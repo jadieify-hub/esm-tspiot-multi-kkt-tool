@@ -11,7 +11,7 @@ WinForms-приложение работает с локальным HTTP API Е
 - сайт: [github.com/jadieify-hub/esm-tspiot-multi-kkt-tool](https://github.com/jadieify-hub/esm-tspiot-multi-kkt-tool);
 - copyright: © 2026 KRS.
 
-Исходный код опубликован для ознакомления на условиях `All rights reserved`. Подробные условия приведены в файле `LICENSE`.
+Программа распространяется бесплатно, в том числе для использования в коммерческой деятельности; официальные сборки — только в [GitHub Releases](https://github.com/jadieify-hub/esm-tspiot-multi-kkt-tool/releases/latest). Исходный код открыт для ознакомления. Продажа, изменение и распространение изменённых версий требуют письменного разрешения KRS. Подробные условия приведены в файле `LICENSE`.
 
 ## Готовые версии
 
