@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+
+    steps:
+      - name: Получить исходный код
+        uses: actions/checkout@v6
+
+      - name: Установить .NET 8
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Подключить MSBuild
+        uses: microsoft/setup-msbuild@v3
+
+      - name: Запустить тесты net8.0
+        run: dotnet run --project tests\EsmTspiot.Shared.Tests\EsmTspiot.Shared.Tests.csproj -c Release
+
+      - name: Запустить тесты net48 системным компилятором
+        shell: powershell
+        run: |
+          $csc = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+          $files = Get-ChildItem -Recurse "src\EsmTspiot.Shared" -Filter *.cs |
+            Where-Object { $_.FullName -notmatch '\\obj\\|\\bin\\' } |
+            ForEach-Object { $_.FullName }
+          $files += (Resolve-Path "tests\EsmTspiot.Shared.Tests\Program.cs").Path
+          & $csc /nologo /define:NETFRAMEWORK /out:"$env:TEMP\SharedTests.exe" /r:System.Net.Http.dll /r:System.Web.Extensions.dll /r:System.Runtime.Serialization.dll $files
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$env:TEMP\SharedTests.exe"
+          exit $LASTEXITCODE
+
+      - name: Собрать Legacy
+        run: msbuild src\EsmTspiot.Legacy.WinForms\EsmTspiot.Legacy.WinForms.csproj /restore /p:Configuration=Release
+
+      - name: Собрать Modern
+        run: dotnet build src\EsmTspiot.Modern.WinForms\EsmTspiot.Modern.WinForms.csproj -c Release
