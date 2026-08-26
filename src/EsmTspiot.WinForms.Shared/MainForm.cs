@@ -69,7 +69,7 @@ namespace EsmTspiot.WinForms.Shared
             _bulkWorkflow = new BulkRegistrationWorkflow(_client);
             _deletionWorkflow = new KktDeletionWorkflow(_client);
             Text = "Управление ККТ в ЕСМ/ТС ПИоТ";
-            ClientSize = new Size(780, 520);
+            ClientSize = new Size(780, 580);
             MinimumSize = new Size(640, 420);
             StartPosition = FormStartPosition.CenterScreen;
             Font = new Font("Segoe UI", 8.25F);
