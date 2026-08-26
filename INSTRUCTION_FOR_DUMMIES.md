@@ -39,7 +39,7 @@
 Для Windows 7 SP1, 8.1, 10 и 11 можно использовать:
 
 ```text
-MultiKKT-ESM-TSPioT-v11.exe
+MultiKKT-ESM-TSPioT-v11.1.exe
 ```
 
 Для этой версии нужен .NET Framework 4.8.

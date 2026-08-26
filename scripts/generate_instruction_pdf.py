@@ -16,7 +16,7 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "INSTRUCTION_FOR_DUMMIES.md"
 OUTPUT_DIR = ROOT / "output" / "pdf"
-OUTPUT = OUTPUT_DIR / "Instruction-MultiKKT-v11.pdf"
+OUTPUT = OUTPUT_DIR / "Instruction-MultiKKT-v11.1.pdf"
 
 
 def register_fonts() -> tuple[str, str]:
