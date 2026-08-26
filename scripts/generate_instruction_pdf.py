@@ -159,7 +159,7 @@ def parse_markdown(markdown: str, styles):
 
         stripped = line.strip()
         if not stripped:
-            flowables.append(Spacer(1, 1.4 * mm))
+            flowables.append(Spacer(1, 0.6 * mm))
             continue
 
         if stripped.startswith("# "):
@@ -207,7 +207,8 @@ def main() -> None:
         topMargin=16 * mm,
         bottomMargin=17 * mm,
         title="Инструкция для чайников: управление ККТ в ЕСМ/ТС ПИоТ",
-        author="Codex",
+        author="Руслан Керусов",
+        subject="Издатель и владелец: KRS",
     )
     doc.build(story, onFirstPage=draw_footer, onLaterPages=draw_footer)
     print(str(OUTPUT))

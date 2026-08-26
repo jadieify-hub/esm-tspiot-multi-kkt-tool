@@ -1,0 +1,9 @@
+<Project>
+  <PropertyGroup>
+    <Company>KRS</Company>
+    <Authors>Руслан Керусов</Authors>
+    <Copyright>Copyright © 2026 KRS. All rights reserved.</Copyright>
+    <RepositoryUrl>https://github.com/jadieify-hub/esm-tspiot-multi-kkt-tool</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+  </PropertyGroup>
+</Project>
