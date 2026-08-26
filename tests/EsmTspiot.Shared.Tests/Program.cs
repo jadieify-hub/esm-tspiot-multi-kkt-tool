@@ -82,6 +82,7 @@ namespace EsmTspiot.Shared.Tests
             Run("Diagnostic masker hides fiscal identifiers", DiagnosticMaskerHidesFiscalIdentifiers);
             Run("Diagnostic masker hides local user paths", DiagnosticMaskerHidesLocalUserPaths);
             Run("Diagnostic masker hides common secrets", DiagnosticMaskerHidesCommonSecrets);
+            Run("Display log trimmer preserves the newest half", DisplayLogTrimmerPreservesNewestHalf);
             Run("File log sink persists text without blocking", FileLogSinkPersistsTextWithoutBlocking);
 
             if (_failures == 0)
@@ -1164,6 +1165,15 @@ namespace EsmTspiot.Shared.Tests
             AssertFalse(masked.Contains("Server=local"), "Connection string must be masked.");
             AssertFalse(masked.Contains("BearerValue"), "Authorization value must be masked.");
             AssertFalse(masked.Contains("KeyValue"), "API key value must be masked.");
+        }
+
+        private static void DisplayLogTrimmerPreservesNewestHalf()
+        {
+            string trimmed = DisplayLogTrimmer.TrimIfNeeded("abcdefghij", 8);
+
+            AssertContains(trimmed, "начало журнала см. в файле");
+            AssertTrue(trimmed.EndsWith("fghij", StringComparison.Ordinal), "Expected the newest half of the visible log.");
+            AssertFalse(trimmed.Contains("abcde"), "Expected the oldest half to be removed.");
         }
 
         private static void FileLogSinkPersistsTextWithoutBlocking()

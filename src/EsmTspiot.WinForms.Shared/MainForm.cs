@@ -15,6 +15,7 @@ namespace EsmTspiot.WinForms.Shared
 {
     public sealed class MainForm : Form
     {
+        private const int MaximumVisibleLogLength = 1500000;
         private readonly TspiotApiClient _client = new TspiotApiClient();
         private readonly BulkRegistrationWorkflow _bulkWorkflow;
         private readonly KktDeletionWorkflow _deletionWorkflow;
@@ -711,13 +712,25 @@ namespace EsmTspiot.WinForms.Shared
             }
             catch (Exception ex)
             {
+                if (IsDisposed || Disposing)
+                {
+                    return;
+                }
+
                 AppendLog("Ошибка приложения: " + ex.Message + "\r\n\r\n");
                 MessageBox.Show(this, ex.Message, "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             finally
             {
-                SetBusy(false);
-                _operationStatusLabel.Text = "Готово";
+                if (IsDisposed || Disposing)
+                {
+                    _busy = false;
+                }
+                else
+                {
+                    SetBusy(false);
+                    _operationStatusLabel.Text = "Готово";
+                }
             }
         }
 
@@ -1878,7 +1891,18 @@ namespace EsmTspiot.WinForms.Shared
 
         private void AppendLog(string text)
         {
+            if (IsDisposed || Disposing)
+            {
+                return;
+            }
+
             string value = text ?? string.Empty;
+            if (_logTextBox.TextLength > MaximumVisibleLogLength)
+            {
+                _logTextBox.Text = DisplayLogTrimmer.TrimIfNeeded(
+                    _logTextBox.Text,
+                    MaximumVisibleLogLength);
+            }
             _logTextBox.AppendText(value);
             _logTextBox.Select(_logTextBox.TextLength, 0);
             _logTextBox.ScrollToCaret();
