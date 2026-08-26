@@ -47,6 +47,7 @@ namespace EsmTspiot.Shared.Tests
             Run("Dkkt selector excludes already created instances", DkktSelectorExcludesAlreadyCreatedInstances);
             Run("Port allocator selects pair after existing instances", PortAllocatorSelectsPairAfterExistingInstances);
             Run("Port allocator reserves either side and consecutive selections", PortAllocatorReservesEitherSideAndConsecutiveSelections);
+            Run("Port allocator reserves the primary KKT pair", PortAllocatorReservesPrimaryKktPair);
             Run("Bulk planner assigns first sequential port pairs", BulkPlannerAssignsFirstSequentialPortPairs);
             Run("Bulk planner reserves implicit first soft port", BulkPlannerReservesImplicitFirstSoftPort);
             Run("Bulk planner skips occupied pair indexes", BulkPlannerSkipsOccupiedPairIndexes);
@@ -472,10 +473,10 @@ namespace EsmTspiot.Shared.Tests
                 "http://127.0.0.1:51077", "4041", devices, new List<KktInstanceInfo>());
 
             AssertEqual(2, plan.Items.Count, "Expected two planned devices.");
-            AssertEqual("50401", plan.Items[0].Input.Port, "Expected first port.");
-            AssertEqual("51401", plan.Items[0].Input.SoftPort, "Expected first soft port.");
-            AssertEqual("50402", plan.Items[1].Input.Port, "Expected second port.");
-            AssertEqual("51402", plan.Items[1].Input.SoftPort, "Expected second soft port.");
+            AssertEqual("50402", plan.Items[0].Input.Port, "Expected first additional KKT port.");
+            AssertEqual("51402", plan.Items[0].Input.SoftPort, "Expected first additional KKT soft port.");
+            AssertEqual("50403", plan.Items[1].Input.Port, "Expected second additional KKT port.");
+            AssertEqual("51403", plan.Items[1].Input.SoftPort, "Expected second additional KKT soft port.");
         }
 
         private static void PortAllocatorSelectsPairAfterExistingInstances()
@@ -507,6 +508,14 @@ namespace EsmTspiot.Shared.Tests
             AssertEqual("51402", first.SoftPort, "Expected matching softPort for the first selection.");
             AssertEqual("50404", second.Port, "Expected the previous selection to remain reserved.");
             AssertEqual("51404", second.SoftPort, "Expected matching softPort for the second selection.");
+        }
+
+        private static void PortAllocatorReservesPrimaryKktPair()
+        {
+            KktPortPair pair = new KktPortPairAllocator(new List<KktInstanceInfo>()).ReserveNext();
+
+            AssertEqual("50402", pair.Port, "The primary KKT port must never be allocated to an additional KKT.");
+            AssertEqual("51402", pair.SoftPort, "The primary KKT softPort must never be allocated to an additional KKT.");
         }
 
         private static void BulkPlannerReservesImplicitFirstSoftPort()
