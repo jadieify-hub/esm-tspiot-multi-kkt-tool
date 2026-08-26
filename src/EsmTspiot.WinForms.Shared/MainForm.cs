@@ -1437,8 +1437,7 @@ namespace EsmTspiot.WinForms.Shared
                     return;
                 }
 
-                Array.Sort(files, StringComparer.OrdinalIgnoreCase);
-                OpenPath(files[files.Length - 1]);
+                OpenPath(InstructionFileSelector.SelectNewest(files));
             }
             catch (Exception ex)
             {
@@ -1524,53 +1523,6 @@ namespace EsmTspiot.WinForms.Shared
             }
 
             return true;
-        }
-
-        private ValidationResult Merge(ValidationResult first, ValidationResult second)
-        {
-            ValidationResult merged = new ValidationResult();
-            AddUniqueMessages(merged, first);
-            AddUniqueMessages(merged, second);
-            return merged;
-        }
-
-        private void AddUniqueMessages(ValidationResult target, ValidationResult source)
-        {
-            for (int i = 0; i < source.Messages.Count; i++)
-            {
-                bool exists = false;
-                for (int j = 0; j < target.Messages.Count; j++)
-                {
-                    if (target.Messages[j] == source.Messages[i])
-                    {
-                        exists = true;
-                        break;
-                    }
-                }
-
-                if (!exists)
-                {
-                    target.Add(source.Messages[i]);
-                }
-            }
-
-            for (int i = 0; i < source.Warnings.Count; i++)
-            {
-                bool exists = false;
-                for (int j = 0; j < target.Warnings.Count; j++)
-                {
-                    if (target.Warnings[j] == source.Warnings[i])
-                    {
-                        exists = true;
-                        break;
-                    }
-                }
-
-                if (!exists)
-                {
-                    target.AddWarning(source.Warnings[i]);
-                }
-            }
         }
 
         private void AppendResponse(ApiResponse response)

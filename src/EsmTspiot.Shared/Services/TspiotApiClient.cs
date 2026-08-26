@@ -12,8 +12,9 @@ namespace EsmTspiot.Shared.Services
         private readonly HttpClient _httpClient;
 
         public TspiotApiClient()
-            : this(new HttpClient())
         {
+            _httpClient = new HttpClient();
+            _httpClient.Timeout = TimeSpan.FromSeconds(30);
         }
 
         public TspiotApiClient(HttpClient httpClient)
@@ -24,7 +25,6 @@ namespace EsmTspiot.Shared.Services
             }
 
             _httpClient = httpClient;
-            _httpClient.Timeout = TimeSpan.FromSeconds(30);
         }
 
         public Task<ApiResponse> GetInstancesAsync(string baseUrl)

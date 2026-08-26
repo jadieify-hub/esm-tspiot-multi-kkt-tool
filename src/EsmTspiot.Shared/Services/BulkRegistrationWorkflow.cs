@@ -265,7 +265,7 @@ namespace EsmTspiot.Shared.Services
                     cancellationToken);
                 Report(progress, current, total, item.Input.KktSerial, "Добавление экземпляра",
                     "Попытка " + attempt.ToString(), response);
-                if (response.IsSuccess || !TspiotErrorDecoder.ContainsErrorCode(response.ResponseBody, 1013))
+                if (response.IsSuccess || !IsTransientFailure(response))
                 {
                     return response;
                 }
@@ -296,7 +296,7 @@ namespace EsmTspiot.Shared.Services
                     cancellationToken);
                 Report(progress, current, total, item.Input.KktSerial, "Регистрация",
                     "Попытка " + attempt.ToString(), response);
-                if (response.IsSuccess || !TspiotErrorDecoder.ContainsErrorCode(response.ResponseBody, 1013))
+                if (response.IsSuccess || !IsTransientFailure(response))
                 {
                     return response;
                 }
@@ -308,6 +308,13 @@ namespace EsmTspiot.Shared.Services
             }
 
             return response;
+        }
+
+        private static bool IsTransientFailure(ApiResponse response)
+        {
+            return response != null &&
+                (response.IsConnectionFailure ||
+                    TspiotErrorDecoder.ContainsErrorCode(response.ResponseBody, 1013));
         }
 
         private async Task<bool> WaitForReadiness(

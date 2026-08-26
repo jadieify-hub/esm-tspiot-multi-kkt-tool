@@ -230,11 +230,19 @@ namespace EsmTspiot.Shared.Validation
 
             bool portOk = TryValidatePort(input == null ? null : input.Port, "port", result, out port);
             bool softPortOk = TryValidatePort(input == null ? null : input.SoftPort, "softPort", result, out softPort);
-            TryValidatePort(input == null ? null : input.DkktPort, "dkktPort", result, out dkktPort);
+            bool dkktPortOk = TryValidatePort(input == null ? null : input.DkktPort, "dkktPort", result, out dkktPort);
 
             if (portOk && softPortOk && port == softPort)
             {
                 result.Add("port и softPort не должны совпадать.");
+            }
+            if (portOk && dkktPortOk && port == dkktPort)
+            {
+                result.Add("port и dkktPort не должны совпадать.");
+            }
+            if (softPortOk && dkktPortOk && softPort == dkktPort)
+            {
+                result.Add("softPort и dkktPort не должны совпадать.");
             }
         }
 

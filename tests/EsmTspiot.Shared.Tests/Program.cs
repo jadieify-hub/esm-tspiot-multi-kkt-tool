@@ -30,6 +30,7 @@ namespace EsmTspiot.Shared.Tests
             Run("Optional entered fields are validated before check", OptionalEnteredFieldsAreValidatedBeforeCheck);
             Run("Optional registration fields are validated before post", OptionalRegistrationFieldsAreValidatedBeforePost);
             Run("Ports must be valid and distinct", PortsMustBeValidAndDistinct);
+            Run("Service ports must differ from dkktPort", ServicePortsMustDifferFromDkktPort);
             Run("Known errors are decoded", KnownErrorsAreDecoded);
             Run("Error 1012 is decoded as manual service recovery", Error1012IsDecodedAsManualServiceRecovery);
             Run("Error 1013 is decoded as manual service recovery", Error1013IsDecodedAsManualServiceRecovery);
@@ -63,6 +64,8 @@ namespace EsmTspiot.Shared.Tests
             Run("Instance details parser reads registration data", InstanceDetailsParserReadsRegistrationData);
             Run("Instance details parser rejects malformed registration data", InstanceDetailsParserRejectsMalformedRegistrationData);
             Run("API client uses documented HTTP contracts", ApiClientUsesDocumentedHttpContracts);
+            Run("API client preserves an injected timeout", ApiClientPreservesInjectedTimeout);
+            Run("Instruction selector uses the newest file time", InstructionSelectorUsesNewestFileTime);
             Run("Deletion planner protects primary KKT", DeletionPlannerProtectsPrimaryKkt);
             Run("Deletion planner blocks ambiguous primary KKT", DeletionPlannerBlocksAmbiguousPrimaryKkt);
             Run("Deletion confirmation requires last four digits", DeletionConfirmationRequiresLastFourDigits);
@@ -75,6 +78,8 @@ namespace EsmTspiot.Shared.Tests
             Run("Bulk workflow resumes incomplete existing instance", BulkWorkflowResumesIncompleteExistingInstance);
             Run("Bulk workflow continues after add failure", BulkWorkflowContinuesAfterAddFailure);
             Run("Bulk workflow retries service not started", BulkWorkflowRetriesServiceNotStarted);
+            Run("Bulk workflow retries connection failure during add", BulkWorkflowRetriesConnectionFailureDuringAdd);
+            Run("Bulk workflow retries connection failure during registration", BulkWorkflowRetriesConnectionFailureDuringRegistration);
             Run("Bulk workflow recovers when retry reports existing instance", BulkWorkflowRecoversWhenRetryReportsExistingInstance);
             Run("Bulk workflow skips PUT when readiness is not confirmed", BulkWorkflowSkipsPutWhenReadinessIsNotConfirmed);
             Run("Bulk workflow honors cancellation", BulkWorkflowHonorsCancellation);
@@ -261,6 +266,22 @@ namespace EsmTspiot.Shared.Tests
 
             AssertFalse(result.IsValid, "Expected equal ports to be invalid.");
             AssertContains(result.JoinMessages(), "port и softPort не должны совпадать");
+        }
+
+        private static void ServicePortsMustDifferFromDkktPort()
+        {
+            TspiotFormInput portCollision = CreateValidInput();
+            portCollision.Port = portCollision.DkktPort;
+            ValidationResult portResult = TspiotInputValidator.ValidatePost(portCollision);
+
+            TspiotFormInput softPortCollision = CreateValidInput();
+            softPortCollision.SoftPort = softPortCollision.DkktPort;
+            ValidationResult softPortResult = TspiotInputValidator.ValidatePost(softPortCollision);
+
+            AssertFalse(portResult.IsValid, "Expected port and dkktPort collision to be rejected.");
+            AssertContains(portResult.JoinMessages(), "port и dkktPort не должны совпадать");
+            AssertFalse(softPortResult.IsValid, "Expected softPort and dkktPort collision to be rejected.");
+            AssertContains(softPortResult.JoinMessages(), "softPort и dkktPort не должны совпадать");
         }
 
         private static void KnownErrorsAreDecoded()
@@ -782,6 +803,39 @@ namespace EsmTspiot.Shared.Tests
             AssertRequest(handler.Requests[6], "DELETE", baseUrl + "/api/v1/tspiot/00105700000001");
         }
 
+        private static void ApiClientPreservesInjectedTimeout()
+        {
+            HttpClient httpClient = new HttpClient(new RecordingHttpHandler());
+            httpClient.Timeout = TimeSpan.FromSeconds(7);
+
+            new TspiotApiClient(httpClient);
+
+            AssertEqual(TimeSpan.FromSeconds(7), httpClient.Timeout, "An injected HttpClient timeout must remain owned by its caller.");
+        }
+
+        private static void InstructionSelectorUsesNewestFileTime()
+        {
+            string directory = Path.Combine(Path.GetTempPath(), "esm_instruction_tests_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            try
+            {
+                string v9 = Path.Combine(directory, "Instruction-MultiKKT-v9.pdf");
+                string v10 = Path.Combine(directory, "Instruction-MultiKKT-v10.pdf");
+                File.WriteAllText(v9, "v9");
+                File.WriteAllText(v10, "v10");
+                File.SetLastWriteTimeUtc(v10, new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+                File.SetLastWriteTimeUtc(v9, new DateTime(2026, 1, 2, 0, 0, 0, DateTimeKind.Utc));
+
+                string selected = InstructionFileSelector.SelectNewest(new string[] { v9, v10 });
+
+                AssertEqual(v9, selected, "Expected the most recently written instruction file.");
+            }
+            finally
+            {
+                Directory.Delete(directory, true);
+            }
+        }
+
         private static void DeletionPlannerProtectsPrimaryKkt()
         {
             KktDeletionPlan plan = KktDeletionPlanner.Build(new List<KktInstanceInfo>
@@ -1003,6 +1057,46 @@ namespace EsmTspiot.Shared.Tests
             AssertEqual(BulkKktRegistrationStatus.Registered, outcome.Results[0].Status, "Expected successful retry.");
         }
 
+        private static void BulkWorkflowRetriesConnectionFailureDuringAdd()
+        {
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            api.InstancesResponse = Success("{\"instances\":[]}");
+            api.DkktResponse = Success("{\"kkt\":[{\"kktSerial\":\"00105700000001\",\"fnSerial\":\"7300000000000001\",\"kktInn\":\"1234567894\"}]}");
+            api.AddResponses.Enqueue(ConnectionFailure());
+            api.AddResponses.Enqueue(Success("{}"));
+            api.InstanceResponses.Enqueue(Success("{\"clientPort\":51402}"));
+            api.RegisterResponses.Enqueue(Success("{}"));
+            BulkRegistrationWorkflow workflow = CreateWorkflow(api);
+
+            BulkRegistrationDiscovery discovery = workflow.DiscoverAsync(
+                "http://127.0.0.1:51077", "4041", null, CancellationToken.None).Result;
+            BulkRegistrationOutcome outcome = workflow.ExecuteAsync(
+                discovery, null, CancellationToken.None).Result;
+
+            AssertEqual(2, api.AddCalls, "Expected POST retry after a connection failure.");
+            AssertEqual(BulkKktRegistrationStatus.Registered, outcome.Results[0].Status, "Expected registration after POST retry.");
+        }
+
+        private static void BulkWorkflowRetriesConnectionFailureDuringRegistration()
+        {
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            api.InstancesResponse = Success("{\"instances\":[]}");
+            api.DkktResponse = Success("{\"kkt\":[{\"kktSerial\":\"00105700000001\",\"fnSerial\":\"7300000000000001\",\"kktInn\":\"1234567894\"}]}");
+            api.AddResponses.Enqueue(Success("{}"));
+            api.InstanceResponses.Enqueue(Success("{\"clientPort\":51402}"));
+            api.RegisterResponses.Enqueue(ConnectionFailure());
+            api.RegisterResponses.Enqueue(Success("{}"));
+            BulkRegistrationWorkflow workflow = CreateWorkflow(api);
+
+            BulkRegistrationDiscovery discovery = workflow.DiscoverAsync(
+                "http://127.0.0.1:51077", "4041", null, CancellationToken.None).Result;
+            BulkRegistrationOutcome outcome = workflow.ExecuteAsync(
+                discovery, null, CancellationToken.None).Result;
+
+            AssertEqual(2, api.RegisterCalls, "Expected PUT retry after a connection failure.");
+            AssertEqual(BulkKktRegistrationStatus.Registered, outcome.Results[0].Status, "Expected successful PUT retry.");
+        }
+
         private static void BulkWorkflowRecoversWhenRetryReportsExistingInstance()
         {
             FakeTspiotApiClient api = new FakeTspiotApiClient();
@@ -1114,6 +1208,18 @@ namespace EsmTspiot.Shared.Tests
                 StatusCode = statusCode,
                 ResponseBody = body,
                 DecodedMessage = "Ошибка"
+            };
+        }
+
+        private static ApiResponse ConnectionFailure()
+        {
+            return new ApiResponse
+            {
+                IsSuccess = false,
+                IsConnectionFailure = true,
+                StatusCode = 0,
+                ResponseBody = string.Empty,
+                DecodedMessage = "Нет соединения"
             };
         }
 
