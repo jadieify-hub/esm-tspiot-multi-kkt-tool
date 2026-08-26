@@ -7,15 +7,18 @@
     <RootNamespace>EsmTspiot.Legacy.WinForms</RootNamespace>
     <LangVersion>latest</LangVersion>
     <PlatformTarget>AnyCPU</PlatformTarget>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <ApplicationIcon>..\EsmTspiot.WinForms.Shared\Assets\app.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\EsmTspiot.Shared\EsmTspiot.Shared.csproj" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\Program.cs" Link="Program.cs" />
+    <Compile Include="..\EsmTspiot.WinForms.Shared\AssemblyInfo.cs" Link="Properties\AssemblyInfo.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\MainForm.cs" Link="MainForm.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\BulkRegistrationDialog.cs" Link="BulkRegistrationDialog.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\KktDeletionConfirmationDialog.cs" Link="KktDeletionConfirmationDialog.cs" />
+    <Compile Include="..\EsmTspiot.WinForms.Shared\KktSelectionDialog.cs" Link="KktSelectionDialog.cs" />
     <None Include="..\EsmTspiot.WinForms.Shared\Assets\app.ico" Link="app.ico" />
   </ItemGroup>
 </Project>

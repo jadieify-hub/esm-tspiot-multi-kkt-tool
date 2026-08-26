@@ -34,14 +34,18 @@ namespace EsmTspiot.WinForms.Shared
         private readonly Button _registerButton = new Button();
         private readonly Button _bulkRegisterButton = new Button();
         private readonly Button _refreshInstancesButton = new Button();
+        private readonly Button _refreshManualInstancesButton = new Button();
         private readonly Button _deleteKktButton = new Button();
         private readonly Button _copyDiagnosticsButton = new Button();
         private readonly Button _openLogFolderButton = new Button();
         private readonly DataGridView _instancesGrid = new DataGridView();
+        private readonly DataGridView _manualInstancesGrid = new DataGridView();
         private readonly Label _instancesSummaryLabel = new Label();
+        private readonly Label _manualInstancesSummaryLabel = new Label();
+        private readonly Label _nextPortPairLabel = new Label();
         private readonly Label _automationStatusLabel = new Label();
         private readonly TabControl _workspaceTabs = new TabControl();
-        private readonly TabPage _secondKktTab = new TabPage();
+        private readonly TabPage _manualKktTab = new TabPage();
         private readonly TabPage _instancesTab = new TabPage();
         private readonly TabPage _automationTab = new TabPage();
         private readonly TabPage _logTab = new TabPage();
@@ -125,10 +129,10 @@ namespace EsmTspiot.WinForms.Shared
                 _workspaceTabs.SelectedTab = _instancesTab;
                 await RunButtonActionAsync(CheckCurrentInstancesAsync);
             };
-            ToolStripMenuItem fillSecond = new ToolStripMenuItem("Заполнить данные второй ККТ");
-            fillSecond.Click += async delegate
+            ToolStripMenuItem fillNext = new ToolStripMenuItem("Выбрать следующую ККТ");
+            fillNext.Click += async delegate
             {
-                _workspaceTabs.SelectedTab = _secondKktTab;
+                _workspaceTabs.SelectedTab = _manualKktTab;
                 await RunButtonActionAsync(LoadDkktDataAsync);
             };
             ToolStripMenuItem automatic = new ToolStripMenuItem("Автоматический режим");
@@ -136,7 +140,7 @@ namespace EsmTspiot.WinForms.Shared
             _deleteMenuItem.Enabled = false;
             _deleteMenuItem.Click += async delegate { await RunButtonActionAsync(DeleteSelectedKktAsync); };
             _operationsMenuItem.DropDownItems.Add(refresh);
-            _operationsMenuItem.DropDownItems.Add(fillSecond);
+            _operationsMenuItem.DropDownItems.Add(fillNext);
             _operationsMenuItem.DropDownItems.Add(automatic);
             _operationsMenuItem.DropDownItems.Add(new ToolStripSeparator());
             _operationsMenuItem.DropDownItems.Add(_deleteMenuItem);
@@ -219,17 +223,17 @@ namespace EsmTspiot.WinForms.Shared
             _workspaceTabs.Dock = DockStyle.Fill;
             _workspaceTabs.Margin = new Padding(6, 4, 6, 4);
 
-            ConfigureTabPage(_secondKktTab, "Вторая ККТ");
+            ConfigureTabPage(_manualKktTab, "Ручное подключение");
             ConfigureTabPage(_instancesTab, "ККТ в ЕСМ");
             ConfigureTabPage(_automationTab, "Автоматический режим");
             ConfigureTabPage(_logTab, "Журнал");
 
-            _secondKktTab.Controls.Add(BuildSecondKktPage());
+            _manualKktTab.Controls.Add(BuildManualKktPage());
             _instancesTab.Controls.Add(BuildInstancesPage());
             _automationTab.Controls.Add(BuildAutomationPage());
             _logTab.Controls.Add(BuildLogGroup());
 
-            _workspaceTabs.TabPages.Add(_secondKktTab);
+            _workspaceTabs.TabPages.Add(_manualKktTab);
             _workspaceTabs.TabPages.Add(_instancesTab);
             _workspaceTabs.TabPages.Add(_automationTab);
             _workspaceTabs.TabPages.Add(_logTab);
@@ -244,7 +248,7 @@ namespace EsmTspiot.WinForms.Shared
             page.AutoScroll = true;
         }
 
-        private Control BuildSecondKktPage()
+        private Control BuildManualKktPage()
         {
             TableLayoutPanel root = new TableLayoutPanel();
             root.Dock = DockStyle.Fill;
@@ -258,20 +262,21 @@ namespace EsmTspiot.WinForms.Shared
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
             root.Controls.Add(BuildKktGroup(), 0, 0);
             root.Controls.Add(BuildPortsGroup(), 0, 1);
-            root.Controls.Add(BuildSecondKktActionsGroup(), 0, 2);
+            root.Controls.Add(BuildManualKktActionsGroup(), 0, 2);
             root.Controls.Add(BuildRecoveryGroup(), 0, 3);
+            root.Controls.Add(BuildManualInstancesGroup(), 0, 4);
             return root;
         }
 
         private GroupBox BuildKktGroup()
         {
-            GroupBox group = CreateGroup("Данные второй ККТ");
+            GroupBox group = CreateGroup("Данные подключаемой ККТ");
             TableLayoutPanel table = CreateTwoColumnTable(4);
-            AddLabeledTextBox(table, 0, "Серийный номер второй ККТ", _kktSerialTextBox, "Используется как id и kktSerial");
-            AddLabeledTextBox(table, 1, "Номер ФН второй ККТ", _fnSerialTextBox, "fnSerial");
+            AddLabeledTextBox(table, 0, "Серийный номер подключаемой ККТ", _kktSerialTextBox, "Используется как id и kktSerial");
+            AddLabeledTextBox(table, 1, "Номер ФН подключаемой ККТ", _fnSerialTextBox, "fnSerial");
             AddLabeledTextBox(table, 2, "ИНН владельца ККТ", _kktInnTextBox, "10 или 12 цифр");
 
-            _atolConfirmedCheckBox.Text = "Я проверил связь в драйвере АТОЛ именно со второй физической ККТ";
+            _atolConfirmedCheckBox.Text = "Я проверил связь в драйвере АТОЛ именно с подключаемой физической ККТ";
             _atolConfirmedCheckBox.AutoSize = true;
             table.Controls.Add(new Label(), 0, 3);
             table.Controls.Add(_atolConfirmedCheckBox, 1, 3);
@@ -292,13 +297,13 @@ namespace EsmTspiot.WinForms.Shared
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
             table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
-            AddCompactPortTextBox(table, 0, "Служба (port)", _portTextBox, "Порт экземпляра сервиса второй ККТ");
+            AddCompactPortTextBox(table, 0, "Служба (port)", _portTextBox, "Порт экземпляра сервиса подключаемой ККТ");
             AddCompactPortTextBox(table, 2, "Frontol (softPort)", _softPortTextBox, "Порт ЕСМ для Frontol");
             group.Controls.Add(table);
             return group;
         }
 
-        private GroupBox BuildSecondKktActionsGroup()
+        private GroupBox BuildManualKktActionsGroup()
         {
             GroupBox group = CreateGroup("Последовательный режим");
             TableLayoutPanel panel = new TableLayoutPanel();
@@ -311,9 +316,9 @@ namespace EsmTspiot.WinForms.Shared
             panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33F));
             panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 42F));
 
-            ConfigureButton(_loadDkktButton, "1. Заполнить данные\r\nвторой ККТ", LoadDkktDataAsync);
-            ConfigureButton(_addButton, "2. Добавить\r\nэкземпляр", AddSecondInstanceAsync);
-            ConfigureButton(_registerButton, "3. Зарегистрировать\r\nвторую ККТ", RegisterSecondKktAsync);
+            ConfigureButton(_loadDkktButton, "1. Выбрать следующую\r\nККТ", LoadDkktDataAsync);
+            ConfigureButton(_addButton, "2. Добавить\r\nэкземпляр", AddSelectedInstanceAsync);
+            ConfigureButton(_registerButton, "3. Зарегистрировать\r\nККТ", RegisterSelectedKktAsync);
 
             ConfigureActionGridButton(_loadDkktButton);
             ConfigureActionGridButton(_addButton);
@@ -325,6 +330,69 @@ namespace EsmTspiot.WinForms.Shared
 
             group.Controls.Add(panel);
             return group;
+        }
+
+        private GroupBox BuildManualInstancesGroup()
+        {
+            GroupBox group = CreateGroup("ККТ в ЕСМ и занятые порты");
+            group.AutoSize = false;
+            group.MinimumSize = new Size(0, 145);
+
+            TableLayoutPanel root = new TableLayoutPanel();
+            root.Dock = DockStyle.Fill;
+            root.ColumnCount = 1;
+            root.RowCount = 3;
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
+            FlowLayoutPanel toolbar = new FlowLayoutPanel();
+            toolbar.Dock = DockStyle.Fill;
+            toolbar.AutoSize = true;
+            toolbar.WrapContents = false;
+            toolbar.Margin = new Padding(0, 0, 0, 4);
+
+            ConfigureButton(_refreshManualInstancesButton, "Обновить", CheckCurrentInstancesAsync);
+            _refreshManualInstancesButton.MinimumSize = new Size(90, 25);
+            _nextPortPairLabel.AutoSize = true;
+            _nextPortPairLabel.Anchor = AnchorStyles.Left;
+            _nextPortPairLabel.Margin = new Padding(8, 6, 0, 0);
+            _nextPortPairLabel.Text = "Следующая свободная пара: список не загружен";
+            toolbar.Controls.Add(_refreshManualInstancesButton);
+            toolbar.Controls.Add(_nextPortPairLabel);
+
+            ConfigureManualInstancesGrid();
+            _manualInstancesSummaryLabel.AutoSize = true;
+            _manualInstancesSummaryLabel.Text = "Список еще не загружен.";
+            _manualInstancesSummaryLabel.Margin = new Padding(0, 4, 0, 0);
+
+            root.Controls.Add(toolbar, 0, 0);
+            root.Controls.Add(_manualInstancesGrid, 0, 1);
+            root.Controls.Add(_manualInstancesSummaryLabel, 0, 2);
+            group.Controls.Add(root);
+            return group;
+        }
+
+        private void ConfigureManualInstancesGrid()
+        {
+            _manualInstancesGrid.Dock = DockStyle.Fill;
+            _manualInstancesGrid.ReadOnly = true;
+            _manualInstancesGrid.AllowUserToAddRows = false;
+            _manualInstancesGrid.AllowUserToDeleteRows = false;
+            _manualInstancesGrid.AllowUserToResizeRows = false;
+            _manualInstancesGrid.MultiSelect = false;
+            _manualInstancesGrid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+            _manualInstancesGrid.RowHeadersVisible = false;
+            _manualInstancesGrid.AutoGenerateColumns = false;
+            _manualInstancesGrid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+            _manualInstancesGrid.BackgroundColor = SystemColors.Window;
+            _manualInstancesGrid.BorderStyle = BorderStyle.Fixed3D;
+
+            _manualInstancesGrid.Columns.Add(CreateInstancesColumn("Роль", 130, 24F));
+            _manualInstancesGrid.Columns.Add(CreateInstancesColumn("Серийный номер", 135, 30F));
+            _manualInstancesGrid.Columns.Add(CreateInstancesColumn("port", 58, 11F));
+            _manualInstancesGrid.Columns.Add(CreateInstancesColumn("softPort", 68, 12F));
+            _manualInstancesGrid.Columns.Add(CreateInstancesColumn("Состояние", 90, 18F));
         }
 
         private Control BuildInstancesPage()
@@ -468,7 +536,7 @@ namespace EsmTspiot.WinForms.Shared
 
             _recoveryLabel.AutoSize = true;
             _recoveryLabel.MaximumSize = new Size(720, 0);
-            _recoveryLabel.Text = "ЕСМ не смог создать службу второй ККТ автоматически.";
+            _recoveryLabel.Text = "ЕСМ не смог создать службу подключаемой ККТ автоматически.";
             _recoveryLabel.Margin = new Padding(0, 0, 0, 4);
 
             FlowLayoutPanel buttons = new FlowLayoutPanel();
@@ -476,7 +544,7 @@ namespace EsmTspiot.WinForms.Shared
             buttons.AutoSize = true;
             buttons.WrapContents = true;
 
-            ConfigureButton(_createServiceButton, "Создать службу от администратора", CreateSecondServiceAsync);
+            ConfigureButton(_createServiceButton, "Создать службу от администратора", CreateSelectedServiceAsync);
             ConfigureButton(_copyRecoveryCommandButton, "Скопировать команду", CopyRecoveryCommandAsync);
             buttons.Controls.Add(_createServiceButton);
             buttons.Controls.Add(_copyRecoveryCommandButton);
@@ -745,7 +813,7 @@ namespace EsmTspiot.WinForms.Shared
             }
         }
 
-        private async Task AddSecondInstanceAsync()
+        private async Task AddSelectedInstanceAsync()
         {
             TspiotFormInput input = ReadInput();
             ValidationResult validation = TspiotInputValidator.ValidatePost(input);
@@ -779,6 +847,7 @@ namespace EsmTspiot.WinForms.Shared
             if (response.IsSuccess)
             {
                 HideServiceRecovery();
+                await RefreshInstancesAfterSuccessfulMutationAsync(input.BaseUrl);
             }
 
             ShowResultMessage(response);
@@ -800,6 +869,20 @@ namespace EsmTspiot.WinForms.Shared
             ApiResponse instancesResponse = await _client.GetInstancesAsync(input.BaseUrl);
             AppendResponse(instancesResponse);
             AppendReadableInstances(instancesResponse);
+            UpdateInstancesGrid(instancesResponse);
+
+            IList<KktInstanceInfo> instances;
+            if (!instancesResponse.IsSuccess ||
+                !InstanceInfoParser.TryParse(instancesResponse.ResponseBody, out instances))
+            {
+                MessageBox.Show(
+                    this,
+                    "Не удалось получить надежный список экземпляров ЕСМ. Выбор ККТ и расчет портов остановлены.",
+                    "Выбор следующей ККТ",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+                return;
+            }
 
             ApiResponse response = await _client.GetDkktListAsync(input.BaseUrl);
             AppendResponse(response);
@@ -809,7 +892,17 @@ namespace EsmTspiot.WinForms.Shared
                 return;
             }
 
-            IList<DkktDeviceInfo> devices = DkktListParser.Parse(response.ResponseBody);
+            IList<DkktDeviceInfo> devices;
+            if (!DkktListParser.TryParse(response.ResponseBody, out devices))
+            {
+                MessageBox.Show(
+                    this,
+                    "ЕСМ вернул неожиданный формат списка физических ККТ. Подстановка остановлена.",
+                    "Выбор следующей ККТ",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+                return;
+            }
             AppendDkktDevices(devices);
 
             if (devices.Count == 0)
@@ -818,29 +911,42 @@ namespace EsmTspiot.WinForms.Shared
                 return;
             }
 
-            IList<KktInstanceInfo> instances = instancesResponse.IsSuccess
-                ? InstanceInfoParser.Parse(instancesResponse.ResponseBody)
-                : new List<KktInstanceInfo>();
             IList<DkktDeviceInfo> candidates = DkktDeviceSelector.FindDevicesWithoutInstances(devices, instances);
             AppendDkktCandidates(candidates);
 
-            if (candidates.Count == 1)
-            {
-                FillFieldsFromDkkt(candidates[0]);
-                MessageBox.Show(this, "Найдена одна ККТ без созданного экземпляра. Данные подставлены в форму. Проверьте их перед регистрацией.", "Заполнение данных", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
-
             if (candidates.Count == 0)
             {
-                MessageBox.Show(this, "Все найденные ККТ уже есть в списке экземпляров или кандидаты не определены. Автоподстановка не выполнена.", "Заполнение данных", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show(this, "Все найденные ККТ уже есть в списке экземпляров или кандидаты не определены.", "Выбор следующей ККТ", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
-            MessageBox.Show(this, "После исключения уже созданных экземпляров осталось несколько кандидатов. Автоподстановка не выполнена, чтобы не выбрать не ту кассу. Список записан в журнал.", "Заполнение данных", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            DkktDeviceInfo selectedDevice = SelectDkktDevice(candidates);
+            if (selectedDevice == null)
+            {
+                AppendLog("Выбор следующей ККТ отменен пользователем.\r\n\r\n");
+                return;
+            }
+
+            KktPortPair nextPair = new KktPortPairAllocator(instances).ReserveNext();
+            if (nextPair == null)
+            {
+                MessageBox.Show(this, "Не найдено свободной пары портов в поддерживаемом диапазоне.", "Выбор следующей ККТ", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            FillFieldsFromDkkt(selectedDevice);
+            _portTextBox.Text = nextPair.Port;
+            _softPortTextBox.Text = nextPair.SoftPort;
+            _atolConfirmedCheckBox.Checked = false;
+            MessageBox.Show(
+                this,
+                "ККТ выбрана. Данные и свободная пара " + nextPair.Port + "/" + nextPair.SoftPort + " подставлены в форму. Проверьте их перед добавлением.",
+                "Выбор следующей ККТ",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
         }
 
-        private async Task RegisterSecondKktAsync()
+        private async Task RegisterSelectedKktAsync()
         {
             TspiotFormInput input = ReadInput();
             ValidationResult validation = TspiotInputValidator.ValidatePut(input, _atolConfirmedCheckBox.Checked);
@@ -855,8 +961,39 @@ namespace EsmTspiot.WinForms.Shared
 
             ApiResponse response = await _client.RegisterInstanceAsync(input.BaseUrl, TspiotInputValidator.CreateRegisterRequest(input));
             AppendResponse(response);
+            if (response.IsSuccess)
+            {
+                await RefreshInstancesAfterSuccessfulMutationAsync(input.BaseUrl);
+            }
             ShowTspiotIdIfPresent(response);
             ShowResultMessage(response);
+        }
+
+        private DkktDeviceInfo SelectDkktDevice(IList<DkktDeviceInfo> candidates)
+        {
+            if (candidates == null || candidates.Count == 0)
+            {
+                return null;
+            }
+            if (candidates.Count == 1)
+            {
+                return candidates[0];
+            }
+
+            using (KktSelectionDialog dialog = new KktSelectionDialog(candidates))
+            {
+                return dialog.ShowDialog(this) == DialogResult.OK
+                    ? dialog.SelectedDevice
+                    : null;
+            }
+        }
+
+        private async Task RefreshInstancesAfterSuccessfulMutationAsync(string baseUrl)
+        {
+            ApiResponse instancesResponse = await _client.GetInstancesAsync(baseUrl);
+            AppendResponse(instancesResponse);
+            AppendReadableInstances(instancesResponse);
+            UpdateInstancesGrid(instancesResponse);
         }
 
         private async Task RegisterAllKktsExperimentalAsync()
@@ -1032,7 +1169,7 @@ namespace EsmTspiot.WinForms.Shared
 
             return false;
         }
-        private async Task CreateSecondServiceAsync()
+        private async Task CreateSelectedServiceAsync()
         {
             TspiotFormInput input = ReadInput();
             ValidationResult validation = TspiotInputValidator.ValidatePost(input);
@@ -1172,7 +1309,7 @@ namespace EsmTspiot.WinForms.Shared
                 : "Найден controlModule.exe: " + _lastControlModulePath;
 
             _recoveryLabel.Text =
-                "ЕСМ вернул ошибку службы: служба второй ККТ не создана или не запущена. " +
+                "ЕСМ вернул ошибку службы: служба подключаемой ККТ не создана или не запущена. " +
                 "Можно создать службу " + ServiceRecoveryCommandBuilder.BuildServiceName(input.KktSerial) +
                 " от имени администратора. " + pathText;
             _recoveryGroup.Visible = true;
@@ -1183,7 +1320,7 @@ namespace EsmTspiot.WinForms.Shared
 
             MessageBox.Show(
                 this,
-                "ЕСМ не смог создать или запустить службу второй ККТ. Используйте блок \"Ошибка службы\" в форме: можно запустить восстановление службы от администратора или скопировать команду.",
+                "ЕСМ не смог создать или запустить службу подключаемой ККТ. Используйте блок \"Ошибка службы\" в форме: можно запустить восстановление службы от администратора или скопировать команду.",
                 "Ошибка службы",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Warning);
@@ -1192,7 +1329,7 @@ namespace EsmTspiot.WinForms.Shared
         private void AppendAddOperationDiagnostics(TspiotFormInput input, AddTspiotRequest request)
         {
             StringBuilder builder = new StringBuilder();
-            builder.AppendLine("Диагностика перед добавлением экземпляра второй ККТ:");
+            builder.AppendLine("Диагностика перед добавлением экземпляра подключаемой ККТ:");
             builder.AppendLine("baseUrl=" + input.BaseUrl);
             builder.AppendLine("serviceName=" + ServiceRecoveryCommandBuilder.BuildServiceName(input.KktSerial));
             builder.AppendLine("id=" + request.Id);
@@ -1305,7 +1442,11 @@ namespace EsmTspiot.WinForms.Shared
             MessageBox.Show(
                 this,
                 "Управление ККТ в ЕСМ/ТС ПИоТ\r\n\r\n" +
-                    "Последовательное добавление второй ККТ, автоматическая обработка нескольких ККТ и безопасное удаление дополнительных экземпляров.",
+                    "Ручное последовательное подключение ККТ, автоматическая обработка нескольких ККТ и безопасное удаление дополнительных экземпляров.\r\n\r\n" +
+                    "Издатель и владелец: KRS\r\n" +
+                    "Автор: Руслан Керусов\r\n" +
+                    "Copyright © 2026 KRS. Все права защищены.\r\n" +
+                    "github.com/jadieify-hub/esm-tspiot-multi-kkt-tool",
                 "О программе",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
@@ -1428,6 +1569,7 @@ namespace EsmTspiot.WinForms.Shared
         private void UpdateInstancesGrid(ApiResponse response)
         {
             _instancesGrid.Rows.Clear();
+            _manualInstancesGrid.Rows.Clear();
 
             IList<KktInstanceInfo> instances;
             if (response == null || !response.IsSuccess ||
@@ -1436,6 +1578,8 @@ namespace EsmTspiot.WinForms.Shared
                 _instancesSummaryLabel.Text = response != null && response.IsSuccess
                     ? "ЕСМ вернул неожиданный формат списка экземпляров."
                     : "Не удалось загрузить список экземпляров.";
+                _manualInstancesSummaryLabel.Text = _instancesSummaryLabel.Text;
+                _nextPortPairLabel.Text = "Следующая свободная пара: недоступна";
                 UpdateDeleteButtonState();
                 return;
             }
@@ -1461,33 +1605,19 @@ namespace EsmTspiot.WinForms.Shared
                     role = "Защищена";
                 }
 
-                int rowIndex = _instancesGrid.Rows.Add(
-                    role,
-                    instance.Id,
-                    instance.Port,
-                    instance.SoftPort,
-                    instance.ServiceState);
-                DataGridViewRow row = _instancesGrid.Rows[rowIndex];
-                row.Tag = candidate;
-                if (!candidate.CanDelete)
-                {
-                    for (int cellIndex = 0; cellIndex < row.Cells.Count; cellIndex++)
-                    {
-                        row.Cells[cellIndex].ToolTipText = candidate.ProtectionReason;
-                    }
-                }
-
-                if (candidate.IsPrimary)
-                {
-                    row.DefaultCellStyle.BackColor = SystemColors.ControlLight;
-                }
-                else if (!candidate.CanDelete)
-                {
-                    row.DefaultCellStyle.BackColor = Color.MistyRose;
-                }
+                AddInstanceGridRow(_instancesGrid, candidate, role, true);
+                AddInstanceGridRow(_manualInstancesGrid, candidate, role, false);
             }
 
             _instancesGrid.ClearSelection();
+            _manualInstancesGrid.ClearSelection();
+            KktPortPair nextPair = new KktPortPairAllocator(instances).ReserveNext();
+            _nextPortPairLabel.Text = nextPair == null
+                ? "Следующая свободная пара: не найдена"
+                : "Следующая свободная пара: " + nextPair.Port + " / " + nextPair.SoftPort;
+            _manualInstancesSummaryLabel.Text = instances.Count == 0
+                ? "Экземпляры ККТ не найдены."
+                : "Экземпляров в ЕСМ: " + instances.Count.ToString() + ".";
             if (instances.Count == 0)
             {
                 _instancesSummaryLabel.Text = "Экземпляры ККТ не найдены.";
@@ -1502,6 +1632,41 @@ namespace EsmTspiot.WinForms.Shared
             }
 
             UpdateDeleteButtonState();
+        }
+
+        private static void AddInstanceGridRow(
+            DataGridView grid,
+            KktDeletionCandidate candidate,
+            string role,
+            bool storeCandidate)
+        {
+            KktInstanceInfo instance = candidate.Instance ?? new KktInstanceInfo();
+            int rowIndex = grid.Rows.Add(
+                role,
+                instance.Id,
+                instance.Port,
+                instance.SoftPort,
+                instance.ServiceState);
+            DataGridViewRow row = grid.Rows[rowIndex];
+            if (storeCandidate)
+            {
+                row.Tag = candidate;
+            }
+            if (!candidate.CanDelete)
+            {
+                for (int cellIndex = 0; cellIndex < row.Cells.Count; cellIndex++)
+                {
+                    row.Cells[cellIndex].ToolTipText = candidate.ProtectionReason;
+                }
+            }
+            if (candidate.IsPrimary)
+            {
+                row.DefaultCellStyle.BackColor = SystemColors.ControlLight;
+            }
+            else if (!candidate.CanDelete)
+            {
+                row.DefaultCellStyle.BackColor = Color.MistyRose;
+            }
         }
 
         private KktDeletionCandidate GetSelectedDeletionCandidate()
@@ -1593,7 +1758,7 @@ namespace EsmTspiot.WinForms.Shared
         private void AppendDkktCandidates(IList<DkktDeviceInfo> devices)
         {
             StringBuilder builder = new StringBuilder();
-            builder.AppendLine("Кандидаты для заполнения второй ККТ:");
+            builder.AppendLine("Кандидаты для ручного подключения:");
             if (devices.Count == 0)
             {
                 builder.AppendLine("Нет кандидатов.");

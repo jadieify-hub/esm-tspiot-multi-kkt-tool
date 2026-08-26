@@ -7,6 +7,7 @@
     <RootNamespace>EsmTspiot.Modern.WinForms</RootNamespace>
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <RuntimeIdentifiers>win-x86;win-x64</RuntimeIdentifiers>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
@@ -17,9 +18,11 @@
   <ItemGroup>
     <ProjectReference Include="..\EsmTspiot.Shared\EsmTspiot.Shared.csproj" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\Program.cs" Link="Program.cs" />
+    <Compile Include="..\EsmTspiot.WinForms.Shared\AssemblyInfo.cs" Link="Properties\AssemblyInfo.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\MainForm.cs" Link="MainForm.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\BulkRegistrationDialog.cs" Link="BulkRegistrationDialog.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\KktDeletionConfirmationDialog.cs" Link="KktDeletionConfirmationDialog.cs" />
+    <Compile Include="..\EsmTspiot.WinForms.Shared\KktSelectionDialog.cs" Link="KktSelectionDialog.cs" />
     <None Include="..\EsmTspiot.WinForms.Shared\Assets\app.ico" Link="app.ico" />
   </ItemGroup>
 </Project>
