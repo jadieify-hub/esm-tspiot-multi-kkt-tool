@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>EsmTspiot.Modern.WinForms</AssemblyName>
+    <RootNamespace>EsmTspiot.Modern.WinForms</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <RuntimeIdentifiers>win-x86;win-x64</RuntimeIdentifiers>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <ApplicationIcon>..\EsmTspiot.WinForms.Shared\Assets\app.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EsmTspiot.Shared\EsmTspiot.Shared.csproj" />
+    <Compile Include="..\EsmTspiot.WinForms.Shared\Program.cs" Link="Program.cs" />
+    <Compile Include="..\EsmTspiot.WinForms.Shared\MainForm.cs" Link="MainForm.cs" />
+    <Compile Include="..\EsmTspiot.WinForms.Shared\BulkRegistrationDialog.cs" Link="BulkRegistrationDialog.cs" />
+    <Compile Include="..\EsmTspiot.WinForms.Shared\KktDeletionConfirmationDialog.cs" Link="KktDeletionConfirmationDialog.cs" />
+    <None Include="..\EsmTspiot.WinForms.Shared\Assets\app.ico" Link="app.ico" />
+  </ItemGroup>
+</Project>
