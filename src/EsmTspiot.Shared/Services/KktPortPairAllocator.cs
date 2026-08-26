@@ -33,6 +33,17 @@ namespace EsmTspiot.Shared.Services
 
         public KktPortPair ReserveNext()
         {
+            KktPortPair pair = PeekNext();
+            if (pair != null)
+            {
+                _occupiedIndexes.Add(pair.Index);
+            }
+
+            return pair;
+        }
+
+        public KktPortPair PeekNext()
+        {
             for (int index = FirstAdditionalPairIndex; index <= MaximumPairIndex; index++)
             {
                 if (_occupiedIndexes.Contains(index))
@@ -40,7 +51,6 @@ namespace EsmTspiot.Shared.Services
                     continue;
                 }
 
-                _occupiedIndexes.Add(index);
                 return new KktPortPair
                 {
                     Index = index,

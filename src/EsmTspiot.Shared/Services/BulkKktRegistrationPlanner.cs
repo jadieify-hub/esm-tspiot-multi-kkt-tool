@@ -62,7 +62,7 @@ namespace EsmTspiot.Shared.Services
                     continue;
                 }
 
-                KktPortPair portPair = portAllocator.ReserveNext();
+                KktPortPair portPair = portAllocator.PeekNext();
                 if (portPair == null)
                 {
                     TspiotFormInput blockedInput = new TspiotFormInput
@@ -97,11 +97,17 @@ namespace EsmTspiot.Shared.Services
                     DkktPort = dkktPort
                 };
 
+                ValidationResult validation = TspiotInputValidator.ValidatePut(input, true);
+                if (validation.IsValid)
+                {
+                    portAllocator.ReserveNext();
+                }
+
                 plan.Items.Add(new BulkKktRegistrationItem
                 {
                     Device = device,
                     Input = input,
-                    Validation = TspiotInputValidator.ValidatePut(input, true)
+                    Validation = validation
                 });
             }
 

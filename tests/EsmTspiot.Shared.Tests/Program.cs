@@ -55,6 +55,7 @@ namespace EsmTspiot.Shared.Tests
             Run("Bulk planner rejects exhausted port pairs", BulkPlannerRejectsExhaustedPortPairs);
             Run("Bulk planner excludes existing devices", BulkPlannerExcludesExistingDevices);
             Run("Bulk planner marks invalid device data", BulkPlannerMarksInvalidDeviceData);
+            Run("Bulk planner does not reserve ports for invalid devices", BulkPlannerDoesNotReservePortsForInvalidDevices);
             Run("Bulk planner skips duplicate devices", BulkPlannerSkipsDuplicateDevices);
             Run("Bulk registration summary counts every status", BulkRegistrationSummaryCountsEveryStatus);
             Run("Bulk registration result formats log line", BulkRegistrationResultFormatsLogLine);
@@ -629,6 +630,22 @@ namespace EsmTspiot.Shared.Tests
 
             AssertFalse(plan.Items[0].Validation.IsValid, "Expected invalid FN to block the item.");
             AssertContains(plan.Items[0].Validation.JoinMessages(), "Номер ФН подключаемой ККТ должен содержать 16 цифр");
+        }
+
+        private static void BulkPlannerDoesNotReservePortsForInvalidDevices()
+        {
+            DkktDeviceInfo invalid = CreateDevice("00105700000001");
+            invalid.FnSerial = "1234";
+            DkktDeviceInfo valid = CreateDevice("00105700000002");
+
+            BulkKktRegistrationPlan plan = BulkKktRegistrationPlanner.Build(
+                "http://127.0.0.1:51077", "4041",
+                new List<DkktDeviceInfo> { invalid, valid },
+                new List<KktInstanceInfo>());
+
+            AssertFalse(plan.Items[0].Validation.IsValid, "Expected the first device to remain invalid.");
+            AssertEqual("50402", plan.Items[1].Input.Port, "An invalid device must not consume the first additional port pair.");
+            AssertEqual("51402", plan.Items[1].Input.SoftPort, "An invalid device must not consume the first additional softPort.");
         }
 
         private static void BulkPlannerSkipsDuplicateDevices()
