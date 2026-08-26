@@ -1,5 +1,7 @@
 # Мульти-ККТ в ЕСМ/ТС ПИоТ
 
+[![CI](https://github.com/jadieify-hub/esm-tspiot-multi-kkt-tool/actions/workflows/ci.yml/badge.svg)](https://github.com/jadieify-hub/esm-tspiot-multi-kkt-tool/actions/workflows/ci.yml)
+
 WinForms-приложение работает с локальным HTTP API ЕСМ/ТС ПИоТ. Оно показывает созданные экземпляры и занятые порты, последовательно подключает вторую, третью и следующие ККТ вручную, содержит экспериментальный массовый режим и безопасно удаляет дополнительные экземпляры.
 
 Программа не меняет настройки драйвера АТОЛ. В ручном сценарии пользователь обязан проверить связь именно с нужной физической ККТ.
@@ -15,9 +17,7 @@ WinForms-приложение работает с локальным HTTP API Е
 
 ## Готовые версии
 
-Все итоговые файлы находятся в `artifacts/release`:
-
-После публикации готовые EXE, PDF и контрольные суммы доступны в [GitHub Releases](https://github.com/jadieify-hub/esm-tspiot-multi-kkt-tool/releases/latest).
+Локальная сборка складывает итоговые файлы в игнорируемую Git папку `artifacts/release`. Опубликованные версии доступны в [GitHub Releases](https://github.com/jadieify-hub/esm-tspiot-multi-kkt-tool/releases/latest):
 
 - `MultiKKT-ESM-TSPioT-v11.1.exe` - компактная стандартная сборка для Windows 7 SP1, 8.1, 10 и 11, 32/64 бита; нужен .NET Framework 4.8.
 
