@@ -1,7 +1,7 @@
 using System;
+using System.Globalization;
 using System.IO;
 using System.Text;
-using System.Text.RegularExpressions;
 
 namespace EsmTspiot.Shared.Services
 {
@@ -17,8 +17,8 @@ namespace EsmTspiot.Shared.Services
 
         public static bool IsManualServiceRecoveryError(string responseBody)
         {
-            string body = responseBody ?? string.Empty;
-            return ContainsCode(body, "1012") || ContainsCode(body, "1013");
+            return TspiotErrorDecoder.ContainsErrorCode(responseBody, 1012) ||
+                TspiotErrorDecoder.ContainsErrorCode(responseBody, 1013);
         }
 
         public static string BuildServiceName(string kktSerial)
@@ -41,6 +41,8 @@ namespace EsmTspiot.Shared.Services
 
         public static string BuildPowerShellScript(string kktSerial, string port, string softPort, string controlModulePath)
         {
+            int parsedPort = ParsePort(port, "port");
+            int parsedSoftPort = ParsePort(softPort, "softPort");
             string normalizedPath = string.IsNullOrWhiteSpace(controlModulePath)
                 ? ControlModuleCandidates[0]
                 : controlModulePath.Trim();
@@ -48,8 +50,8 @@ namespace EsmTspiot.Shared.Services
             StringBuilder builder = new StringBuilder();
             builder.AppendLine("$ErrorActionPreference = \"Stop\"");
             builder.AppendLine("$kkt = \"" + EscapeDoubleQuoted(Trim(kktSerial)) + "\"");
-            builder.AppendLine("$port = " + Trim(port));
-            builder.AppendLine("$softPort = " + Trim(softPort));
+            builder.AppendLine("$port = " + parsedPort.ToString(CultureInfo.InvariantCulture));
+            builder.AppendLine("$softPort = " + parsedSoftPort.ToString(CultureInfo.InvariantCulture));
             builder.AppendLine("$exe = \"" + EscapeDoubleQuoted(normalizedPath) + "\"");
             builder.AppendLine("$serviceName = \"esm-cm-$kkt\"");
             builder.AppendLine("$stamp = Get-Date -Format \"yyyyMMdd_HHmmss\"");
@@ -85,7 +87,7 @@ namespace EsmTspiot.Shared.Services
             builder.AppendLine("Write-Host \"--- Процессы controlModule / esm ---\"");
             builder.AppendLine("tasklist | findstr /I \"controlModule esm\" | Out-Host");
             builder.AppendLine();
-            builder.AppendLine("$args = \"--id $kkt --port $port --soft-port $softPort --pretty-logs=true\"");
+            builder.AppendLine("$serviceArgs = \"--id $kkt --port $port --soft-port $softPort --pretty-logs=true\"");
             builder.AppendLine("$expectedId = \"--id $kkt\"");
             builder.AppendLine("$expectedPort = \"--port $port\"");
             builder.AppendLine("$expectedSoftPort = \"--soft-port $softPort\"");
@@ -114,7 +116,7 @@ namespace EsmTspiot.Shared.Services
             builder.AppendLine("if ($createService) {");
             builder.AppendLine("    New-Service `");
             builder.AppendLine("        -Name $serviceName `");
-            builder.AppendLine("        -BinaryPathName \"`\"$exe`\" $args\" `");
+            builder.AppendLine("        -BinaryPathName \"`\"$exe`\" $serviceArgs\" `");
             builder.AppendLine("        -DisplayName \"ESM: Control Module $kkt\" `");
             builder.AppendLine("        -StartupType Automatic");
             builder.AppendLine("}");
@@ -125,7 +127,11 @@ namespace EsmTspiot.Shared.Services
             builder.AppendLine("} else {");
             builder.AppendLine("    Write-Host \"Служба $serviceName уже запущена.\"");
             builder.AppendLine("}");
-            builder.AppendLine("Restart-Service esm-orchestrator");
+            builder.AppendLine("try {");
+            builder.AppendLine("    Restart-Service esm-orchestrator");
+            builder.AppendLine("} catch {");
+            builder.AppendLine("    Write-Host \"Не удалось перезапустить службу esm-orchestrator: $($_.Exception.Message)\"");
+            builder.AppendLine("}");
             builder.AppendLine("Write-Host \"Служба $serviceName создана/запущена. Проверьте список ККТ в утилите.\"");
             builder.AppendLine("Write-Host \"--- Служба после восстановления ---\"");
             builder.AppendLine("Get-WmiObject Win32_Service -Filter \"Name='$serviceName'\" | Select-Object Name, DisplayName, State, PathName | Format-List | Out-Host");
@@ -144,18 +150,21 @@ namespace EsmTspiot.Shared.Services
         {
             return (value ?? string.Empty)
                 .Replace("`", "``")
-                .Replace("\"", "`\"");
+                .Replace("\"", "`\"")
+                .Replace("$", "`$");
         }
 
-        private static bool ContainsCode(string body, string code)
+        private static int ParsePort(string value, string fieldName)
         {
-            if (string.IsNullOrEmpty(body))
+            int port;
+            if (!int.TryParse(Trim(value), out port) || port < 1 || port > 65535)
             {
-                return false;
+                throw new ArgumentException(
+                    "Поле " + fieldName + " должно содержать целое число от 1 до 65535.",
+                    fieldName);
             }
 
-            string pattern = "(\"code\"|\"errorCode\"|\"error\"|\"error_code\")\\s*:\\s*\"?" + Regex.Escape(code) + "\"?";
-            return Regex.IsMatch(body, pattern) || body.IndexOf(code, StringComparison.Ordinal) >= 0;
+            return port;
         }
 
         private static string Trim(string value)

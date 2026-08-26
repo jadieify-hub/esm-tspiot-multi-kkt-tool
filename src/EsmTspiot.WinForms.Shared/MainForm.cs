@@ -1236,9 +1236,16 @@ namespace EsmTspiot.WinForms.Shared
 
         private Task CopyRecoveryCommandAsync()
         {
+            TspiotFormInput input = ReadInput();
+            ValidationResult validation = TspiotInputValidator.ValidatePost(input);
+            if (!ShowValidation(validation) || !ConfirmWarnings(validation))
+            {
+                return Task.FromResult(0);
+            }
+
             if (string.IsNullOrEmpty(_lastRecoveryScript))
             {
-                PrepareServiceRecovery(ReadInput());
+                PrepareServiceRecovery(input);
             }
 
             Clipboard.SetText(_lastRecoveryScript);

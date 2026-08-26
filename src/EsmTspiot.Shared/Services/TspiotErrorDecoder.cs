@@ -69,7 +69,7 @@ namespace EsmTspiot.Shared.Services
             }
 
             string codeText = code.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            string pattern = "(\"code\"|\"errorCode\"|\"error\"|\"error_code\")\\s*:\\s*\"?" + Regex.Escape(codeText) + "\"?";
+            string pattern = "(\"code\"|\"errorCode\"|\"error\"|\"error_code\")\\s*:\\s*\"?" + Regex.Escape(codeText) + "\"?(?![0-9])";
             return Regex.IsMatch(body, pattern);
         }
     }

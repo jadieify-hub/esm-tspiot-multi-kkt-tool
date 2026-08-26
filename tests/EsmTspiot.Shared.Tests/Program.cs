@@ -36,6 +36,10 @@ namespace EsmTspiot.Shared.Tests
             Run("Service recovery command uses KKT serial and ports", ServiceRecoveryCommandUsesKktSerialAndPorts);
             Run("Service recovery command recreates service with wrong ports", ServiceRecoveryCommandRecreatesServiceWithWrongPorts);
             Run("Service recovery command writes diagnostics", ServiceRecoveryCommandWritesDiagnostics);
+            Run("Service recovery command escapes PowerShell substitution", ServiceRecoveryCommandEscapesPowerShellSubstitution);
+            Run("Service recovery detection ignores codes inside serials", ServiceRecoveryDetectionIgnoresCodesInsideSerials);
+            Run("Error code detection requires a numeric boundary", ErrorCodeDetectionRequiresNumericBoundary);
+            Run("Service recovery command rejects invalid ports", ServiceRecoveryCommandRejectsInvalidPorts);
             Run("Forbidden is decoded", ForbiddenIsDecoded);
             Run("Instance parser reads nested instances", InstanceParserReadsNestedInstances);
             Run("Instance parser reads root arrays", InstanceParserReadsRootArrays);
@@ -302,7 +306,9 @@ namespace EsmTspiot.Shared.Tests
             AssertContains(command, "New-Service");
             AssertContains(command, "esm-cm-$kkt");
             AssertContains(command, "controlModule.exe");
+            AssertContains(command, "$serviceArgs = \"--id $kkt --port $port --soft-port $softPort --pretty-logs=true\"");
             AssertContains(command, "Restart-Service esm-orchestrator");
+            AssertContains(command, "Не удалось перезапустить службу esm-orchestrator");
         }
 
         private static void ServiceRecoveryCommandRecreatesServiceWithWrongPorts()
@@ -340,6 +346,60 @@ namespace EsmTspiot.Shared.Tests
             AssertContains(command, "netstat -ano");
             AssertContains(command, "tasklist");
             AssertContains(command, "Лог сохранён");
+        }
+
+        private static void ServiceRecoveryCommandEscapesPowerShellSubstitution()
+        {
+            string command = ServiceRecoveryCommandBuilder.BuildPowerShellScript(
+                "0010$(calc)003",
+                "50402",
+                "51402",
+                "C:\\Program Files\\ESP\\ESM\\bin\\controlModule.exe");
+
+            AssertContains(command, "$kkt = \"0010`$(calc)003\"");
+            AssertFalse(
+                command.IndexOf("$kkt = \"0010$(calc)003\"", StringComparison.Ordinal) >= 0,
+                "PowerShell substitution must not remain executable.");
+        }
+
+        private static void ServiceRecoveryDetectionIgnoresCodesInsideSerials()
+        {
+            string body = "{\"kktSerial\":\"00101300000000\"}";
+
+            AssertFalse(
+                ServiceRecoveryCommandBuilder.IsManualServiceRecoveryError(body),
+                "A serial containing 1013 must not enable service recovery.");
+        }
+
+        private static void ErrorCodeDetectionRequiresNumericBoundary()
+        {
+            string body = "{\"code\":10131}";
+
+            AssertFalse(
+                TspiotErrorDecoder.ContainsErrorCode(body, 1013),
+                "Code 10131 must not be treated as 1013.");
+            AssertFalse(
+                ServiceRecoveryCommandBuilder.IsManualServiceRecoveryError(body),
+                "Code 10131 must not enable service recovery.");
+        }
+
+        private static void ServiceRecoveryCommandRejectsInvalidPorts()
+        {
+            bool portRejected = false;
+            try
+            {
+                ServiceRecoveryCommandBuilder.BuildPowerShellScript(
+                    "00108000000003",
+                    "50402; calc",
+                    "51402",
+                    string.Empty);
+            }
+            catch (ArgumentException ex)
+            {
+                portRejected = ex.Message.IndexOf("port", StringComparison.OrdinalIgnoreCase) >= 0;
+            }
+
+            AssertTrue(portRejected, "Expected a non-numeric port to be rejected.");
         }
 
         private static void ForbiddenIsDecoded()
