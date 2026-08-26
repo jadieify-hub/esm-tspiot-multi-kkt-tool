@@ -41,6 +41,8 @@ namespace EsmTspiot.Shared.Tests
             Run("Instance parser reads root arrays", InstanceParserReadsRootArrays);
             Run("Dkkt parser reads kkt array", DkktParserReadsKktArray);
             Run("Dkkt selector excludes already created instances", DkktSelectorExcludesAlreadyCreatedInstances);
+            Run("Port allocator selects pair after existing instances", PortAllocatorSelectsPairAfterExistingInstances);
+            Run("Port allocator reserves either side and consecutive selections", PortAllocatorReservesEitherSideAndConsecutiveSelections);
             Run("Bulk planner assigns first sequential port pairs", BulkPlannerAssignsFirstSequentialPortPairs);
             Run("Bulk planner reserves implicit first soft port", BulkPlannerReservesImplicitFirstSoftPort);
             Run("Bulk planner skips occupied pair indexes", BulkPlannerSkipsOccupiedPairIndexes);
@@ -101,7 +103,7 @@ namespace EsmTspiot.Shared.Tests
             ValidationResult result = TspiotInputValidator.ValidatePut(input, true);
 
             AssertFalse(result.IsValid, "Expected invalid serial.");
-            AssertContains(result.JoinMessages(), "Серийный номер второй ККТ должен состоять только из цифр");
+            AssertContains(result.JoinMessages(), "Серийный номер подключаемой ККТ должен состоять только из цифр");
         }
 
         private static void KktSerialMustHaveExpectedLength()
@@ -112,7 +114,7 @@ namespace EsmTspiot.Shared.Tests
             ValidationResult result = TspiotInputValidator.ValidatePost(input);
 
             AssertFalse(result.IsValid, "Expected short KKT serial to be invalid.");
-            AssertContains(result.JoinMessages(), "Серийный номер второй ККТ/ФР должен содержать 14 цифр");
+            AssertContains(result.JoinMessages(), "Серийный номер подключаемой ККТ/ФР должен содержать 14 цифр");
         }
 
         private static void FnSerialMustHaveExpectedLength()
@@ -123,7 +125,7 @@ namespace EsmTspiot.Shared.Tests
             ValidationResult result = TspiotInputValidator.ValidatePut(input, true);
 
             AssertFalse(result.IsValid, "Expected short FN serial to be invalid.");
-            AssertContains(result.JoinMessages(), "Номер ФН второй ККТ должен содержать 16 цифр");
+            AssertContains(result.JoinMessages(), "Номер ФН подключаемой ККТ должен содержать 16 цифр");
         }
 
         private static void InnLengthMustBeTenOrTwelve()
@@ -220,7 +222,7 @@ namespace EsmTspiot.Shared.Tests
             ValidationResult invalidResult = TspiotInputValidator.ValidateForCheck(input);
 
             AssertFalse(invalidResult.IsValid, "Entered invalid optional fields must block current KKT check.");
-            AssertContains(invalidResult.JoinMessages(), "Номер ФН второй ККТ должен содержать 16 цифр");
+            AssertContains(invalidResult.JoinMessages(), "Номер ФН подключаемой ККТ должен содержать 16 цифр");
             AssertContains(invalidResult.JoinMessages(), "ИНН должен состоять только из цифр");
         }
 
@@ -272,7 +274,7 @@ namespace EsmTspiot.Shared.Tests
 
             string message = TspiotErrorDecoder.Decode(400, body);
             AssertContains(message, "Ошибка 1012");
-            AssertContains(message, "службу второй ККТ");
+            AssertContains(message, "службу подключаемой ККТ");
         }
 
         private static void Error1013IsDecodedAsManualServiceRecovery()
@@ -283,7 +285,7 @@ namespace EsmTspiot.Shared.Tests
 
             string message = TspiotErrorDecoder.Decode(500, body);
             AssertContains(message, "Ошибка 1013");
-            AssertContains(message, "служба второй ККТ");
+            AssertContains(message, "служба подключаемой ККТ");
         }
 
         private static void ServiceRecoveryCommandUsesKktSerialAndPorts()
@@ -416,6 +418,37 @@ namespace EsmTspiot.Shared.Tests
             AssertEqual("51402", plan.Items[1].Input.SoftPort, "Expected second soft port.");
         }
 
+        private static void PortAllocatorSelectsPairAfterExistingInstances()
+        {
+            List<KktInstanceInfo> instances = new List<KktInstanceInfo>
+            {
+                new KktInstanceInfo { Id = "1", Port = "50401", SoftPort = "0" },
+                new KktInstanceInfo { Id = "2", Port = "50402", SoftPort = "51402" }
+            };
+
+            KktPortPair pair = new KktPortPairAllocator(instances).ReserveNext();
+
+            AssertEqual("50403", pair.Port, "Expected the next service port after pairs 1 and 2.");
+            AssertEqual("51403", pair.SoftPort, "Expected the matching Frontol port.");
+        }
+
+        private static void PortAllocatorReservesEitherSideAndConsecutiveSelections()
+        {
+            List<KktInstanceInfo> instances = new List<KktInstanceInfo>
+            {
+                new KktInstanceInfo { Id = "1", Port = "50401", SoftPort = "51403" }
+            };
+            KktPortPairAllocator allocator = new KktPortPairAllocator(instances);
+
+            KktPortPair first = allocator.ReserveNext();
+            KktPortPair second = allocator.ReserveNext();
+
+            AssertEqual("50402", first.Port, "Expected the lowest pair whose both sides are free.");
+            AssertEqual("51402", first.SoftPort, "Expected matching softPort for the first selection.");
+            AssertEqual("50404", second.Port, "Expected the previous selection to remain reserved.");
+            AssertEqual("51404", second.SoftPort, "Expected matching softPort for the second selection.");
+        }
+
         private static void BulkPlannerReservesImplicitFirstSoftPort()
         {
             IList<KktInstanceInfo> instances = new List<KktInstanceInfo>
@@ -504,7 +537,7 @@ namespace EsmTspiot.Shared.Tests
                 new List<DkktDeviceInfo> { device }, new List<KktInstanceInfo>());
 
             AssertFalse(plan.Items[0].Validation.IsValid, "Expected invalid FN to block the item.");
-            AssertContains(plan.Items[0].Validation.JoinMessages(), "Номер ФН второй ККТ должен содержать 16 цифр");
+            AssertContains(plan.Items[0].Validation.JoinMessages(), "Номер ФН подключаемой ККТ должен содержать 16 цифр");
         }
 
         private static void BulkPlannerSkipsDuplicateDevices()

@@ -55,7 +55,7 @@ namespace EsmTspiot.Shared.Validation
 
             if (!atolConnectionConfirmed)
             {
-                result.Add("Перед регистрацией нужно подтвердить, что связь в драйвере АТОЛ проверена именно со второй физической ККТ.");
+                result.Add("Перед регистрацией нужно подтвердить, что связь в драйвере АТОЛ проверена именно с подключаемой физической ККТ.");
             }
 
             return result;
@@ -143,18 +143,18 @@ namespace EsmTspiot.Shared.Validation
             {
                 if (required)
                 {
-                    result.Add("Серийный номер второй ККТ обязателен.");
+                    result.Add("Серийный номер подключаемой ККТ обязателен.");
                 }
                 return;
             }
 
             if (!IsDigitsOnly(value))
             {
-                result.Add("Серийный номер второй ККТ должен состоять только из цифр 0-9 (ASCII-цифр).");
+                result.Add("Серийный номер подключаемой ККТ должен состоять только из цифр 0-9 (ASCII-цифр).");
             }
             else if (value.Length != 14)
             {
-                result.Add("Серийный номер второй ККТ/ФР должен содержать 14 цифр.");
+                result.Add("Серийный номер подключаемой ККТ/ФР должен содержать 14 цифр.");
             }
             else if (!value.StartsWith("001", StringComparison.Ordinal))
             {
@@ -177,18 +177,18 @@ namespace EsmTspiot.Shared.Validation
             {
                 if (required)
                 {
-                    result.Add("Номер ФН второй ККТ обязателен.");
+                    result.Add("Номер ФН подключаемой ККТ обязателен.");
                 }
                 return;
             }
 
             if (!IsDigitsOnly(value))
             {
-                result.Add("Номер ФН второй ККТ должен состоять только из цифр 0-9 (ASCII-цифр).");
+                result.Add("Номер ФН подключаемой ККТ должен состоять только из цифр 0-9 (ASCII-цифр).");
             }
             else if (value.Length != 16)
             {
-                result.Add("Номер ФН второй ККТ должен содержать 16 цифр.");
+                result.Add("Номер ФН подключаемой ККТ должен содержать 16 цифр.");
             }
             else if (!value.StartsWith("73", StringComparison.Ordinal))
             {

@@ -7,10 +7,6 @@ namespace EsmTspiot.Shared.Services
 {
     public static class BulkKktRegistrationPlanner
     {
-        private const int PortBase = 50400;
-        private const int SoftPortBase = 51400;
-        private const int MaximumPairIndex = 1000;
-
         public static BulkKktRegistrationPlan Build(
             string baseUrl,
             string dkktPort,
@@ -19,8 +15,8 @@ namespace EsmTspiot.Shared.Services
         {
             BulkKktRegistrationPlan plan = new BulkKktRegistrationPlan();
             HashSet<string> existingIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            HashSet<int> occupiedIndexes = new HashSet<int>();
             HashSet<string> seenDeviceIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            KktPortPairAllocator portAllocator = new KktPortPairAllocator(instances);
 
             if (instances != null)
             {
@@ -37,9 +33,6 @@ namespace EsmTspiot.Shared.Services
                     {
                         existingIds.Add(id);
                     }
-
-                    ReservePairIndex(instance.Port, PortBase, occupiedIndexes);
-                    ReservePairIndex(instance.SoftPort, SoftPortBase, occupiedIndexes);
                 }
             }
 
@@ -48,7 +41,6 @@ namespace EsmTspiot.Shared.Services
                 return plan;
             }
 
-            int nextIndex = 1;
             for (int i = 0; i < devices.Count; i++)
             {
                 DkktDeviceInfo device = devices[i];
@@ -70,12 +62,8 @@ namespace EsmTspiot.Shared.Services
                     continue;
                 }
 
-                while (occupiedIndexes.Contains(nextIndex))
-                {
-                    nextIndex++;
-                }
-
-                if (nextIndex > MaximumPairIndex)
+                KktPortPair portPair = portAllocator.ReserveNext();
+                if (portPair == null)
                 {
                     TspiotFormInput blockedInput = new TspiotFormInput
                     {
@@ -104,8 +92,8 @@ namespace EsmTspiot.Shared.Services
                     KktSerial = serial,
                     FnSerial = (device.FnSerial ?? string.Empty).Trim(),
                     KktInn = (device.KktInn ?? string.Empty).Trim(),
-                    Port = (PortBase + nextIndex).ToString(),
-                    SoftPort = (SoftPortBase + nextIndex).ToString(),
+                    Port = portPair.Port,
+                    SoftPort = portPair.SoftPort,
                     DkktPort = dkktPort
                 };
 
@@ -115,27 +103,9 @@ namespace EsmTspiot.Shared.Services
                     Input = input,
                     Validation = TspiotInputValidator.ValidatePut(input, true)
                 });
-
-                occupiedIndexes.Add(nextIndex);
-                nextIndex++;
             }
 
             return plan;
-        }
-
-        private static void ReservePairIndex(string value, int portBase, ISet<int> occupiedIndexes)
-        {
-            int port;
-            if (!int.TryParse(value, out port))
-            {
-                return;
-            }
-
-            int index = port - portBase;
-            if (index >= 1 && index <= MaximumPairIndex)
-            {
-                occupiedIndexes.Add(index);
-            }
         }
     }
 }
