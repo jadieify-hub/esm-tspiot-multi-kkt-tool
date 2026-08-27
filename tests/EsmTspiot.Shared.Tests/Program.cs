@@ -79,6 +79,14 @@ namespace EsmTspiot.Shared.Tests
             Run("LM binding planner rejects duplicate local endpoints", LmBindingPlannerRejectsDuplicateLocalEndpoints);
             Run("LM binding planner rejects invalid loopback and port", LmBindingPlannerRejectsInvalidLoopbackAndPort);
             Run("LM binding plan cannot contain credentials", LmBindingPlanCannotContainCredentials);
+            Run("LM service identity is deterministic and independent", LmServiceIdentityIsDeterministicAndIndependent);
+            Run("LM service identity rejects unsafe serial", LmServiceIdentityRejectsUnsafeSerial);
+            Run("LM gateway planner never adopts official base service", LmGatewayPlannerNeverAdoptsOfficialBaseService);
+            Run("LM gateway planner allocates sequential local ports", LmGatewayPlannerAllocatesSequentialLocalPorts);
+            Run("LM gateway planner keeps owned and skips foreign listener", LmGatewayPlannerKeepsOwnedAndSkipsForeignListener);
+            Run("LM gateway planner preserves matching managed assignment", LmGatewayPlannerPreservesMatchingManagedAssignment);
+            Run("LM gateway planner rejects unsafe target and all port conflicts", LmGatewayPlannerRejectsUnsafeTargetAndAllPortConflicts);
+            Run("Managed LM service spec contains no credentials", ManagedLmServiceSpecContainsNoCredentials);
             Run("LM binding session does not invent readback", LmBindingSessionDoesNotInventReadback);
             Run("LM binding session preserves current drafts on refresh", LmBindingSessionPreservesCurrentDraftsOnRefresh);
             Run("LM binding session discards a draft after INN changes", LmBindingSessionDiscardsDraftAfterInnChanges);
@@ -1146,6 +1154,378 @@ namespace EsmTspiot.Shared.Tests
                         "Plan model must not retain a credential object.");
                 }
             }
+        }
+
+        private static void LmServiceIdentityIsDeterministicAndIndependent()
+        {
+            string first = LmServiceIdentity.CreateName("00105700000001");
+            string repeated = LmServiceIdentity.CreateName("00105700000001");
+            string second = LmServiceIdentity.CreateName("00105700000002");
+
+            AssertEqual("krs-esm-lm-00105700000001", first, "Expected the fixed app-owned service prefix.");
+            AssertEqual(first, repeated, "The same KKT must always produce the same service identity.");
+            AssertFalse(string.Equals(first, second, StringComparison.Ordinal),
+                "Different KKT must never share a service identity.");
+        }
+
+        private static void LmServiceIdentityRejectsUnsafeSerial()
+        {
+            string[] unsafeValues =
+            {
+                null,
+                string.Empty,
+                "0010570000001",
+                "001057000000001",
+                "0010570000000A",
+                "0010570000000\u0661",
+                "0010570000000-",
+                " 00105700000001 "
+            };
+
+            for (int index = 0; index < unsafeValues.Length; index++)
+            {
+                bool rejected = false;
+                try
+                {
+                    LmServiceIdentity.CreateName(unsafeValues[index]);
+                }
+                catch (ArgumentException)
+                {
+                    rejected = true;
+                }
+
+                AssertTrue(rejected, "Unsafe KKT serial must be rejected.");
+            }
+        }
+
+        private static void LmGatewayPlannerNeverAdoptsOfficialBaseService()
+        {
+            LmGatewayDiscovery discovery = CreateLmDiscovery(CreateLmKkt("00105700000001", "1234567894"));
+            IList<LmGatewayDraft> drafts = new List<LmGatewayDraft>
+            {
+                CreateLmGatewayDraft("00105700000001", "10.20.30.40", "5995", null, null)
+            };
+            IList<LmServiceInventoryItem> inventory = new List<LmServiceInventoryItem>
+            {
+                new LmServiceInventoryItem
+                {
+                    ServiceName = "esm-lm-controller",
+                    Role = LmServiceRole.VerifiedOfficial,
+                    Ports = new LmGatewayPorts(50063, 5063),
+                    IsRunning = true
+                }
+            };
+
+            LmGatewayPlan plan = LmGatewayPlanner.Build(
+                discovery,
+                drafts,
+                inventory,
+                CreateLmPortPolicy(),
+                new List<TcpListenerSnapshotItem>());
+
+            AssertEqual(1, plan.Items.Count, "Expected one managed plan row.");
+            AssertTrue(plan.Items[0].IsValid, "Official service must only reserve its observed ports.");
+            AssertEqual("krs-esm-lm-00105700000001", plan.Items[0].Spec.ServiceName,
+                "The official base service must never be adopted.");
+            AssertEqual(LmServiceRole.Managed, plan.Items[0].Spec.Role,
+                "Every planned per-KKT service must have the managed role.");
+            AssertFalse(plan.Items[0].Spec.Ports.GrpcPort == 50063 || plan.Items[0].Spec.Ports.RestPort == 5063,
+                "Official ports must remain reserved.");
+        }
+
+        private static void LmGatewayPlannerAllocatesSequentialLocalPorts()
+        {
+            LmGatewayDiscovery discovery = CreateLmDiscovery(
+                CreateLmKkt("00105700000003", "500100732259"),
+                CreateLmKkt("00105700000001", "1234567894"),
+                CreateLmKkt("00105700000002", "7707083893"));
+            IList<LmGatewayDraft> drafts = new List<LmGatewayDraft>
+            {
+                CreateLmGatewayDraft("00105700000003", "lm-three.example", "5995", null, null),
+                CreateLmGatewayDraft("00105700000001", "10.20.30.41", "5995", null, null),
+                CreateLmGatewayDraft("00105700000002", "2001:db8::2", "5995", null, null)
+            };
+
+            LmGatewayPlan plan = LmGatewayPlanner.Build(
+                discovery,
+                drafts,
+                new List<LmServiceInventoryItem>(),
+                CreateLmPortPolicy(),
+                new List<TcpListenerSnapshotItem>());
+
+            AssertEqual(3, plan.Items.Count, "Expected one plan row per KKT even when INNs repeat.");
+            for (int index = 0; index < plan.Items.Count; index++)
+            {
+                AssertTrue(plan.Items[index].IsValid, "Expected every happy-path row to be valid.");
+                AssertEqual(LmServiceRole.Managed, plan.Items[index].Spec.Role,
+                    "Each KKT must receive an independent managed service.");
+                AssertEqual(55000 + index, plan.Items[index].Spec.Ports.GrpcPort,
+                    "Expected deterministic sequential gRPC allocation.");
+                AssertEqual(15000 + index, plan.Items[index].Spec.Ports.RestPort,
+                    "Expected deterministic sequential REST allocation.");
+            }
+
+            AssertEqual("00105700000001", plan.Items[0].Kkt.KktSerial,
+                "Allocation order must use ordinal KKT serial order.");
+            AssertEqual("00105700000003", plan.Items[2].Kkt.KktSerial,
+                "Discovery order must not affect allocation.");
+
+            LmGatewayDiscovery sameInnDiscovery = CreateLmDiscovery(
+                CreateLmKkt("00105700000011", "7707083893"),
+                CreateLmKkt("00105700000012", "7707083893"));
+            IList<LmGatewayDraft> sameInnDrafts = new List<LmGatewayDraft>
+            {
+                CreateLmGatewayDraft("00105700000011", "10.20.31.11", "5995", null, null),
+                CreateLmGatewayDraft("00105700000012", "10.20.31.12", "5995", null, null)
+            };
+            LmGatewayPlan sameInnPlan = LmGatewayPlanner.Build(
+                sameInnDiscovery,
+                sameInnDrafts,
+                new List<LmServiceInventoryItem>(),
+                CreateLmPortPolicy(),
+                new List<TcpListenerSnapshotItem>());
+            AssertEqual(2, sameInnPlan.Items.Count,
+                "Equal INNs must not collapse independent physical KKT rows.");
+            AssertFalse(string.Equals(
+                    sameInnPlan.Items[0].Spec.ServiceName,
+                    sameInnPlan.Items[1].Spec.ServiceName,
+                    StringComparison.Ordinal),
+                "Service identity must be derived from KKT serial rather than INN.");
+        }
+
+        private static void LmGatewayPlannerKeepsOwnedAndSkipsForeignListener()
+        {
+            const string existingSerial = "00105700000001";
+            const string newSerial = "00105700000002";
+            string existingService = LmServiceIdentity.CreateName(existingSerial);
+            LmGatewayDiscovery discovery = CreateLmDiscovery(
+                CreateLmKkt(existingSerial, "1234567894"),
+                CreateLmKkt(newSerial, "7707083893"));
+            IList<LmGatewayDraft> drafts = new List<LmGatewayDraft>
+            {
+                CreateLmGatewayDraft(existingSerial, "10.20.30.41", "5995", null, null),
+                CreateLmGatewayDraft(newSerial, "10.20.30.42", "5995", null, null)
+            };
+            IList<LmServiceInventoryItem> inventory = new List<LmServiceInventoryItem>
+            {
+                new LmServiceInventoryItem
+                {
+                    KktSerial = existingSerial,
+                    ServiceName = existingService,
+                    Role = LmServiceRole.Managed,
+                    Ports = new LmGatewayPorts(55000, 15000),
+                    Target = new LmGatewayTarget("10.20.30.41", 5995),
+                    IsRunning = true
+                }
+            };
+            IList<TcpListenerSnapshotItem> listeners = new List<TcpListenerSnapshotItem>
+            {
+                new TcpListenerSnapshotItem(55000, existingService, true),
+                new TcpListenerSnapshotItem(15000, existingService, true),
+                new TcpListenerSnapshotItem(55001, "foreign-service", true),
+                new TcpListenerSnapshotItem(15001, null, false)
+            };
+
+            LmGatewayPlan plan = LmGatewayPlanner.Build(
+                discovery, drafts, inventory, CreateLmPortPolicy(), listeners);
+
+            AssertEqual(55000, plan.Items[0].Spec.Ports.GrpcPort,
+                "A proven owned listener must preserve the managed assignment.");
+            AssertEqual(15000, plan.Items[0].Spec.Ports.RestPort,
+                "A proven owned listener must preserve both assigned ports.");
+            AssertEqual(LmGatewayPlanAction.NoChange, plan.Items[0].Action,
+                "A running matching service with proven listeners needs no service mutation.");
+            AssertEqual(55002, plan.Items[1].Spec.Ports.GrpcPort,
+                "A foreign listener in either column must reserve the number globally.");
+            AssertEqual(15002, plan.Items[1].Spec.Ports.RestPort,
+                "An ambiguous listener must be skipped instead of adopted.");
+        }
+
+        private static void LmGatewayPlannerPreservesMatchingManagedAssignment()
+        {
+            const string serial = "00105700000001";
+            LmGatewayDiscovery discovery = CreateLmDiscovery(CreateLmKkt(serial, "1234567894"));
+            IList<LmGatewayDraft> drafts = new List<LmGatewayDraft>
+            {
+                CreateLmGatewayDraft(serial, "lm-one.example", "5995", null, null)
+            };
+            IList<LmServiceInventoryItem> inventory = new List<LmServiceInventoryItem>
+            {
+                new LmServiceInventoryItem
+                {
+                    KktSerial = serial,
+                    ServiceName = LmServiceIdentity.CreateName(serial),
+                    Role = LmServiceRole.Managed,
+                    Ports = new LmGatewayPorts(55007, 15007),
+                    Target = new LmGatewayTarget("lm-one.example", 5995),
+                    IsRunning = false
+                }
+            };
+
+            LmGatewayPlan plan = LmGatewayPlanner.Build(
+                discovery,
+                drafts,
+                inventory,
+                CreateLmPortPolicy(),
+                new List<TcpListenerSnapshotItem>());
+
+            AssertTrue(plan.Items[0].IsValid, "A stopped but matching managed assignment must remain valid.");
+            AssertEqual(55007, plan.Items[0].Spec.Ports.GrpcPort,
+                "A valid existing assignment must not be renumbered.");
+            AssertEqual(15007, plan.Items[0].Spec.Ports.RestPort,
+                "Both existing ports must be preserved.");
+            AssertEqual(LmGatewayPlanAction.StartManagedService, plan.Items[0].Action,
+                "A matching stopped service only needs to start.");
+        }
+
+        private static void LmGatewayPlannerRejectsUnsafeTargetAndAllPortConflicts()
+        {
+            LmGatewayDiscovery discovery = CreateLmDiscovery(
+                CreateLmKkt("00105700000001", "1234567894"),
+                CreateLmKkt("00105700000002", "7707083893"),
+                CreateLmKkt("00105700000003", "500100732259"),
+                CreateLmKkt("00105700000004", "781122334455"));
+            IList<LmGatewayDraft> drafts = new List<LmGatewayDraft>
+            {
+                CreateLmGatewayDraft("00105700000001", "https://lm.example/path", "5995", null, null),
+                CreateLmGatewayDraft("00105700000002", "10.20.30.42", "5995", "54999", "15001"),
+                CreateLmGatewayDraft("00105700000003", "localhost", "55000", "55000", "15000"),
+                CreateLmGatewayDraft("00105700000004", "10.20.30.44", "5995", null, null)
+            };
+            IList<TcpListenerSnapshotItem> listeners = new List<TcpListenerSnapshotItem>
+            {
+                new TcpListenerSnapshotItem(55001, "foreign-service", true),
+                new TcpListenerSnapshotItem(15001, null, false)
+            };
+
+            LmGatewayPlan plan = LmGatewayPlanner.Build(
+                discovery, drafts, new List<LmServiceInventoryItem>(), CreateLmPortPolicy(), listeners);
+
+            AssertEqual(LmGatewayPlanAction.Blocked, plan.Items[0].Action,
+                "A URL is not a plain target address and must be blocked.");
+            AssertContains(plan.Items[0].ServiceValidation.JoinMessages(), "Адрес");
+            AssertEqual(LmGatewayPlanAction.Blocked, plan.Items[1].Action,
+                "An explicit port outside its approved pool must be blocked.");
+            AssertContains(plan.Items[1].ServiceValidation.JoinMessages(), "диапазон");
+            AssertEqual(LmGatewayPlanAction.Blocked, plan.Items[2].Action,
+                "A loopback target must not reuse a local controller port.");
+            AssertContains(plan.Items[2].ServiceValidation.JoinMessages(), "целевого ЛМ");
+            AssertTrue(plan.Items[3].IsValid, "Invalid preceding drafts must not consume automatic ports.");
+            AssertEqual(55000, plan.Items[3].Spec.Ports.GrpcPort,
+                "The first valid automatic row must retain the first free gRPC number.");
+            AssertEqual(15000, plan.Items[3].Spec.Ports.RestPort,
+                "The first valid automatic row must retain the first free REST number.");
+
+            LmGatewayDiscovery overlappingDiscovery = CreateLmDiscovery(
+                CreateLmKkt("00105700000011", "1234567894"),
+                CreateLmKkt("00105700000012", "7707083893"),
+                CreateLmKkt("00105700000013", "500100732259"));
+            IList<LmGatewayDraft> overlappingDrafts = new List<LmGatewayDraft>
+            {
+                CreateLmGatewayDraft("00105700000011", "10.20.31.11", "5995", "20000", "20001"),
+                CreateLmGatewayDraft("00105700000012", "10.20.31.12", "5995", "20002", "20000"),
+                CreateLmGatewayDraft("00105700000013", "10.20.31.13", "5995", null, null)
+            };
+            LmManagedPortPolicy overlappingPolicy = new LmManagedPortPolicy(
+                new TcpPortRange(20000, 20003),
+                new TcpPortRange(20000, 20003));
+
+            LmGatewayPlan overlappingPlan = LmGatewayPlanner.Build(
+                overlappingDiscovery,
+                overlappingDrafts,
+                new List<LmServiceInventoryItem>(),
+                overlappingPolicy,
+                new List<TcpListenerSnapshotItem>());
+
+            AssertTrue(overlappingPlan.Items[0].IsValid, "Expected the first explicit pair to be accepted.");
+            AssertEqual(LmGatewayPlanAction.Blocked, overlappingPlan.Items[1].Action,
+                "A port used in the other local column must still be treated as occupied.");
+            AssertTrue(overlappingPlan.Items[2].IsValid,
+                "A duplicate invalid row must not reserve its otherwise unused port.");
+            AssertEqual(20002, overlappingPlan.Items[2].Spec.Ports.GrpcPort,
+                "Automatic allocation must skip both numbers of the earlier pair.");
+            AssertEqual(20003, overlappingPlan.Items[2].Spec.Ports.RestPort,
+                "Automatic allocation must keep both local columns globally unique.");
+
+            string normalizedLoopback;
+            bool isLoopback;
+            AssertTrue(LmGatewayInputValidator.TryNormalizeTargetAddress(
+                "::ffff:127.0.0.1", out normalizedLoopback, out isLoopback),
+                "IPv4-mapped IPv6 loopback must be accepted as an IP literal.");
+            AssertTrue(isLoopback, "All loopback representations must participate in local-port conflicts.");
+            AssertEqual("127.0.0.1", normalizedLoopback, "Loopback comparison must use one canonical form.");
+
+            ValidationResult unicodeTarget = LmGatewayInputValidator.ValidateTarget(
+                new LmGatewayTarget("lm-\u0430.example", 5995));
+            AssertFalse(unicodeTarget.IsValid, "Ambiguous Unicode DNS names must be rejected.");
+        }
+
+        private static void ManagedLmServiceSpecContainsNoCredentials()
+        {
+            Type[] types =
+            {
+                typeof(ManagedLmServiceSpec),
+                typeof(LmGatewayDraft),
+                typeof(LmGatewayPlanItem),
+                typeof(LmGatewayPlan)
+            };
+
+            for (int typeIndex = 0; typeIndex < types.Length; typeIndex++)
+            {
+                System.Reflection.PropertyInfo[] properties = types[typeIndex].GetProperties();
+                for (int propertyIndex = 0; propertyIndex < properties.Length; propertyIndex++)
+                {
+                    string name = properties[propertyIndex].Name;
+                    string typeName = properties[propertyIndex].PropertyType.FullName ?? string.Empty;
+                    AssertFalse(name.IndexOf("Password", StringComparison.OrdinalIgnoreCase) >= 0,
+                        "Managed service plan must not retain a password.");
+                    AssertFalse(name.IndexOf("Login", StringComparison.OrdinalIgnoreCase) >= 0,
+                        "Managed service plan must not retain a login.");
+                    AssertFalse(name.IndexOf("Credential", StringComparison.OrdinalIgnoreCase) >= 0,
+                        "Managed service plan must not retain credentials.");
+                    AssertFalse(name.IndexOf("Binary", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                name.IndexOf("Path", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                name.IndexOf("Argument", StringComparison.OrdinalIgnoreCase) >= 0,
+                        "Managed service plan must not accept arbitrary executable values.");
+                    AssertFalse(typeName.IndexOf("Credential", StringComparison.OrdinalIgnoreCase) >= 0,
+                        "Managed service plan must not reference a credential type.");
+                }
+            }
+        }
+
+        private static LmGatewayKkt CreateLmKkt(string serial, string inn)
+        {
+            return new LmGatewayKkt
+            {
+                InstanceId = serial,
+                KktSerial = serial,
+                KktInn = inn,
+                ServiceState = "RUNNING"
+            };
+        }
+
+        private static LmGatewayDraft CreateLmGatewayDraft(
+            string serial,
+            string targetAddress,
+            string targetPort,
+            string grpcPort,
+            string restPort)
+        {
+            return new LmGatewayDraft
+            {
+                KktSerial = serial,
+                TargetAddress = targetAddress,
+                TargetPort = targetPort,
+                GrpcPort = grpcPort,
+                RestPort = restPort
+            };
+        }
+
+        private static LmManagedPortPolicy CreateLmPortPolicy()
+        {
+            return new LmManagedPortPolicy(
+                new TcpPortRange(55000, 55009),
+                new TcpPortRange(15000, 15009));
         }
 
         private static void LmBindingSessionDoesNotInventReadback()
