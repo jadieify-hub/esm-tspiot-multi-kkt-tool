@@ -79,6 +79,11 @@ namespace EsmTspiot.Shared.Tests
             Run("LM binding planner rejects duplicate local endpoints", LmBindingPlannerRejectsDuplicateLocalEndpoints);
             Run("LM binding planner rejects invalid loopback and port", LmBindingPlannerRejectsInvalidLoopbackAndPort);
             Run("LM binding plan cannot contain credentials", LmBindingPlanCannotContainCredentials);
+            Run("LM binding session does not invent readback", LmBindingSessionDoesNotInventReadback);
+            Run("LM binding session preserves current drafts on refresh", LmBindingSessionPreservesCurrentDraftsOnRefresh);
+            Run("LM binding session discards a draft after INN changes", LmBindingSessionDiscardsDraftAfterInnChanges);
+            Run("LM binding session builds a plan only for selected KKT", LmBindingSessionBuildsPlanOnlyForSelectedKkt);
+            Run("LM binding session masks outcome details", LmBindingSessionMasksOutcomeDetails);
             Run("LM binding workflow sends items sequentially", LmBindingWorkflowSendsItemsSequentially);
             Run("LM binding workflow skips invalid item and continues", LmBindingWorkflowSkipsInvalidItemAndContinues);
             Run("LM binding workflow marks lost response for attention", LmBindingWorkflowMarksLostResponseForAttention);
@@ -1119,7 +1124,9 @@ namespace EsmTspiot.Shared.Tests
             {
                 typeof(LmGatewayBindingInput),
                 typeof(LmGatewayBindingItem),
-                typeof(LmGatewayBindingPlan)
+                typeof(LmGatewayBindingPlan),
+                typeof(LmGatewayBindingSessionRow),
+                typeof(LmGatewayBindingSession)
             };
 
             for (int typeIndex = 0; typeIndex < planTypes.Length; typeIndex++)
@@ -1139,6 +1146,165 @@ namespace EsmTspiot.Shared.Tests
                         "Plan model must not retain a credential object.");
                 }
             }
+        }
+
+        private static void LmBindingSessionDoesNotInventReadback()
+        {
+            LmGatewayBindingSession session = new LmGatewayBindingSession();
+            session.ReplaceDiscovery(CreateLmDiscovery(
+                new LmGatewayKkt
+                {
+                    InstanceId = "00105700000001",
+                    KktSerial = "00105700000001",
+                    KktInn = "1234567894",
+                    ServiceState = "RUNNING"
+                }));
+
+            AssertEqual(1, session.Rows.Count, "Expected one row for the registered KKT.");
+            AssertEqual("00105700000001", session.Rows[0].Kkt.KktSerial, "Expected discovered KKT identity.");
+            AssertEqual("127.0.0.1", session.Rows[0].ControllerAddress, "Expected safe local controller default.");
+            AssertEqual(string.Empty, session.Rows[0].ControllerGrpcPort, "A controller port must not be guessed.");
+            AssertFalse(session.Rows[0].LastBindingStatus.HasValue,
+                "Discovery has no documented LM readback and must not claim a binding result.");
+            AssertFalse(session.Rows[0].IsSelected, "A newly discovered row must require explicit selection.");
+        }
+
+        private static void LmBindingSessionPreservesCurrentDraftsOnRefresh()
+        {
+            LmGatewayBindingSession session = new LmGatewayBindingSession();
+            session.ReplaceDiscovery(CreateLmDiscovery(
+                new LmGatewayKkt
+                {
+                    InstanceId = "00105700000001",
+                    KktSerial = "00105700000001",
+                    KktInn = "1234567894",
+                    ServiceState = "STOPPED"
+                },
+                new LmGatewayKkt
+                {
+                    InstanceId = "00105700000002",
+                    KktSerial = "00105700000002",
+                    KktInn = "7707083893"
+                }));
+            AssertTrue(session.TryUpdateDraft(
+                "00105700000001", "localhost", "50064", true), "Expected draft update for a known KKT.");
+
+            session.ReplaceDiscovery(CreateLmDiscovery(
+                new LmGatewayKkt
+                {
+                    InstanceId = "00105700000001",
+                    KktSerial = "00105700000001",
+                    KktInn = "1234567894",
+                    ServiceState = "RUNNING"
+                }));
+
+            AssertEqual(1, session.Rows.Count, "A stale KKT must be removed after refresh.");
+            AssertEqual("localhost", session.Rows[0].ControllerAddress, "Current-session address draft must survive refresh.");
+            AssertEqual("50064", session.Rows[0].ControllerGrpcPort, "Current-session port draft must survive refresh.");
+            AssertTrue(session.Rows[0].IsSelected, "Current-session selection must survive refresh.");
+            AssertEqual("RUNNING", session.Rows[0].Kkt.ServiceState, "Fresh ESM state must replace the old snapshot.");
+        }
+
+        private static void LmBindingSessionBuildsPlanOnlyForSelectedKkt()
+        {
+            LmGatewayBindingSession session = new LmGatewayBindingSession();
+            session.ReplaceDiscovery(CreateLmDiscovery(
+                new LmGatewayKkt
+                {
+                    InstanceId = "00105700000001",
+                    KktSerial = "00105700000001",
+                    KktInn = "1234567894"
+                },
+                new LmGatewayKkt
+                {
+                    InstanceId = "00105700000002",
+                    KktSerial = "00105700000002",
+                    KktInn = "7707083893"
+                }));
+            session.TryUpdateDraft("00105700000001", "127.0.0.1", "50063", false);
+            session.TryUpdateDraft("00105700000002", "127.0.0.1", "50064", true);
+
+            LmGatewayBindingPlan plan = session.BuildSelectedPlan();
+            session.TryUpdateDraft("00105700000002", "127.0.0.1", "59999", true);
+
+            AssertEqual(1, plan.Items.Count, "Only explicitly selected KKT must enter the binding plan.");
+            AssertEqual("00105700000002", plan.Items[0].Kkt.KktSerial, "Expected the selected KKT.");
+            AssertEqual("50064", plan.Items[0].Input.ControllerGrpcPort, "Plan must retain a stable draft snapshot.");
+            AssertTrue(plan.Items[0].IsValid, "Expected selected row to produce a valid plan item.");
+        }
+
+        private static void LmBindingSessionDiscardsDraftAfterInnChanges()
+        {
+            const string serial = "00105700000001";
+            LmGatewayBindingSession session = new LmGatewayBindingSession();
+            session.ReplaceDiscovery(CreateLmDiscovery(
+                new LmGatewayKkt
+                {
+                    InstanceId = serial,
+                    KktSerial = serial,
+                    KktInn = "1234567894"
+                }));
+            session.TryUpdateDraft(serial, "127.0.0.1", "50063", true);
+            LmGatewayBindingOutcome outcome = new LmGatewayBindingOutcome();
+            outcome.Results.Add(new LmGatewayBindingResult
+            {
+                InstanceId = serial,
+                KktSerial = serial,
+                KktInn = "1234567894",
+                Status = LmGatewayBindingStatus.BindingAccepted,
+                Details = "accepted"
+            });
+            session.ApplyOutcome(outcome);
+
+            session.ReplaceDiscovery(CreateLmDiscovery(
+                new LmGatewayKkt
+                {
+                    InstanceId = serial,
+                    KktSerial = serial,
+                    KktInn = "7707083893"
+                }));
+
+            AssertEqual("127.0.0.1", session.Rows[0].ControllerAddress,
+                "A new INN must receive a fresh local-address default.");
+            AssertEqual(string.Empty, session.Rows[0].ControllerGrpcPort,
+                "A controller port from the previous INN must be discarded.");
+            AssertFalse(session.Rows[0].IsSelected,
+                "A KKT re-registered to another INN must require explicit selection again.");
+            AssertFalse(session.Rows[0].LastBindingStatus.HasValue,
+                "A binding result from the previous INN must not survive refresh.");
+            AssertEqual(1, session.InvalidatedKktSerials.Count,
+                "The UI must be told to clear credentials for the replaced identity.");
+            AssertEqual(serial, session.InvalidatedKktSerials[0],
+                "Expected invalidation for the re-registered KKT serial.");
+        }
+
+        private static void LmBindingSessionMasksOutcomeDetails()
+        {
+            const string password = "session-secret-value";
+            LmGatewayBindingSession session = new LmGatewayBindingSession();
+            session.ReplaceDiscovery(CreateLmDiscovery(
+                new LmGatewayKkt
+                {
+                    InstanceId = "00105700000001",
+                    KktSerial = "00105700000001",
+                    KktInn = "1234567894"
+                }));
+            LmGatewayBindingOutcome outcome = new LmGatewayBindingOutcome();
+            outcome.Results.Add(new LmGatewayBindingResult
+            {
+                InstanceId = "00105700000001",
+                KktSerial = "00105700000001",
+                KktInn = "1234567894",
+                Status = LmGatewayBindingStatus.BindingFailed,
+                Details = "password=" + password
+            });
+
+            session.ApplyOutcome(outcome);
+
+            AssertEqual(LmGatewayBindingStatus.BindingFailed, session.Rows[0].LastBindingStatus.Value,
+                "Expected matching outcome status on the session row.");
+            AssertFalse(session.Rows[0].LastMessage.Contains(password),
+                "Session state rendered by the UI must not retain a reflected password.");
         }
 
         private static LmGatewayDiscovery CreateLmDiscovery(params LmGatewayKkt[] items)
