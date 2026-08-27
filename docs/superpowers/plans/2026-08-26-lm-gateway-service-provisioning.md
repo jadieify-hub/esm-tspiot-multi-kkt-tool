@@ -384,7 +384,7 @@ git commit -m "Добавить планирование экземпляров 
 - Exit codes: `0` typed result sent, `2` invalid/authentication request, `3` operation failed, `4` unsupported controller/version.
 - Request schema version: integer `1`.
 
-- [ ] **Step 1: Add helper protocol tests before implementation**
+- [x] **Step 1: Add helper protocol tests before implementation**
 
 Register in the new helper test runner:
 
@@ -400,7 +400,7 @@ Run("Installer operation accepts only one verified setup selection", InstallerOp
 Run("Installer operation rejects stale or substituted source file", InstallerOperationRejectsStaleOrSubstitutedSourceFile);
 ```
 
-- [ ] **Step 2: Run helper build and verify RED**
+- [x] **Step 2: Run helper build and verify RED**
 
 ```powershell
 & $msbuild tests\EsmTspiot.ServiceProvisioner.Tests\EsmTspiot.ServiceProvisioner.Tests.csproj /restore /p:Configuration=Release
@@ -408,7 +408,7 @@ Run("Installer operation rejects stale or substituted source file", InstallerOpe
 
 Expected: project or types do not exist.
 
-- [ ] **Step 3: Create compact net48 projects**
+- [x] **Step 3: Create compact net48 projects**
 
 Helper project properties and reference:
 
@@ -435,7 +435,7 @@ Expose only deliberate public test seams or add `InternalsVisibleTo("EsmTspiot.S
 
 In the same commit add CI steps that build and run helper tests immediately after shared tests. Check `$LASTEXITCODE` after `msbuild` and after the test EXE separately so a later command cannot hide failure.
 
-- [ ] **Step 4: Implement strict request/result transport**
+- [x] **Step 4: Implement strict request/result transport**
 
 Every request contains only:
 
@@ -457,11 +457,11 @@ UI obtains the client PID with `GetNamedPipeClientProcessId` and accepts only th
 
 Messages are length-prefixed and at most 1 MiB. After mutual authentication, UI sends exactly one execute request and may send one typed `CancelAfterCurrentItem` control message with matching `operationId` and monotonic sequence. Helper sends typed per-item progress/results and one final result. No arbitrary message kind, request/result file or TOCTOU path exists.
 
-- [ ] **Step 5: Implement deterministic exit behavior**
+- [x] **Step 5: Implement deterministic exit behavior**
 
 Even on operational failure, send a redacted per-item batch result when the authenticated pipe remains connected. `Program.Main` contains only parse args → mutually authenticate pipe peers → read/validate/hash → dispatch/control-loop → send result → exit; no SCM logic. Explicit cancel or UI disconnect sets `CancelAfterCurrentItem`: helper finishes and reconciles only the current item, marks untouched items `Cancelled`, writes final machine-side state and is never force-killed.
 
-- [ ] **Step 6: Run helper tests and verify GREEN**
+- [x] **Step 6: Run helper tests and verify GREEN**
 
 ```powershell
 & $msbuild tests\EsmTspiot.ServiceProvisioner.Tests\EsmTspiot.ServiceProvisioner.Tests.csproj /restore /p:Configuration=Release
@@ -470,7 +470,7 @@ Even on operational failure, send a redacted per-item batch result when the auth
 
 Expected: 9/9 helper tests pass. Shared test matrix still passes.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add .github/workflows/ci.yml EsmTspiotTool.sln src/EsmTspiot.Shared/Models/LmServiceOperation.cs src/EsmTspiot.Shared/Models/LmServiceProvisioningItemRequest.cs src/EsmTspiot.Shared/Models/LmServiceProvisioningBatchRequest.cs src/EsmTspiot.Shared/Models/LmServiceProvisioningStatus.cs src/EsmTspiot.Shared/Models/LmServiceProvisioningItemResult.cs src/EsmTspiot.Shared/Models/LmServiceProvisioningBatchResult.cs src/EsmTspiot.Shared/Models/LmManifestFingerprint.cs src/EsmTspiot.Shared/Models/LmRemovalConfirmation.cs src/EsmTspiot.Shared/Models/LmCleanupConfirmation.cs src/EsmTspiot.Shared/Services/CanonicalLmPlanHasher.cs src/EsmTspiot.ServiceProvisioner tests/EsmTspiot.ServiceProvisioner.Tests

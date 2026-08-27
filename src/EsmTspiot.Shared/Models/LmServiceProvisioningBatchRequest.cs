@@ -1,0 +1,41 @@
+using System.Collections.Generic;
+using System.Runtime.Serialization;
+
+namespace EsmTspiot.Shared.Models
+{
+    [DataContract]
+    public sealed class LmServiceProvisioningBatchRequest
+    {
+        public LmServiceProvisioningBatchRequest()
+        {
+            Items = new List<LmServiceProvisioningItemRequest>();
+        }
+
+        [DataMember(Order = 1)]
+        public int SchemaVersion { get; set; }
+
+        [DataMember(Order = 2)]
+        public LmServiceOperation Operation { get; set; }
+
+        [DataMember(Order = 3)]
+        public string OperationId { get; set; }
+
+        [DataMember(Order = 4)]
+        public string InitiatingSid { get; set; }
+
+        [DataMember(Order = 5)]
+        public string PlanHash { get; set; }
+
+        [DataMember(Order = 6)]
+        public IList<LmServiceProvisioningItemRequest> Items { get; private set; }
+
+        [DataMember(Order = 7, EmitDefaultValue = false)]
+        public LmRemovalConfirmation RemovalConfirmation { get; set; }
+
+        [DataMember(Order = 8, EmitDefaultValue = false)]
+        public LmCleanupConfirmation CleanupConfirmation { get; set; }
+
+        [DataMember(Order = 9, EmitDefaultValue = false)]
+        public LmControllerInstallerSelection InstallerSelection { get; set; }
+    }
+}
