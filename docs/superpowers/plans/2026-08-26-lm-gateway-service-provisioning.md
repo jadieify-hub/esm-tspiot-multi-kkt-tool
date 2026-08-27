@@ -12,6 +12,17 @@
 
 **Prerequisite:** Все задачи `2026-08-26-lm-gateway-esm-binding.md` завершены, прошли ревью и находятся в текущей ветке.
 
+## Execution amendment: private compatibility track (2026-08-27)
+
+Этот раздел переопределяет прежние ссылки плана на единый `PublicSourceReady`:
+
+- техническое исследование и private-реализацию открывает `TechnicalCompatibilityReady` для конкретной версии;
+- `PublicSourceReady` нужен только перед переводом ветки/репозитория в public или публикацией сборки с этой функцией;
+- пока publication gate не пройден, код, tests, docs и сборки с vendor-specific фактами остаются private;
+- локальные raw evidence, бинарники вендора, профили и секреты не попадают в Git даже в private-режиме;
+- первая исследуемая версия — `1.6.3.2`, installer SHA-256 `822e047dbef62cbdbe2cf1ae22c457f43930c574fbcf265170987b9c7eae91e7`, signer `JSC ESP`;
+- каждая новая версия требует нового capability profile и повторного technical gate; wildcard-версии не поддерживаются.
+
 **Toolchain prerequisite:** До первого RED выполнить приведенный ниже preflight в той же PowerShell-сессии. Нужны .NET 8 SDK, .NET Framework 4.8 Targeting/Developer Pack и Visual Studio Build Tools/MSBuild; для генерации инструкции также нужен уже зафиксированный проектом Python toolchain. Системный runtime/`csc.exe` не заменяет SDK/targeting pack для SDK-style helper/WinForms-проектов. Если preflight не проходит, реализацию не начинать и не объявлять локальную матрицу пройденной; сначала установить компоненты либо выполнять полный цикл на подготовленном CI/VM.
 
 ```powershell
@@ -31,10 +42,10 @@ if (-not $msbuild -or -not (Test-Path -LiteralPath $msbuild)) { throw 'Visual St
 
 ## Global Constraints
 
-- Task 1 — жесткий compatibility gate. До его успешного завершения запрещено писать код регистрации дополнительной службы.
+- Task 1 — жёсткий `TechnicalCompatibilityGate`. До `TechnicalCompatibilityReady` запрещено писать код регистрации дополнительной службы.
 - Использовать только официальный установленный бинарный файл контроллера. Не включать его в репозиторий или релиз.
 - Не использовать и не анализировать сторонний архив как источник реализации.
-- Публичный репозиторий содержит только compatibility summary/provenance. Raw vendor/VM characterization хранится вне рабочего дерева; недокументированный vendor-specific факт нельзя переносить в публичный adapter/capability source без официального публичного источника или явного разрешения правообладателя.
+- Private-репозиторий содержит только compatibility summary/provenance и версионный adapter/capability code после technical gate. Raw vendor/VM characterization хранится вне рабочего дерева.
 - Не применять junction/symlink/reparse points, бинарный патчинг, UPX, копирование полного штатного профиля, `taskkill`, PowerShell или `sc.exe` в продукте.
 - Основное окно всегда работает без повышения прав. UAC запрашивается только на `Ensure`, `Remove` или `Cleanup` через отдельный helper.
 - Имя службы, ImagePath, профиль, service account, аргументы и environment не принимаются от пользователя и вычисляются/проверяются помощником.
@@ -48,7 +59,7 @@ if (-not $msbuild -or -not (Test-Path -LiteralPath $msbuild)) { throw 'Visual St
 - При неизвестном состоянии не выполнять разрушительный rollback; повторно прочитать состояние и поставить `RequiresAttention`.
 - Один запуск создания/обновления использует `EnsureBatch` не более чем для 32 ККТ и один UAC. Удаление остается отдельной одноэлементной операцией и отдельным UAC.
 - До любой SCM-мутации создавать crash journal и брать machine-wide плюс per-KKT mutex; при старте helper сначала reconciles незавершенные операции.
-- Запрещен недокументированный per-service `ProgramData`/environment. Без официально документированного отдельного config/data path compatibility gate завершается FAIL.
+- Запрещен недокументированный per-service `ProgramData`/environment. Technical gate проходит только при доказанном безопасном режиме изоляции из порядка Task 1; произвольный fallback запрещён.
 - Elevation разрешена только из не доступного обычному пользователю каталога установки и только при split-token повышении того же локального администратора. Portable/user-writable режим поддерживает только просмотр и binding-only.
 - Реализация остается C# 5-compatible и без новых внешних пакетов.
 - После каждой задачи RED → GREEN → commit. Не пушить и не публиковать без отдельного указания.
@@ -64,7 +75,7 @@ if (-not $msbuild -or -not (Test-Path -LiteralPath $msbuild)) { throw 'Visual St
 
 **Environment:**
 
-- VM requirements below apply only after Step 0 has produced `PublicSourceReady`; do not download or install the controller merely to discover publishable literals.
+- VM requirements below apply after Step 0 verifies the exact user-supplied installer identity and records `CharacterizationReady`; the installer is never executed on the host.
 - Disposable Windows 10/11 VM with PowerShell 5.1 and a clean snapshot for characterization.
 - Separate Windows 7 SP1 VM only if the supported official controller version itself declares Windows 7 support; otherwise service provisioning is disabled on Windows 7 while viewing/binding remain available.
 - Official controller installer obtained from the authorized delivery channel.
@@ -73,24 +84,26 @@ if (-not $msbuild -or -not (Test-Path -LiteralPath $msbuild)) { throw 'Visual St
 
 **Interfaces:**
 
-- Produces a public human-readable compatibility summary for exactly one official controller version plus a separate local evidence pack.
-- Produces `PublicSourceReady`, `PublicSourcePending` or `PublicSourceRejected` before any VM work; only `PublicSourceReady` permits Steps 1–8.
-- Requires exactly one officially documented isolation mode: `DocumentedDataDirectory`.
-- Produces a pass/fail decision; failure blocks Tasks 2–13.
-- A fact required by public source code is admissible only when backed by official public documentation or explicit publication permission; VM observation alone is not an admissible source for a public vendor-specific literal.
+- Produces a private human-readable compatibility summary for exactly one official controller version plus a separate local evidence pack.
+- Produces `CharacterizationReady`, then `TechnicalCompatibilityReady` or `TechnicalCompatibilityRejected`; only `TechnicalCompatibilityReady` permits Tasks 2–13.
+- Tests isolation candidates in this order: official data/config switch, separate non-reparse execution path/hard link, app-owned supervisor. Junction is an experimental negative/control test only and cannot become production behavior without a separate threat model and approved spec change.
+- Maintains `PublicSourcePending/Ready/Rejected` independently; this status controls publication, not VM access.
+- A fact observed only in VM may be encoded solely in the private, exact-version capability profile. It is not thereby approved for public source/builds.
 
-- [ ] **Step 0: Establish the complete publication basis before opening a VM**
+- [ ] **Step 0: Verify the official package and open only the technical characterization gate**
 
-Without downloading or installing the controller, create a `PublicLiteralAuthorization` matrix in the public provenance document. Use exactly these columns: `GroupId`, `NeededBy`, `RequiredFacts`, `OfficialPublicUrl`, `RevisionOrSection`, `PermissionReference`, `PermissionScope`, `Status`. Include all of these groups:
+Use the user-supplied `esm-lm-controller_1.6.3.2-windows-setup.exe`. Before mapping it into Sandbox, verify filename, size, SHA-256, Authenticode status, signer subject, certificate chain/code-signing EKU and file/product version. The expected installer SHA-256 is `822e047dbef62cbdbe2cf1ae22c457f43930c574fbcf265170987b9c7eae91e7`, expected signer is `JSC ESP`, and expected version is `1.6.3.2`. A mismatch is `TechnicalCompatibilityRejected`; never offer an override.
+
+Record the four publication groups below in the compatibility summary, but do not wait for an answer before private VM characterization:
 
 1. the exact data/config-directory switch, Windows quoting rules and per-process isolation semantics;
 2. the minimum profile schema discriminator, object paths, field names/types and serialization needed for local gRPC/REST ports and target LM address/port;
 3. the exact public encoding of service account, dependencies, start mode and recovery actions;
 4. any vendor-specific listener/bind, executable identity or service metadata literal that will be compiled into public source or represented in public tests/fixtures.
 
-For each group, record either an official public URL plus document revision/section or a scope-specific written permission reference. Do not publish private correspondence, personal names, email addresses or attachments; keep those in access-controlled storage outside the repository and expose only the permission identifier, granted scope and digest.
+For each group, record whether it is supported by an official public URL/permission or only by private black-box evidence. Do not commit private correspondence, personal names, email addresses, raw paths, raw schemas or attachments.
 
-If any required group lacks a complete basis, set `PublicSourcePending`, send one consolidated request asking the rightsholder to permit the exact missing facts in public source, tests, documentation and distributed compiled builds, and stop before VM creation, controller download/installation and Tasks 2–13. An incomplete or refused grant is `PublicSourceRejected` and stops the plan. After a response, rebuild the whole matrix rather than approving only the answered row. Continue to Step 1 only when every row is `Ready` and the aggregate state is `PublicSourceReady`.
+If a publication group lacks a complete basis, keep `PublicSourcePending` and the repository/build private. Set `CharacterizationReady` and continue to Step 1 only after the installer identity check passes and Windows Sandbox is available with networking disabled and a read-only installer mapping. Tasks 2–13 still remain blocked until Step 7 produces `TechnicalCompatibilityReady`.
 
 - [ ] **Step 1: Capture the clean VM baseline**
 
@@ -163,11 +176,11 @@ $stream = [System.IO.File]::OpenRead($binaryPath)
 try { ([BitConverter]::ToString($sha256.ComputeHash($stream))).Replace('-', '').ToLowerInvariant() } finally { $stream.Dispose(); $sha256.Dispose() }
 ```
 
-The parser accepts a correctly quoted executable or an unquoted path without whitespace. An unquoted executable path containing whitespace or any ambiguous command line produces `Gate: FAIL`. Record exact service details, resolved root, DACLs, account, dependencies, start/recovery configuration and raw signer output only in the local evidence pack. The public summary may contain version, PE product/architecture, signer identity, SHA-256, high-level trust conclusion and evidence IDs/digests, but no raw SCM/path/DACL dump. Any unprivileged write/modify access to the binary or its ancestors produces FAIL. Do not commit the vendor binary or raw evidence.
+The parser accepts a correctly quoted executable or an unquoted path without whitespace. An unquoted executable path containing whitespace or any ambiguous command line produces `Gate: FAIL`. Record exact service details, resolved root, DACLs, account, dependencies, start/recovery configuration and raw signer output only in the local evidence pack. The private summary may contain version, PE product/architecture, signer identity, SHA-256, high-level trust conclusion and evidence IDs/digests, but no raw SCM/path/DACL dump. Any unprivileged write/modify access to the binary or its ancestors produces FAIL. Do not commit the vendor binary or raw evidence.
 
 - [ ] **Step 3: Determine official configuration behavior**
 
-Start and stop only the official service, then diff filesystem and service registry state. Store sanitized raw diffs, observed relative/absolute paths, registry names, field paths/types/defaults and raw CLI output only in the local evidence pack. The public summary contains evidence IDs/digests and conclusions, not raw output or internal schema. Never record certificate/private-key contents, tokens, passwords, organization identifiers or a full production config dump anywhere.
+Start and stop only the official service, then diff filesystem and service registry state. Store sanitized raw diffs, observed relative/absolute paths, registry names, field paths/types/defaults and raw CLI output only in the local evidence pack. The private summary contains evidence IDs/digests and conclusions, not raw output or internal schema. Never record certificate/private-key contents, tokens, passwords, organization identifiers or a full production config dump anywhere.
 
 Check in this order:
 
@@ -175,13 +188,13 @@ Check in this order:
 2. `--help` or equivalent self-documenting CLI output of the official binary in the VM;
 3. filesystem/registry writes produced by the official service itself.
 
-Bundled documentation and self-documenting CLI output may be used for local characterization. They authorize a vendor-specific literal in public source only when their official public publication is proven or the rightsholder has granted explicit publication permission recorded in public provenance. Otherwise, like the third source, they may support only `Gate: FAIL`, not `Gate: PASS` for a public build. Any vendor-specific path/schema/field needed by public code must be present in that public-admissible source contract.
+Bundled documentation, self-documenting CLI output and observed runtime behavior may support the private exact-version capability profile. Mark every fact with provenance class `OfficialPublic`, `VendorSelfDocumented` or `PrivateBlackBox`. Only `OfficialPublic` or a recorded publication permission may later cross into public source/builds.
 
-Confirm where local gRPC, local REST and target LM address/port are represented. Separately prove that the controller profile itself needs no login/password/token beyond credentials sent to ESM through the documented PUT. If the controller requires any additional per-profile secret, or the required public adapter facts exist only in observation evidence, mark the v1 gate failed rather than extending the privileged protocol with credentials or publishing undocumented internals.
+Confirm where local gRPC, local REST and target LM address/port are represented. Separately prove that the controller profile itself needs no login/password/token beyond credentials sent to ESM through the documented PUT. If the controller requires any additional per-profile secret, mark the technical gate failed rather than extending the privileged protocol with credentials. Facts supported only by observation are tagged `PrivateBlackBox` and keep the implementation private.
 
 - [ ] **Step 4: Prove the documented isolation mode**
 
-Require a public-admissible official document or self-documenting vendor CLI that defines a separate data/config-directory argument for each process. If the document or CLI output is not officially public and publication permission is absent, or if the argument does not exist, set `Gate: FAIL` immediately. Do not test per-service `ProgramData`, registry environment, junction or copied profiles as fallback.
+First test an official document/self-documenting CLI data/config-directory argument. If absent, characterize whether configuration is resolved from the launched executable path or working directory. Then test a separate non-reparse path/hard link and, independently, an app-owned supervisor. Do not patch or unpack the binary, copy secrets/full profiles, use per-service `ProgramData`, or carry a test mechanism into production by assumption. A junction may be used only as a final VM control to distinguish path resolution behavior; it cannot produce `TechnicalCompatibilityReady` under the current spec.
 
 For the test service use an obvious temporary name not equal to the product's future name, a new empty data directory and the same verified binary. Create it only inside the VM. Confirm all of the following:
 
@@ -203,23 +216,23 @@ Do not revert or discard the first VM while its local evidence pack is the only 
 
 - [ ] **Step 7: Write the capability profile and gate decision**
 
-The public document must include only:
+The private summary committed to Git must include only:
 
-- `Gate: PASS` or `Gate: FAIL`, date, supported official version and Windows versions;
+- `TechnicalCompatibilityReady` or `TechnicalCompatibilityRejected`, independent publication status, date, supported official version and Windows versions;
 - public vendor version, SHA-256, signer identity and high-level trust conclusion;
-- links to official public sources and, if applicable, an identifier for explicit publication permission;
-- high-level invariants: documented data/config switch exists, profiles and service identities are isolated, no junction/environment fallback, required listener families are supported;
+- links to official public sources and the provenance class of each relied-on fact;
+- high-level invariants: the selected exact-version isolation mode is proven, profiles and service identities are isolated, no production junction/environment fallback is used, required listener families are supported;
 - target LM authentication conclusion without credentials or internal config paths;
 - unsupported conditions, known limitations and two-run conclusion without raw output;
 - `EvidenceId` plus SHA-256 for each relied-on local evidence item and a digest of the sorted local `SHA256SUMS` manifest.
 
 The local access-controlled evidence pack must include exact binary/service paths, SCM account/dependencies/start/recovery, SDDL/DACL, raw filesystem/registry diffs, internal paths/schema/field names, exact port pools/endpoints/dual-stack behavior, health observations, process trees, sanitized CLI/installer output, VM/snapshot metadata and per-item hashes. It remains outside the repository and is never attached to a public release.
 
-Pass only when every spec requirement in section 9 is independently reproducible and every vendor-specific literal required by public source has an admissible public source/permission. On FAIL, stop this plan and report the exact capability or publication basis missing; do not invent a fallback or move a locally observed internal into public code.
+Pass the technical gate only when every technical requirement in spec section 9 is independently reproducible twice for the exact installer version. A failed publication basis leaves `PublicSourcePending` but does not change the technical result. On technical failure, stop the plan and report the exact missing capability; do not invent a fallback.
 
-- [ ] **Step 8: Hash local evidence, update public provenance and commit only the summary**
+- [ ] **Step 8: Hash local evidence, update private provenance and commit only the summary**
 
-Generate a sorted `SHA256SUMS` inside `$evidenceRoot`, add its own digest plus referenced `EvidenceId` values to the public summary/provenance, then verify no raw evidence path is inside the worktree. Review the staged diff for absolute user/VM paths, SIDs, account names, internal registry/config paths and raw command output; any hit blocks the commit.
+Generate a sorted `SHA256SUMS` inside `$evidenceRoot`, add its own digest plus referenced `EvidenceId` values to the private summary/provenance, then verify no raw evidence path is inside the worktree. Review the staged diff for absolute user/VM paths, SIDs, account names, internal registry/config paths and raw command output; any hit blocks the commit.
 
 ```powershell
 $repoRoot = (git rev-parse --show-toplevel).Trim()
@@ -234,7 +247,7 @@ Get-ChildItem -LiteralPath $evidenceRoot -File -Recurse |
   ForEach-Object { $_.Hash.ToLowerInvariant() + '  ' + $_.Path } |
   Set-Content -LiteralPath $sumsPath -Encoding UTF8
 $evidenceManifestDigest = (Get-FileHash -LiteralPath $sumsPath -Algorithm SHA256).Hash.ToLowerInvariant()
-# Manually place only $evidenceManifestDigest and referenced EvidenceId values in the public summary.
+# Manually place only $evidenceManifestDigest and referenced EvidenceId values in the private summary.
 
 git add docs/research/2026-08-26-official-lm-controller-compatibility.md docs/research/2026-08-26-lm-gateway-provenance.md
 git diff --cached --check
@@ -348,6 +361,8 @@ git commit -m "Добавить планирование экземпляров 
 - Create: `src/EsmTspiot.Shared/Models/LmManifestFingerprint.cs`
 - Create: `src/EsmTspiot.Shared/Models/LmRemovalConfirmation.cs`
 - Create: `src/EsmTspiot.Shared/Models/LmCleanupConfirmation.cs`
+- Create: `src/EsmTspiot.Shared/Models/LmControllerInstallerSelection.cs`
+- Create: `src/EsmTspiot.Shared/Models/LmControllerInstallResult.cs`
 - Create: `src/EsmTspiot.Shared/Services/CanonicalLmPlanHasher.cs`
 - Create: `src/EsmTspiot.ServiceProvisioner/EsmTspiot.ServiceProvisioner.csproj`
 - Create: `src/EsmTspiot.ServiceProvisioner/Program.cs`
@@ -362,7 +377,7 @@ git commit -m "Добавить планирование экземпляров 
 **Interfaces:**
 
 - Helper command line: `--pipe <32 hex chars> --operation <32 hex chars>` only; no paths or JSON appear in command line.
-- Operations: `EnsureBatch`, `RemoveManaged` and `CleanupManaged` only. Ensure contains 1–32 items; remove/cleanup contain exactly one.
+- Operations: `InstallControllerVersion`, `EnsureBatch`, `RemoveManaged` and `CleanupManaged` only. Install contains exactly one selected installer; ensure contains 1–32 items; remove/cleanup contain exactly one.
 - Exit codes: `0` typed result sent, `2` invalid/authentication request, `3` operation failed, `4` unsupported controller/version.
 - Request schema version: integer `1`.
 
@@ -378,6 +393,8 @@ Run("Provisioning protocol rejects unsafe item", ProvisioningProtocolRejectsUnsa
 Run("Provisioning pipe authenticates exact protected peer images", ProvisioningPipeAuthenticatesExactProtectedPeerImages);
 Run("Provisioning protocol rejects plan hash mismatch", ProvisioningProtocolRejectsPlanHashMismatch);
 Run("Provisioning protocol exposes no credentials paths or commands", ProvisioningProtocolExposesNoCredentialsPathsOrCommands);
+Run("Installer operation accepts only one verified setup selection", InstallerOperationAcceptsOnlyOneVerifiedSetupSelection);
+Run("Installer operation rejects stale or substituted source file", InstallerOperationRejectsStaleOrSubstitutedSourceFile);
 ```
 
 - [ ] **Step 2: Run helper build and verify RED**
@@ -417,17 +434,19 @@ In the same commit add CI steps that build and run helper tests immediately afte
 
 - [ ] **Step 4: Implement strict request/result transport**
 
-The batch request contains only:
+Every request contains only:
 
 - schema version;
 - operation and `operationId`;
 - initiating Windows SID;
 - SHA-256 of the canonical redacted plan/confirmation shown in UI;
-- 1–32 items with KKT serial, local gRPC/REST ports and target LM address/port.
+- the operation-specific payload described below.
 
-For `EnsureBatch`, the hash covers the exact selected rows shown in the plan dialog. For `RemoveManaged`, one canonical confirmation includes KKT serial, derived service name, local ports, manifest fingerprint and the retained-ESM warning. For `CleanupManaged`, it includes KKT serial, observed manifest fingerprint and displayed `CleanupPending` state. The helper reloads the manifest and rejects a stale/mismatched confirmation before stop/delete/cleanup.
+`EnsureBatch` contains 1–32 items with KKT serial, local gRPC/REST ports and target LM address/port. `RemoveManaged` and `CleanupManaged` contain one immutable confirmation projection. `InstallControllerVersion` contains exactly one user-selected source path plus the filename, byte length, SHA-256, file/product version and signer identity already shown in UI. The source path is allowed only for this operation; it is never accepted as an ImagePath/profile path, command-line argument or service field.
 
-The request does not contain service name, binary path, config path, username, password, environment, shell text or arbitrary arguments. Both sides derive service name from KKT serial when constructing the canonical confirmation; only its hash is transmitted. The helper recalculates all derived values, canonicalizes the request, checks the confirmation hash, limits count, and rejects duplicate KKT or ports before SCM work. Results are per item so one failure does not hide the other outcomes.
+For `InstallControllerVersion`, the hash covers exact displayed file metadata and the warning that all managed instances will be stopped and moved to `VersionVerificationPending`. For `EnsureBatch`, the hash covers the exact selected rows shown in the plan dialog. For `RemoveManaged`, one canonical confirmation includes KKT serial, derived service name, local ports, manifest fingerprint and the retained-ESM warning. For `CleanupManaged`, it includes KKT serial, observed manifest fingerprint and displayed `CleanupPending` state. The helper reloads local state and rejects a stale/mismatched confirmation before install/stop/delete/cleanup.
+
+Except for the strictly scoped installer source path above, the request does not contain service name, binary path, config path, username, password, environment, shell text or arbitrary arguments. Both sides derive service name from KKT serial when constructing the canonical confirmation; only its hash is transmitted. The helper recalculates all derived values, canonicalizes the request, checks the confirmation hash, limits count, and rejects duplicate KKT or ports before SCM work. Results are per item so one failure does not hide the other outcomes.
 
 The unelevated UI creates exactly one one-shot named-pipe server with an unguessable GUID, `maxNumberOfServerInstances: 1` (never `MaxAllowedServerInstances`) and a DACL for its exact user SID, `SYSTEM` and `Administrators`. The same `operationId` may not create a second server instance; failure to obtain the unique pipe name aborts before UAC. The helper connects as client, obtains the pipe-server PID through `GetNamedPipeServerProcessId`, reads that process token SID and image path, and requires the SID to equal both request `InitiatingSid` and the non-elevated/elevated identity of the same split-token local administrator. The server image must be the exact main EXE in the parent protected product directory with expected filename/product/company/version and no reparse component. Standard-user over-the-shoulder elevation with another account and same-SID wrong-image server both fail before the working payload is read.
 
@@ -446,7 +465,7 @@ Even on operational failure, send a redacted per-item batch result when the auth
 & "tests\EsmTspiot.ServiceProvisioner.Tests\bin\Release\net48\EsmTspiot.ServiceProvisioner.Tests.exe"
 ```
 
-Expected: 7/7 helper tests pass. Shared test matrix still passes.
+Expected: 9/9 helper tests pass. Shared test matrix still passes.
 
 - [ ] **Step 7: Commit**
 
@@ -463,6 +482,7 @@ git commit -m "Добавить протокол помощника служб �
 
 - Create: `src/EsmTspiot.ServiceProvisioner/ControllerCapabilityProfile.cs`
 - Create: `src/EsmTspiot.ServiceProvisioner/OfficialControllerLocator.cs`
+- Create: `src/EsmTspiot.ServiceProvisioner/OfficialControllerInstallerVerifier.cs`
 - Create: `src/EsmTspiot.ServiceProvisioner/IFileTrustVerifier.cs`
 - Create: `src/EsmTspiot.ServiceProvisioner/WinTrustVerifier.cs`
 - Create: `src/EsmTspiot.ServiceProvisioner/ManagedServiceManifest.cs`
@@ -475,6 +495,7 @@ git commit -m "Добавить протокол помощника служб �
 **Interfaces:**
 
 - `OfficialControllerLocator.ResolveVerifiedBinary()` returns a typed immutable record or an error; no user path input.
+- `OfficialControllerInstallerVerifier.VerifyStageAndLock(selection)` is the only helper boundary that accepts a user path. It opens the source without write/delete sharing, verifies exact metadata, copies it into an administrator-only staging root while the source handle remains locked, re-verifies the staged file and returns a disposable locked artifact.
 - `ManagedServiceManifestStore.Read/Write/Delete` operates only in `%ProgramData%\KRS\MultiKKT\Inventory\<derived-service-name>`.
 - Profile paths are separate under `%ProgramData%\KRS\MultiKKT\Profiles\<derived-service-name>` and never exposed to unelevated inventory readers.
 - Operation journals live under a third protected `Operations` root and are the crash-recovery source before/through SCM mutation.
@@ -487,6 +508,8 @@ Register:
 ```csharp
 Run("Official controller locator enforces protected allowed root", OfficialControllerLocatorEnforcesProtectedAllowedRoot);
 Run("Official controller locator enforces full product trust", OfficialControllerLocatorEnforcesFullProductTrust);
+Run("Official installer verifier locks verifies and stages atomically", OfficialInstallerVerifierLocksVerifiesAndStagesAtomically);
+Run("Official installer verifier rejects filename signer version or hash mismatch", OfficialInstallerVerifierRejectsFilenameSignerVersionOrHashMismatch);
 Run("Manifest path is derived only from KKT serial", ManifestPathIsDerivedOnlyFromKktSerial);
 Run("Manifest and profile stores reject reparse points", ManifestAndProfileStoresRejectReparsePoints);
 Run("Manifest is atomic credential free and projects cleanup state", ManifestIsAtomicCredentialFreeAndProjectsCleanupState);
@@ -501,7 +524,7 @@ Expected: missing trust and manifest types.
 
 - [ ] **Step 3: Encode only the passed capability profile**
 
-Transcribe only facts marked public-admissible in Task 1 provenance—controller version, allowed installation root/relative executable, PE architecture/product identity, code-signing EKU, valid SHA-256 and Authenticode signer—into `ControllerCapabilityProfile`. If a required literal is supported only by the local evidence pack, stop with `Gate: FAIL`; do not hide the same fact in source code after omitting it from docs. Supporting another version requires a new independently reviewed profile; do not accept «any signed file» or a wildcard publisher.
+Transcribe only facts accepted by `TechnicalCompatibilityReady` for the exact version—controller version, allowed installation root/relative executable, PE architecture/product identity, code-signing EKU, valid SHA-256, Authenticode signer and the selected isolation mode—into `ControllerCapabilityProfile`. Tag each fact with its provenance class. A `PrivateBlackBox` fact keeps the branch/build private. Supporting another version requires a new independently reviewed profile; do not accept «any signed file» or a wildcard publisher.
 
 - [ ] **Step 4: Implement path and trust checks**
 
@@ -516,13 +539,15 @@ Requirements:
 - repeat the canonical path/reparse/DACL/hash/signature check immediately before `CreateService`/start to narrow replacement races;
 - no fallback search in current directory, PATH, temp or user profile.
 
+For installer selection, require basename `esm-lm-controller_<version>-windows-setup.exe`, a regular non-reparse file, exact size/hash/version/signing identity from `ControllerCapabilityProfile`, and a valid Authenticode chain/code-signing EKU. Never execute from Downloads/Desktop directly. Copy through the locked source handle to `%ProgramData%\KRS\MultiKKT\InstallerStaging\<operationId>`, whose complete ancestor chain is administrator/SYSTEM-write only; verify the staged copy again, launch only that path, and delete the staging directory after the child exits. A locked residue becomes app-owned `CleanupPending`, not an untracked file.
+
 - [ ] **Step 5: Implement manifest store and ACL**
 
 Create physically separate roots. Inventory-manifest DACL: `SYSTEM` and `Builtin Administrators` full, initiating user SID read-only, no `Builtin Users`/`Authenticated Users`. Its nonsecret state projection contains `LocalLifecycleState`, `OperationId`, `LastCleanupErrorClass` and `UpdatedUtc`, while the authoritative journal remains administrators/SYSTEM only. Profile DACL grants runtime access only to a unique per-instance service SID/account proven by Task 1; a common `LocalSystem`, `LocalService`, `NetworkService` or shared account without demonstrably equivalent per-instance isolation is `Gate: FAIL`. If Windows Service SID is used, capability profile records the exact SID type and the VM test proves the second service cannot read the first profile. UI/initiating user cannot read profiles. Split immutable config from writable runtime state/logs when the controller supports it. Writes use temp + flush + atomic replace. On every operation validate ACL and reparse status of every existing component.
 
 - [ ] **Step 6: Run helper tests and verify GREEN**
 
-Expected: 13/13 helper tests pass.
+Expected: 17/17 helper tests pass.
 
 - [ ] **Step 7: Commit**
 
@@ -583,17 +608,17 @@ Use Unicode APIs and `SafeHandle`:
 
 Request the minimum access mask for each operation. Do not grant interactive-user control over the resulting service ACL.
 
-- [ ] **Step 4: Apply the documented data-directory argument only**
+- [ ] **Step 4: Apply only the isolation mode selected by Task 1**
 
-Build the service ImagePath from the verified executable plus the one fixed, documented data-directory switch and a strictly quoted derived profile path. Do not write per-service environment or accept caller-provided arguments. Unit-test Windows command-line quoting, including spaces and trailing backslashes.
+Build the service ImagePath/execution contract solely from the exact-version `ControllerCapabilityProfile`: verified executable plus a fixed data-directory switch, a verified non-reparse per-instance execution path, or the app-owned supervisor selected by Task 1. Do not mix modes, write per-service environment or accept caller-provided arguments. Unit-test any Windows command-line quoting, including spaces and trailing backslashes.
 
 - [ ] **Step 5: Mirror only verified official service facts**
 
-Service account, dependencies, start mode and recovery actions come from public-admissible facts in `ControllerCapabilityProfile`, not from UI or discovery of an arbitrary similarly named service. If their exact public encoding lacks an official public source/permission, the gate fails before this task. After creation set and re-read an explicit service-object DACL: `SYSTEM` and Administrators receive only required management rights; operator/initiating SID gets no `CHANGE_CONFIG`, `WRITE_DAC`, `DELETE`, `START` or `STOP`. Do not silently elevate privileges beyond the official service configuration verified in Task 1.
+Service account, dependencies, start mode and recovery actions come from the exact-version `ControllerCapabilityProfile`, not from UI or discovery of an arbitrary similarly named service. If any required value was not proven by the technical gate, stop before this task; if it is `PrivateBlackBox`, retain the private-only publication status. After creation set and re-read an explicit service-object DACL: `SYSTEM` and Administrators receive only required management rights; operator/initiating SID gets no `CHANGE_CONFIG`, `WRITE_DAC`, `DELETE`, `START` or `STOP`. Do not silently elevate privileges beyond the official service configuration verified in Task 1.
 
 - [ ] **Step 6: Run helper tests and verify GREEN**
 
-Expected: 18/18 helper tests pass; helper builds as AnyCPU net48 without external packages.
+Expected: 22/22 helper tests pass; helper builds as AnyCPU net48 without external packages.
 
 - [ ] **Step 7: Commit**
 
@@ -617,13 +642,13 @@ git commit -m "Добавить безопасный адаптер Windows SCM"
 **Interfaces:**
 
 - `PrepareEmptyProfile(spec)` creates only the derived app-owned profile.
-- `CreateOrLoadConfiguration` uses only the documented data-directory/config contract proven in Task 1.
+- `CreateOrLoadConfiguration` uses only the exact-version data-directory/config contract proven in Task 1.
 - `ApplyConfiguration` changes only gRPC port, REST port and target LM address/port fields named in the capability profile.
 - `ReadConfiguration` returns typed values for reconciliation.
 
-- [ ] **Step 1: Create a sanitized schema fixture only from an admissible public contract**
+- [ ] **Step 1: Create a sanitized schema fixture from the passed exact-version capability profile**
 
-The fixture contains the minimum valid shape explicitly documented by an official public contract or covered by recorded publication permission, with dummy addresses/ports and no copied tokens, certificates, private keys, organization identifiers or comments. Add a provenance citation to that public basis. A schema inferred only from local runtime/filesystem evidence makes the gate fail; do not publish a sanitized reconstruction or paste the production file wholesale.
+The fixture contains only the minimum valid shape proven by Task 1, with dummy addresses/ports and no copied tokens, certificates, private keys, organization identifiers, values or comments from the observed profile. Add the evidence ID and provenance class. If any field is `PrivateBlackBox`, the fixture and compiled build remain private; never paste the production file wholesale.
 
 - [ ] **Step 2: Add profile-adapter tests**
 
@@ -644,13 +669,13 @@ Expected: missing profile adapter.
 
 - [ ] **Step 4: Implement exactly one proven schema adapter**
 
-Do not add heuristic key search. Require the expected object path, field types and schema discriminator from the admissible public contract recorded in Task 1. If schema differs, return `UnsupportedController` before changing a service.
+Do not add heuristic key search. Require the expected object path, field types and schema discriminator from the exact-version capability profile recorded in Task 1. If schema differs, return `UnsupportedController` before changing a service.
 
-For a new profile, independently generate the minimum supported schema from the public-admissible source contract cited in the capability profile; never copy the full official profile. Write only local ports and target address/port—never credentials. For an owned existing profile, patch the supported fields only while every service/child/listener PID is stopped, then replace the config atomically.
+For a new profile, independently generate the minimum supported schema from the exact-version capability profile; never copy the full official profile. Write only local ports and target address/port—never credentials. For an owned existing profile, patch the supported fields only while every service/child/listener PID is stopped, then replace the config atomically.
 
 - [ ] **Step 5: Run helper tests and verify GREEN**
 
-Expected: 24/24 helper tests pass.
+Expected: 28/28 helper tests pass.
 
 - [ ] **Step 6: Commit**
 
@@ -675,6 +700,7 @@ git commit -m "Добавить изолированную конфигурац�
 **Interfaces:**
 
 - `LmServiceProvisioner.EnsureBatch(request) : LmServiceProvisioningBatchResult`.
+- `LmServiceProvisioner.InstallControllerVersion(request) : LmControllerInstallResult`.
 - Probe checks service state, service PID and port-owner PID according to Task 1 capability profile.
 - No HTTP credentials are involved.
 
@@ -696,26 +722,36 @@ Run("Ensure journal recovers every simulated crash stage", EnsureJournalRecovers
 Run("Ensure serializes concurrent ensure remove and cleanup", EnsureSerializesConcurrentMutations);
 Run("Ensure batch continues failures and honors cancel boundary", EnsureBatchContinuesFailuresAndHonorsCancelBoundary);
 Run("Ensure batch rejects stale operation result", EnsureBatchRejectsStaleOperationResult);
+Run("Install version marks every managed instance verification pending before launch", InstallVersionMarksEveryManagedInstanceVerificationPendingBeforeLaunch);
+Run("Install version never runs a substituted or unlocked installer", InstallVersionNeverRunsSubstitutedOrUnlockedInstaller);
+Run("Install version leaves services stopped when verification fails", InstallVersionLeavesServicesStoppedWhenVerificationFails);
+Run("Ensure clears version pending only after recreated artifacts are ready", EnsureClearsVersionPendingOnlyAfterRecreatedArtifactsAreReady);
 ```
 
 - [ ] **Step 2: Run tests and verify RED**
 
 Expected: missing provisioner/probe.
 
-- [ ] **Step 3: Implement ownership verification**
+- [ ] **Step 3: Implement the selected-installer version transition**
+
+For `InstallControllerVersion`, validate the canonical confirmation, acquire the machine-wide mutex, call `VerifyStageAndLock`, enumerate only app-owned manifests, and atomically write `VersionVerificationPending` to every managed instance before stopping anything. Stop each managed service normally and verify its service/child/listener PIDs exited; never kill a process. Launch the staged signed installer visibly with no guessed silent/vendor arguments and wait for its exit. The official base service remains owned by the installer.
+
+After exit, re-resolve the installed binary and require exact version, hash, product, architecture, signer and protected path from the selected capability profile. Delete the protected staged copy. Success records the new machine controller version but keeps every old managed instance in `VersionVerificationPending`; the next `EnsureBatch` recreates any version-dependent execution/profile artifact and clears that state for one KKT only after readiness succeeds. Cancellation, installer failure, identity mismatch or staging-cleanup failure never restarts managed services automatically. Removal/cleanup remain available from the saved ownership manifest.
+
+- [ ] **Step 4: Implement ownership verification**
 
 Require operation journal/manifest + service marker + exact derived name + verified ImagePath + matching KKT serial. A pending journal alone is not sufficient to delete a service, but it permits deterministic reconciliation with the other ownership facts. The official base service has a separate read-only verification path and is never passed to `EnsureBatch`.
 
-- [ ] **Step 4: Implement ensure state machine**
+- [ ] **Step 5: Implement ensure state machine**
 
 Exact order for new service:
 
 1. authenticate and validate the whole batch/hash, then acquire a machine-wide operation mutex;
 2. for each KKT in stable serial order acquire a per-KKT mutex and reconcile any pending journal;
-3. verify capability and repeat official binary path/DACL/hash/signature checks;
+3. reject an unsupported machine version; accept `VersionVerificationPending` only as an explicit recreate/update action, then repeat official binary path/DACL/hash/signature checks;
 4. re-read listeners, then bind both managed ports to the exact capability-profile endpoints with `ExclusiveAddressUse=true`, no `ReuseAddress` and explicit IPv6-only/dual-stack mode; keep every probe socket while preparing the profile and creating the stopped service;
 5. atomically create `Preparing` operation journal before any profile/SCM mutation;
-6. prepare isolated profile and atomically generate/apply documented configuration;
+6. prepare isolated profile and atomically generate/apply the exact-version capability configuration;
 7. create service stopped with marker and restrictive service DACL, updating journal stage after success;
 8. release the two probe sockets immediately before `StartService`, then start service;
 9. wait bounded time for `Running` and both listeners;
@@ -727,15 +763,15 @@ For an owned existing service reconcile current state first. A matching ready se
 
 The two renamed tests above contain subcases for occupied IPv4, IPv6, dual-stack, OS-excluded candidate and a race immediately after probe release. Cancellation before the first item changes nothing; cancellation received during an item completes/reconciles that item only, marks every untouched item `Cancelled`, and returns a partial typed result. Pipe loss follows the same boundary.
 
-- [ ] **Step 5: Implement conservative failure behavior**
+- [ ] **Step 6: Implement conservative failure behavior**
 
 If a just-created service fails readiness, request a normal stop, keep the service/profile, retain a terminal failure journal for reconciliation, and return exact stage. Do not delete automatically. If SCM result is ambiguous, re-query; if still ambiguous, return `RequiresAttention`. Tests inject a crash after profile creation, `CreateService`, start and readiness, then prove the next run never creates an unowned orphan.
 
-- [ ] **Step 6: Run helper tests and verify GREEN**
+- [ ] **Step 7: Run helper tests and verify GREEN**
 
-Expected: 37/37 helper tests pass.
+Expected: 45/45 helper tests pass.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```powershell
 git add src/EsmTspiot.ServiceProvisioner tests/EsmTspiot.ServiceProvisioner.Tests/Program.cs
@@ -815,7 +851,7 @@ If SCM is already absent but a valid manifest or `Deleting/Cleaning` journal and
 
 - [ ] **Step 6: Run helper tests and verify GREEN**
 
-Expected: 47/47 helper tests pass. Source scan shows no forced-process termination or shell command.
+Expected: 55/55 helper tests pass. Source scan shows no forced-process termination or shell command.
 
 - [ ] **Step 7: Commit**
 
@@ -843,7 +879,7 @@ git commit -m "Добавить удаление управляемых служ
 
 **Interfaces:**
 
-- `ILmServiceProvisioner.EnsureBatchAsync(items, operationId, planHash, token)`, `RemoveAsync(LmRemovalConfirmation confirmation, token)` and `CleanupAsync(LmCleanupConfirmation confirmation, token)`. Each confirmation contains a new operation ID, KKT serial, observed manifest fingerprint and canonical hash of the exact dialog/inventory projection; it contains no arbitrary path or command.
+- `ILmServiceProvisioner.InstallControllerVersionAsync(selection, operationId, confirmationHash, token)`, `EnsureBatchAsync(items, operationId, planHash, token)`, `RemoveAsync(LmRemovalConfirmation confirmation, token)` and `CleanupAsync(LmCleanupConfirmation confirmation, token)`. Only install accepts one selected source path under the strict verifier contract from Task 4. Each other confirmation contains a new operation ID, KKT serial, observed manifest fingerprint and canonical hash of the exact dialog/inventory projection; it contains no arbitrary path or command.
 - `ILmGatewayProbe.ProbeAsync(serviceSpec, token)` returns typed service/listener readiness without credentials.
 - Windows adapters remain outside `EsmTspiot.Shared`.
 
@@ -1008,13 +1044,14 @@ git commit -m "Добавить управление жизненным цикл
 
 ### Task 11: Вкладка «Контроллеры ЛМ ЧЗ» и удаление из интерфейса
 
-**Состояние на 2026-08-27:** безопасный binding-only срез реализован до service gate на базе `LmGatewayBindingSession`, `LmGatewayPage`, Phase 1 discovery/planner/workflow и документированного PUT ЕСМ. Он показывает только зарегистрированные ККТ, хранит drafts/credentials в памяти текущего сеанса и не заявляет read-back. При выполнении Task 11 существующую страницу нужно расширить inventory/helper-функциями, а не заменять; до `PublicSourceReady` запрещено добавлять в неё создание, обновление или удаление служб, REST-порт и vendor-specific профиль.
+**Состояние на 2026-08-27:** безопасный binding-only срез реализован до service gate на базе `LmGatewayBindingSession`, `LmGatewayPage`, Phase 1 discovery/planner/workflow и документированного PUT ЕСМ. Он показывает только зарегистрированные ККТ, хранит drafts/credentials в памяти текущего сеанса и не заявляет read-back. При выполнении Task 11 существующую страницу нужно расширить inventory/helper-функциями, а не заменять; создание, обновление, удаление служб и vendor-specific профиль добавляются только после `TechnicalCompatibilityReady`, а до `PublicSourceReady` остаются private.
 
 **Files:**
 
 - Create: `src/EsmTspiot.WinForms.Shared/LmGatewayPage.cs`
 - Create: `src/EsmTspiot.WinForms.Shared/LmGatewayPlanDialog.cs`
 - Create: `src/EsmTspiot.WinForms.Shared/LmGatewayRemovalDialog.cs`
+- Create: `src/EsmTspiot.WinForms.Shared/LmControllerInstallerPicker.cs`
 - Modify: `src/EsmTspiot.WinForms.Shared/MainForm.cs`
 - Modify: `src/EsmTspiot.WinForms.Shared/BulkRegistrationDialog.cs`
 - Modify: `src/EsmTspiot.Legacy.WinForms/EsmTspiot.Legacy.WinForms.csproj`
@@ -1025,21 +1062,27 @@ git commit -m "Добавить управление жизненным цикл
 - New main tab: `Контроллеры ЛМ ЧЗ`.
 - `LmGatewayPage` receives base-URL provider, API/workflows, Windows adapters and `Action<string>` logger; it does not reach into private MainForm controls.
 - Delete action is enabled only for exactly one verified managed row.
+- `LmControllerInstallerPicker.SelectAndInspect(owner)` returns an in-memory `LmControllerInstallerSelection`; the helper remains the authoritative verifier.
 
 - [ ] **Step 1: Build the page layout as a separate UserControl**
 
 Use a resizable `TableLayoutPanel`:
 
-1. toolbar with `Обновить`, `Подготовить план`, `Создать / обновить выбранные`, `Повторить привязку к ЕСМ`, `Удалить службу` and contextual `Повторить очистку`;
-2. read-only status grid occupying remaining height;
-3. selected-row editor with target LM address/port, login/password, local gRPC/REST ports;
-4. status/help line.
+1. installer row with read-only path field, `Выбрать…`, `Установить / проверить версию` and a compact status showing filename, version, signer and shortened SHA-256;
+2. toolbar with `Обновить`, `Подготовить план`, `Создать / обновить выбранные`, `Повторить привязку к ЕСМ`, `Удалить службу` and contextual `Повторить очистку`;
+3. read-only status grid occupying remaining height;
+4. selected-row editor with target LM address/port, login/password, local gRPC/REST ports;
+5. status/help line.
 
 Grid columns exactly follow spec section 6.1. Password textbox uses `UseSystemPasswordChar = true`; grid and status never display it.
+
+The picker filter is `esm-lm-controller_*-windows-setup.exe`. Selection performs a non-authoritative read-only preflight and displays a clear mismatch; it never launches the file. Keep the full source path only in the current page session, do not add it to settings/logs/manifest, and clear it after install, cancel or form disposal. `Создать / обновить` remains disabled until the installed controller version is authoritatively verified by the helper.
 
 - [ ] **Step 2: Implement refresh and in-memory editing**
 
 `Обновить` performs Phase 1 KKT discovery and read-only service inventory/probe. It never requests UAC and never reads profile directories. Draft/credentials live only for the current form session. The plan stores no credentials; the page keeps a short-lived credential provider keyed by KKT serial and removes each reference after binding/cancel/close.
+
+`Установить / проверить версию` shows one final confirmation with selected metadata and the exact number of managed services that will be stopped. It sends `InstallControllerVersion` through one helper/UAC operation. After success refresh inventory: rows stay `VersionVerificationPending` until the user explicitly runs create/update for them; do not chain an automatic mass restart.
 
 Do not persist credentials to settings, registry, manifest or logs.
 
@@ -1247,7 +1290,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\package_compact_rele
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 ```
 
-Expected: 116 shared tests and 47 helper tests pass, zero compile/package errors. If review added tests, record the larger exact counts.
+Expected: 116 shared tests and 55 helper tests pass, zero compile/package errors. If review added tests, record the larger exact counts.
 
 - [ ] **Step 2: Run the same fail-fast static safety gate as CI**
 
@@ -1266,24 +1309,27 @@ Expected:
 
 From a clean supported VM snapshot:
 
-1. install the exact supported official controller;
-2. extract the verified compact package as administrator under `C:\Program Files\KRS\MultiKKT`, verify inherited protected ACL, then start the app unelevated;
-3. use a fake/test ESM and three synthetic KKT records with different INNs;
-4. confirm the verified base controller is displayed read-only and cannot be assigned;
-5. create three managed services with distinct gRPC/REST pairs from the approved pools and distinct dummy target LM endpoints; prove the helper rejects a deliberately occupied or OS-excluded candidate during its bind check;
-6. confirm one UAC sequence and per-item results;
-7. verify three independent profiles and listeners;
-8. verify three correct PUT bodies at fake ESM and absence of passwords in all app logs/files;
-9. rerun create/update and confirm no duplicate services and `NoChange` results;
-10. simulate one port conflict and confirm only its row is blocked;
-11. simulate one PUT failure, confirm service remains `ReadyNotBound`, then retry binding without UAC;
-12. remove one managed service from UI by typing its KKT serial;
-13. confirm service, profile, manifest and app-owned metadata absent, other two services/listeners unchanged, and UI says ESM binding remains;
-14. inject a locked profile file, confirm `CleanupPending`, unlock it and finish via `Повторить очистку` without manual folder deletion;
-15. confirm delete disabled for official base and unknown service;
-16. inject crashes after profile/create/start and prove the next launch reconciles journals without orphan/duplicate services;
-17. start concurrent ensure/remove attempts and prove mutex serialization;
-18. reboot VM and confirm remaining service autostart behavior matches capability profile.
+1. extract the verified compact package as administrator under `C:\Program Files\KRS\MultiKKT`, verify inherited protected ACL, then start the app unelevated;
+2. choose the exact supported `esm-lm-controller_*-windows-setup.exe` in the page and confirm displayed version/signer/hash;
+3. run `Установить / проверить версию`, confirm one UAC, protected staging cleanup and the verified official base controller;
+4. use a fake/test ESM and three synthetic KKT records with different INNs;
+5. confirm the verified base controller is displayed read-only and cannot be assigned;
+6. create three managed services with distinct gRPC/REST pairs from the approved pools and distinct dummy target LM endpoints; prove the helper rejects a deliberately occupied or OS-excluded candidate during its bind check;
+7. confirm one UAC sequence and per-item results;
+8. verify three independent profiles and listeners;
+9. verify three correct PUT bodies at fake ESM and absence of passwords in all app logs/files;
+10. rerun create/update and confirm no duplicate services and `NoChange` results;
+11. select and run the same verified installer again as an update rehearsal; confirm all managed rows become stopped `VersionVerificationPending` before installer launch and are not restarted automatically;
+12. explicitly run create/update and confirm each successfully verified row returns to `ServiceReady`, while removal remains available before that action;
+13. simulate one port conflict and confirm only its row is blocked;
+14. simulate one PUT failure, confirm service remains `ReadyNotBound`, then retry binding without UAC;
+15. remove one managed service from UI by typing its KKT serial;
+16. confirm service, profile, manifest and app-owned metadata absent, other two services/listeners unchanged, and UI says ESM binding remains;
+17. inject a locked profile file, confirm `CleanupPending`, unlock it and finish via `Повторить очистку` without manual folder deletion;
+18. confirm delete disabled for official base and unknown service;
+19. inject crashes after installer staging, version-pending publication, profile/create/start and prove the next launch reconciles journals without orphan/duplicate services;
+20. start concurrent install/ensure/remove attempts and prove mutex serialization;
+21. reboot VM and confirm remaining service autostart behavior matches capability profile.
 
 Use no production credentials or real organization data.
 
@@ -1304,12 +1350,12 @@ Reviewer checklist:
 - errors/cancellation are resumable and do not trigger guessed rollback;
 - same sources compile for Legacy and Modern;
 - packaging remains compact and excludes vendor code;
-- no public source/document contains a vendor-specific fact supported only by the local evidence pack;
+- no raw evidence, vendor binary or production secret is tracked; `PrivateBlackBox` facts are version-scoped and keep repository/build visibility private;
 - documentation matches actual behavior and limitations.
 
 - [ ] **Step 5: Record evidence and commit review result**
 
-Append to the public summary/provenance:
+Append to the private summary/provenance:
 
 - implementation commit hashes;
 - exact supported official controller version/hash/signature;
