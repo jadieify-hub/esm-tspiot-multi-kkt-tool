@@ -1008,6 +1008,8 @@ git commit -m "Добавить управление жизненным цикл
 
 ### Task 11: Вкладка «Контроллеры ЛМ ЧЗ» и удаление из интерфейса
 
+**Состояние на 2026-08-27:** безопасный binding-only срез реализован до service gate на базе `LmGatewayBindingSession`, `LmGatewayPage`, Phase 1 discovery/planner/workflow и документированного PUT ЕСМ. Он показывает только зарегистрированные ККТ, хранит drafts/credentials в памяти текущего сеанса и не заявляет read-back. При выполнении Task 11 существующую страницу нужно расширить inventory/helper-функциями, а не заменять; до `PublicSourceReady` запрещено добавлять в неё создание, обновление или удаление служб, REST-порт и vendor-specific профиль.
+
 **Files:**
 
 - Create: `src/EsmTspiot.WinForms.Shared/LmGatewayPage.cs`
