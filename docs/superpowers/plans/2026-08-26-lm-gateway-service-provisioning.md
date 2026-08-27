@@ -1077,7 +1077,7 @@ git commit -m "Добавить управление жизненным цикл
 - Delete action is enabled only for exactly one verified managed row.
 - `LmControllerInstallerPicker.SelectAndInspect(owner)` returns an in-memory `LmControllerInstallerSelection`; the helper remains the authoritative verifier.
 
-- [ ] **Step 1: Build the page layout as a separate UserControl**
+- [x] **Step 1: Build the page layout as a separate UserControl**
 
 Use a resizable `TableLayoutPanel`:
 
@@ -1091,7 +1091,7 @@ Grid columns exactly follow spec section 6.1. Password textbox uses `UseSystemPa
 
 The picker filter is `esm-lm-controller_*-windows-setup.exe`. Selection performs a non-authoritative read-only preflight and displays a clear mismatch; it never launches the file. Keep the full source path only in the current page session, do not add it to settings/logs/manifest, and clear it after install, cancel or form disposal. `Создать / обновить` remains disabled until the installed controller version is authoritatively verified by the helper.
 
-- [ ] **Step 2: Implement refresh and in-memory editing**
+- [x] **Step 2: Implement refresh and in-memory editing**
 
 `Обновить` performs Phase 1 KKT discovery and read-only service inventory/probe. It never requests UAC and never reads profile directories. Draft/credentials live only for the current form session. The plan stores no credentials; the page keeps a short-lived credential provider keyed by KKT serial and removes each reference after binding/cancel/close.
 
@@ -1099,15 +1099,15 @@ The picker filter is `esm-lm-controller_*-windows-setup.exe`. Selection performs
 
 Do not persist credentials to settings, registry, manifest or logs.
 
-- [ ] **Step 3: Implement plan confirmation dialog**
+- [x] **Step 3: Implement plan confirmation dialog**
 
 Show each KKT/INN, action, service role/name, local ports, target LM and validation. The dialog shows only `Credentials: заданы/не заданы`, never a password placeholder/value. Rows with blocking errors are automatically unchecked and remain visible as `Blocked`; the user may run the remaining valid selected rows. Start is enabled when at least one selected row is valid. UAC is requested only after the final start button.
 
-- [ ] **Step 4: Implement sequential execution and cancellation UI**
+- [x] **Step 4: Implement sequential execution and cancellation UI**
 
 Reuse the progress/cancellation UX pattern of `BulkRegistrationDialog`, not its business logic. Send all valid create/update rows in one helper batch/UAC, then show current KKT and stage while probing/binding. Closing during work sends `CancelAfterCurrentItem`; explain that the current KKT will finish safely and remaining KKT will not start. Never kill helper; the page remains mutation-locked until operation reconciliation. Already completed actions are not rolled back.
 
-- [ ] **Step 5: Implement removal dialog and button**
+- [x] **Step 5: Implement removal dialog and button**
 
 Enable `Удалить службу` only when:
 
@@ -1124,15 +1124,15 @@ Dialog displays KKT, INN, service, ports and the warnings from spec, including i
 
 For `CleanupPending`, replace delete with `Повторить очистку`; the app performs cleanup itself and never tells the user to find a folder manually. For official/unknown rows keep both mutation buttons disabled and show the reason. Do not offer «удалить все».
 
-- [ ] **Step 6: Connect the two product parts without automatic elevation**
+- [x] **Step 6: Connect the two product parts without automatic elevation**
 
 Add `public bool GoToLmGatewaysRequested { get; private set; }` and a post-completion button `_goToLmGatewaysButton` with text `Перейти к контроллерам ЛМ ЧЗ`. Show it only when outcome has at least one successfully registered/recovered row and the operation is no longer running. Its click sets the property, sets `DialogResult = OK` and closes. MainForm owns exactly one `LmGatewayPage`, selects its tab and calls refresh when the property is true. If the user closes normally, no behavior changes. Never start provisioning directly from bulk registration.
 
-- [ ] **Step 7: Link UI files into both WinForms projects**
+- [x] **Step 7: Link UI files into both WinForms projects**
 
 Add explicit compile links for the page and two dialogs to Legacy and Modern csproj files.
 
-- [ ] **Step 8: Compile both targets**
+- [x] **Step 8: Compile both targets**
 
 ```powershell
 & $msbuild src\EsmTspiot.Legacy.WinForms\EsmTspiot.Legacy.WinForms.csproj /restore /p:Configuration=Release
@@ -1141,7 +1141,7 @@ dotnet build src\EsmTspiot.Modern.WinForms\EsmTspiot.Modern.WinForms.csproj -c R
 
 Expected: zero errors. MainForm instantiates the page exactly once. The initial 780×580 window shows all tab labels; new page scrolls on a smaller working area and does not clip its grid/actions.
 
-- [ ] **Step 9: Manual UI smoke without mutations**
+- [x] **Step 9: Manual UI smoke without mutations**
 
 After the final build, rename the helper only inside that output folder and launch the app without rebuilding:
 
@@ -1153,7 +1153,7 @@ After the final build, rename the helper only inside that output folder and laun
 
 Repeat from a user-writable extracted folder: refresh and binding-only remain available, while create/delete/cleanup are disabled before UAC with an instruction to place the verified compact package under a protected administrator-owned installation directory.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```powershell
 git add src/EsmTspiot.WinForms.Shared src/EsmTspiot.Legacy.WinForms/EsmTspiot.Legacy.WinForms.csproj src/EsmTspiot.Modern.WinForms/EsmTspiot.Modern.WinForms.csproj
@@ -1178,7 +1178,7 @@ git commit -m "Добавить интерфейс контроллеров ЛМ
 - CI builds/runs shared tests, helper tests, Legacy, Modern and helper.
 - Default release asset is a compact ZIP containing the runnable set; no 60 MB self-contained assets by default.
 
-- [ ] **Step 1: Extend CI**
+- [x] **Step 1: Extend CI**
 
 Add after shared tests:
 
@@ -1195,7 +1195,7 @@ Keep the existing net8/net48 shared matrix and both WinForms builds. Implement a
 
 The same script performs a default-deny secret scan: only exact reviewed file+symbol patterns in request transport, short-lived credential DTO/input and masking code are allowed; a new `password/newPassword/token/secret/apiKey/authorization` production hit fails. It also fails on a tracked executable/library, private key/certificate bundle or recognized vendor artifact. Tests prove hit/no-hit/tool-error behavior so the scan itself cannot silently invert success.
 
-- [ ] **Step 2: Implement deterministic compact packaging**
+- [x] **Step 2: Implement deterministic compact packaging**
 
 Package a clean staging directory with this exact layout:
 
@@ -1203,14 +1203,14 @@ Package a clean staging directory with this exact layout:
 - root `EsmTspiot.Shared.dll` built for net48 and required by the Legacy app;
 - `Provisioner\EsmTspiot.ServiceProvisioner.exe`;
 - `Provisioner\EsmTspiot.Shared.dll` built for net48 plus any additional helper dependency outputs explicitly discovered from the helper build (no vendor binaries);
-- `README.txt` describing that the official controller must already be installed;
+- `README.txt` describing how to select the official installer from a licensed PIoT distribution and where to extract the compact package safely;
 - `SHA256SUMS` for every shipped file.
 
 The README gives one safe installation route for service operations: an administrator extracts the verified ZIP into `C:\Program Files\KRS\MultiKKT`; inherited ACL must deny ordinary-user write. From Downloads/Desktop/other user-writable folders the app deliberately offers only viewing and binding-only. The script copies dependencies from clean Release output directories, never from the repository root, verifies the exact layout above, and rejects an official controller binary, credential file, test fixture or PDB. It fails if helper/main versions, embedded helper hash or KRS author/company metadata differ. A VM smoke launches the Legacy EXE from the staging folder before the ZIP is accepted, catching a missing `EsmTspiot.Shared.dll`/helper dependency.
 
 Do not publish Modern self-contained x86/x64 by default. They remain CI-only unless explicitly requested.
 
-- [ ] **Step 3: Update README honestly**
+- [x] **Step 3: Update README honestly**
 
 Replace the current blanket statement that PUT settings is never called with precise behavior:
 
@@ -1224,7 +1224,7 @@ Replace the current blanket statement that PUT settings is never called with pre
 - service mutations require extraction to a protected administrator-owned directory;
 - compact ZIP is the default download.
 
-- [ ] **Step 4: Update beginner instruction and regenerate PDF**
+- [x] **Step 4: Update beginner instruction and regenerate PDF**
 
 Add two explicit scenarios:
 
@@ -1237,7 +1237,7 @@ Add two explicit scenarios:
 
 Regenerate the PDF with the existing script and visually inspect every page. Screenshots must be made from this product, not copied from another application.
 
-- [ ] **Step 5: Run package verification**
+- [x] **Step 5: Run package verification**
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\package_compact_release.ps1
@@ -1249,7 +1249,7 @@ Expected: one compact ZIP plus documentation/checksums as defined by the release
 
 Add the packaging command and archive-content verification as a CI step. Check its exit code and inspect the ZIP file list in CI, so a release package cannot diverge from locally tested output.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add .github/workflows/ci.yml scripts README.md INSTRUCTION_FOR_DUMMIES.md
@@ -1303,7 +1303,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\package_compact_rele
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 ```
 
-Expected: 116 shared tests and 60 helper tests pass, zero compile/package errors. If review added tests, record the larger exact counts.
+Expected: 121 shared tests and 60 helper tests pass, zero compile/package errors. If review added tests, record the larger exact counts.
 
 - [ ] **Step 2: Run the same fail-fast static safety gate as CI**
 
