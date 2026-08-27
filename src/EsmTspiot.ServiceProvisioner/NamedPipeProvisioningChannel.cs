@@ -323,21 +323,18 @@ namespace EsmTspiot.ServiceProvisioner
 
     internal static class PeerImagePathSafety
     {
-        private const FileSystemRights UnsafeRights =
-            FileSystemRights.Write |
-            FileSystemRights.Modify |
-            FileSystemRights.FullControl |
-            FileSystemRights.ChangePermissions |
-            FileSystemRights.TakeOwnership;
-
         internal static bool IsProtected(string imagePath)
         {
             try
             {
                 string fullPath = Path.GetFullPath(imagePath);
                 string directory = Path.GetDirectoryName(fullPath);
-                return IsAclProtected(new FileInfo(fullPath).GetAccessControl()) &&
-                    IsAclProtected(new DirectoryInfo(directory).GetAccessControl());
+                return PathSafety.IsSecurityProtected(
+                        new FileInfo(fullPath).GetAccessControl(),
+                        null) &&
+                    PathSafety.IsSecurityProtected(
+                        new DirectoryInfo(directory).GetAccessControl(),
+                        null);
             }
             catch (Exception ex)
             {
@@ -351,69 +348,8 @@ namespace EsmTspiot.ServiceProvisioner
 
         internal static bool HasReparseComponent(string path)
         {
-            try
-            {
-                string current = Path.GetFullPath(path);
-                while (!string.IsNullOrEmpty(current))
-                {
-                    if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
-                    {
-                        return true;
-                    }
-
-                    string parent = Path.GetDirectoryName(current);
-                    if (string.IsNullOrEmpty(parent) || string.Equals(parent, current, StringComparison.OrdinalIgnoreCase))
-                    {
-                        break;
-                    }
-                    current = parent;
-                }
-
-                return false;
-            }
-            catch (Exception ex)
-            {
-                if (ex is IOException || ex is UnauthorizedAccessException || ex is SystemException)
-                {
-                    return true;
-                }
-                throw;
-            }
-        }
-
-        private static bool IsAclProtected(FileSystemSecurity security)
-        {
-            AuthorizationRuleCollection rules = security.GetAccessRules(
-                true,
-                true,
-                typeof(SecurityIdentifier));
-            for (int index = 0; index < rules.Count; index++)
-            {
-                FileSystemAccessRule rule = rules[index] as FileSystemAccessRule;
-                if (rule == null || rule.AccessControlType != AccessControlType.Allow ||
-                    (rule.FileSystemRights & UnsafeRights) == 0)
-                {
-                    continue;
-                }
-
-                SecurityIdentifier sid = rule.IdentityReference as SecurityIdentifier;
-                if (sid == null || !IsPrivilegedSid(sid.Value))
-                {
-                    return false;
-                }
-            }
-
-            return true;
-        }
-
-        private static bool IsPrivilegedSid(string sid)
-        {
-            return string.Equals(sid, "S-1-5-18", StringComparison.Ordinal) ||
-                string.Equals(sid, "S-1-5-32-544", StringComparison.Ordinal) ||
-                string.Equals(
-                    sid,
-                    "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464",
-                    StringComparison.Ordinal);
+            string root = Path.GetPathRoot(Path.GetFullPath(path));
+            return PathSafety.HasReparseComponent(path, root);
         }
     }
 }

@@ -504,7 +504,7 @@ git commit -m "Добавить протокол помощника служб �
 - Operation journals live under a third protected `Operations` root and are the crash-recovery source before/through SCM mutation.
 - `PathSafety` rejects reparse points at every existing path component.
 
-- [ ] **Step 1: Add trust and manifest tests**
+- [x] **Step 1: Add trust and manifest tests**
 
 Register:
 
@@ -521,15 +521,15 @@ Run("Manifest ownership mismatch blocks mutation", ManifestOwnershipMismatchBloc
 
 Use fake filesystem/trust boundaries where practical. Tests must not require an installed controller or administrator rights.
 
-- [ ] **Step 2: Run helper tests and verify RED**
+- [x] **Step 2: Run helper tests and verify RED**
 
 Expected: missing trust and manifest types.
 
-- [ ] **Step 3: Encode only the passed capability profile**
+- [x] **Step 3: Encode only the passed capability profile**
 
 Transcribe only facts accepted by `TechnicalCompatibilityReady` for the exact version—controller version, allowed installation root/relative executable, PE architecture/product identity, code-signing EKU, valid SHA-256, Authenticode signer, fixed profile/config contract, the single `ProgramData` environment key and supervisor terminal-mode contract—into `ControllerCapabilityProfile`. Tag each fact with its provenance class. A `PrivateBlackBox` fact keeps the branch/build private. Supporting another version requires a new independently reviewed profile; do not accept «any signed file» or a wildcard publisher.
 
-- [ ] **Step 4: Implement path and trust checks**
+- [x] **Step 4: Implement path and trust checks**
 
 Requirements:
 
@@ -544,15 +544,15 @@ Requirements:
 
 For installer selection, require basename `esm-lm-controller_<version>-windows-setup.exe`, a regular non-reparse file, exact size/hash/version/signing identity from `ControllerCapabilityProfile`, and a valid Authenticode chain/code-signing EKU. Never execute from Downloads/Desktop directly. Copy through the locked source handle to `%ProgramData%\KRS\MultiKKT\InstallerStaging\<operationId>`, whose complete ancestor chain is administrator/SYSTEM-write only; verify the staged copy again, launch only that path, and delete the staging directory after the child exits. A locked residue becomes app-owned `CleanupPending`, not an untracked file.
 
-- [ ] **Step 5: Implement manifest store and ACL**
+- [x] **Step 5: Implement manifest store and ACL**
 
 Create physically separate roots. Inventory-manifest DACL: `SYSTEM` and `Builtin Administrators` full, initiating user SID read-only, no `Builtin Users`/`Authenticated Users`. Its nonsecret state projection contains `LocalLifecycleState`, `OperationId`, `LastCleanupErrorClass` and `UpdatedUtc`, while the authoritative journal remains administrators/SYSTEM only. Profile DACL grants runtime access to the unique per-instance service SID and management access to administrators/SYSTEM. Configure `SERVICE_SID_TYPE_RESTRICTED`; the supervisor and child inherit the restricted token, so the normal `SYSTEM` grant and restricted service-SID grant must both pass. A peer service SID is absent and cannot read the profile. UI/initiating user cannot read profiles. Split immutable config from writable runtime state/logs when the controller supports it. Writes use temp + flush + atomic replace. On every operation validate ACL and reparse status of every existing component.
 
-- [ ] **Step 6: Run helper tests and verify GREEN**
+- [x] **Step 6: Run helper tests and verify GREEN**
 
 Expected: 17/17 helper tests pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add src/EsmTspiot.ServiceProvisioner tests/EsmTspiot.ServiceProvisioner.Tests/Program.cs

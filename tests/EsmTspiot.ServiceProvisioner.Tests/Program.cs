@@ -3,6 +3,10 @@ using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using System.Runtime.Serialization.Json;
+using System.Security.AccessControl;
+using System.Security.Cryptography;
+using System.Security.Principal;
+using System.Text;
 using EsmTspiot.ServiceProvisioner;
 using EsmTspiot.Shared.Models;
 using EsmTspiot.Shared.Services;
@@ -24,10 +28,18 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Provisioning protocol exposes no credentials paths or commands", ProvisioningProtocolExposesNoCredentialsPathsOrCommands);
             Run("Installer operation accepts only one verified setup selection", InstallerOperationAcceptsOnlyOneVerifiedSetupSelection);
             Run("Installer operation rejects stale or substituted source file", InstallerOperationRejectsStaleOrSubstitutedSourceFile);
+            Run("Official controller locator enforces protected allowed root", OfficialControllerLocatorEnforcesProtectedAllowedRoot);
+            Run("Official controller locator enforces full product trust", OfficialControllerLocatorEnforcesFullProductTrust);
+            Run("Official installer verifier locks verifies and stages atomically", OfficialInstallerVerifierLocksVerifiesAndStagesAtomically);
+            Run("Official installer verifier rejects filename signer version or hash mismatch", OfficialInstallerVerifierRejectsFilenameSignerVersionOrHashMismatch);
+            Run("Manifest path is derived only from KKT serial", ManifestPathIsDerivedOnlyFromKktSerial);
+            Run("Manifest and profile stores reject reparse points", ManifestAndProfileStoresRejectReparsePoints);
+            Run("Manifest is atomic credential free and projects cleanup state", ManifestIsAtomicCredentialFreeAndProjectsCleanupState);
+            Run("Manifest ownership mismatch blocks mutation", ManifestOwnershipMismatchBlocksMutation);
 
             if (_failures == 0)
             {
-                Console.WriteLine("All 9 provisioner tests passed.");
+                Console.WriteLine("All 17 provisioner tests passed.");
                 return 0;
             }
 
@@ -279,6 +291,304 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 "A changed source length must fail before installer execution.");
         }
 
+        private static void OfficialControllerLocatorEnforcesProtectedAllowedRoot()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                string binaryPath = Path.Combine(root, "bin", "lmcontroller.exe");
+                Directory.CreateDirectory(Path.GetDirectoryName(binaryPath));
+                File.WriteAllBytes(binaryPath, Encoding.ASCII.GetBytes("trusted-controller"));
+                ControllerCapabilityProfile profile = CreateTestCapabilityProfile(root, binaryPath, null);
+                FakePathSafety safePaths = new FakePathSafety(true);
+                FakeFileTrustVerifier trust = new FakeFileTrustVerifier(profile.ControllerBinary, true);
+
+                OfficialControllerLocator locator = new OfficialControllerLocator(profile, trust, safePaths);
+                VerifiedControllerBinaryResult result = locator.ResolveVerifiedBinary();
+
+                AssertTrue(result.IsSuccess, result.ErrorMessage);
+                AssertEqual(Path.GetFullPath(binaryPath), result.Binary.FullPath,
+                    "Controller must resolve only under the fixed allowed root.");
+
+                profile.ControllerRelativePath = @"..\outside\lmcontroller.exe";
+                VerifiedControllerBinaryResult escaped =
+                    new OfficialControllerLocator(profile, trust, safePaths).ResolveVerifiedBinary();
+                AssertFalse(escaped.IsSuccess, "A relative path escaping the allowed root must fail closed.");
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        }
+
+        private static void OfficialControllerLocatorEnforcesFullProductTrust()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                string binaryPath = Path.Combine(root, "bin", "lmcontroller.exe");
+                Directory.CreateDirectory(Path.GetDirectoryName(binaryPath));
+                File.WriteAllBytes(binaryPath, Encoding.ASCII.GetBytes("trusted-controller"));
+                ControllerCapabilityProfile profile = CreateTestCapabilityProfile(root, binaryPath, null);
+                FakeFileTrustVerifier rejectedTrust = new FakeFileTrustVerifier(
+                    profile.ControllerBinary,
+                    false,
+                    "signer mismatch");
+
+                VerifiedControllerBinaryResult rejected = new OfficialControllerLocator(
+                    profile,
+                    rejectedTrust,
+                    new FakePathSafety(true)).ResolveVerifiedBinary();
+
+                AssertFalse(rejected.IsSuccess, "A path match without full product trust must be rejected.");
+                AssertContains(rejected.ErrorMessage, "signer mismatch");
+                AssertEqual(PeMachine.Amd64, rejectedTrust.LastExpectation.Machine,
+                    "The exact characterized PE architecture must reach the trust boundary.");
+                AssertEqual("CN=JSC ESP", rejectedTrust.LastExpectation.SignerSubject,
+                    "The exact signer must reach the trust boundary.");
+                AssertTrue(rejectedTrust.LastExpectation.RequireCodeSigningEku,
+                    "A generic certificate is not sufficient for executable trust.");
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        }
+
+        private static void OfficialInstallerVerifierLocksVerifiesAndStagesAtomically()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                string source = Path.Combine(root, "source", "esm-lm-controller_1.6.3.2-windows-setup.exe");
+                Directory.CreateDirectory(Path.GetDirectoryName(source));
+                byte[] content = Encoding.UTF8.GetBytes("official-installer-content");
+                File.WriteAllBytes(source, content);
+                string stagingRoot = Path.Combine(root, "staging");
+                ControllerCapabilityProfile profile = CreateTestCapabilityProfile(root, null, source);
+                FakeFileTrustVerifier trust = new FakeFileTrustVerifier(profile.Installer, true);
+                LmControllerInstallerSelection selection = CreateSelectionFromExpectation(source, profile.Installer);
+                OfficialControllerInstallerVerifier verifier = new OfficialControllerInstallerVerifier(
+                    profile,
+                    trust,
+                    new FakePathSafety(true),
+                    stagingRoot,
+                    Guid.NewGuid().ToString("N"));
+
+                string stagedPath;
+                using (LockedInstallerArtifact artifact = verifier.VerifyStageAndLock(selection))
+                {
+                    stagedPath = artifact.FullPath;
+                    AssertTrue(File.Exists(stagedPath), "Expected an administrator-owned staged copy.");
+                    AssertFalse(string.Equals(source, stagedPath, StringComparison.OrdinalIgnoreCase),
+                        "Installer must never execute directly from the selected source path.");
+                    AssertEqual(Convert.ToBase64String(content), Convert.ToBase64String(File.ReadAllBytes(stagedPath)),
+                        "Staging must copy the exact locked bytes.");
+
+                    bool sourceLocked = false;
+                    try
+                    {
+                        using (FileStream ignored = new FileStream(
+                            source, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete))
+                        {
+                        }
+                    }
+                    catch (IOException)
+                    {
+                        sourceLocked = true;
+                    }
+                    AssertTrue(sourceLocked, "Source must remain locked against write/delete through staging.");
+                }
+
+                using (FileStream writable = new FileStream(
+                    source, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete))
+                {
+                    AssertTrue(writable.CanWrite, "Disposing the artifact must release the source lock.");
+                }
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        }
+
+        private static void OfficialInstallerVerifierRejectsFilenameSignerVersionOrHashMismatch()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                string source = Path.Combine(root, "esm-lm-controller_1.6.3.2-windows-setup.exe");
+                File.WriteAllBytes(source, Encoding.UTF8.GetBytes("official-installer-content"));
+                ControllerCapabilityProfile profile = CreateTestCapabilityProfile(root, null, source);
+                FakeFileTrustVerifier trust = new FakeFileTrustVerifier(profile.Installer, true);
+                OfficialControllerInstallerVerifier verifier = new OfficialControllerInstallerVerifier(
+                    profile,
+                    trust,
+                    new FakePathSafety(true),
+                    Path.Combine(root, "staging"),
+                    Guid.NewGuid().ToString("N"));
+
+                LmControllerInstallerSelection wrongName = CreateSelectionFromExpectation(source, profile.Installer);
+                wrongName.FileName = "controller-setup.exe";
+                AssertThrows<InvalidDataException>(delegate { verifier.VerifyStageAndLock(wrongName); },
+                    "Filename mismatch must fail before staging.");
+
+                LmControllerInstallerSelection wrongSigner = CreateSelectionFromExpectation(source, profile.Installer);
+                wrongSigner.SignerThumbprint = new string('f', 40);
+                AssertThrows<InvalidDataException>(delegate { verifier.VerifyStageAndLock(wrongSigner); },
+                    "Signer mismatch must fail before staging.");
+
+                LmControllerInstallerSelection wrongVersion = CreateSelectionFromExpectation(source, profile.Installer);
+                wrongVersion.FileVersion = "9.9.9.9";
+                AssertThrows<InvalidDataException>(delegate { verifier.VerifyStageAndLock(wrongVersion); },
+                    "Version mismatch must fail before staging.");
+
+                LmControllerInstallerSelection wrongHash = CreateSelectionFromExpectation(source, profile.Installer);
+                wrongHash.Sha256 = new string('e', 64);
+                AssertThrows<InvalidDataException>(delegate { verifier.VerifyStageAndLock(wrongHash); },
+                    "Hash mismatch must fail before staging.");
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        }
+
+        private static void ManifestPathIsDerivedOnlyFromKktSerial()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                ManagedServiceManifestStore store = new ManagedServiceManifestStore(
+                    root,
+                    new FakePathSafety(true),
+                    "S-1-5-21-111-222-333-1001");
+                string serviceName = LmServiceIdentity.CreateName("00105700000001");
+
+                string manifestPath = store.GetManifestPath("00105700000001");
+                string profilePath = store.GetProfileRoot("00105700000001");
+
+                AssertContains(manifestPath, Path.Combine("Inventory", serviceName, "manifest.json"));
+                AssertContains(profilePath, Path.Combine("Profiles", serviceName));
+                AssertFalse(manifestPath.IndexOf("00105700000002", StringComparison.Ordinal) >= 0,
+                    "No caller-provided path may influence another KKT identity.");
+                AssertThrows<ArgumentException>(delegate { store.GetManifestPath(@"..\outside"); },
+                    "Unsafe serial must never become a path component.");
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        }
+
+        private static void ManifestAndProfileStoresRejectReparsePoints()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                FakePathSafety unsafePaths = new FakePathSafety(false);
+                ManagedServiceManifestStore store = new ManagedServiceManifestStore(
+                    root,
+                    unsafePaths,
+                    "S-1-5-21-111-222-333-1001");
+                ManagedServiceManifest manifest = CreateTestManifest(ManagedServiceLifecycleState.ServiceReady);
+
+                AssertThrows<InvalidDataException>(delegate { store.Write(manifest); },
+                    "Manifest store must fail before traversing a reparse path.");
+                AssertThrows<InvalidDataException>(delegate {
+                    store.EnsureProfileRoot(manifest.KktSerial, manifest.ServiceSid);
+                }, "Profile store must fail before traversing a reparse path.");
+
+                DirectorySecurity protectedAcl = new DirectorySecurity();
+                protectedAcl.SetOwner(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null));
+                protectedAcl.AddAccessRule(new FileSystemAccessRule(
+                    new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null),
+                    FileSystemRights.FullControl,
+                    AccessControlType.Allow));
+                protectedAcl.AddAccessRule(new FileSystemAccessRule(
+                    new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null),
+                    FileSystemRights.FullControl,
+                    AccessControlType.Allow));
+                AssertTrue(PathSafety.IsSecurityProtected(protectedAcl, null),
+                    "SYSTEM/Administrators-only DACL must be accepted.");
+
+                protectedAcl.AddAccessRule(new FileSystemAccessRule(
+                    new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null),
+                    FileSystemRights.Modify,
+                    AccessControlType.Allow));
+                AssertFalse(PathSafety.IsSecurityProtected(protectedAcl, null),
+                    "An unprivileged write ACE must fail closed.");
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        }
+
+        private static void ManifestIsAtomicCredentialFreeAndProjectsCleanupState()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                ManagedServiceManifestStore store = new ManagedServiceManifestStore(
+                    root,
+                    new FakePathSafety(true),
+                    "S-1-5-21-111-222-333-1001");
+                ManagedServiceManifest manifest = CreateTestManifest(ManagedServiceLifecycleState.CleanupPending);
+
+                store.Write(manifest);
+                ManagedServiceManifest loaded = store.Read(manifest.KktSerial);
+                LmServiceInventoryItem projection = store.ReadProjection(manifest.KktSerial);
+                string json = File.ReadAllText(store.GetManifestPath(manifest.KktSerial), Encoding.UTF8);
+
+                AssertEqual(manifest.ServiceName, loaded.ServiceName, "Expected the owned manifest to round-trip.");
+                AssertEqual(LmServiceProvisioningStatus.CleanupPending, projection.Status,
+                    "CleanupPending must remain visible after an app restart.");
+                AssertTrue(projection.ManifestFingerprint != null &&
+                           projection.ManifestFingerprint.Sha256.Length == 64,
+                    "Inventory projection must carry the observed immutable fingerprint.");
+                AssertFalse(json.IndexOf("password", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            json.IndexOf("credential", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            json.IndexOf("secret", StringComparison.OrdinalIgnoreCase) >= 0,
+                    "Manifest must remain credential-free.");
+                AssertEqual(0, Directory.GetFiles(
+                    Path.GetDirectoryName(store.GetManifestPath(manifest.KktSerial)), "*.tmp").Length,
+                    "Atomic write must not leave a temporary file after success.");
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        }
+
+        private static void ManifestOwnershipMismatchBlocksMutation()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                ManagedServiceManifestStore store = new ManagedServiceManifestStore(
+                    root,
+                    new FakePathSafety(true),
+                    "S-1-5-21-111-222-333-1001");
+                ManagedServiceManifest manifest = CreateTestManifest(ManagedServiceLifecycleState.ServiceReady);
+                store.Write(manifest);
+                string path = store.GetManifestPath(manifest.KktSerial);
+                string tampered = File.ReadAllText(path, Encoding.UTF8).Replace(
+                    manifest.ServiceName,
+                    "foreign-service");
+                File.WriteAllText(path, tampered, new UTF8Encoding(false));
+
+                AssertThrows<InvalidDataException>(delegate { store.Write(manifest); },
+                    "An existing ownership mismatch must block overwrite.");
+                AssertThrows<InvalidDataException>(delegate { store.Delete(manifest.KktSerial); },
+                    "An existing ownership mismatch must block deletion.");
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        }
+
         private static LmServiceProvisioningBatchRequest CreateEnsureRequest(int count)
         {
             LmServiceProvisioningBatchRequest request = CreateRequest(LmServiceOperation.EnsureBatch);
@@ -404,6 +714,105 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             };
         }
 
+        private static string CreateTemporaryDirectory()
+        {
+            string path = Path.Combine(
+                Path.GetTempPath(),
+                "esm_tspiot_provisioner_tests_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(path);
+            return path;
+        }
+
+        private static ControllerCapabilityProfile CreateTestCapabilityProfile(
+            string installRoot,
+            string binaryPath,
+            string installerPath)
+        {
+            string actualBinaryPath = binaryPath ?? Path.Combine(installRoot, "bin", "lmcontroller.exe");
+            string actualInstallerPath = installerPath ?? Path.Combine(
+                installRoot,
+                "esm-lm-controller_1.6.3.2-windows-setup.exe");
+            TrustedFileExpectation binary = CreateExpectation(actualBinaryPath, "lmcontroller.exe");
+            TrustedFileExpectation installer = CreateExpectation(
+                actualInstallerPath,
+                "esm-lm-controller_1.6.3.2-windows-setup.exe");
+            installer.FileVersion = "1.6.3.2";
+            installer.ProductVersion = string.Empty;
+
+            return ControllerCapabilityProfile.CreateForTesting(
+                "1.6.3.2",
+                installRoot,
+                Path.Combine("bin", "lmcontroller.exe"),
+                binary,
+                installer,
+                "ProgramData");
+        }
+
+        private static TrustedFileExpectation CreateExpectation(string path, string fileName)
+        {
+            byte[] content = File.Exists(path) ? File.ReadAllBytes(path) : Encoding.UTF8.GetBytes(fileName);
+            return new TrustedFileExpectation
+            {
+                FileName = fileName,
+                ByteLength = content.Length,
+                Sha256 = ComputeSha256(content),
+                FileVersion = string.Empty,
+                ProductVersion = string.Empty,
+                ProductName = string.Empty,
+                CompanyName = string.Empty,
+                Machine = PeMachine.Amd64,
+                SignerSubject = "CN=JSC ESP",
+                SignerThumbprint = "1CD26372850FE30F1559821CF5D318591695271A",
+                RequireCodeSigningEku = true
+            };
+        }
+
+        private static LmControllerInstallerSelection CreateSelectionFromExpectation(
+            string sourcePath,
+            TrustedFileExpectation expectation)
+        {
+            return new LmControllerInstallerSelection
+            {
+                SourcePath = sourcePath,
+                FileName = expectation.FileName,
+                ByteLength = expectation.ByteLength,
+                Sha256 = expectation.Sha256,
+                FileVersion = expectation.FileVersion,
+                ProductVersion = expectation.ProductVersion,
+                SignerSubject = expectation.SignerSubject,
+                SignerThumbprint = expectation.SignerThumbprint,
+                StopManagedInstancesWarningAccepted = true
+            };
+        }
+
+        private static ManagedServiceManifest CreateTestManifest(ManagedServiceLifecycleState state)
+        {
+            return ManagedServiceManifest.Create(
+                "00105700000001",
+                new LmGatewayPorts(55000, 15000),
+                new LmGatewayTarget("10.20.30.40", 5995),
+                "1.6.3.2",
+                new string('a', 64),
+                new string('b', 64),
+                "S-1-5-80-123456789-123456789-123456789-123456789-123456789",
+                Guid.NewGuid().ToString("N"),
+                state);
+        }
+
+        private static string ComputeSha256(byte[] content)
+        {
+            using (SHA256 algorithm = SHA256.Create())
+            {
+                byte[] hash = algorithm.ComputeHash(content);
+                StringBuilder result = new StringBuilder(hash.Length * 2);
+                for (int index = 0; index < hash.Length; index++)
+                {
+                    result.Append(hash[index].ToString("x2"));
+                }
+                return result.ToString();
+            }
+        }
+
         private static bool ContainsForbiddenPropertyFragment(string name)
         {
             string[] fragments =
@@ -468,6 +877,89 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             {
                 throw new InvalidOperationException(
                     "Expected text to contain: " + expected + ". Actual: " + text);
+            }
+        }
+
+        private static void AssertThrows<TException>(Action action, string message)
+            where TException : Exception
+        {
+            try
+            {
+                action();
+            }
+            catch (TException)
+            {
+                return;
+            }
+
+            throw new InvalidOperationException(message);
+        }
+
+        private sealed class FakePathSafety : IPathSafety
+        {
+            private readonly bool _isSafe;
+
+            internal FakePathSafety(bool isSafe)
+            {
+                _isSafe = isSafe;
+            }
+
+            public ValidationResult Validate(string path, string requiredRoot)
+            {
+                ValidationResult result = new ValidationResult();
+                if (!_isSafe)
+                {
+                    result.Add("reparse path rejected");
+                }
+                return result;
+            }
+
+            public ValidationResult ValidateProtected(
+                string path,
+                string requiredRoot,
+                string allowedWriterSid)
+            {
+                return Validate(path, requiredRoot);
+            }
+
+            public void EnsureProtectedDirectory(
+                string path,
+                ProtectedDirectoryKind kind,
+                string readOnlySid,
+                string serviceSid)
+            {
+                if (!_isSafe)
+                {
+                    throw new InvalidDataException("reparse path rejected");
+                }
+                Directory.CreateDirectory(path);
+            }
+        }
+
+        private sealed class FakeFileTrustVerifier : IFileTrustVerifier
+        {
+            private readonly TrustedFileExpectation _observed;
+            private readonly bool _trusted;
+            private readonly string _error;
+
+            internal FakeFileTrustVerifier(
+                TrustedFileExpectation observed,
+                bool trusted,
+                string error = null)
+            {
+                _observed = observed;
+                _trusted = trusted;
+                _error = error;
+            }
+
+            internal TrustedFileExpectation LastExpectation { get; private set; }
+
+            public FileTrustResult Verify(string path, TrustedFileExpectation expectation)
+            {
+                LastExpectation = expectation;
+                return _trusted
+                    ? FileTrustResult.Trusted(path, _observed)
+                    : FileTrustResult.Rejected(_error ?? "trust rejected");
             }
         }
     }
