@@ -46,9 +46,34 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & "tests\EsmTspiot.ServiceProvisioner.Tests\bin\Release\net48\EsmTspiot.ServiceProvisioner.Tests.exe"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          msbuild src\EsmTspiot.ServiceProvisioner\EsmTspiot.ServiceProvisioner.csproj /restore /p:Configuration=Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Проверить безопасность LM-реализации
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify_lm_safety.ps1
 
       - name: Собрать Legacy
         run: msbuild src\EsmTspiot.Legacy.WinForms\EsmTspiot.Legacy.WinForms.csproj /restore /p:Configuration=Release
 
       - name: Собрать Modern
         run: dotnet build src\EsmTspiot.Modern.WinForms\EsmTspiot.Modern.WinForms.csproj -c Release
+
+      - name: Собрать и проверить компактный ZIP
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\package_compact_release.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zipPath = "artifacts\release\MultiKKT-ESM-TSPioT-compact.zip"
+          $archive = [IO.Compression.ZipFile]::OpenRead((Resolve-Path $zipPath))
+          try {
+            $entries = @($archive.Entries | ForEach-Object FullName | Sort-Object)
+            $entries | ForEach-Object { Write-Host $_ }
+            if ($entries -match '(?i)(modern|win-x64|win-x86|esm-lm-controller|lmcontroller|\.pdb$)') {
+              throw "Compact ZIP contains a forbidden release entry."
+            }
+          }
+          finally {
+            $archive.Dispose()
+          }

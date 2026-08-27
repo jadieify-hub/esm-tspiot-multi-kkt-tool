@@ -16,7 +16,7 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "INSTRUCTION_FOR_DUMMIES.md"
 OUTPUT_DIR = ROOT / "output" / "pdf"
-OUTPUT = OUTPUT_DIR / "Instruction-MultiKKT-v11.1.pdf"
+OUTPUT = OUTPUT_DIR / "Instruction-MultiKKT.pdf"
 
 
 def register_fonts() -> tuple[str, str]:
@@ -123,7 +123,13 @@ def build_styles(font_name: str, bold_font_name: str):
 
 
 def inline_text(text: str) -> str:
-    return html.escape(text.replace("`", ""))
+    normalized = (
+        text.replace("`", "")
+        .replace("—", "-")
+        .replace("–", "-")
+        .replace("‑", "-")
+    )
+    return html.escape(normalized)
 
 
 def paragraph(text: str, style: ParagraphStyle) -> Paragraph:
