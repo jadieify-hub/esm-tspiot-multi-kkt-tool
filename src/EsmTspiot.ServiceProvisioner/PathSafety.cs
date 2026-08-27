@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Security.AccessControl;
 using System.Security.Principal;
@@ -11,7 +12,8 @@ namespace EsmTspiot.ServiceProvisioner
         Inventory = 1,
         Profile = 2,
         Operations = 3,
-        InstallerStaging = 4
+        InstallerStaging = 4,
+        ProfileContainer = 5
     }
 
     internal interface IPathSafety
@@ -158,6 +160,7 @@ namespace EsmTspiot.ServiceProvisioner
             string serviceSid)
         {
             Directory.CreateDirectory(path);
+            IList<SecurityIdentifier> preservedTraverseSids = ReadSafeTraverseSids(path);
             DirectorySecurity security = new DirectorySecurity();
             security.SetAccessRuleProtection(true, false);
             security.SetOwner(AdministratorsSid);
@@ -182,8 +185,69 @@ namespace EsmTspiot.ServiceProvisioner
                     new SecurityIdentifier(serviceSid),
                     FileSystemRights.Modify | FileSystemRights.Synchronize);
             }
+            if (kind == ProtectedDirectoryKind.ProfileContainer)
+            {
+                if (string.IsNullOrEmpty(serviceSid))
+                {
+                    throw new InvalidDataException("Profile container requires an exact service SID.");
+                }
+                SecurityIdentifier sid = new SecurityIdentifier(serviceSid);
+                if (!ContainsSid(preservedTraverseSids, sid.Value))
+                {
+                    preservedTraverseSids.Add(sid);
+                }
+            }
+            for (int index = 0; index < preservedTraverseSids.Count; index++)
+            {
+                security.AddAccessRule(new FileSystemAccessRule(
+                    preservedTraverseSids[index],
+                    FileSystemRights.Traverse | FileSystemRights.Synchronize,
+                    InheritanceFlags.None,
+                    PropagationFlags.None,
+                    AccessControlType.Allow));
+            }
 
             new DirectoryInfo(path).SetAccessControl(security);
+        }
+
+        private static IList<SecurityIdentifier> ReadSafeTraverseSids(string path)
+        {
+            List<SecurityIdentifier> result = new List<SecurityIdentifier>();
+            DirectorySecurity existing = new DirectoryInfo(path).GetAccessControl();
+            AuthorizationRuleCollection rules = existing.GetAccessRules(
+                true,
+                false,
+                typeof(SecurityIdentifier));
+            FileSystemRights allowed = FileSystemRights.Traverse | FileSystemRights.Synchronize;
+            for (int index = 0; index < rules.Count; index++)
+            {
+                FileSystemAccessRule rule = rules[index] as FileSystemAccessRule;
+                SecurityIdentifier sid = rule == null
+                    ? null
+                    : rule.IdentityReference as SecurityIdentifier;
+                if (rule != null && sid != null &&
+                    rule.AccessControlType == AccessControlType.Allow &&
+                    rule.InheritanceFlags == InheritanceFlags.None &&
+                    (rule.FileSystemRights & ~allowed) == 0 &&
+                    sid.Value.StartsWith("S-1-5-80-", StringComparison.Ordinal) &&
+                    !ContainsSid(result, sid.Value))
+                {
+                    result.Add(sid);
+                }
+            }
+            return result;
+        }
+
+        private static bool ContainsSid(IList<SecurityIdentifier> values, string sid)
+        {
+            for (int index = 0; index < values.Count; index++)
+            {
+                if (string.Equals(values[index].Value, sid, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         private static void AddDirectoryRule(

@@ -66,14 +66,14 @@ namespace EsmTspiot.ServiceProvisioner
             }
             _pathSafety.EnsureProtectedDirectory(
                 _root,
-                ProtectedDirectoryKind.Operations,
+                ProtectedDirectoryKind.ProfileContainer,
                 null,
-                null);
+                serviceSid);
             _pathSafety.EnsureProtectedDirectory(
                 _profilesRoot,
-                ProtectedDirectoryKind.Operations,
+                ProtectedDirectoryKind.ProfileContainer,
                 null,
-                null);
+                serviceSid);
             _pathSafety.EnsureProtectedDirectory(
                 path,
                 ProtectedDirectoryKind.Profile,
@@ -81,6 +81,57 @@ namespace EsmTspiot.ServiceProvisioner
                 serviceSid);
             EnsureProtectedSafety(path, serviceSid);
             return path;
+        }
+
+        internal string EnsureProfileContentDirectory(
+            string kktSerial,
+            string serviceSid,
+            params string[] relativeComponents)
+        {
+            string current = EnsureProfileRoot(kktSerial, serviceSid);
+            if (relativeComponents == null)
+            {
+                throw new ArgumentNullException("relativeComponents");
+            }
+            for (int index = 0; index < relativeComponents.Length; index++)
+            {
+                string component = relativeComponents[index];
+                if (string.IsNullOrWhiteSpace(component) ||
+                    component == "." || component == ".." ||
+                    component.IndexOfAny(new[] {
+                        Path.DirectorySeparatorChar,
+                        Path.AltDirectorySeparatorChar,
+                        Path.VolumeSeparatorChar }) >= 0)
+                {
+                    throw new ArgumentException("Profile path component is invalid.", "relativeComponents");
+                }
+                current = Path.Combine(current, component);
+                EnsureStructuralSafety(current);
+                if (Directory.Exists(current))
+                {
+                    EnsureProtectedSafety(current, serviceSid);
+                }
+                _pathSafety.EnsureProtectedDirectory(
+                    current,
+                    ProtectedDirectoryKind.Profile,
+                    null,
+                    serviceSid);
+                EnsureProtectedSafety(current, serviceSid);
+            }
+            return current;
+        }
+
+        internal void ValidateProfileContentPath(
+            string kktSerial,
+            string serviceSid,
+            string path)
+        {
+            string profileRoot = GetProfileRoot(kktSerial);
+            if (!PathSafety.IsUnderRoot(path, profileRoot))
+            {
+                throw new InvalidDataException("Profile content path escapes the derived profile root.");
+            }
+            EnsureProtectedSafety(path, serviceSid);
         }
 
         internal void Write(ManagedServiceManifest manifest)
@@ -307,35 +358,7 @@ namespace EsmTspiot.ServiceProvisioner
 
         internal static void Write(string path, byte[] payload)
         {
-            string temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-            try
-            {
-                using (FileStream stream = new FileStream(
-                    temporary,
-                    FileMode.CreateNew,
-                    FileAccess.Write,
-                    FileShare.None))
-                {
-                    stream.Write(payload, 0, payload.Length);
-                    stream.Flush(true);
-                }
-
-                if (File.Exists(path))
-                {
-                    File.Replace(temporary, path, null, true);
-                }
-                else
-                {
-                    File.Move(temporary, path);
-                }
-            }
-            finally
-            {
-                if (File.Exists(temporary))
-                {
-                    File.Delete(temporary);
-                }
-            }
+            new AtomicFileWriter().WriteBytes(path, payload);
         }
     }
 }
