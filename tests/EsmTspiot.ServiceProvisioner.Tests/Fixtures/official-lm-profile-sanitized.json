@@ -1,0 +1,20 @@
+{
+  "schemaId": "official-lm-controller-1.6.3.2-config-v1",
+  "controllerVersion": "1.6.3.2",
+  "provenanceClass": "PrivateBlackBox",
+  "evidenceId": "run3-empty-profile",
+  "requiredPaths": {
+    "settings.common.gRPCPort": "integer",
+    "settings.common.RESTPort": "integer",
+    "settings.lmConfig.url": "http-url-without-credentials",
+    "settings.lmConfig.port": "integer",
+    "settings.common.gRPCSecured": "boolean:true",
+    "settings.lmConfig.version": "literal:not defined"
+  },
+  "dummyValues": {
+    "gRPCPort": 55000,
+    "RESTPort": 15000,
+    "targetUrl": "http://192.0.2.10",
+    "targetPort": 45995
+  }
+}

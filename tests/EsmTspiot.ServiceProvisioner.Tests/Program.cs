@@ -46,10 +46,16 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Supervisor replaces only child ProgramData", SupervisorReplacesOnlyChildProgramData);
             Run("Supervisor rejects caller supplied environment and arguments", SupervisorRejectsCallerSuppliedEnvironmentAndArguments);
             Run("Supervisor stops child gracefully without process kill", SupervisorStopsChildGracefullyWithoutProcessKill);
+            Run("LM profile adapter changes only supported fields", LmProfileAdapterChangesOnlySupportedFields);
+            Run("LM profile adapter rejects ambiguous schema", LmProfileAdapterRejectsAmbiguousSchema);
+            Run("LM profile adapter preserves unknown nonsecret fields", LmProfileAdapterPreservesUnknownNonsecretFields);
+            Run("LM profile adapter writes atomically", LmProfileAdapterWritesAtomically);
+            Run("LM profile adapter never clones official profile", LmProfileAdapterNeverClonesOfficialProfile);
+            Run("LM profile adapter detects unsupported controller version", LmProfileAdapterDetectsUnsupportedControllerVersion);
 
             if (_failures == 0)
             {
-                Console.WriteLine("All 27 provisioner tests passed.");
+                Console.WriteLine("All 33 provisioner tests passed.");
                 return 0;
             }
 
@@ -795,6 +801,258 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 "The supervisor must wait for the same child PID.");
             AssertTrue(runtime.WaitMilliseconds > 0 && runtime.WaitMilliseconds <= 60000,
                 "Graceful stop wait must be bounded.");
+        }
+
+        private static void LmProfileAdapterChangesOnlySupportedFields()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                FakeWindowsServiceApi api = new FakeWindowsServiceApi();
+                OfficialLmProfileAdapter adapter = CreateTestProfileAdapter(root, api);
+                ManagedLmServiceSpec initial = CreateManagedSpec(
+                    "00105700000001", 55000, 15000, "10.20.30.40", 5995);
+                adapter.CreateOrLoadConfiguration(initial, TestServiceSid());
+                string path = adapter.GetConfigurationPath(initial.KktSerial);
+                string before = File.ReadAllText(path, Encoding.UTF8);
+                ManagedLmServiceSpec changed = CreateManagedSpec(
+                    initial.KktSerial, 55001, 15001, "lm-two.example", 6995);
+
+                adapter.ApplyConfiguration(changed, TestServiceSid());
+                LmProfileConfiguration observed = adapter.ReadConfiguration(
+                    initial.KktSerial, TestServiceSid());
+                string after = File.ReadAllText(path, Encoding.UTF8);
+
+                AssertEqual(55001, observed.GrpcPort, "Expected only the typed gRPC port update.");
+                AssertEqual(15001, observed.RestPort, "Expected only the typed REST port update.");
+                AssertEqual("lm-two.example", observed.TargetAddress,
+                    "Expected only the normalized target address update.");
+                AssertEqual(6995, observed.TargetPort, "Expected only the typed target port update.");
+                AssertEqual(RemoveSupportedProfileLines(before), RemoveSupportedProfileLines(after),
+                    "Every unsupported schema line must remain byte-for-byte stable.");
+
+                CreateTestSupervisorService(api).EnsureConfigured(initial.KktSerial);
+                api.Start(initial.ServiceName);
+                AssertThrows<InvalidOperationException>(delegate {
+                    adapter.ApplyConfiguration(changed, TestServiceSid());
+                }, "A running supervisor must block every profile mutation.");
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        }
+
+        private static void LmProfileAdapterRejectsAmbiguousSchema()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                OfficialLmProfileAdapter adapter = CreateTestProfileAdapter(root);
+                ManagedLmServiceSpec spec = CreateManagedSpec(
+                    "00105700000001", 55000, 15000, "10.20.30.40", 5995);
+                adapter.CreateOrLoadConfiguration(spec, TestServiceSid());
+                string path = adapter.GetConfigurationPath(spec.KktSerial);
+                File.AppendAllText(path, Environment.NewLine +
+                    "settings:" + Environment.NewLine +
+                    "    common:" + Environment.NewLine +
+                    "        gRPCPort: 55999" + Environment.NewLine, Encoding.UTF8);
+
+                AssertThrows<InvalidDataException>(delegate {
+                    adapter.ReadConfiguration(spec.KktSerial, TestServiceSid());
+                },
+                    "Duplicate schema paths must fail closed before configuration changes.");
+
+                ManagedLmServiceSpec second = CreateManagedSpec(
+                    "00105700000002", 55001, 15001, "10.20.30.41", 5996);
+                adapter.CreateOrLoadConfiguration(second, TestServiceSid());
+                string secondPath = adapter.GetConfigurationPath(second.KktSerial);
+                string malformedIndent = File.ReadAllText(secondPath, Encoding.UTF8).Replace(
+                    "        gRPCPort:",
+                    "            gRPCPort:");
+                File.WriteAllText(secondPath, malformedIndent, Encoding.UTF8);
+                AssertThrows<InvalidDataException>(delegate {
+                    adapter.ReadConfiguration(second.KktSerial, TestServiceSid());
+                }, "A path with non-exact nesting must fail closed.");
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        }
+
+        private static void LmProfileAdapterPreservesUnknownNonsecretFields()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                OfficialLmProfileAdapter adapter = CreateTestProfileAdapter(root);
+                ManagedLmServiceSpec spec = CreateManagedSpec(
+                    "00105700000001", 55000, 15000, "10.20.30.40", 5995);
+                adapter.CreateOrLoadConfiguration(spec, TestServiceSid());
+                string path = adapter.GetConfigurationPath(spec.KktSerial);
+                File.AppendAllText(path,
+                    "    extension:" + Environment.NewLine +
+                    "        harmlessFlag: keep-me" + Environment.NewLine,
+                    Encoding.UTF8);
+
+                adapter.ApplyConfiguration(CreateManagedSpec(
+                    spec.KktSerial, 55002, 15002, "10.20.30.41", 5996), TestServiceSid());
+
+                AssertContains(File.ReadAllText(path, Encoding.UTF8), "harmlessFlag: keep-me");
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        }
+
+        private static void LmProfileAdapterWritesAtomically()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                OfficialLmProfileAdapter adapter = CreateTestProfileAdapter(root);
+                ManagedLmServiceSpec spec = CreateManagedSpec(
+                    "00105700000001", 55000, 15000, "10.20.30.40", 5995);
+
+                adapter.CreateOrLoadConfiguration(spec, TestServiceSid());
+                adapter.ApplyConfiguration(CreateManagedSpec(
+                    spec.KktSerial, 55003, 15003, "10.20.30.42", 5997), TestServiceSid());
+
+                string directory = Path.GetDirectoryName(adapter.GetConfigurationPath(spec.KktSerial));
+                AssertEqual(0, Directory.GetFiles(directory, "*.tmp").Length,
+                    "Atomic profile writes must not leave a temporary file.");
+                AssertEqual(55003, adapter.ReadConfiguration(
+                    spec.KktSerial, TestServiceSid()).GrpcPort,
+                    "The atomically replaced file must remain readable.");
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        }
+
+        private static void LmProfileAdapterNeverClonesOfficialProfile()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                OfficialLmProfileAdapter adapter = CreateTestProfileAdapter(root);
+                ManagedLmServiceSpec spec = CreateManagedSpec(
+                    "00105700000001", 55000, 15000, "10.20.30.40", 5995);
+                string profileRoot = adapter.PrepareEmptyProfile(spec, TestServiceSid());
+                adapter.CreateOrLoadConfiguration(spec, TestServiceSid());
+                string[] files = Directory.GetFiles(profileRoot, "*", SearchOption.AllDirectories);
+
+                AssertEqual(1, files.Length,
+                    "A new profile may contain only the independently generated config before first start.");
+                AssertEqual("config.yml", Path.GetFileName(files[0]),
+                    "Certificates and keys must be generated by the official controller itself.");
+                string fixturePath = Path.Combine(
+                    AppDomain.CurrentDomain.BaseDirectory,
+                    "Fixtures",
+                    "official-lm-profile-sanitized.json");
+                string fixture = File.ReadAllText(fixturePath, Encoding.UTF8);
+                AssertContains(fixture, "PrivateBlackBox");
+                AssertContains(fixture, "run3-empty-profile");
+                AssertFalse(fixture.IndexOf("BEGIN ", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            fixture.IndexOf("password", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            fixture.IndexOf("token", StringComparison.OrdinalIgnoreCase) >= 0,
+                    "The sanitized schema fixture must contain no copied secrets.");
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        }
+
+        private static void LmProfileAdapterDetectsUnsupportedControllerVersion()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                TrustedFileExpectation binary = CreateExpectation(
+                    Path.Combine(root, "lmcontroller.exe"), "lmcontroller.exe");
+                TrustedFileExpectation installer = CreateExpectation(
+                    Path.Combine(root, "setup.exe"),
+                    "esm-lm-controller_9.9.9.9-windows-setup.exe");
+                ControllerCapabilityProfile unsupported = ControllerCapabilityProfile.CreateForTesting(
+                    "9.9.9.9",
+                    root,
+                    "lmcontroller.exe",
+                    binary,
+                    installer,
+                    "ProgramData");
+
+                AssertThrows<NotSupportedException>(delegate {
+                    new OfficialLmProfileAdapter(
+                        unsupported,
+                        new ManagedServiceManifestStore(
+                            root, new FakePathSafety(true), "S-1-5-21-111-222-333-1001"),
+                        new AtomicFileWriter(),
+                        new FakeWindowsServiceApi());
+                }, "An uncharacterized controller version must be rejected before profile access.");
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        }
+
+        private static OfficialLmProfileAdapter CreateTestProfileAdapter(
+            string root,
+            FakeWindowsServiceApi serviceApi = null)
+        {
+            return new OfficialLmProfileAdapter(
+                ControllerCapabilityProfile.SupportedVersion1632(),
+                new ManagedServiceManifestStore(
+                    root,
+                    new FakePathSafety(true),
+                    "S-1-5-21-111-222-333-1001"),
+                new AtomicFileWriter(),
+                serviceApi ?? new FakeWindowsServiceApi());
+        }
+
+        private static ManagedLmServiceSpec CreateManagedSpec(
+            string serial,
+            int grpcPort,
+            int restPort,
+            string targetAddress,
+            int targetPort)
+        {
+            return new ManagedLmServiceSpec(
+                new LmGatewayKkt
+                {
+                    KktSerial = serial,
+                    KktInn = "1234567894"
+                },
+                new LmGatewayPorts(grpcPort, restPort),
+                new LmGatewayTarget(targetAddress, targetPort));
+        }
+
+        private static string TestServiceSid()
+        {
+            return "S-1-5-80-123456789-123456789-123456789-123456789-123456789";
+        }
+
+        private static string RemoveSupportedProfileLines(string value)
+        {
+            string[] lines = value.Replace("\r\n", "\n").Split('\n');
+            StringBuilder result = new StringBuilder();
+            for (int index = 0; index < lines.Length; index++)
+            {
+                string trimmed = lines[index].TrimStart();
+                if (trimmed.StartsWith("gRPCPort:", StringComparison.Ordinal) ||
+                    trimmed.StartsWith("RESTPort:", StringComparison.Ordinal) ||
+                    trimmed.StartsWith("url:", StringComparison.Ordinal) ||
+                    trimmed.StartsWith("port:", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+                result.AppendLine(lines[index]);
+            }
+            return result.ToString();
         }
 
         private static LmGatewaySupervisorService CreateTestSupervisorService(

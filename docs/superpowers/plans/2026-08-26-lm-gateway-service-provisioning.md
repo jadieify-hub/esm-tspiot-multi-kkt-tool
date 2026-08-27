@@ -659,11 +659,11 @@ git commit -m "Добавить безопасный адаптер Windows SCM"
 - `ApplyConfiguration` changes only gRPC port, REST port and target LM address/port fields named in the capability profile.
 - `ReadConfiguration` returns typed values for reconciliation.
 
-- [ ] **Step 1: Create a sanitized schema fixture from the passed exact-version capability profile**
+- [x] **Step 1: Create a sanitized schema fixture from the passed exact-version capability profile**
 
 The fixture contains only the minimum valid shape proven by Task 1, with dummy addresses/ports and no copied tokens, certificates, private keys, organization identifiers, values or comments from the observed profile. Add the evidence ID and provenance class. If any field is `PrivateBlackBox`, the fixture and compiled build remain private; never paste the production file wholesale.
 
-- [ ] **Step 2: Add profile-adapter tests**
+- [x] **Step 2: Add profile-adapter tests**
 
 Register:
 
@@ -676,21 +676,21 @@ Run("LM profile adapter never clones official profile", LmProfileAdapterNeverClo
 Run("LM profile adapter detects unsupported controller version", LmProfileAdapterDetectsUnsupportedControllerVersion);
 ```
 
-- [ ] **Step 3: Run tests and verify RED**
+- [x] **Step 3: Run tests and verify RED**
 
 Expected: missing profile adapter.
 
-- [ ] **Step 4: Implement exactly one proven schema adapter**
+- [x] **Step 4: Implement exactly one proven schema adapter**
 
 Do not add heuristic key search. Require the expected object path, field types and schema discriminator from the exact-version capability profile recorded in Task 1. If schema differs, return `UnsupportedController` before changing a service.
 
 For a new profile, independently generate the minimum supported schema from the exact-version capability profile; never copy the full official profile, CA, certificate or key. Write only local ports and target address/port—never credentials. The controller must generate unique CA/server material on first start; readiness fails if expected generated artifacts are missing or shared with another managed profile. For an owned existing profile, patch the supported fields only while every service/child/listener PID is stopped, then replace the config atomically.
 
-- [ ] **Step 5: Run helper tests and verify GREEN**
+- [x] **Step 5: Run helper tests and verify GREEN**
 
 Expected: 33/33 helper tests pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add src/EsmTspiot.ServiceProvisioner tests/EsmTspiot.ServiceProvisioner.Tests
