@@ -29,5 +29,38 @@ namespace EsmTspiot.ServiceProvisioner
 
         [DataMember(Order = 8)]
         internal LmProvisioningJournalStage Stage { get; set; }
+
+        [DataMember(Order = 9)]
+        internal int GrpcPort { get; set; }
+
+        [DataMember(Order = 10)]
+        internal int RestPort { get; set; }
+
+        [DataMember(Order = 11)]
+        internal string TargetAddress { get; set; }
+
+        [DataMember(Order = 12)]
+        internal int TargetPort { get; set; }
+
+        [DataMember(Order = 13)]
+        internal string ServiceName { get; set; }
+
+        [DataMember(Order = 14)]
+        internal string SupervisorImagePath { get; set; }
+
+        [DataMember(Order = 15)]
+        internal string ProfilePath { get; set; }
+
+        [DataMember(Order = 16)]
+        internal string ServiceSid { get; set; }
+
+        [DataMember(Order = 17)]
+        internal string ControllerVersion { get; set; }
+
+        [DataMember(Order = 18)]
+        internal string ControllerBinarySha256 { get; set; }
+
+        [DataMember(Order = 19)]
+        internal string SupervisorSha256 { get; set; }
     }
 }
