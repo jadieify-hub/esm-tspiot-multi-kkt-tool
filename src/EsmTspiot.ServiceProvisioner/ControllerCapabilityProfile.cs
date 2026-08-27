@@ -65,6 +65,8 @@ namespace EsmTspiot.ServiceProvisioner
         internal WindowsServiceRecoveryPolicy ServiceRecoveryPolicy { get; private set; }
         internal string TerminalArguments { get; private set; }
         internal int GracefulStopTimeoutMilliseconds { get; private set; }
+        internal IList<string> GeneratedArtifactFileNames { get; private set; }
+        internal bool ListenerUsesDualStackIpv6Wildcard { get; private set; }
         internal IDictionary<string, CapabilityFactProvenance> Provenance { get; private set; }
 
         internal static ControllerCapabilityProfile SupportedVersion1632()
@@ -92,6 +94,14 @@ namespace EsmTspiot.ServiceProvisioner
                     new[] { 30000, 60000, 60000 }),
                 TerminalArguments = string.Empty,
                 GracefulStopTimeoutMilliseconds = 30000,
+                GeneratedArtifactFileNames = new List<string>
+                {
+                    "ca.crt",
+                    "ca.pem",
+                    "server.crt",
+                    "server.pem"
+                },
+                ListenerUsesDualStackIpv6Wildcard = true,
                 ControllerBinary = new TrustedFileExpectation
                 {
                     FileName = "lmcontroller.exe",
@@ -151,7 +161,15 @@ namespace EsmTspiot.ServiceProvisioner
                     60,
                     new[] { 30000, 60000, 60000 }),
                 TerminalArguments = string.Empty,
-                GracefulStopTimeoutMilliseconds = 30000
+                GracefulStopTimeoutMilliseconds = 30000,
+                GeneratedArtifactFileNames = new List<string>
+                {
+                    "ca.crt",
+                    "ca.pem",
+                    "server.crt",
+                    "server.pem"
+                },
+                ListenerUsesDualStackIpv6Wildcard = true
             };
             profile.TagProductionFacts();
             return profile;
@@ -173,6 +191,8 @@ namespace EsmTspiot.ServiceProvisioner
             Provenance["ServiceStartMode"] = CapabilityFactProvenance.PrivateBlackBox;
             Provenance["ServiceErrorControl"] = CapabilityFactProvenance.PrivateBlackBox;
             Provenance["ServiceRecoveryPolicy"] = CapabilityFactProvenance.PrivateBlackBox;
+            Provenance["GeneratedArtifactFileNames"] = CapabilityFactProvenance.PrivateBlackBox;
+            Provenance["ListenerUsesDualStackIpv6Wildcard"] = CapabilityFactProvenance.PrivateBlackBox;
         }
     }
 }

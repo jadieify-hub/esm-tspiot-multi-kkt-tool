@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Net;
+using System.Net.Sockets;
 using System.Reflection;
 using System.Runtime.Serialization.Json;
 using System.Security.AccessControl;
@@ -52,10 +54,27 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("LM profile adapter writes atomically", LmProfileAdapterWritesAtomically);
             Run("LM profile adapter never clones official profile", LmProfileAdapterNeverClonesOfficialProfile);
             Run("LM profile adapter detects unsupported controller version", LmProfileAdapterDetectsUnsupportedControllerVersion);
+            Run("Ensure creates profile service and listeners in order", EnsureCreatesProfileServiceAndListenersInOrder);
+            Run("Ensure is no op for matching ready service", EnsureIsNoOpForMatchingReadyService);
+            Run("Ensure starts matching stopped service", EnsureStartsMatchingStoppedService);
+            Run("Ensure safely updates owned mismatched service", EnsureSafelyUpdatesOwnedMismatchedService);
+            Run("Ensure blocks unknown existing service", EnsureBlocksUnknownExistingService);
+            Run("Ensure rechecks and holds exact exclusive endpoints until start", EnsureRechecksAndHoldsExactExclusiveEndpointsUntilStart);
+            Run("Ensure rejects listener owned by another process", EnsureRejectsListenerOwnedByAnotherProcess);
+            Run("Ensure leaves failed new service stopped for diagnosis", EnsureLeavesFailedNewServiceStoppedForDiagnosis);
+            Run("Ensure writes manifest only after confirmed stages", EnsureWritesManifestOnlyAfterConfirmedStages);
+            Run("Ensure journal recovers every simulated crash stage", EnsureJournalRecoversEverySimulatedCrashStage);
+            Run("Ensure serializes concurrent ensure remove and cleanup", EnsureSerializesConcurrentMutations);
+            Run("Ensure batch continues failures and honors cancel boundary", EnsureBatchContinuesFailuresAndHonorsCancelBoundary);
+            Run("Ensure batch rejects stale operation result", EnsureBatchRejectsStaleOperationResult);
+            Run("Install version marks every managed instance verification pending before launch", InstallVersionMarksEveryManagedInstanceVerificationPendingBeforeLaunch);
+            Run("Install version never runs a substituted or unlocked installer", InstallVersionNeverRunsSubstitutedOrUnlockedInstaller);
+            Run("Install version leaves services stopped when verification fails", InstallVersionLeavesServicesStoppedWhenVerificationFails);
+            Run("Ensure clears version pending only after recreated artifacts are ready", EnsureClearsVersionPendingOnlyAfterRecreatedArtifactsAreReady);
 
             if (_failures == 0)
             {
-                Console.WriteLine("All 33 provisioner tests passed.");
+                Console.WriteLine("All 50 provisioner tests passed.");
                 return 0;
             }
 
@@ -717,6 +736,10 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             AssertTrue(api.LastDefinition.RecoveryPolicy != null &&
                        api.LastDefinition.RecoveryPolicy.RestartDelaysMilliseconds.Count == 3,
                 "The exact characterized recovery policy must accompany creation.");
+            AssertEqual(
+                "S-1-5-80-1562836834-2535112711-1761592931-1687635663-3051341797",
+                RestrictedServiceSid.Derive("krs-esm-lm-00105700000001"),
+                "Service SID derivation must match the Windows service-SID algorithm before creation.");
         }
 
         private static void ScmImagePathTargetsOnlyProtectedSupervisorMode()
@@ -1055,6 +1078,424 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             return result.ToString();
         }
 
+        private static void EnsureCreatesProfileServiceAndListenersInOrder()
+        {
+            FakeLmProvisioningPlatform platform = new FakeLmProvisioningPlatform();
+            LmServiceProvisioningBatchResult result = new LmServiceProvisioner(platform)
+                .EnsureBatch(CreateEnsureRequest(1), NeverCancelLmProvisioning.Instance);
+
+            AssertEqual(LmServiceProvisioningStatus.Succeeded, result.Items[0].Status,
+                "A fully confirmed new service must succeed.");
+            AssertEventOrder(platform.Events,
+                "MachineLock", "ItemLock:00105700000001", "Reconcile:00105700000001",
+                "VerifyController", "Reserve:00105700000001", "Journal:Preparing",
+                "Profile:00105700000001", "Journal:ProfileReady", "Configure:00105700000001",
+                "Journal:ServiceReady", "ReleasePorts:00105700000001", "Start:00105700000001",
+                "Journal:Started", "Probe:00105700000001", "Manifest:00105700000001",
+                "CompleteJournal:00105700000001");
+        }
+
+        private static void EnsureIsNoOpForMatchingReadyService()
+        {
+            FakeLmProvisioningPlatform platform = new FakeLmProvisioningPlatform();
+            platform.SetState("00105700000001", LmProvisioningObservedState.MatchingReady);
+
+            LmServiceProvisioningBatchResult result = new LmServiceProvisioner(platform)
+                .EnsureBatch(CreateEnsureRequest(1), NeverCancelLmProvisioning.Instance);
+
+            AssertEqual(LmServiceProvisioningStatus.Succeeded, result.Items[0].Status,
+                "A matching ready service must be reported unchanged.");
+            AssertContains(result.Items[0].Message, "изменений");
+            AssertFalse(platform.ContainsEventPrefix("Reserve:") ||
+                        platform.ContainsEventPrefix("Configure:") ||
+                        platform.ContainsEventPrefix("Start:"),
+                "A matching ready service must not be mutated.");
+        }
+
+        private static void EnsureStartsMatchingStoppedService()
+        {
+            FakeLmProvisioningPlatform platform = new FakeLmProvisioningPlatform();
+            platform.SetState("00105700000001", LmProvisioningObservedState.MatchingStopped);
+
+            LmServiceProvisioningBatchResult result = new LmServiceProvisioner(platform)
+                .EnsureBatch(CreateEnsureRequest(1), NeverCancelLmProvisioning.Instance);
+
+            AssertEqual(LmServiceProvisioningStatus.Succeeded, result.Items[0].Status,
+                "A matching stopped service must start and pass readiness.");
+            AssertTrue(platform.ContainsEventPrefix("Start:"), "Expected StartService.");
+            AssertFalse(platform.ContainsEventPrefix("Configure:"),
+                "An exact stopped service needs no SCM rewrite.");
+        }
+
+        private static void EnsureSafelyUpdatesOwnedMismatchedService()
+        {
+            FakeLmProvisioningPlatform platform = new FakeLmProvisioningPlatform();
+            platform.SetState("00105700000001", LmProvisioningObservedState.OwnedMismatch);
+
+            LmServiceProvisioningBatchResult result = new LmServiceProvisioner(platform)
+                .EnsureBatch(CreateEnsureRequest(1), NeverCancelLmProvisioning.Instance);
+
+            AssertEqual(LmServiceProvisioningStatus.Succeeded, result.Items[0].Status,
+                "An owned mismatch must be updated transactionally.");
+            AssertEventOrder(platform.Events, "Stop:00105700000001", "Reserve:00105700000001",
+                "Profile:00105700000001", "Configure:00105700000001",
+                "ReleasePorts:00105700000001", "Start:00105700000001");
+        }
+
+        private static void EnsureBlocksUnknownExistingService()
+        {
+            FakeLmProvisioningPlatform platform = new FakeLmProvisioningPlatform();
+            platform.SetState("00105700000001", LmProvisioningObservedState.Foreign);
+
+            LmServiceProvisioningBatchResult result = new LmServiceProvisioner(platform)
+                .EnsureBatch(CreateEnsureRequest(1), NeverCancelLmProvisioning.Instance);
+
+            AssertEqual(LmServiceProvisioningStatus.RequiresAttention, result.Items[0].Status,
+                "A foreign service at the derived name must block mutation.");
+            AssertFalse(platform.ContainsEventPrefix("Stop:") ||
+                        platform.ContainsEventPrefix("Configure:"),
+                "Unknown ownership must not trigger stop or update.");
+        }
+
+        private static void EnsureRechecksAndHoldsExactExclusiveEndpointsUntilStart()
+        {
+            FakeLmProvisioningPlatform platform = new FakeLmProvisioningPlatform();
+            platform.RequireReservationReleasedBeforeStart = true;
+
+            LmServiceProvisioningBatchResult result = new LmServiceProvisioner(platform)
+                .EnsureBatch(CreateEnsureRequest(1), NeverCancelLmProvisioning.Instance);
+
+            AssertEqual(LmServiceProvisioningStatus.Succeeded, result.Items[0].Status,
+                "The exact dual-stack reservation must be released only at the start boundary.");
+            AssertTrue(platform.ReservationHeldDuringProfileAndScm,
+                "Both listener ports must remain exclusively held through profile and SCM mutation.");
+
+            int first = FindUnusedDualStackPort();
+            int second = FindUnusedDualStackPort(first);
+            using (ExclusiveTcpPortReservation reservation =
+                ExclusiveTcpPortReservation.AcquireDualStackWildcard(first, second))
+            {
+                AssertThrows<SocketException>(
+                    delegate { BindAndClose(AddressFamily.InterNetwork, first, false); },
+                    "The reservation must occupy the IPv4 side of the dual-stack endpoint.");
+                AssertThrows<SocketException>(
+                    delegate { BindAndClose(AddressFamily.InterNetworkV6, second, false); },
+                    "The reservation must occupy the IPv6 side of the dual-stack endpoint.");
+            }
+
+            using (Socket ipv4Owner = CreateExclusiveSocket(AddressFamily.InterNetwork, true))
+            {
+                ipv4Owner.Bind(new IPEndPoint(IPAddress.Any, 0));
+                int occupied = ((IPEndPoint)ipv4Owner.LocalEndPoint).Port;
+                int peer = FindUnusedDualStackPort(occupied);
+                AssertThrows<SocketException>(
+                    delegate
+                    {
+                        using (ExclusiveTcpPortReservation ignored =
+                            ExclusiveTcpPortReservation.AcquireDualStackWildcard(occupied, peer))
+                        {
+                        }
+                    },
+                    "An existing IPv4 listener must block a dual-stack reservation.");
+            }
+
+            using (Socket ipv6Owner = CreateExclusiveSocket(AddressFamily.InterNetworkV6, false))
+            {
+                ipv6Owner.Bind(new IPEndPoint(IPAddress.IPv6Any, 0));
+                int occupied = ((IPEndPoint)ipv6Owner.LocalEndPoint).Port;
+                int peer = FindUnusedDualStackPort(occupied);
+                AssertThrows<SocketException>(
+                    delegate
+                    {
+                        using (ExclusiveTcpPortReservation ignored =
+                            ExclusiveTcpPortReservation.AcquireDualStackWildcard(occupied, peer))
+                        {
+                        }
+                    },
+                    "An existing IPv6 listener must block a dual-stack reservation.");
+            }
+        }
+
+        private static void EnsureRejectsListenerOwnedByAnotherProcess()
+        {
+            FakeLmProvisioningPlatform platform = new FakeLmProvisioningPlatform();
+            platform.Readiness = LmReadinessResult.Failed("listener belongs to another process");
+
+            LmServiceProvisioningBatchResult result = new LmServiceProvisioner(platform)
+                .EnsureBatch(CreateEnsureRequest(1), NeverCancelLmProvisioning.Instance);
+
+            AssertEqual(LmServiceProvisioningStatus.Failed, result.Items[0].Status,
+                "Foreign listener ownership must fail readiness.");
+            AssertContains(result.Items[0].Message, "listener");
+
+            using (Socket listener = CreateExclusiveSocket(
+                AddressFamily.InterNetworkV6,
+                true))
+            {
+                listener.Bind(new IPEndPoint(IPAddress.IPv6Any, 0));
+                listener.Listen(1);
+                int port = ((IPEndPoint)listener.LocalEndPoint).Port;
+                IList<int> owners = new TcpListenerOwnerReader()
+                    .FindListenerProcessIds(port);
+                AssertTrue(
+                    owners.Contains(System.Diagnostics.Process.GetCurrentProcess().Id),
+                    "The IP Helper reader must map an IPv6 dual-stack listener to its owner PID.");
+            }
+        }
+
+        private static void EnsureLeavesFailedNewServiceStoppedForDiagnosis()
+        {
+            FakeLmProvisioningPlatform platform = new FakeLmProvisioningPlatform();
+            platform.Readiness = LmReadinessResult.Failed("readiness timeout");
+
+            new LmServiceProvisioner(platform).EnsureBatch(
+                CreateEnsureRequest(1), NeverCancelLmProvisioning.Instance);
+
+            AssertTrue(platform.ContainsEventPrefix("Stop:"),
+                "A failed new service must receive a normal stop request.");
+            AssertFalse(platform.ContainsEventPrefix("Delete:"),
+                "A failed new service must remain for diagnosis and reconciliation.");
+            AssertTrue(platform.Events.Contains("Journal:Failed"),
+                "A terminal failure journal must remain.");
+        }
+
+        private static void EnsureWritesManifestOnlyAfterConfirmedStages()
+        {
+            FakeLmProvisioningPlatform platform = new FakeLmProvisioningPlatform();
+            new LmServiceProvisioner(platform).EnsureBatch(
+                CreateEnsureRequest(1), NeverCancelLmProvisioning.Instance);
+
+            AssertTrue(platform.Events.IndexOf("Probe:00105700000001") <
+                       platform.Events.IndexOf("Manifest:00105700000001"),
+                "Manifest ownership must be committed only after readiness.");
+            AssertTrue(platform.Events.IndexOf("Manifest:00105700000001") <
+                       platform.Events.IndexOf("CompleteJournal:00105700000001"),
+                "The crash journal must be removed last.");
+        }
+
+        private static void EnsureJournalRecoversEverySimulatedCrashStage()
+        {
+            string[] stages = { "Profile", "Configure", "Start", "Manifest" };
+            for (int index = 0; index < stages.Length; index++)
+            {
+                FakeLmProvisioningPlatform platform = new FakeLmProvisioningPlatform();
+                platform.ThrowOnceAtPrefix = stages[index] + ":";
+                LmServiceProvisioningBatchRequest request = CreateEnsureRequest(1);
+                new LmServiceProvisioner(platform).EnsureBatch(
+                    request, NeverCancelLmProvisioning.Instance);
+                platform.ThrowOnceAtPrefix = null;
+                platform.Events.Clear();
+
+                new LmServiceProvisioner(platform).EnsureBatch(
+                    request, NeverCancelLmProvisioning.Instance);
+
+                AssertTrue(platform.Events.IndexOf("Reconcile:00105700000001") >= 0,
+                    "Every resumed stage must reconcile its journal first.");
+                AssertTrue(platform.Events.IndexOf("Reconcile:00105700000001") <
+                           platform.Events.IndexOf("VerifyController"),
+                    "Recovery must precede fresh mutation after " + stages[index] + ".");
+            }
+        }
+
+        private static void EnsureSerializesConcurrentMutations()
+        {
+            FakeLmProvisioningPlatform platform = new FakeLmProvisioningPlatform();
+            new LmServiceProvisioner(platform).EnsureBatch(
+                CreateEnsureRequest(2), NeverCancelLmProvisioning.Instance);
+
+            AssertEqual(1, platform.MaximumMachineLockDepth,
+                "Only one machine mutation boundary may be held.");
+            AssertEqual(1, platform.MaximumItemLockDepth,
+                "Only one per-KKT mutation boundary may be held at a time.");
+            AssertEqual(0, platform.CurrentMachineLockDepth,
+                "Machine lock must be released after the batch.");
+            AssertEqual(0, platform.CurrentItemLockDepth,
+                "Item lock must be released after each KKT.");
+        }
+
+        private static void EnsureBatchContinuesFailuresAndHonorsCancelBoundary()
+        {
+            FakeLmProvisioningPlatform continuing = new FakeLmProvisioningPlatform();
+            continuing.FailSerial = "00105700000001";
+            LmServiceProvisioningBatchResult continued = new LmServiceProvisioner(continuing)
+                .EnsureBatch(CreateEnsureRequest(2), NeverCancelLmProvisioning.Instance);
+            AssertEqual(LmServiceProvisioningStatus.Failed, continued.Items[0].Status,
+                "The injected item failure must be preserved.");
+            AssertEqual(LmServiceProvisioningStatus.Succeeded, continued.Items[1].Status,
+                "A failed row must not hide or skip the next row.");
+
+            FakeLmProvisioningPlatform cancelling = new FakeLmProvisioningPlatform();
+            CancelAfterCompletedItems cancel = new CancelAfterCompletedItems(cancelling, 1);
+            LmServiceProvisioningBatchResult cancelled = new LmServiceProvisioner(cancelling)
+                .EnsureBatch(CreateEnsureRequest(3), cancel);
+            AssertEqual(LmServiceProvisioningStatus.Succeeded, cancelled.Items[0].Status,
+                "The current item must finish before cancellation.");
+            AssertEqual(LmServiceProvisioningStatus.Cancelled, cancelled.Items[1].Status,
+                "The first untouched item must be cancelled.");
+            AssertEqual(LmServiceProvisioningStatus.Cancelled, cancelled.Items[2].Status,
+                "Every remaining untouched item must be cancelled.");
+        }
+
+        private static void EnsureBatchRejectsStaleOperationResult()
+        {
+            FakeLmProvisioningPlatform platform = new FakeLmProvisioningPlatform();
+            LmServiceProvisioningBatchRequest request = CreateEnsureRequest(1);
+            request.PlanHash = new string('f', 64);
+
+            LmServiceProvisioningBatchResult result = new LmServiceProvisioner(platform)
+                .EnsureBatch(request, NeverCancelLmProvisioning.Instance);
+
+            AssertEqual(LmServiceProvisioningStatus.Failed, result.Status,
+                "A stale canonical operation hash must fail before locks or SCM.");
+            AssertEqual(0, platform.Events.Count,
+                "A stale request must not reach the mutation platform.");
+        }
+
+        private static void InstallVersionMarksEveryManagedInstanceVerificationPendingBeforeLaunch()
+        {
+            FakeLmProvisioningPlatform platform = new FakeLmProvisioningPlatform();
+            platform.ManagedSerials.Add("00105700000001");
+            platform.ManagedSerials.Add("00105700000002");
+
+            LmControllerInstallResult result = new LmServiceProvisioner(platform)
+                .InstallControllerVersion(CreateInstallerRequest());
+
+            AssertEqual(LmServiceProvisioningStatus.Succeeded, result.Status,
+                "A verified staged installer may complete.");
+            AssertEventOrder(platform.Events,
+                "PrepareInstaller", "VersionPending:00105700000001",
+                "VersionPending:00105700000002", "Stop:00105700000001",
+                "Stop:00105700000002", "LaunchInstaller");
+            AssertFalse(platform.ContainsEventPrefix("Start:"),
+                "Managed services must not restart automatically after installer exit.");
+        }
+
+        private static void InstallVersionNeverRunsSubstitutedOrUnlockedInstaller()
+        {
+            FakeLmProvisioningPlatform platform = new FakeLmProvisioningPlatform();
+            platform.RejectInstaller = true;
+
+            LmControllerInstallResult result = new LmServiceProvisioner(platform)
+                .InstallControllerVersion(CreateInstallerRequest());
+
+            AssertEqual(LmServiceProvisioningStatus.Failed, result.Status,
+                "A substituted installer must fail before machine state changes.");
+            AssertFalse(platform.Events.Contains("LaunchInstaller") ||
+                        platform.ContainsEventPrefix("VersionPending:"),
+                "An unverified or unlocked source must never launch or stop services.");
+        }
+
+        private static void InstallVersionLeavesServicesStoppedWhenVerificationFails()
+        {
+            FakeLmProvisioningPlatform platform = new FakeLmProvisioningPlatform();
+            platform.ManagedSerials.Add("00105700000001");
+            platform.InstallerResult = new LmControllerInstallResult
+            {
+                Status = LmServiceProvisioningStatus.UnsupportedController,
+                Message = "installed identity mismatch"
+            };
+
+            LmControllerInstallResult result = new LmServiceProvisioner(platform)
+                .InstallControllerVersion(CreateInstallerRequest());
+
+            AssertEqual(LmServiceProvisioningStatus.UnsupportedController, result.Status,
+                "Post-install identity mismatch must remain explicit.");
+            AssertTrue(platform.ContainsEventPrefix("Stop:"), "Managed services must be stopped first.");
+            AssertFalse(platform.ContainsEventPrefix("Start:"),
+                "Verification failure must never restart an old managed instance.");
+        }
+
+        private static void EnsureClearsVersionPendingOnlyAfterRecreatedArtifactsAreReady()
+        {
+            FakeLmProvisioningPlatform success = new FakeLmProvisioningPlatform();
+            success.SetState("00105700000001", LmProvisioningObservedState.VersionPending);
+            new LmServiceProvisioner(success).EnsureBatch(
+                CreateEnsureRequest(1), NeverCancelLmProvisioning.Instance);
+            AssertTrue(success.ContainsEventPrefix("Manifest:"),
+                "A ready recreated instance may replace VersionVerificationPending.");
+
+            FakeLmProvisioningPlatform failure = new FakeLmProvisioningPlatform();
+            failure.SetState("00105700000001", LmProvisioningObservedState.VersionPending);
+            failure.Readiness = LmReadinessResult.Failed("not ready");
+            new LmServiceProvisioner(failure).EnsureBatch(
+                CreateEnsureRequest(1), NeverCancelLmProvisioning.Instance);
+            AssertFalse(failure.ContainsEventPrefix("Manifest:"),
+                "A failed recreate must retain VersionVerificationPending ownership state.");
+        }
+
+        private static void AssertEventOrder(IList<string> events, params string[] expected)
+        {
+            int previous = -1;
+            for (int index = 0; index < expected.Length; index++)
+            {
+                int actual = events.IndexOf(expected[index]);
+                if (actual <= previous)
+                {
+                    throw new InvalidOperationException(
+                        "Expected event order at '" + expected[index] + "'. Actual: " +
+                        string.Join(" | ", new List<string>(events).ToArray()));
+                }
+                previous = actual;
+            }
+        }
+
+        private static int FindUnusedDualStackPort(params int[] excluded)
+        {
+            for (int attempt = 0; attempt < 20; attempt++)
+            {
+                using (Socket socket = CreateExclusiveSocket(
+                    AddressFamily.InterNetworkV6,
+                    false))
+                {
+                    socket.DualMode = true;
+                    socket.Bind(new IPEndPoint(IPAddress.IPv6Any, 0));
+                    int port = ((IPEndPoint)socket.LocalEndPoint).Port;
+                    bool skip = false;
+                    for (int index = 0; index < excluded.Length; index++)
+                    {
+                        skip |= excluded[index] == port;
+                    }
+                    if (!skip)
+                    {
+                        return port;
+                    }
+                }
+            }
+            throw new InvalidOperationException("Could not select two distinct test ports.");
+        }
+
+        private static Socket CreateExclusiveSocket(
+            AddressFamily family,
+            bool dualMode)
+        {
+            Socket socket = new Socket(family, SocketType.Stream, ProtocolType.Tcp);
+            socket.ExclusiveAddressUse = true;
+            socket.SetSocketOption(
+                SocketOptionLevel.Socket,
+                SocketOptionName.ReuseAddress,
+                false);
+            if (family == AddressFamily.InterNetworkV6)
+            {
+                socket.DualMode = dualMode;
+            }
+            return socket;
+        }
+
+        private static void BindAndClose(
+            AddressFamily family,
+            int port,
+            bool dualMode)
+        {
+            using (Socket socket = CreateExclusiveSocket(family, dualMode))
+            {
+                socket.Bind(new IPEndPoint(
+                    family == AddressFamily.InterNetwork
+                        ? IPAddress.Any
+                        : IPAddress.IPv6Any,
+                    port));
+            }
+        }
+
         private static LmGatewaySupervisorService CreateTestSupervisorService(
             FakeWindowsServiceApi api)
         {
@@ -1388,6 +1829,290 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             }
 
             throw new InvalidOperationException(message);
+        }
+
+        private sealed class CancelAfterCompletedItems : ILmProvisioningCancellation
+        {
+            private readonly FakeLmProvisioningPlatform _platform;
+            private readonly int _completedItems;
+
+            internal CancelAfterCompletedItems(
+                FakeLmProvisioningPlatform platform,
+                int completedItems)
+            {
+                _platform = platform;
+                _completedItems = completedItems;
+            }
+
+            public bool IsCancellationRequested
+            {
+                get { return _platform.CompletedItems >= _completedItems; }
+            }
+        }
+
+        private sealed class FakeLmProvisioningPlatform : ILmProvisioningPlatform
+        {
+            private readonly Dictionary<string, LmProvisioningObservedState> _states =
+                new Dictionary<string, LmProvisioningObservedState>(StringComparer.Ordinal);
+            private bool _reservationHeld;
+            private bool _profileSawReservation;
+            private bool _scmSawReservation;
+            private bool _throwInjected;
+
+            internal FakeLmProvisioningPlatform()
+            {
+                Events = new List<string>();
+                ManagedSerials = new List<string>();
+                Readiness = LmReadinessResult.Ready();
+                InstallerResult = new LmControllerInstallResult
+                {
+                    Status = LmServiceProvisioningStatus.Succeeded,
+                    Message = "installed"
+                };
+            }
+
+            internal List<string> Events { get; private set; }
+            internal List<string> ManagedSerials { get; private set; }
+            internal LmReadinessResult Readiness { get; set; }
+            internal LmControllerInstallResult InstallerResult { get; set; }
+            internal string FailSerial { get; set; }
+            internal string ThrowOnceAtPrefix { get; set; }
+            internal bool RejectInstaller { get; set; }
+            internal bool RequireReservationReleasedBeforeStart { get; set; }
+            internal int CurrentMachineLockDepth { get; private set; }
+            internal int CurrentItemLockDepth { get; private set; }
+            internal int MaximumMachineLockDepth { get; private set; }
+            internal int MaximumItemLockDepth { get; private set; }
+            internal int CompletedItems { get; private set; }
+
+            internal bool ReservationHeldDuringProfileAndScm
+            {
+                get { return _profileSawReservation && _scmSawReservation; }
+            }
+
+            internal void SetState(string serial, LmProvisioningObservedState state)
+            {
+                _states[serial] = state;
+            }
+
+            internal bool ContainsEventPrefix(string prefix)
+            {
+                for (int index = 0; index < Events.Count; index++)
+                {
+                    if (Events[index].StartsWith(prefix, StringComparison.Ordinal))
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            public IDisposable AcquireMachineLock()
+            {
+                Record("MachineLock");
+                CurrentMachineLockDepth++;
+                MaximumMachineLockDepth = Math.Max(
+                    MaximumMachineLockDepth,
+                    CurrentMachineLockDepth);
+                return new CallbackDisposable(delegate { CurrentMachineLockDepth--; });
+            }
+
+            public IDisposable AcquireItemLock(string kktSerial)
+            {
+                Record("ItemLock:" + kktSerial);
+                CurrentItemLockDepth++;
+                MaximumItemLockDepth = Math.Max(MaximumItemLockDepth, CurrentItemLockDepth);
+                return new CallbackDisposable(delegate { CurrentItemLockDepth--; });
+            }
+
+            public void Reconcile(LmServiceProvisioningItemRequest item, string operationId)
+            {
+                Record("Reconcile:" + item.KktSerial);
+            }
+
+            public LmVerifiedController VerifyController()
+            {
+                Record("VerifyController");
+                return new LmVerifiedController
+                {
+                    Version = "1.6.3.2",
+                    BinarySha256 = new string('a', 64),
+                    SupervisorSha256 = new string('b', 64)
+                };
+            }
+
+            public LmProvisioningObservedState Inspect(
+                LmServiceProvisioningItemRequest item,
+                string initiatingSid)
+            {
+                Record("Inspect:" + item.KktSerial);
+                if (string.Equals(item.KktSerial, FailSerial, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException("injected item failure");
+                }
+                LmProvisioningObservedState state;
+                return _states.TryGetValue(item.KktSerial, out state)
+                    ? state
+                    : LmProvisioningObservedState.Absent;
+            }
+
+            public IDisposable ReservePorts(LmServiceProvisioningItemRequest item)
+            {
+                Record("Reserve:" + item.KktSerial);
+                if (_reservationHeld)
+                {
+                    throw new InvalidOperationException("reservation already held");
+                }
+                _reservationHeld = true;
+                return new CallbackDisposable(delegate
+                {
+                    if (_reservationHeld)
+                    {
+                        _reservationHeld = false;
+                        Record("ReleasePorts:" + item.KktSerial);
+                    }
+                });
+            }
+
+            public string DeriveServiceSid(string kktSerial)
+            {
+                return TestServiceSid();
+            }
+
+            public void WriteJournal(
+                LmServiceProvisioningItemRequest item,
+                string operationId,
+                LmProvisioningJournalStage stage)
+            {
+                Record("Journal:" + stage.ToString());
+            }
+
+            public void PrepareProfile(LmServiceProvisioningItemRequest item, string serviceSid)
+            {
+                _profileSawReservation |= _reservationHeld;
+                Record("Profile:" + item.KktSerial);
+            }
+
+            public void ConfigureService(
+                LmServiceProvisioningItemRequest item,
+                string serviceSid,
+                string initiatingSid)
+            {
+                _scmSawReservation |= _reservationHeld;
+                Record("Configure:" + item.KktSerial);
+            }
+
+            public void Start(LmServiceProvisioningItemRequest item)
+            {
+                if (RequireReservationReleasedBeforeStart && _reservationHeld)
+                {
+                    throw new InvalidOperationException("ports still reserved at StartService");
+                }
+                Record("Start:" + item.KktSerial);
+            }
+
+            public void RequestStop(LmServiceProvisioningItemRequest item)
+            {
+                Record("Stop:" + item.KktSerial);
+            }
+
+            public LmReadinessResult Probe(LmServiceProvisioningItemRequest item)
+            {
+                Record("Probe:" + item.KktSerial);
+                return Readiness;
+            }
+
+            public void WriteManifest(
+                LmServiceProvisioningItemRequest item,
+                LmVerifiedController controller,
+                string serviceSid,
+                string operationId)
+            {
+                Record("Manifest:" + item.KktSerial);
+                _states[item.KktSerial] = LmProvisioningObservedState.MatchingReady;
+            }
+
+            public void CompleteJournal(
+                LmServiceProvisioningItemRequest item,
+                string operationId)
+            {
+                Record("CompleteJournal:" + item.KktSerial);
+                CompletedItems++;
+            }
+
+            public IList<string> GetManagedSerials()
+            {
+                return new List<string>(ManagedSerials);
+            }
+
+            public void MarkVersionPending(string kktSerial, string operationId)
+            {
+                Record("VersionPending:" + kktSerial);
+            }
+
+            public ILockedControllerInstaller PrepareInstaller(
+                LmControllerInstallerSelection selection,
+                string operationId)
+            {
+                Record("PrepareInstaller");
+                if (RejectInstaller)
+                {
+                    throw new InvalidDataException("installer changed");
+                }
+                return new FakeLockedInstaller(this);
+            }
+
+            private void Record(string value)
+            {
+                Events.Add(value);
+                if (!_throwInjected &&
+                    !string.IsNullOrEmpty(ThrowOnceAtPrefix) &&
+                    value.StartsWith(ThrowOnceAtPrefix, StringComparison.Ordinal))
+                {
+                    _throwInjected = true;
+                    throw new InvalidOperationException("simulated crash at " + value);
+                }
+            }
+
+            private sealed class FakeLockedInstaller : ILockedControllerInstaller
+            {
+                private readonly FakeLmProvisioningPlatform _owner;
+
+                internal FakeLockedInstaller(FakeLmProvisioningPlatform owner)
+                {
+                    _owner = owner;
+                }
+
+                public LmControllerInstallResult Run()
+                {
+                    _owner.Record("LaunchInstaller");
+                    return _owner.InstallerResult;
+                }
+
+                public void Dispose()
+                {
+                }
+            }
+        }
+
+        private sealed class CallbackDisposable : IDisposable
+        {
+            private Action _callback;
+
+            internal CallbackDisposable(Action callback)
+            {
+                _callback = callback;
+            }
+
+            public void Dispose()
+            {
+                Action callback = _callback;
+                _callback = null;
+                if (callback != null)
+                {
+                    callback();
+                }
+            }
         }
 
         private sealed class FakePathSafety : IPathSafety

@@ -26,5 +26,8 @@ namespace EsmTspiot.ServiceProvisioner
 
         [DataMember(Order = 7)]
         internal string UpdatedUtc { get; set; }
+
+        [DataMember(Order = 8)]
+        internal LmProvisioningJournalStage Stage { get; set; }
     }
 }

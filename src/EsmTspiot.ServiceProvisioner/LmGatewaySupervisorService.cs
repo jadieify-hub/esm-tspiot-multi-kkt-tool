@@ -191,6 +191,14 @@ namespace EsmTspiot.ServiceProvisioner
             return definition;
         }
 
+        internal bool IsExactDefinition(
+            string kktSerial,
+            string operatorSid,
+            WindowsServiceRecord observed)
+        {
+            return Matches(BuildDefinition(kktSerial, operatorSid), observed);
+        }
+
         internal static int RunServiceMode(string serviceName)
         {
             string serial;

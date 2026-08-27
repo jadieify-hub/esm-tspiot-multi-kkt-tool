@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Runtime.Serialization.Json;
 using System.Security.Cryptography;
@@ -178,6 +179,47 @@ namespace EsmTspiot.ServiceProvisioner
                 throw new InvalidDataException("Manifest identity does not match its derived directory.");
             }
             return manifest;
+        }
+
+        internal bool TryRead(string kktSerial, out ManagedServiceManifest manifest)
+        {
+            string path = GetManifestPath(kktSerial);
+            EnsureSafe(path);
+            if (!File.Exists(path))
+            {
+                manifest = null;
+                return false;
+            }
+            manifest = Read(kktSerial);
+            return true;
+        }
+
+        internal IList<string> ReadManagedSerials()
+        {
+            List<string> serials = new List<string>();
+            if (!Directory.Exists(_inventoryRoot))
+            {
+                return serials;
+            }
+            EnsureSafe(_inventoryRoot);
+            string[] directories = Directory.GetDirectories(_inventoryRoot);
+            for (int index = 0; index < directories.Length; index++)
+            {
+                string serviceName = Path.GetFileName(directories[index]);
+                string serial;
+                if (!LmServiceIdentity.TryParseName(serviceName, out serial))
+                {
+                    throw new InvalidDataException("Inventory contains an unknown directory.");
+                }
+                ManagedServiceManifest manifest = Read(serial);
+                if (!string.Equals(manifest.ServiceName, serviceName, StringComparison.Ordinal))
+                {
+                    throw new InvalidDataException("Inventory directory identity mismatch.");
+                }
+                serials.Add(serial);
+            }
+            serials.Sort(StringComparer.Ordinal);
+            return serials;
         }
 
         internal LmServiceInventoryItem ReadProjection(string kktSerial)

@@ -48,8 +48,52 @@ namespace EsmTspiot.ServiceProvisioner
                         return ExitInvalidRequest;
                     }
 
-                    LmServiceProvisioningBatchResult result = CreateUnsupportedResult(request);
-                    channel.WriteMessage(result);
+                    try
+                    {
+                        WindowsLmProvisioningPlatform platform =
+                            WindowsLmProvisioningPlatform.Create(
+                                request.InitiatingSid,
+                                request.OperationId);
+                        LmServiceProvisioner provisioner = new LmServiceProvisioner(platform);
+                        if (request.Operation == LmServiceOperation.EnsureBatch)
+                        {
+                            LmServiceProvisioningBatchResult result = provisioner.EnsureBatch(
+                                request,
+                                NeverCancelLmProvisioning.Instance);
+                            channel.WriteMessage(result);
+                            return ToExitCode(result.Status);
+                        }
+                        if (request.Operation == LmServiceOperation.InstallControllerVersion)
+                        {
+                            LmControllerInstallResult result =
+                                provisioner.InstallControllerVersion(request);
+                            channel.WriteMessage(result);
+                            return ToExitCode(result.Status);
+                        }
+                    }
+                    catch (NotSupportedException ex)
+                    {
+                        WriteOperationFailure(
+                            channel,
+                            request,
+                            LmServiceProvisioningStatus.UnsupportedController,
+                            ex.Message);
+                        return ExitUnsupportedController;
+                    }
+                    catch (Exception ex)
+                    {
+                        WriteOperationFailure(
+                            channel,
+                            request,
+                            LmServiceProvisioningStatus.Failed,
+                            "Не удалось подготовить защищенную среду операции: " +
+                                ex.GetType().Name + ".");
+                        return ExitOperationFailed;
+                    }
+
+                    LmServiceProvisioningBatchResult unsupported =
+                        CreateUnsupportedResult(request);
+                    channel.WriteMessage(unsupported);
                     return ExitUnsupportedController;
                 }
             }
@@ -69,6 +113,62 @@ namespace EsmTspiot.ServiceProvisioner
             {
                 return ExitOperationFailed;
             }
+        }
+
+        private static void WriteOperationFailure(
+            NamedPipeProvisioningChannel channel,
+            LmServiceProvisioningBatchRequest request,
+            LmServiceProvisioningStatus status,
+            string message)
+        {
+            if (request.Operation == LmServiceOperation.InstallControllerVersion)
+            {
+                channel.WriteMessage(new LmControllerInstallResult
+                {
+                    Status = status,
+                    Message = message
+                });
+                return;
+            }
+
+            LmServiceProvisioningBatchResult result = new LmServiceProvisioningBatchResult
+            {
+                SchemaVersion = ProvisioningRequestValidator.CurrentSchemaVersion,
+                OperationId = request.OperationId,
+                PlanHash = request.PlanHash,
+                Status = status
+            };
+            if (request.Items != null)
+            {
+                for (int index = 0; index < request.Items.Count; index++)
+                {
+                    result.Items.Add(new LmServiceProvisioningItemResult
+                    {
+                        KktSerial = request.Items[index] == null
+                            ? string.Empty
+                            : request.Items[index].KktSerial,
+                        Status = status,
+                        Message = message
+                    });
+                }
+            }
+            channel.WriteMessage(result);
+        }
+
+        private static int ToExitCode(LmServiceProvisioningStatus status)
+        {
+            if (status == LmServiceProvisioningStatus.Succeeded ||
+                status == LmServiceProvisioningStatus.Cancelled ||
+                status == LmServiceProvisioningStatus.RequiresAttention)
+            {
+                return ExitResultSent;
+            }
+            if (status == LmServiceProvisioningStatus.UnsupportedController ||
+                status == LmServiceProvisioningStatus.VersionVerificationPending)
+            {
+                return ExitUnsupportedController;
+            }
+            return ExitOperationFailed;
         }
 
         private static LmServiceProvisioningBatchResult CreateUnsupportedResult(
