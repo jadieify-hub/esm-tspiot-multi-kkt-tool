@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Net.Http;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using EsmTspiot.Shared.Logging;
@@ -127,6 +128,9 @@ namespace EsmTspiot.Shared.Tests
             Run("Sensitive masker preserves ordinary fields", SensitiveMaskerPreservesOrdinaryFields);
             Run("Display log trimmer preserves the newest half", DisplayLogTrimmerPreservesNewestHalf);
             Run("File log sink persists text without blocking", FileLogSinkPersistsTextWithoutBlocking);
+            Run("LM provisioner contract exposes no arbitrary command", LmProvisionerContractExposesNoArbitraryCommand);
+            Run("LM probe result separates service and listener state", LmProbeResultSeparatesServiceAndListenerState);
+            Run("LM provisioning progress contains no credentials", LmProvisioningProgressContainsNoCredentials);
 
             if (_failures == 0)
             {
@@ -2484,6 +2488,72 @@ namespace EsmTspiot.Shared.Tests
 
             Directory.Delete(directory, true);
         }
+
+        private static void LmProvisionerContractExposesNoArbitraryCommand()
+        {
+            Type contract = typeof(ILmServiceProvisioner);
+            string[] forbidden =
+            {
+                "Command", "Argument", "Environment", "BinaryPath", "ProfilePath",
+                "ServiceName", "SourcePath", "Password", "Credential", "Secret", "Token"
+            };
+            MethodInfo[] methods = contract.GetMethods();
+            AssertEqual(4, methods.Length, "The helper contract must expose only four typed operations.");
+            for (int methodIndex = 0; methodIndex < methods.Length; methodIndex++)
+            {
+                ParameterInfo[] parameters = methods[methodIndex].GetParameters();
+                for (int parameterIndex = 0; parameterIndex < parameters.Length; parameterIndex++)
+                {
+                    string name = parameters[parameterIndex].Name ?? string.Empty;
+                    for (int forbiddenIndex = 0; forbiddenIndex < forbidden.Length; forbiddenIndex++)
+                    {
+                        AssertFalse(
+                            name.IndexOf(forbidden[forbiddenIndex], StringComparison.OrdinalIgnoreCase) >= 0,
+                            "Provisioner contract contains an unsafe parameter: " + name + ".");
+                    }
+                }
+            }
+        }
+
+        private static void LmProbeResultSeparatesServiceAndListenerState()
+        {
+            LmGatewayProbeResult result = new LmGatewayProbeResult
+            {
+                ServiceRunning = true,
+                GrpcListenerReady = true,
+                RestListenerReady = false,
+                ListenerOwnersVerified = false,
+                Message = "REST listener missing"
+            };
+
+            AssertTrue(result.ServiceRunning, "Service state must remain independently visible.");
+            AssertTrue(result.GrpcListenerReady, "gRPC readiness must remain independently visible.");
+            AssertFalse(result.RestListenerReady, "REST readiness must not be inferred from gRPC.");
+            AssertFalse(result.IsReady, "Overall readiness needs service, both listeners and owner proof.");
+        }
+
+        private static void LmProvisioningProgressContainsNoCredentials()
+        {
+            Type type = typeof(LmProvisioningProgress);
+            string[] forbidden =
+            {
+                "Password", "Login", "Credential", "Secret", "Token", "Authorization",
+                "Request", "Response"
+            };
+            PropertyInfo[] properties = type.GetProperties();
+            for (int propertyIndex = 0; propertyIndex < properties.Length; propertyIndex++)
+            {
+                for (int forbiddenIndex = 0; forbiddenIndex < forbidden.Length; forbiddenIndex++)
+                {
+                    AssertFalse(
+                        properties[propertyIndex].Name.IndexOf(
+                            forbidden[forbiddenIndex],
+                            StringComparison.OrdinalIgnoreCase) >= 0,
+                        "Provisioning progress must be credential-free.");
+                }
+            }
+        }
+
         private static TspiotFormInput CreateValidInput()
         {
             return new TspiotFormInput

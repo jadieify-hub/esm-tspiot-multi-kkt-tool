@@ -10,5 +10,6 @@ namespace EsmTspiot.Shared.Models
         public bool IsRunning { get; set; }
         public LmServiceProvisioningStatus Status { get; set; }
         public LmManifestFingerprint ManifestFingerprint { get; set; }
+        public string Message { get; set; }
     }
 }

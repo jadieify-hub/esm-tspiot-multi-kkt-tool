@@ -896,7 +896,7 @@ git commit -m "Добавить удаление управляемых служ
 - `ILmGatewayProbe.ProbeAsync(serviceSpec, token)` returns typed service/listener readiness without credentials.
 - Windows adapters remain outside `EsmTspiot.Shared`.
 
-- [ ] **Step 1: Add shared interface contract tests**
+- [x] **Step 1: Add shared interface contract tests**
 
 Register:
 
@@ -906,11 +906,11 @@ Run("LM probe result separates service and listener state", LmProbeResultSeparat
 Run("LM provisioning progress contains no credentials", LmProvisioningProgressContainsNoCredentials);
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Expected: missing interfaces/results.
 
-- [ ] **Step 3: Implement helper invocation**
+- [x] **Step 3: Implement helper invocation**
 
 `LmServiceProvisionerClient`:
 
@@ -925,7 +925,7 @@ Expected: missing interfaces/results.
 
 Cancellation before UAC/helper connection aborts the whole request. After mutual pipe authentication the client sends `CancelAfterCurrentItem` and continues reading until the current item is reconciled and the helper returns partial results; pipe loss has the same helper-side effect. It never kills the elevated process. Further mutations remain blocked until final result or inventory/journal reconciliation determines actual state.
 
-- [ ] **Step 4: Implement read-only inventory**
+- [x] **Step 4: Implement read-only inventory**
 
 Read only inventory manifests permitted to the initiating SID; never read profile directories or protected journals. Query SCM with read-only access. A manifest marked `CleanupPending`, or any valid managed manifest whose SCM service is absent, is classified `CleanupPending` so cleanup remains visible after restart. Classify rows as:
 
@@ -938,11 +938,11 @@ Read only inventory manifests permitted to the initiating SID; never read profil
 
 A name match alone never yields `Managed`. Do not request UAC for `Обновить`.
 
-- [ ] **Step 5: Implement readiness probe**
+- [x] **Step 5: Implement readiness probe**
 
 Use the same capability ownership rules as helper, but read-only. Confirm service state and both local ports; map listener PID with the Windows IP Helper API. The UI may use a non-authoritative socket/listener snapshot for planning, but the helper's exclusive bind immediately before mutation is the authority. Do not parse localized `netsh` output, send LM credentials or perform a production code-check request.
 
-- [ ] **Step 6: Link shared WinForms source files into both targets**
+- [x] **Step 6: Link shared WinForms source files into both targets**
 
 Add explicit `<Compile Include=... Link=...>` entries for all new Windows adapter files to both WinForms projects. Import `build/EsmTspiot.Provisioner.targets` in both apps. The target:
 
@@ -955,7 +955,7 @@ Add explicit `<Compile Include=... Link=...>` entries for all new Windows adapte
 
 The embedded hash is an integrity check, while protected-directory ACL is the trust boundary; an external editable hash file is not used.
 
-- [ ] **Step 7: Run shared tests and compile both WinForms targets**
+- [x] **Step 7: Run shared tests and compile both WinForms targets**
 
 ```powershell
 dotnet run --project tests\EsmTspiot.Shared.Tests\EsmTspiot.Shared.Tests.csproj -c Release
@@ -973,7 +973,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $publishSmoke 'Provisioner\EsmTspiot
 
 Also run `dotnet publish` for Modern into a clean temporary publish directory and assert `Provisioner\EsmTspiot.ServiceProvisioner.exe` plus its net48 `EsmTspiot.Shared.dll` exist there and match the embedded helper hash. Expected: 107 shared tests pass; Legacy and Modern build/publish with zero errors; each build/publish output contains the correct isolated helper closure. No UI entry point exists yet.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```powershell
 git add build/EsmTspiot.Provisioner.targets src/EsmTspiot.Shared/Services/ILmServiceProvisioner.cs src/EsmTspiot.Shared/Services/ILmGatewayProbe.cs src/EsmTspiot.WinForms.Shared src/EsmTspiot.Legacy.WinForms/EsmTspiot.Legacy.WinForms.csproj src/EsmTspiot.Modern.WinForms/EsmTspiot.Modern.WinForms.csproj tests/EsmTspiot.Shared.Tests/Program.cs

@@ -1,0 +1,93 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <ProvisionerProject>$(MSBuildThisFileDirectory)..\src\EsmTspiot.ServiceProvisioner\EsmTspiot.ServiceProvisioner.csproj</ProvisionerProject>
+    <ProvisionerOutputDirectory>$(MSBuildThisFileDirectory)..\src\EsmTspiot.ServiceProvisioner\bin\$(Configuration)\net48\</ProvisionerOutputDirectory>
+    <ProvisionerExe>$(ProvisionerOutputDirectory)EsmTspiot.ServiceProvisioner.exe</ProvisionerExe>
+    <ProvisionerShared>$(ProvisionerOutputDirectory)EsmTspiot.Shared.dll</ProvisionerShared>
+    <ProvisionerIntegritySource>$(MSBuildProjectDirectory)\obj\$(Configuration)\$(TargetFramework)\ProvisionerIntegrity.g.cs</ProvisionerIntegritySource>
+  </PropertyGroup>
+
+  <Target Name="BuildProvisionerAndGenerateIntegrity"
+          BeforeTargets="CoreCompile"
+          Condition="'$(DesignTimeBuild)' != 'true'">
+    <MSBuild Projects="$(ProvisionerProject)"
+             Targets="Restore;Build"
+             Properties="Configuration=$(Configuration);Platform=AnyCPU"
+             RemoveProperties="RuntimeIdentifier;RuntimeIdentifiers;SelfContained;PublishSingleFile;PublishDir"
+             BuildInParallel="false" />
+    <Error Condition="!Exists('$(ProvisionerExe)')"
+           Text="Provisioner helper was not produced." />
+    <Error Condition="!Exists('$(ProvisionerShared)')"
+           Text="Provisioner net48 shared dependency was not produced." />
+    <GetFileHash Files="$(ProvisionerExe)" Algorithm="SHA256">
+      <Output TaskParameter="Items" ItemName="_ProvisionerHashItem" />
+    </GetFileHash>
+    <PropertyGroup>
+      <_ProvisionerHash>@(_ProvisionerHashItem-&gt;'%(FileHash)')</_ProvisionerHash>
+      <_ProvisionerCode>namespace EsmTspiot.WinForms.Shared { internal static class ProvisionerIntegrity { internal const string ExpectedSha256 = &quot;$(_ProvisionerHash)&quot;%3B } }</_ProvisionerCode>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(ProvisionerIntegritySource)"
+                      Lines="$(_ProvisionerCode)"
+                      Overwrite="true"
+                      Encoding="UTF-8" />
+    <ItemGroup>
+      <Compile Include="$(ProvisionerIntegritySource)" />
+    </ItemGroup>
+  </Target>
+
+  <Target Name="VerifyProvisionerMetadata"
+          AfterTargets="Build"
+          Condition="'$(DesignTimeBuild)' != 'true'">
+    <GetAssemblyIdentity AssemblyFiles="$(ProvisionerExe)">
+      <Output TaskParameter="Assemblies" ItemName="_ProvisionerAssembly" />
+    </GetAssemblyIdentity>
+    <GetAssemblyIdentity AssemblyFiles="$(TargetPath)">
+      <Output TaskParameter="Assemblies" ItemName="_MainAssembly" />
+    </GetAssemblyIdentity>
+    <PropertyGroup>
+      <_ProvisionerVersion>@(_ProvisionerAssembly-&gt;'%(Version)')</_ProvisionerVersion>
+      <_MainVersion>@(_MainAssembly-&gt;'%(Version)')</_MainVersion>
+    </PropertyGroup>
+    <Error Condition="'$(_ProvisionerVersion)' != '$(_MainVersion)'"
+           Text="Provisioner and main application versions differ." />
+    <ReadLinesFromFile File="$(MSBuildThisFileDirectory)..\src\EsmTspiot.ServiceProvisioner\Properties\AssemblyInfo.cs">
+      <Output TaskParameter="Lines" ItemName="_ProvisionerAssemblyInfo" />
+    </ReadLinesFromFile>
+    <ReadLinesFromFile File="$(MSBuildThisFileDirectory)..\src\EsmTspiot.WinForms.Shared\AssemblyInfo.cs">
+      <Output TaskParameter="Lines" ItemName="_MainAssemblyInfo" />
+    </ReadLinesFromFile>
+    <ItemGroup>
+      <_ProvisionerCompanyLine Include="@(_ProvisionerAssemblyInfo)"
+          Condition="'%(Identity)' == '[assembly: AssemblyCompany(&quot;KRS&quot;)]'" />
+      <_ProvisionerProductLine Include="@(_ProvisionerAssemblyInfo)"
+          Condition="'%(Identity)' == '[assembly: AssemblyProduct(&quot;Управление ККТ в ЕСМ/ТС ПИоТ&quot;)]'" />
+      <_MainCompanyLine Include="@(_MainAssemblyInfo)"
+          Condition="'%(Identity)' == '[assembly: AssemblyCompany(&quot;KRS&quot;)]'" />
+      <_MainProductLine Include="@(_MainAssemblyInfo)"
+          Condition="'%(Identity)' == '[assembly: AssemblyProduct(&quot;Управление ККТ в ЕСМ/ТС ПИоТ&quot;)]'" />
+    </ItemGroup>
+    <Error Condition="'@(_ProvisionerCompanyLine)' == '' or '@(_MainCompanyLine)' == ''"
+           Text="Provisioner company metadata is not KRS." />
+    <Error Condition="'@(_ProvisionerProductLine)' == '' or '@(_MainProductLine)' == ''"
+           Text="Provisioner product metadata differs from the main application." />
+  </Target>
+
+  <Target Name="CopyProvisionerClosure"
+          AfterTargets="Build"
+          DependsOnTargets="VerifyProvisionerMetadata"
+          Condition="'$(DesignTimeBuild)' != 'true'">
+    <MakeDir Directories="$(TargetDir)Provisioner" />
+    <Copy SourceFiles="$(ProvisionerExe);$(ProvisionerShared)"
+          DestinationFolder="$(TargetDir)Provisioner"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="CopyPublishedProvisionerClosure"
+          AfterTargets="Publish"
+          Condition="'$(DesignTimeBuild)' != 'true'">
+    <MakeDir Directories="$(PublishDir)Provisioner" />
+    <Copy SourceFiles="$(ProvisionerExe);$(ProvisionerShared)"
+          DestinationFolder="$(PublishDir)Provisioner"
+          SkipUnchangedFiles="true" />
+  </Target>
+</Project>
