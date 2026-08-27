@@ -131,6 +131,15 @@ namespace EsmTspiot.Shared.Tests
             Run("LM provisioner contract exposes no arbitrary command", LmProvisionerContractExposesNoArbitraryCommand);
             Run("LM probe result separates service and listener state", LmProbeResultSeparatesServiceAndListenerState);
             Run("LM provisioning progress contains no credentials", LmProvisioningProgressContainsNoCredentials);
+            Run("LM lifecycle ensures probes then binds", LmLifecycleEnsuresProbesThenBinds);
+            Run("LM lifecycle never binds failed service", LmLifecycleNeverBindsFailedService);
+            Run("LM lifecycle continues after one KKT failure", LmLifecycleContinuesAfterOneKktFailure);
+            Run("LM lifecycle retries binding without reprovisioning", LmLifecycleRetriesBindingWithoutReprovisioning);
+            Run("LM lifecycle preserves partial outcome on cancellation", LmLifecyclePreservesPartialOutcomeOnCancellation);
+            Run("LM lifecycle reconciles unknown result before mutation", LmLifecycleReconcilesUnknownResultBeforeMutation);
+            Run("LM removal workflow removes one selected managed service", LmRemovalWorkflowRemovesOneSelectedManagedService);
+            Run("LM removal workflow blocks batch and official removal", LmRemovalWorkflowBlocksBatchAndOfficialRemoval);
+            Run("LM removal outcome warns that ESM binding remains", LmRemovalOutcomeWarnsThatEsmBindingRemains);
 
             if (_failures == 0)
             {
@@ -2554,6 +2563,343 @@ namespace EsmTspiot.Shared.Tests
             }
         }
 
+        private static void LmLifecycleEnsuresProbesThenBinds()
+        {
+            List<string> order = new List<string>();
+            FakeLmProvisioner provisioner = new FakeLmProvisioner(order);
+            FakeLmProbe probe = new FakeLmProbe(order);
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            api.LmGatewayCallObserved = delegate { order.Add("bind"); };
+            LmGatewayPlan plan = CreateLifecyclePlan(2, LmGatewayPlanAction.CreateManagedService);
+            string operationId = Guid.NewGuid().ToString("N");
+            string hash = ComputeEnsureHash(plan, operationId);
+            provisioner.EnsureResult = CreateEnsureResult(plan, operationId, hash, -1);
+
+            LmGatewayLifecycleOutcome outcome = new LmGatewayLifecycleWorkflow(
+                provisioner,
+                probe,
+                new LmGatewayBindingWorkflow(api)).ExecuteAsync(
+                    "http://127.0.0.1:51077",
+                    plan,
+                    operationId,
+                    hash,
+                    CreateCredentials,
+                    null,
+                    CancellationToken.None).GetAwaiter().GetResult();
+
+            AssertEqual(1, provisioner.EnsureCalls, "All services must use one helper batch.");
+            AssertEqual(2, api.LmGatewayCalls.Count, "Every ready service must be bound.");
+            AssertEqual("ensure", order[0], "Provisioning must happen first.");
+            AssertEqual("probe", order[1], "Probe must happen before binding.");
+            AssertEqual("bind", order[2], "Binding must follow a successful probe.");
+            AssertEqual(LmGatewayLifecycleStatus.BindingAccepted, outcome.Results[0].Status, "Expected accepted binding.");
+        }
+
+        private static void LmLifecycleNeverBindsFailedService()
+        {
+            FakeLmProvisioner provisioner = new FakeLmProvisioner(null);
+            FakeLmProbe probe = new FakeLmProbe(null);
+            probe.DefaultResult = new LmGatewayProbeResult { ServiceRunning = true, Message = "listeners missing" };
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            LmGatewayPlan plan = CreateLifecyclePlan(1, LmGatewayPlanAction.CreateManagedService);
+            string operationId = Guid.NewGuid().ToString("N");
+            string hash = ComputeEnsureHash(plan, operationId);
+            provisioner.EnsureResult = CreateEnsureResult(plan, operationId, hash, -1);
+
+            LmGatewayLifecycleOutcome outcome = CreateLifecycleWorkflow(provisioner, probe, api)
+                .ExecuteAsync("http://127.0.0.1:51077", plan, operationId, hash,
+                    CreateCredentials, null, CancellationToken.None).GetAwaiter().GetResult();
+
+            AssertEqual(0, api.LmGatewayCalls.Count, "A failed readiness probe must block PUT.");
+            AssertEqual(LmGatewayLifecycleStatus.ServiceFailed, outcome.Results[0].Status, "Expected service failure.");
+        }
+
+        private static void LmLifecycleContinuesAfterOneKktFailure()
+        {
+            FakeLmProvisioner provisioner = new FakeLmProvisioner(null);
+            FakeLmProbe probe = new FakeLmProbe(null);
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            LmGatewayPlan plan = CreateLifecyclePlan(2, LmGatewayPlanAction.UpdateManagedService);
+            string operationId = Guid.NewGuid().ToString("N");
+            string hash = ComputeEnsureHash(plan, operationId);
+            provisioner.EnsureResult = CreateEnsureResult(plan, operationId, hash, 0);
+
+            LmGatewayLifecycleOutcome outcome = CreateLifecycleWorkflow(provisioner, probe, api)
+                .ExecuteAsync("http://127.0.0.1:51077", plan, operationId, hash,
+                    CreateCredentials, null, CancellationToken.None).GetAwaiter().GetResult();
+
+            AssertEqual(2, outcome.Results.Count, "Both KKT outcomes must be retained.");
+            AssertEqual(LmGatewayLifecycleStatus.ServiceFailed, outcome.Results[0].Status, "First service must fail.");
+            AssertEqual(LmGatewayLifecycleStatus.BindingAccepted, outcome.Results[1].Status, "Second KKT must continue.");
+            AssertEqual(1, api.LmGatewayCalls.Count, "Only the ready KKT must be bound.");
+        }
+
+        private static void LmLifecycleRetriesBindingWithoutReprovisioning()
+        {
+            FakeLmProvisioner provisioner = new FakeLmProvisioner(null);
+            FakeLmProbe probe = new FakeLmProbe(null);
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            LmGatewayPlanItem item = CreateLifecyclePlan(1, LmGatewayPlanAction.BindReadyService).Items[0];
+
+            LmGatewayLifecycleResult result = CreateLifecycleWorkflow(provisioner, probe, api)
+                .RetryBindingAsync("http://127.0.0.1:51077", item, CreateCredentials, null,
+                    CancellationToken.None).GetAwaiter().GetResult();
+
+            AssertEqual(0, provisioner.EnsureCalls, "Binding retry must not request UAC/helper.");
+            AssertEqual(1, probe.Calls, "Binding retry must re-probe readiness.");
+            AssertEqual(LmGatewayLifecycleStatus.BindingAccepted, result.Status, "Expected accepted retry.");
+        }
+
+        private static void LmLifecyclePreservesPartialOutcomeOnCancellation()
+        {
+            CancellationTokenSource cancellation = new CancellationTokenSource();
+            FakeLmProvisioner provisioner = new FakeLmProvisioner(null);
+            FakeLmProbe probe = new FakeLmProbe(null);
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            api.LmGatewayCallObserved = delegate(int call) { if (call == 1) cancellation.Cancel(); };
+            LmGatewayPlan plan = CreateLifecyclePlan(2, LmGatewayPlanAction.CreateManagedService);
+            string operationId = Guid.NewGuid().ToString("N");
+            string hash = ComputeEnsureHash(plan, operationId);
+            provisioner.EnsureResult = CreateEnsureResult(plan, operationId, hash, -1);
+
+            LmGatewayLifecycleOutcome outcome = CreateLifecycleWorkflow(provisioner, probe, api)
+                .ExecuteAsync("http://127.0.0.1:51077", plan, operationId, hash,
+                    CreateCredentials, null, cancellation.Token).GetAwaiter().GetResult();
+
+            AssertTrue(outcome.Cancelled, "Outcome must retain cancellation state.");
+            AssertEqual(LmGatewayLifecycleStatus.BindingAccepted, outcome.Results[0].Status, "Completed KKT must stay completed.");
+            AssertEqual(LmGatewayLifecycleStatus.Cancelled, outcome.Results[1].Status, "Untouched KKT must be cancelled.");
+        }
+
+        private static void LmLifecycleReconcilesUnknownResultBeforeMutation()
+        {
+            FakeLmProvisioner provisioner = new FakeLmProvisioner(null);
+            provisioner.EnsureException = new IOException("pipe lost");
+            FakeLmProbe probe = new FakeLmProbe(null);
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            LmGatewayPlan plan = CreateLifecyclePlan(1, LmGatewayPlanAction.CreateManagedService);
+            string operationId = Guid.NewGuid().ToString("N");
+            string hash = ComputeEnsureHash(plan, operationId);
+
+            LmGatewayLifecycleOutcome outcome = CreateLifecycleWorkflow(provisioner, probe, api)
+                .ExecuteAsync("http://127.0.0.1:51077", plan, operationId, hash,
+                    CreateCredentials, null, CancellationToken.None).GetAwaiter().GetResult();
+
+            AssertEqual(1, provisioner.EnsureCalls, "Unknown result must not trigger a second mutation.");
+            AssertEqual(1, probe.Calls, "Unknown result must be reconciled read-only.");
+            AssertEqual(LmGatewayLifecycleStatus.BindingAccepted, outcome.Results[0].Status, "Ready reconciled service may bind.");
+        }
+
+        private static void LmRemovalWorkflowRemovesOneSelectedManagedService()
+        {
+            FakeLmProvisioner provisioner = new FakeLmProvisioner(null);
+            LmServiceInventoryItem selected = CreateManagedInventoryItem();
+            provisioner.RemoveResult = new LmServiceProvisioningItemResult
+            {
+                KktSerial = selected.KktSerial,
+                Status = LmServiceProvisioningStatus.RemovedLocalArtifactsBindingRetained,
+                Message = "removed"
+            };
+            int inventoryReads = 0;
+            LmGatewayRemovalWorkflow workflow = new LmGatewayRemovalWorkflow(
+                provisioner,
+                delegate
+                {
+                    inventoryReads++;
+                    return inventoryReads == 1
+                        ? new List<LmServiceInventoryItem> { selected }
+                        : new List<LmServiceInventoryItem>();
+                });
+            LmRemovalConfirmation confirmation = CreateRemovalConfirmation(selected);
+            string operationId = Guid.NewGuid().ToString("N");
+            string hash = ComputeRemovalHash(confirmation, operationId);
+
+            LmGatewayLifecycleResult result = workflow.RemoveAsync(
+                new[] { selected }, confirmation, operationId, hash,
+                CancellationToken.None).GetAwaiter().GetResult();
+
+            AssertEqual(1, provisioner.RemoveCalls, "Exactly one managed service must be removed.");
+            AssertEqual(LmGatewayLifecycleStatus.RemovedLocalArtifactsBindingRetained, result.Status, "Expected verified local removal.");
+        }
+
+        private static void LmRemovalWorkflowBlocksBatchAndOfficialRemoval()
+        {
+            FakeLmProvisioner provisioner = new FakeLmProvisioner(null);
+            LmGatewayRemovalWorkflow workflow = new LmGatewayRemovalWorkflow(
+                provisioner,
+                delegate { return new List<LmServiceInventoryItem>(); });
+            LmServiceInventoryItem managed = CreateManagedInventoryItem();
+            LmServiceInventoryItem official = CreateManagedInventoryItem();
+            official.Role = LmServiceRole.VerifiedOfficial;
+            LmRemovalConfirmation confirmation = CreateRemovalConfirmation(managed);
+
+            LmGatewayLifecycleResult batch = workflow.RemoveAsync(
+                new[] { managed, managed }, confirmation, Guid.NewGuid().ToString("N"),
+                new string('0', 64), CancellationToken.None).GetAwaiter().GetResult();
+            LmGatewayLifecycleResult protectedResult = workflow.RemoveAsync(
+                new[] { official }, confirmation, Guid.NewGuid().ToString("N"),
+                new string('0', 64), CancellationToken.None).GetAwaiter().GetResult();
+
+            AssertEqual(LmGatewayLifecycleStatus.Blocked, batch.Status, "Batch removal must be blocked.");
+            AssertEqual(LmGatewayLifecycleStatus.Blocked, protectedResult.Status, "Official service removal must be blocked.");
+            AssertEqual(0, provisioner.RemoveCalls, "Blocked removals must never reach helper.");
+        }
+
+        private static void LmRemovalOutcomeWarnsThatEsmBindingRemains()
+        {
+            LmGatewayLifecycleResult result = new LmGatewayLifecycleResult
+            {
+                Status = LmGatewayLifecycleStatus.RemovedLocalArtifactsBindingRetained,
+                Details = LmGatewayRemovalWorkflow.BindingRetainedMessage
+            };
+            AssertContains(result.Details, "ЕСМ");
+            AssertContains(result.Details, "не очищена");
+        }
+
+        private static LmGatewayLifecycleWorkflow CreateLifecycleWorkflow(
+            FakeLmProvisioner provisioner,
+            FakeLmProbe probe,
+            FakeTspiotApiClient api)
+        {
+            return new LmGatewayLifecycleWorkflow(
+                provisioner,
+                probe,
+                new LmGatewayBindingWorkflow(api));
+        }
+
+        private static LmGatewayPlan CreateLifecyclePlan(int count, LmGatewayPlanAction action)
+        {
+            LmGatewayPlan plan = new LmGatewayPlan();
+            for (int index = 0; index < count; index++)
+            {
+                string serial = "001057000000" + (index + 1).ToString("00");
+                LmGatewayKkt kkt = new LmGatewayKkt
+                {
+                    InstanceId = "instance-" + index.ToString(),
+                    KktSerial = serial,
+                    KktInn = index == 0 ? "1234567894" : "500100732259"
+                };
+                plan.Items.Add(new LmGatewayPlanItem
+                {
+                    Kkt = kkt,
+                    Spec = new ManagedLmServiceSpec(
+                        new LmGatewayKkt { KktSerial = serial, KktInn = kkt.KktInn },
+                        new LmGatewayPorts(50063 + index * 2, 50064 + index * 2),
+                        new LmGatewayTarget("10.0.0." + (index + 10).ToString(), 5000)),
+                    Action = action
+                });
+            }
+            return plan;
+        }
+
+        private static string ComputeEnsureHash(LmGatewayPlan plan, string operationId)
+        {
+            LmServiceProvisioningBatchRequest request = new LmServiceProvisioningBatchRequest
+            {
+                SchemaVersion = 1,
+                Operation = LmServiceOperation.EnsureBatch,
+                OperationId = operationId,
+                InitiatingSid = "S-1-5-21-1-2-3-1001"
+            };
+            for (int index = 0; index < plan.Items.Count; index++)
+            {
+                LmGatewayPlanItem item = plan.Items[index];
+                if (item != null && item.IsValid &&
+                    item.Action != LmGatewayPlanAction.BindReadyService &&
+                    item.Action != LmGatewayPlanAction.NoChange)
+                {
+                    request.Items.Add(ToProvisioningRequest(item.Spec));
+                }
+            }
+            return CanonicalLmPlanHasher.Compute(request);
+        }
+
+        private static LmServiceProvisioningItemRequest ToProvisioningRequest(ManagedLmServiceSpec spec)
+        {
+            return new LmServiceProvisioningItemRequest
+            {
+                KktSerial = spec.KktSerial,
+                GrpcPort = spec.Ports.GrpcPort,
+                RestPort = spec.Ports.RestPort,
+                TargetAddress = spec.Target.Address,
+                TargetPort = spec.Target.Port
+            };
+        }
+
+        private static LmServiceProvisioningBatchResult CreateEnsureResult(
+            LmGatewayPlan plan,
+            string operationId,
+            string hash,
+            int failedIndex)
+        {
+            LmServiceProvisioningBatchResult result = new LmServiceProvisioningBatchResult
+            {
+                SchemaVersion = 1,
+                OperationId = operationId,
+                PlanHash = hash,
+                Status = failedIndex < 0
+                    ? LmServiceProvisioningStatus.Succeeded
+                    : LmServiceProvisioningStatus.RequiresAttention
+            };
+            for (int index = 0; index < plan.Items.Count; index++)
+            {
+                result.Items.Add(new LmServiceProvisioningItemResult
+                {
+                    KktSerial = plan.Items[index].Spec.KktSerial,
+                    Status = index == failedIndex
+                        ? LmServiceProvisioningStatus.Failed
+                        : LmServiceProvisioningStatus.Succeeded,
+                    Message = index == failedIndex ? "failed" : "ready"
+                });
+            }
+            return result;
+        }
+
+        private static LmGatewayCredentials CreateCredentials(string serial)
+        {
+            return new LmGatewayCredentials { Login = "operator", Password = "temporary" };
+        }
+
+        private static LmServiceInventoryItem CreateManagedInventoryItem()
+        {
+            string serial = "00105700000001";
+            return new LmServiceInventoryItem
+            {
+                KktSerial = serial,
+                ServiceName = LmServiceIdentity.CreateName(serial),
+                Role = LmServiceRole.Managed,
+                Ports = new LmGatewayPorts(50063, 50064),
+                Target = new LmGatewayTarget("10.0.0.10", 5000),
+                Status = LmServiceProvisioningStatus.Succeeded,
+                ManifestFingerprint = new LmManifestFingerprint { Sha256 = new string('a', 64) }
+            };
+        }
+
+        private static LmRemovalConfirmation CreateRemovalConfirmation(LmServiceInventoryItem item)
+        {
+            return new LmRemovalConfirmation
+            {
+                KktSerial = item.KktSerial,
+                GrpcPort = item.Ports.GrpcPort,
+                RestPort = item.Ports.RestPort,
+                ManifestFingerprint = item.ManifestFingerprint,
+                RetainedEsmWarningAccepted = true
+            };
+        }
+
+        private static string ComputeRemovalHash(LmRemovalConfirmation confirmation, string operationId)
+        {
+            LmServiceProvisioningBatchRequest request = new LmServiceProvisioningBatchRequest
+            {
+                SchemaVersion = 1,
+                Operation = LmServiceOperation.RemoveManaged,
+                OperationId = operationId,
+                InitiatingSid = "S-1-5-21-1-2-3-1001",
+                RemovalConfirmation = confirmation
+            };
+            return CanonicalLmPlanHasher.Compute(request);
+        }
+
         private static TspiotFormInput CreateValidInput()
         {
             return new TspiotFormInput
@@ -2612,6 +2958,103 @@ namespace EsmTspiot.Shared.Tests
             if (text == null || text.IndexOf(expected, StringComparison.Ordinal) < 0)
             {
                 throw new InvalidOperationException("Expected text to contain: " + expected + ". Actual: " + text);
+            }
+        }
+
+        private sealed class FakeLmProvisioner : ILmServiceProvisioner
+        {
+            private readonly IList<string> _order;
+
+            internal FakeLmProvisioner(IList<string> order)
+            {
+                _order = order;
+            }
+
+            internal int EnsureCalls { get; private set; }
+            internal int RemoveCalls { get; private set; }
+            internal int CleanupCalls { get; private set; }
+            internal Exception EnsureException { get; set; }
+            internal LmServiceProvisioningBatchResult EnsureResult { get; set; }
+            internal LmServiceProvisioningItemResult RemoveResult { get; set; }
+            internal LmServiceProvisioningItemResult CleanupResult { get; set; }
+
+            public Task<LmControllerInstallResult> InstallControllerVersionAsync(
+                LmControllerInstallerSelection selection,
+                string operationId,
+                string planHash,
+                CancellationToken cancellation)
+            {
+                throw new NotSupportedException();
+            }
+
+            public Task<LmServiceProvisioningBatchResult> EnsureBatchAsync(
+                IList<LmServiceProvisioningItemRequest> items,
+                string operationId,
+                string planHash,
+                CancellationToken cancellation)
+            {
+                EnsureCalls++;
+                if (_order != null)
+                {
+                    _order.Add("ensure");
+                }
+                if (EnsureException != null)
+                {
+                    throw EnsureException;
+                }
+                return Task.FromResult(EnsureResult);
+            }
+
+            public Task<LmServiceProvisioningItemResult> RemoveAsync(
+                LmRemovalConfirmation confirmation,
+                string operationId,
+                string planHash,
+                CancellationToken cancellation)
+            {
+                RemoveCalls++;
+                return Task.FromResult(RemoveResult);
+            }
+
+            public Task<LmServiceProvisioningItemResult> CleanupAsync(
+                LmCleanupConfirmation confirmation,
+                string operationId,
+                string planHash,
+                CancellationToken cancellation)
+            {
+                CleanupCalls++;
+                return Task.FromResult(CleanupResult);
+            }
+        }
+
+        private sealed class FakeLmProbe : ILmGatewayProbe
+        {
+            private readonly IList<string> _order;
+
+            internal FakeLmProbe(IList<string> order)
+            {
+                _order = order;
+                DefaultResult = new LmGatewayProbeResult
+                {
+                    ServiceRunning = true,
+                    GrpcListenerReady = true,
+                    RestListenerReady = true,
+                    ListenerOwnersVerified = true
+                };
+            }
+
+            internal int Calls { get; private set; }
+            internal LmGatewayProbeResult DefaultResult { get; set; }
+
+            public Task<LmGatewayProbeResult> ProbeAsync(
+                ManagedLmServiceSpec service,
+                CancellationToken cancellation)
+            {
+                Calls++;
+                if (_order != null)
+                {
+                    _order.Add("probe");
+                }
+                return Task.FromResult(DefaultResult);
             }
         }
 
