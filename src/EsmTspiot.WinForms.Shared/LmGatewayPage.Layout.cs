@@ -10,10 +10,13 @@ namespace EsmTspiot.WinForms.Shared
             TableLayoutPanel root = new TableLayoutPanel();
             root.Dock = DockStyle.Fill;
             root.ColumnCount = 1;
-            root.RowCount = 3;
+            root.RowCount = 4;
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
+            root.Controls.Add(BuildInstallerPanel(), 0, 0);
 
             FlowLayoutPanel toolbar = new FlowLayoutPanel();
             toolbar.Dock = DockStyle.Fill;
@@ -21,19 +24,31 @@ namespace EsmTspiot.WinForms.Shared
             toolbar.WrapContents = true;
             toolbar.Margin = new Padding(0, 0, 0, 6);
 
-            ConfigureButton(_refreshButton, "Обновить ККТ");
-            ConfigureButton(_bindButton, "Привязать выбранные к ЕСМ");
+            ConfigureButton(_refreshButton, "Обновить");
+            ConfigureButton(_preparePlanButton, "Подготовить план");
+            ConfigureButton(_executePlanButton, "Создать / обновить выбранные");
+            ConfigureButton(_bindButton, "Повторить привязку к ЕСМ");
+            ConfigureButton(_removeServiceButton, "Удалить службу");
+            ConfigureButton(_cleanupButton, "Повторить очистку");
             ConfigureButton(_cancelButton, "Остановить");
             _refreshButton.Click += async delegate { await RefreshAsync(); };
             _bindButton.Click += async delegate { await BindSelectedAsync(); };
+            _preparePlanButton.Click += delegate { PrepareServicePlan(); };
+            _executePlanButton.Click += async delegate { await ConfirmAndExecuteServicePlanAsync(); };
+            _removeServiceButton.Click += async delegate { await ConfirmAndRemoveServiceAsync(); };
+            _cleanupButton.Click += async delegate { await ConfirmAndCleanupServiceAsync(); };
             _cancelButton.Click += delegate { CancelCurrentOperation(); };
             _cancelButton.Visible = false;
             toolbar.Controls.Add(_refreshButton);
+            toolbar.Controls.Add(_preparePlanButton);
+            toolbar.Controls.Add(_executePlanButton);
             toolbar.Controls.Add(_bindButton);
+            toolbar.Controls.Add(_removeServiceButton);
+            toolbar.Controls.Add(_cleanupButton);
             toolbar.Controls.Add(_cancelButton);
 
             _statusLabel.AutoSize = false;
-            _statusLabel.Size = new Size(385, 31);
+            _statusLabel.Size = new Size(720, 36);
             _statusLabel.TextAlign = ContentAlignment.MiddleLeft;
             _statusLabel.AutoEllipsis = true;
             _statusLabel.Text = "Read-back ЕСМ не документирован; показан только текущий сеанс.";
@@ -43,9 +58,9 @@ namespace EsmTspiot.WinForms.Shared
             ConfigureGrid();
             GroupBox editor = BuildEditor();
 
-            root.Controls.Add(toolbar, 0, 0);
-            root.Controls.Add(_grid, 0, 1);
-            root.Controls.Add(editor, 0, 2);
+            root.Controls.Add(toolbar, 0, 1);
+            root.Controls.Add(_grid, 0, 2);
+            root.Controls.Add(editor, 0, 3);
             Controls.Add(root);
         }
 
@@ -71,11 +86,17 @@ namespace EsmTspiot.WinForms.Shared
             _grid.Columns.Add(selected);
             _grid.Columns.Add(CreateTextColumn("Серийный номер ККТ", 115));
             _grid.Columns.Add(CreateTextColumn("ИНН", 85));
-            _grid.Columns.Add(CreateTextColumn("ЕСМ", 55));
-            _grid.Columns.Add(CreateTextColumn("Адрес контроллера", 90));
-            _grid.Columns.Add(CreateTextColumn("gRPC-порт", 60));
+            _grid.Columns.Add(CreateTextColumn("Состояние ЕСМ", 105));
+            _grid.Columns.Add(CreateTextColumn("ЕСМ port", 65));
+            _grid.Columns.Add(CreateTextColumn("ЕСМ softPort", 80));
+            _grid.Columns.Add(CreateTextColumn("Роль", 85));
+            _grid.Columns.Add(CreateTextColumn("Служба", 175));
+            _grid.Columns.Add(CreateTextColumn("gRPC", 55));
+            _grid.Columns.Add(CreateTextColumn("REST", 55));
+            _grid.Columns.Add(CreateTextColumn("Целевой ЛМ", 125));
+            _grid.Columns.Add(CreateTextColumn("Состояние службы", 120));
             _grid.Columns.Add(CreateTextColumn("Привязка (сеанс)", 110));
-            _grid.Columns.Add(CreateTextColumn("Последнее действие / ошибка", 145));
+            _grid.Columns.Add(CreateTextColumn("Последнее действие / ошибка", 180));
 
             _grid.SelectionChanged += delegate { LoadSelectedEditor(); };
             _grid.CurrentCellDirtyStateChanged += delegate
@@ -100,17 +121,20 @@ namespace EsmTspiot.WinForms.Shared
             table.AutoSize = true;
             table.Padding = new Padding(6, 3, 6, 6);
             table.ColumnCount = 5;
-            table.RowCount = 2;
+            table.RowCount = 4;
             table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
             table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
             table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 
-            AddEditorField(table, 0, "Адрес локального контроллера", _addressTextBox, false);
-            AddEditorField(table, 0, "gRPC-порт", _portTextBox, true);
-            AddEditorField(table, 1, "Логин ЛМ ЧЗ", _loginTextBox, false);
-            AddEditorField(table, 1, "Пароль ЛМ ЧЗ", _passwordTextBox, true);
+            AddEditorField(table, 0, "Адрес целевого ЛМ", _targetAddressTextBox, false);
+            AddEditorField(table, 0, "Порт целевого ЛМ", _targetPortTextBox, true);
+            AddEditorField(table, 1, "Адрес контроллера", _addressTextBox, false);
+            AddEditorField(table, 1, "Локальный gRPC", _portTextBox, true);
+            AddEditorField(table, 2, "Локальный REST", _restPortTextBox, false);
+            AddEditorField(table, 2, "Логин ЛМ ЧЗ", _loginTextBox, true);
+            AddEditorField(table, 3, "Пароль ЛМ ЧЗ", _passwordTextBox, false);
             _addressTextBox.ReadOnly = true;
             _passwordTextBox.UseSystemPasswordChar = true;
 
@@ -118,7 +142,7 @@ namespace EsmTspiot.WinForms.Shared
             _saveDraftButton.Margin = new Padding(8, 1, 0, 1);
             _saveDraftButton.Click += delegate { SaveSelectedDraft(); };
             table.Controls.Add(_saveDraftButton, 4, 0);
-            table.SetRowSpan(_saveDraftButton, 2);
+            table.SetRowSpan(_saveDraftButton, 4);
             _editorGroup.Controls.Add(table);
             return _editorGroup;
         }

@@ -216,17 +216,49 @@ namespace EsmTspiot.WinForms.Shared
                 throw new ArgumentOutOfRangeException("port");
             }
             HashSet<int> owners = new HashSet<int>();
-            ReadTable(AddressFamilyInet, port, owners, false);
-            ReadTable(AddressFamilyInet6, port, owners, true);
+            ReadTable(AddressFamilyInet, delegate(int hostPort, int processId)
+            {
+                if (hostPort == port && processId > 0)
+                {
+                    owners.Add(processId);
+                }
+            }, false);
+            ReadTable(AddressFamilyInet6, delegate(int hostPort, int processId)
+            {
+                if (hostPort == port && processId > 0)
+                {
+                    owners.Add(processId);
+                }
+            }, true);
             List<int> result = new List<int>(owners);
+            result.Sort();
+            return result;
+        }
+
+        internal IList<int> FindPorts(int first, int last)
+        {
+            if (first < 1 || last > 65535 || first > last)
+            {
+                throw new ArgumentOutOfRangeException("first");
+            }
+            HashSet<int> ports = new HashSet<int>();
+            Action<int, int> collect = delegate(int hostPort, int processId)
+            {
+                if (hostPort >= first && hostPort <= last && processId > 0)
+                {
+                    ports.Add(hostPort);
+                }
+            };
+            ReadTable(AddressFamilyInet, collect, false);
+            ReadTable(AddressFamilyInet6, collect, true);
+            List<int> result = new List<int>(ports);
             result.Sort();
             return result;
         }
 
         private static void ReadTable(
             int family,
-            int expectedPort,
-            HashSet<int> owners,
+            Action<int, int> addListener,
             bool ipv6)
         {
             int size = 0;
@@ -283,10 +315,7 @@ namespace EsmTspiot.WinForms.Shared
                     }
                     short low = unchecked((short)(networkPort & 0xFFFF));
                     int hostPort = unchecked((ushort)IPAddress.NetworkToHostOrder(low));
-                    if (hostPort == expectedPort && processId > 0)
-                    {
-                        owners.Add(unchecked((int)processId));
-                    }
+                    addListener(hostPort, unchecked((int)processId));
                 }
             }
             finally

@@ -1108,6 +1108,14 @@ namespace EsmTspiot.WinForms.Shared
                     dialog.Outcome.Cancelled || HasBulkFailures(dialog.Outcome.Results)
                         ? MessageBoxIcon.Warning
                         : MessageBoxIcon.Information);
+                if (dialog.GoToLmGatewaysRequested)
+                {
+                    BeginInvoke(new Action(async delegate
+                    {
+                        _workspaceTabs.SelectedTab = _lmGatewayTab;
+                        await _lmGatewayPage.RefreshAsync();
+                    }));
+                }
             }
         }
 

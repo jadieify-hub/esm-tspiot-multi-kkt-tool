@@ -18,6 +18,10 @@
     <Compile Include="..\EsmTspiot.WinForms.Shared\MainForm.cs" Link="MainForm.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayPage.cs" Link="LmGatewayPage.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayPage.Layout.cs" Link="LmGatewayPage.Layout.cs" />
+    <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayPage.Services.cs" Link="LmGatewayPage.Services.cs" />
+    <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayPlanDialog.cs" Link="LmGatewayPlanDialog.cs" />
+    <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayRemovalDialog.cs" Link="LmGatewayRemovalDialog.cs" />
+    <Compile Include="..\EsmTspiot.WinForms.Shared\LmControllerInstallerPicker.cs" Link="LmControllerInstallerPicker.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmServiceProvisionerClient.cs" Link="LmServiceProvisionerClient.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmServiceInventoryReader.cs" Link="LmServiceInventoryReader.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayProbe.cs" Link="LmGatewayProbe.cs" />
