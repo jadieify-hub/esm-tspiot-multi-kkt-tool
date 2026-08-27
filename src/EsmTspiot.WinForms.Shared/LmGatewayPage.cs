@@ -56,6 +56,7 @@ namespace EsmTspiot.WinForms.Shared
             _logger = logger;
             _discoveryWorkflow = new LmGatewayDiscoveryWorkflow(apiClient);
             _bindingWorkflow = new LmGatewayBindingWorkflow(apiClient);
+            InitializeServiceFeatures();
 
             Dock = DockStyle.Fill;
             AutoScroll = false;
@@ -92,6 +93,7 @@ namespace EsmTspiot.WinForms.Shared
                     _cancellation = null;
                 }
                 ClearAllCredentials();
+                ClearInstallerSelection();
             }
 
             base.Dispose(disposing);
@@ -164,6 +166,10 @@ namespace EsmTspiot.WinForms.Shared
             }
 
             _session.ReplaceDiscovery(discovery);
+            _currentDiscovery = discovery;
+            RefreshServiceInventory();
+            await ProbeManagedServicesAsync(cancellationToken);
+            MergeServiceDrafts();
             ClearCredentialsForInvalidatedRows();
             RemoveCredentialsForMissingRows();
             FillRows(null);
@@ -172,6 +178,7 @@ namespace EsmTspiot.WinForms.Shared
                 ? "Зарегистрированные ККТ для привязки не найдены."
                 : "Загружено ККТ: " + discovery.Items.Count.ToString() +
                     ". Текущая привязка не проверена: документированный read-back отсутствует.";
+            AppendServiceCapabilityStatus();
 
             StringBuilder log = new StringBuilder();
             log.AppendLine("=== ККТ для ручной привязки к контроллерам ЛМ ===");
@@ -352,6 +359,7 @@ namespace EsmTspiot.WinForms.Shared
 
             string serial = row.Kkt.KktSerial;
             _session.TryUpdateDraft(serial, _addressTextBox.Text, _portTextBox.Text, true);
+            SaveServiceDraft(serial);
             StoreCredentials(serial, _loginTextBox.Text, _passwordTextBox.Text);
             FillRows(serial);
             _statusLabel.Text = "Параметры ККТ " + serial +
@@ -371,6 +379,7 @@ namespace EsmTspiot.WinForms.Shared
                 _addressTextBox.Text,
                 _portTextBox.Text,
                 row.IsSelected);
+            SaveServiceDraft(row.Kkt.KktSerial);
             StoreCredentials(row.Kkt.KktSerial, _loginTextBox.Text, _passwordTextBox.Text);
             FillRows(row.Kkt.KktSerial);
         }
@@ -442,18 +451,26 @@ namespace EsmTspiot.WinForms.Shared
                 for (int index = 0; index < _session.Rows.Count; index++)
                 {
                     LmGatewayBindingSessionRow item = _session.Rows[index];
+                    LmServiceInventoryItem inventory = FindInventory(item.Kkt.KktSerial);
+                    LmGatewayDraft draft = GetOrCreateServiceDraft(item.Kkt.KktSerial);
                     int rowIndex = _grid.Rows.Add(
                         item.IsSelected,
                         item.Kkt.KktSerial,
                         item.Kkt.KktInn,
                         string.IsNullOrWhiteSpace(item.Kkt.ServiceState) ? "Не указано" : item.Kkt.ServiceState,
-                        item.ControllerAddress,
-                        item.ControllerGrpcPort,
+                        item.Kkt.Port ?? string.Empty,
+                        item.Kkt.SoftPort ?? string.Empty,
+                        GetRoleText(inventory),
+                        inventory == null ? LmServiceIdentity.CreateName(item.Kkt.KktSerial) : inventory.ServiceName,
+                        GetPortText(draft.GrpcPort, inventory == null || inventory.Ports == null ? 0 : inventory.Ports.GrpcPort),
+                        GetPortText(draft.RestPort, inventory == null || inventory.Ports == null ? 0 : inventory.Ports.RestPort),
+                        GetTargetText(draft, inventory),
+                        GetServiceStatusText(inventory),
                         item.LastBindingStatus.HasValue
                             ? GetBindingStatusText(item.LastBindingStatus.Value)
                             : "Не проверено (read-back нет)",
-                        item.LastMessage ?? string.Empty);
-                    _grid.Rows[rowIndex].Tag = item;
+                        GetRowMessage(item, inventory));
+                    _grid.Rows[rowIndex].Tag = new LmGatewayGridRow(item, inventory);
                     if (item.LastBindingStatus == LmGatewayBindingStatus.BindingAccepted)
                     {
                         _grid.Rows[rowIndex].DefaultCellStyle.BackColor = Color.Honeydew;
@@ -469,6 +486,36 @@ namespace EsmTspiot.WinForms.Shared
                     if (string.Equals(item.Kkt.KktSerial, selectedSerial, StringComparison.Ordinal))
                     {
                         rowToSelect = rowIndex;
+                    }
+                }
+
+                for (int index = 0; index < _serviceInventory.Count; index++)
+                {
+                    LmServiceInventoryItem inventory = _serviceInventory[index];
+                    if (inventory == null || FindSessionRow(inventory.KktSerial) != null)
+                    {
+                        continue;
+                    }
+                    int rowIndex = _grid.Rows.Add(
+                        false,
+                        string.IsNullOrEmpty(inventory.KktSerial) ? "—" : inventory.KktSerial,
+                        string.Empty,
+                        "—",
+                        string.Empty,
+                        string.Empty,
+                        GetRoleText(inventory),
+                        inventory.ServiceName,
+                        inventory.Ports == null ? string.Empty : inventory.Ports.GrpcPort.ToString(),
+                        inventory.Ports == null ? string.Empty : inventory.Ports.RestPort.ToString(),
+                        inventory.Target == null ? string.Empty : inventory.Target.Address + ":" + inventory.Target.Port,
+                        GetServiceStatusText(inventory),
+                        "—",
+                        inventory.Message ?? string.Empty);
+                    _grid.Rows[rowIndex].Tag = new LmGatewayGridRow(null, inventory);
+                    _grid.Rows[rowIndex].Cells[0].ReadOnly = true;
+                    if (inventory.Role != LmServiceRole.Managed)
+                    {
+                        _grid.Rows[rowIndex].DefaultCellStyle.BackColor = Color.Gainsboro;
                     }
                 }
 
@@ -507,6 +554,7 @@ namespace EsmTspiot.WinForms.Shared
                 : "Параметры: ККТ не выбрана — хранятся только до закрытия программы";
             _addressTextBox.Text = hasRow ? row.ControllerAddress : string.Empty;
             _portTextBox.Text = hasRow ? row.ControllerGrpcPort : string.Empty;
+            LoadServiceDraft(row);
 
             LmGatewayCredentials credentials;
             if (hasRow && _credentials.TryGetValue(row.Kkt.KktSerial, out credentials) && credentials != null)
@@ -529,7 +577,8 @@ namespace EsmTspiot.WinForms.Shared
                 return null;
             }
 
-            return _grid.SelectedRows[0].Tag as LmGatewayBindingSessionRow;
+            LmGatewayGridRow context = _grid.SelectedRows[0].Tag as LmGatewayGridRow;
+            return context == null ? null : context.SessionRow;
         }
 
         private void OnGridCellValueChanged(object sender, DataGridViewCellEventArgs e)
@@ -539,7 +588,8 @@ namespace EsmTspiot.WinForms.Shared
                 return;
             }
 
-            LmGatewayBindingSessionRow row = _grid.Rows[e.RowIndex].Tag as LmGatewayBindingSessionRow;
+            LmGatewayGridRow context = _grid.Rows[e.RowIndex].Tag as LmGatewayGridRow;
+            LmGatewayBindingSessionRow row = context == null ? null : context.SessionRow;
             if (row == null || row.Kkt == null)
             {
                 return;
@@ -594,7 +644,7 @@ namespace EsmTspiot.WinForms.Shared
             }
 
             _cancellation.Cancel();
-            _statusLabel.Text = "Остановка запрошена. Потерянный ответ не будет автоматически повторён.";
+            _statusLabel.Text = "Остановка запрошена. Текущая ККТ завершится безопасно; следующие не начнутся.";
         }
 
         private void UpdateActionState()
@@ -619,6 +669,7 @@ namespace EsmTspiot.WinForms.Shared
             _refreshButton.Enabled = idle;
             _saveDraftButton.Enabled = idle && hasRow;
             _bindButton.Enabled = idle && hasSelected;
+            UpdateServiceActionState(idle, hasRow, hasSelected);
             _addressTextBox.Enabled = idle && hasRow;
             _portTextBox.Enabled = idle && hasRow;
             _loginTextBox.Enabled = idle && hasRow;

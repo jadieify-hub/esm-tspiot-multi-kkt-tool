@@ -18,6 +18,7 @@ namespace EsmTspiot.WinForms.Shared
         private readonly ProgressBar _progressBar = new ProgressBar();
         private readonly Button _startButton = new Button();
         private readonly Button _cancelButton = new Button();
+        private readonly Button _goToLmGatewaysButton = new Button();
         private CancellationTokenSource _cancellation;
         private bool _running;
 
@@ -44,6 +45,7 @@ namespace EsmTspiot.WinForms.Shared
         }
 
         public BulkRegistrationOutcome Outcome { get; private set; }
+        public bool GoToLmGatewaysRequested { get; private set; }
 
         private void BuildLayout()
         {
@@ -84,7 +86,18 @@ namespace EsmTspiot.WinForms.Shared
             _cancelButton.AutoSize = true;
             _cancelButton.Click += CancelOrClose;
 
+            _goToLmGatewaysButton.Text = "Перейти к контроллерам ЛМ ЧЗ";
+            _goToLmGatewaysButton.AutoSize = true;
+            _goToLmGatewaysButton.Visible = false;
+            _goToLmGatewaysButton.Click += delegate
+            {
+                GoToLmGatewaysRequested = true;
+                DialogResult = DialogResult.OK;
+                Close();
+            };
+
             buttons.Controls.Add(_cancelButton);
+            buttons.Controls.Add(_goToLmGatewaysButton);
             buttons.Controls.Add(_startButton);
             root.Controls.Add(buttons, 0, 3);
             Controls.Add(root);
@@ -197,7 +210,28 @@ namespace EsmTspiot.WinForms.Shared
                     ? "Операция остановлена. Уже выполненные действия не отменены."
                     : "Операция завершена. Подробности записаны в журнал.";
                 _progressBar.Value = _progressBar.Maximum;
+                _goToLmGatewaysButton.Visible = HasSuccessfulRegistration();
             }
+        }
+
+        private bool HasSuccessfulRegistration()
+        {
+            if (Outcome == null)
+            {
+                return false;
+            }
+            for (int index = 0; index < Outcome.Results.Count; index++)
+            {
+                BulkKktRegistrationResult result = Outcome.Results[index];
+                if (result != null &&
+                    (result.Status == BulkKktRegistrationStatus.Registered ||
+                     result.Status == BulkKktRegistrationStatus.RecoveredRegistration ||
+                     result.Status == BulkKktRegistrationStatus.AlreadyExists))
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         private void UpdateProgress(BulkRegistrationProgress progress)
