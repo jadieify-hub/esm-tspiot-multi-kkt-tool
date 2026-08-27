@@ -1000,7 +1000,7 @@ git commit -m "Подключить помощник служб к прилож�
 - Removal order: explicit UI confirmation → one helper remove → automatic profile/metadata cleanup → inventory refresh; no ESM unbind call.
 - Results preserve separate service and binding statuses.
 
-- [ ] **Step 1: Add lifecycle tests**
+- [x] **Step 1: Add lifecycle tests**
 
 Register:
 
@@ -1016,11 +1016,11 @@ Run("LM removal workflow blocks batch and official removal", LmRemovalWorkflowBl
 Run("LM removal outcome warns that ESM binding remains", LmRemovalOutcomeWarnsThatEsmBindingRemains);
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Expected: missing lifecycle workflows.
 
-- [ ] **Step 3: Implement creation orchestration**
+- [x] **Step 3: Implement creation orchestration**
 
 For all valid selected plan items:
 
@@ -1034,19 +1034,19 @@ For all valid selected plan items:
 
 UAC cancellation happens before the batch starts and marks all pending mutations cancelled. Cancellation after helper connection sends `CancelAfterCurrentItem`: lifecycle preserves completed/current reconciled outcomes, marks untouched rows `Cancelled`, never kills helper and waits for or later reconciles the same `operationId` before allowing another mutation.
 
-- [ ] **Step 4: Implement binding-only repair path**
+- [x] **Step 4: Implement binding-only repair path**
 
 For a ready controller whose prior PUT failed, `RetryBindingAsync` probes again and invokes Phase 1 workflow without calling helper. This path requires no UAC.
 
-- [ ] **Step 5: Implement removal orchestration**
+- [x] **Step 5: Implement removal orchestration**
 
 Accept exactly one selected managed inventory record and the canonical hash of the confirmation the user actually accepted. Call helper `RemoveAsync`; when it returns `CleanupPending`, expose `CleanupAsync` with a new operation ID and hash of the visible pending projection as `Повторить очистку`. Read inventory/probe afterward. A changed manifest fingerprint makes the request stale and forces refresh/reconfirmation. Return `RemovedLocalArtifactsBindingRetained` only when SCM, profile, manifest and all app-owned metadata absence are confirmed. Do not call any PUT/DELETE settings endpoint.
 
-- [ ] **Step 6: Run net8 and net48 tests and verify GREEN**
+- [x] **Step 6: Run net8 and net48 tests and verify GREEN**
 
 Expected: 116 shared tests pass in both frameworks.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add src/EsmTspiot.Shared/Models/LmGatewayLifecycle* src/EsmTspiot.Shared/Services/LmGatewayLifecycleWorkflow.cs src/EsmTspiot.Shared/Services/LmGatewayRemovalWorkflow.cs tests/EsmTspiot.Shared.Tests/Program.cs
