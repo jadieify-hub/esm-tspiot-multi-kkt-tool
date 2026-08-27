@@ -19,6 +19,7 @@ namespace EsmTspiot.WinForms.Shared
         private readonly TspiotApiClient _client = new TspiotApiClient();
         private readonly BulkRegistrationWorkflow _bulkWorkflow;
         private readonly KktDeletionWorkflow _deletionWorkflow;
+        private readonly LmGatewayPage _lmGatewayPage;
         private readonly FileLogSink _fileLogSink = FileLogSink.CreateDefault();
         private readonly TextBox _baseUrlTextBox = new TextBox();
         private readonly TextBox _kktSerialTextBox = new TextBox();
@@ -49,6 +50,7 @@ namespace EsmTspiot.WinForms.Shared
         private readonly TabPage _manualKktTab = new TabPage();
         private readonly TabPage _instancesTab = new TabPage();
         private readonly TabPage _automationTab = new TabPage();
+        private readonly TabPage _lmGatewayTab = new TabPage();
         private readonly TabPage _logTab = new TabPage();
         private readonly ToolStripStatusLabel _operationStatusLabel = new ToolStripStatusLabel();
         private readonly ToolStripStatusLabel _connectionStatusLabel = new ToolStripStatusLabel();
@@ -68,6 +70,11 @@ namespace EsmTspiot.WinForms.Shared
         {
             _bulkWorkflow = new BulkRegistrationWorkflow(_client);
             _deletionWorkflow = new KktDeletionWorkflow(_client);
+            _lmGatewayPage = new LmGatewayPage(
+                delegate { return _baseUrlTextBox.Text; },
+                _client,
+                AppendLog);
+            _lmGatewayPage.OperationStateChanged += OnLmGatewayOperationStateChanged;
             Text = "Управление ККТ в ЕСМ/ТС ПИоТ";
             ClientSize = new Size(780, 580);
             MinimumSize = new Size(640, 420);
@@ -138,11 +145,14 @@ namespace EsmTspiot.WinForms.Shared
             };
             ToolStripMenuItem automatic = new ToolStripMenuItem("Автоматический режим");
             automatic.Click += delegate { _workspaceTabs.SelectedTab = _automationTab; };
+            ToolStripMenuItem lmGateways = new ToolStripMenuItem("Контроллеры ЛМ ЧЗ");
+            lmGateways.Click += delegate { _workspaceTabs.SelectedTab = _lmGatewayTab; };
             _deleteMenuItem.Enabled = false;
             _deleteMenuItem.Click += async delegate { await RunButtonActionAsync(DeleteSelectedKktAsync); };
             _operationsMenuItem.DropDownItems.Add(refresh);
             _operationsMenuItem.DropDownItems.Add(fillNext);
             _operationsMenuItem.DropDownItems.Add(automatic);
+            _operationsMenuItem.DropDownItems.Add(lmGateways);
             _operationsMenuItem.DropDownItems.Add(new ToolStripSeparator());
             _operationsMenuItem.DropDownItems.Add(_deleteMenuItem);
 
@@ -227,17 +237,27 @@ namespace EsmTspiot.WinForms.Shared
             ConfigureTabPage(_manualKktTab, "Ручное подключение");
             ConfigureTabPage(_instancesTab, "ККТ в ЕСМ");
             ConfigureTabPage(_automationTab, "Автоматический режим");
+            ConfigureTabPage(_lmGatewayTab, "Контроллеры ЛМ ЧЗ");
             ConfigureTabPage(_logTab, "Журнал");
 
             _manualKktTab.Controls.Add(BuildManualKktPage());
             _instancesTab.Controls.Add(BuildInstancesPage());
             _automationTab.Controls.Add(BuildAutomationPage());
+            _lmGatewayTab.Controls.Add(_lmGatewayPage);
             _logTab.Controls.Add(BuildLogGroup());
 
             _workspaceTabs.TabPages.Add(_manualKktTab);
             _workspaceTabs.TabPages.Add(_instancesTab);
             _workspaceTabs.TabPages.Add(_automationTab);
+            _workspaceTabs.TabPages.Add(_lmGatewayTab);
             _workspaceTabs.TabPages.Add(_logTab);
+            _workspaceTabs.Selected += async delegate
+            {
+                if (_workspaceTabs.SelectedTab == _lmGatewayTab && !_busy)
+                {
+                    await _lmGatewayPage.RefreshIfNeededAsync();
+                }
+            };
             return _workspaceTabs;
         }
 
@@ -1886,7 +1906,21 @@ namespace EsmTspiot.WinForms.Shared
             }
 
             _operationsMenuItem.Enabled = !busy;
+            _lmGatewayPage.SetHostBusy(busy);
             UpdateDeleteButtonState();
+        }
+
+        private void OnLmGatewayOperationStateChanged(bool busy)
+        {
+            if (IsDisposed || Disposing)
+            {
+                return;
+            }
+
+            SetBusy(busy);
+            _operationStatusLabel.Text = busy
+                ? "Выполняется операция с привязками ЛМ..."
+                : "Готово";
         }
     }
 }
