@@ -68,6 +68,11 @@ namespace EsmTspiot.Shared.Tests
             Run("LM gateway API uses documented PUT contract", LmGatewayApiUsesDocumentedPutContract);
             Run("LM gateway API escapes instance id", LmGatewayApiEscapesInstanceId);
             Run("LM gateway API response stores redacted request", LmGatewayApiResponseStoresRedactedRequest);
+            Run("LM discovery returns registered KKT with INN", LmDiscoveryReturnsRegisteredKktWithInn);
+            Run("LM discovery aborts on malformed instance list", LmDiscoveryAbortsOnMalformedInstanceList);
+            Run("LM discovery continues after one malformed detail", LmDiscoveryContinuesAfterOneMalformedDetail);
+            Run("LM discovery excludes unregistered instance", LmDiscoveryExcludesUnregisteredInstance);
+            Run("LM discovery honors cancellation", LmDiscoveryHonorsCancellation);
             Run("API client preserves an injected timeout", ApiClientPreservesInjectedTimeout);
             Run("Instruction selector uses the newest file time", InstructionSelectorUsesNewestFileTime);
             Run("Deletion planner protects primary KKT", DeletionPlannerProtectsPrimaryKkt);
@@ -900,6 +905,110 @@ namespace EsmTspiot.Shared.Tests
             AssertContains(handler.Requests[0].Body, "\"password\":\"" + password + "\"");
             AssertContains(response.RequestBody, "\"password\":\"***\"");
             AssertFalse(response.RequestBody.Contains(password), "ApiResponse must not retain the raw password.");
+        }
+
+        private static void LmDiscoveryReturnsRegisteredKktWithInn()
+        {
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            api.InstancesResponse = Success(
+                "{\"instances\":[" +
+                "{\"id\":\"00105700000002\",\"port\":50402,\"softPort\":51402,\"dkktPort\":4041,\"serviceState\":\"RUNNING\"}," +
+                "{\"id\":\"00105700000001\",\"port\":50401,\"softPort\":51401,\"dkktPort\":4041,\"serviceState\":\"STOPPED\"}]}");
+            api.InstanceResponses.Enqueue(Success(
+                "{\"clientPort\":51402,\"regData\":{\"kktSerial\":\"00105700000002\"," +
+                "\"fnSerial\":\"7300000000000002\",\"kktInn\":\"1234567894\"}}"));
+            api.InstanceResponses.Enqueue(Success(
+                "{\"clientPort\":51401,\"regData\":{\"kktSerial\":\"00105700000001\"," +
+                "\"fnSerial\":\"7300000000000001\",\"kktInn\":\"7707083893\"}}"));
+            LmGatewayDiscoveryWorkflow workflow = new LmGatewayDiscoveryWorkflow(api);
+
+            LmGatewayDiscovery discovery = workflow.DiscoverAsync(
+                "http://127.0.0.1:51077", null, CancellationToken.None).Result;
+
+            AssertTrue(discovery.IsSuccessful, "Expected successful LM discovery.");
+            AssertEqual(2, discovery.Items.Count, "Expected two registered KKT.");
+            AssertEqual("00105700000002", discovery.Items[0].InstanceId, "Expected source order to be preserved.");
+            AssertEqual("1234567894", discovery.Items[0].KktInn, "Expected first KKT INN.");
+            AssertEqual("50402", discovery.Items[0].Port, "Expected ESM service port.");
+            AssertEqual("51402", discovery.Items[0].SoftPort, "Expected ESM soft port.");
+            AssertEqual("4041", discovery.Items[0].DkktPort, "Expected ESM dkkt port.");
+            AssertEqual("RUNNING", discovery.Items[0].ServiceState, "Expected ESM service state.");
+            AssertEqual("00105700000001", discovery.Items[1].InstanceId, "Expected stable second item.");
+            AssertEqual("7707083893", discovery.Items[1].KktInn, "Expected a different second INN.");
+            AssertEqual(0, discovery.Issues.Count, "Expected no issues for valid details.");
+        }
+
+        private static void LmDiscoveryAbortsOnMalformedInstanceList()
+        {
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            api.InstancesResponse = Success("{\"instances\":\"unexpected\"}");
+            LmGatewayDiscoveryWorkflow workflow = new LmGatewayDiscoveryWorkflow(api);
+
+            LmGatewayDiscovery discovery = workflow.DiscoverAsync(
+                "http://127.0.0.1:51077", null, CancellationToken.None).Result;
+
+            AssertFalse(discovery.IsSuccessful, "Malformed instance list must abort discovery.");
+            AssertContains(discovery.ErrorMessage, "список экземпляров");
+            AssertEqual(0, api.InstanceCalls, "Details must not be requested after a malformed list.");
+            AssertEqual(0, discovery.Items.Count, "Malformed list must not produce binding candidates.");
+        }
+
+        private static void LmDiscoveryContinuesAfterOneMalformedDetail()
+        {
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            api.InstancesResponse = Success(
+                "{\"instances\":[{\"id\":\"bad-detail\"},{\"id\":\"00105700000002\"}]}");
+            api.InstanceResponses.Enqueue(Success("{\"unexpected\":true}"));
+            api.InstanceResponses.Enqueue(Success(
+                "{\"clientPort\":51402,\"regData\":{\"kktSerial\":\"00105700000002\"," +
+                "\"fnSerial\":\"7300000000000002\",\"kktInn\":\"1234567894\"}}"));
+            LmGatewayDiscoveryWorkflow workflow = new LmGatewayDiscoveryWorkflow(api);
+
+            LmGatewayDiscovery discovery = workflow.DiscoverAsync(
+                "http://127.0.0.1:51077", null, CancellationToken.None).Result;
+
+            AssertTrue(discovery.IsSuccessful, "One malformed detail must remain a nonfatal issue.");
+            AssertEqual(1, discovery.Issues.Count, "Expected one issue.");
+            AssertEqual("bad-detail", discovery.Issues[0].InstanceId, "Issue must identify only the invalid instance.");
+            AssertEqual(1, discovery.Items.Count, "Expected discovery to continue with the next instance.");
+            AssertEqual("00105700000002", discovery.Items[0].InstanceId, "Expected the valid second KKT.");
+        }
+
+        private static void LmDiscoveryExcludesUnregisteredInstance()
+        {
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            api.InstancesResponse = Success("{\"instances\":[{\"id\":\"00105700000001\"}]}");
+            api.InstanceResponses.Enqueue(Success("{\"clientPort\":51401,\"regData\":null}"));
+            LmGatewayDiscoveryWorkflow workflow = new LmGatewayDiscoveryWorkflow(api);
+
+            LmGatewayDiscovery discovery = workflow.DiscoverAsync(
+                "http://127.0.0.1:51077", null, CancellationToken.None).Result;
+
+            AssertTrue(discovery.IsSuccessful, "Unregistered KKT must be a nonfatal issue.");
+            AssertEqual(0, discovery.Items.Count, "Unregistered instance must not be eligible for LM binding.");
+            AssertEqual(1, discovery.Issues.Count, "Expected an issue for incomplete registration data.");
+            AssertContains(discovery.Issues[0].Message, "не зарегистрирован");
+        }
+
+        private static void LmDiscoveryHonorsCancellation()
+        {
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            api.InstancesResponse = Success("{\"instances\":[{\"id\":\"00105700000001\"}]}");
+            api.CancelOnInstanceCall = 1;
+            LmGatewayDiscoveryWorkflow workflow = new LmGatewayDiscoveryWorkflow(api);
+            bool cancellationObserved = false;
+
+            try
+            {
+                workflow.DiscoverAsync(
+                    "http://127.0.0.1:51077", null, CancellationToken.None).GetAwaiter().GetResult();
+            }
+            catch (OperationCanceledException)
+            {
+                cancellationObserved = true;
+            }
+
+            AssertTrue(cancellationObserved, "Discovery cancellation must propagate to the caller.");
         }
 
         private static void ApiClientPreservesInjectedTimeout()
