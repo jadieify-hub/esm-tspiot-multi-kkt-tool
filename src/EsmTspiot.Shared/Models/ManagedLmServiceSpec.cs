@@ -28,6 +28,28 @@ namespace EsmTspiot.Shared.Models
             Target = new LmGatewayTarget(target.Address, target.Port);
         }
 
+        public ManagedLmServiceSpec(
+            string kktSerial,
+            LmGatewayPorts ports,
+            LmGatewayTarget target)
+        {
+            if (ports == null)
+            {
+                throw new ArgumentNullException("ports");
+            }
+            if (target == null)
+            {
+                throw new ArgumentNullException("target");
+            }
+
+            KktSerial = kktSerial;
+            KktInn = string.Empty;
+            ServiceName = LmServiceIdentity.CreateName(KktSerial);
+            ProfileName = ServiceName;
+            Ports = new LmGatewayPorts(ports.GrpcPort, ports.RestPort);
+            Target = new LmGatewayTarget(target.Address, target.Port);
+        }
+
         public string KktSerial { get; private set; }
         public string KktInn { get; private set; }
         public string ServiceName { get; private set; }

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Runtime.Serialization.Json;
 using EsmTspiot.Shared.Models;
@@ -22,7 +23,7 @@ namespace EsmTspiot.ServiceProvisioner
         internal void Write(ProvisioningOperationJournal journal)
         {
             Validate(journal);
-            string path = GetPath(journal.OperationId);
+            string path = GetPath(journal.OperationId, journal.KktSerial);
             EnsureSafe(path);
             string directory = Path.GetDirectoryName(path);
             _pathSafety.EnsureProtectedDirectory(
@@ -44,9 +45,9 @@ namespace EsmTspiot.ServiceProvisioner
             AtomicJsonFile.Write(path, AtomicJsonFile.Serialize(journal));
         }
 
-        internal ProvisioningOperationJournal Read(string operationId)
+        internal ProvisioningOperationJournal Read(string operationId, string kktSerial)
         {
-            string path = GetPath(operationId);
+            string path = GetPath(operationId, kktSerial);
             EnsureSafe(path);
             using (FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
             {
@@ -63,10 +64,10 @@ namespace EsmTspiot.ServiceProvisioner
             }
         }
 
-        internal void Delete(string operationId)
+        internal void Delete(string operationId, string kktSerial)
         {
-            ProvisioningOperationJournal journal = Read(operationId);
-            string path = GetPath(journal.OperationId);
+            ProvisioningOperationJournal journal = Read(operationId, kktSerial);
+            string path = GetPath(journal.OperationId, journal.KktSerial);
             File.Delete(path);
             string directory = Path.GetDirectoryName(path);
             if (Directory.GetFileSystemEntries(directory).Length == 0)
@@ -75,13 +76,61 @@ namespace EsmTspiot.ServiceProvisioner
             }
         }
 
-        private string GetPath(string operationId)
+        internal IList<ProvisioningOperationJournal> ReadForKkt(string kktSerial)
+        {
+            LmServiceIdentity.CreateName(kktSerial);
+            List<ProvisioningOperationJournal> journals =
+                new List<ProvisioningOperationJournal>();
+            if (!Directory.Exists(_root))
+            {
+                return journals;
+            }
+            EnsureSafe(_root);
+            string fileName = LmServiceIdentity.CreateName(kktSerial) + ".json";
+            string[] operationDirectories = Directory.GetDirectories(_root);
+            for (int index = 0; index < operationDirectories.Length; index++)
+            {
+                string operationId = Path.GetFileName(operationDirectories[index]);
+                if (!ProvisionerCommandLine.IsGuidN(operationId))
+                {
+                    throw new InvalidDataException("Operations store contains an unknown directory.");
+                }
+                string path = Path.Combine(operationDirectories[index], fileName);
+                EnsureSafe(path);
+                if (File.Exists(path))
+                {
+                    journals.Add(Read(operationId, kktSerial));
+                }
+            }
+            journals.Sort(delegate(
+                ProvisioningOperationJournal left,
+                ProvisioningOperationJournal right)
+            {
+                return string.CompareOrdinal(left.UpdatedUtc, right.UpdatedUtc);
+            });
+            return journals;
+        }
+
+        internal void DeleteForKkt(string kktSerial)
+        {
+            IList<ProvisioningOperationJournal> journals = ReadForKkt(kktSerial);
+            for (int index = 0; index < journals.Count; index++)
+            {
+                Delete(journals[index].OperationId, kktSerial);
+            }
+        }
+
+        private string GetPath(string operationId, string kktSerial)
         {
             if (!ProvisionerCommandLine.IsGuidN(operationId))
             {
                 throw new ArgumentException("Operation id must be a 32-character GUID.", "operationId");
             }
-            return Path.Combine(_root, operationId.ToLowerInvariant(), "journal.json");
+            string serviceName = LmServiceIdentity.CreateName(kktSerial);
+            return Path.Combine(
+                _root,
+                operationId.ToLowerInvariant(),
+                serviceName + ".json");
         }
 
         private void EnsureSafe(string path)
@@ -97,7 +146,9 @@ namespace EsmTspiot.ServiceProvisioner
         {
             if (journal == null || journal.SchemaVersion != 1 ||
                 !ProvisionerCommandLine.IsGuidN(journal.OperationId) ||
-                string.IsNullOrWhiteSpace(journal.UpdatedUtc))
+                string.IsNullOrWhiteSpace(journal.UpdatedUtc) ||
+                journal.Stage < LmProvisioningJournalStage.Preparing ||
+                journal.Stage > LmProvisioningJournalStage.Failed)
             {
                 throw new InvalidDataException("Operation journal is invalid.");
             }

@@ -717,7 +717,7 @@ git commit -m "Добавить изолированную конфигурац�
 - Probe checks service state, service PID and port-owner PID according to Task 1 capability profile.
 - No HTTP credentials are involved.
 
-- [ ] **Step 1: Add ensure transaction tests**
+- [x] **Step 1: Add ensure transaction tests**
 
 Register:
 
@@ -741,21 +741,21 @@ Run("Install version leaves services stopped when verification fails", InstallVe
 Run("Ensure clears version pending only after recreated artifacts are ready", EnsureClearsVersionPendingOnlyAfterRecreatedArtifactsAreReady);
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Expected: missing provisioner/probe.
 
-- [ ] **Step 3: Implement the selected-installer version transition**
+- [x] **Step 3: Implement the selected-installer version transition**
 
 For `InstallControllerVersion`, validate the canonical confirmation, acquire the machine-wide mutex, call `VerifyStageAndLock`, enumerate only app-owned manifests, and atomically write `VersionVerificationPending` to every managed instance before stopping anything. Stop each managed service normally and verify its service/child/listener PIDs exited; never kill a process. Launch the staged signed installer visibly with no guessed silent/vendor arguments and wait for its exit. The official base service remains owned by the installer.
 
 After exit, re-resolve the installed binary and require exact version, hash, product, architecture, signer and protected path from the selected capability profile. Delete the protected staged copy. Success records the new machine controller version but keeps every old managed instance in `VersionVerificationPending`; the next `EnsureBatch` recreates any version-dependent execution/profile artifact and clears that state for one KKT only after readiness succeeds. Cancellation, installer failure, identity mismatch or staging-cleanup failure never restarts managed services automatically. Removal/cleanup remain available from the saved ownership manifest.
 
-- [ ] **Step 4: Implement ownership verification**
+- [x] **Step 4: Implement ownership verification**
 
 Require operation journal/manifest + service marker + exact derived name + verified ImagePath + matching KKT serial. A pending journal alone is not sufficient to delete a service, but it permits deterministic reconciliation with the other ownership facts. The official base service has a separate read-only verification path and is never passed to `EnsureBatch`.
 
-- [ ] **Step 5: Implement ensure state machine**
+- [x] **Step 5: Implement ensure state machine**
 
 Exact order for new service:
 
@@ -776,15 +776,15 @@ For an owned existing service reconcile current state first. A matching ready se
 
 The two renamed tests above contain subcases for occupied IPv4, IPv6, dual-stack, OS-excluded candidate and a race immediately after probe release. Cancellation before the first item changes nothing; cancellation received during an item completes/reconciles that item only, marks every untouched item `Cancelled`, and returns a partial typed result. Pipe loss follows the same boundary.
 
-- [ ] **Step 6: Implement conservative failure behavior**
+- [x] **Step 6: Implement conservative failure behavior**
 
 If a just-created service fails readiness, request a normal stop, keep the service/profile, retain a terminal failure journal for reconciliation, and return exact stage. Do not delete automatically. If SCM result is ambiguous, re-query; if still ambiguous, return `RequiresAttention`. Tests inject a crash after profile creation, `CreateService`, start and readiness, then prove the next run never creates an unowned orphan.
 
-- [ ] **Step 7: Run helper tests and verify GREEN**
+- [x] **Step 7: Run helper tests and verify GREEN**
 
 Expected: 50/50 helper tests pass.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```powershell
 git add src/EsmTspiot.ServiceProvisioner tests/EsmTspiot.ServiceProvisioner.Tests/Program.cs

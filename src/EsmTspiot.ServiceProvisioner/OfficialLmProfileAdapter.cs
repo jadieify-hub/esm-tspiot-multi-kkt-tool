@@ -124,7 +124,7 @@ namespace EsmTspiot.ServiceProvisioner
             yaml.Append("settings:").Append(newline);
             yaml.Append("    logs:").Append(newline);
             yaml.Append("        dir: ").Append(QuoteYaml(logDirectory)).Append(newline);
-            yaml.Append("        debugInfo: false").Append(newline);
+            yaml.Append("        debugInfo: true").Append(newline);
             yaml.Append("    common:").Append(newline);
             yaml.Append("        gRPCPort: ").Append(configuration.GrpcPort).Append(newline);
             yaml.Append("        RESTPort: ").Append(configuration.RestPort).Append(newline);
@@ -141,7 +141,9 @@ namespace EsmTspiot.ServiceProvisioner
             yaml.Append("    certificate:").Append(newline);
             yaml.Append("        hosts: []").Append(newline);
             yaml.Append("    connection:").Append(newline);
-            yaml.Append("        pingServers: []").Append(newline);
+            yaml.Append("        pingServers:").Append(newline);
+            yaml.Append("            - ya.ru").Append(newline);
+            yaml.Append("            - google.com").Append(newline);
             yaml.Append("        inetstatus: {}").Append(newline);
             yaml.Append("        lmstatus: {}").Append(newline);
             return yaml.ToString();
