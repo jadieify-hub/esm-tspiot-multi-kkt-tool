@@ -8,6 +8,7 @@ namespace EsmTspiot.Shared.Models
         public LmGatewayPorts Ports { get; set; }
         public LmGatewayTarget Target { get; set; }
         public bool IsRunning { get; set; }
+        public bool IsReady { get; set; }
         public LmServiceProvisioningStatus Status { get; set; }
         public LmManifestFingerprint ManifestFingerprint { get; set; }
         public string Message { get; set; }

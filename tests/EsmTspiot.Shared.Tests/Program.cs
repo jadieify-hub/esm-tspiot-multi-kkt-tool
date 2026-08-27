@@ -85,6 +85,7 @@ namespace EsmTspiot.Shared.Tests
             Run("LM gateway planner never adopts official base service", LmGatewayPlannerNeverAdoptsOfficialBaseService);
             Run("LM gateway planner allocates sequential local ports", LmGatewayPlannerAllocatesSequentialLocalPorts);
             Run("LM gateway planner keeps owned and skips foreign listener", LmGatewayPlannerKeepsOwnedAndSkipsForeignListener);
+            Run("LM listener snapshot projects only ready managed owners", LmListenerSnapshotProjectsOnlyReadyManagedOwners);
             Run("LM gateway planner preserves matching managed assignment", LmGatewayPlannerPreservesMatchingManagedAssignment);
             Run("LM gateway planner rejects unsafe target and all port conflicts", LmGatewayPlannerRejectsUnsafeTargetAndAllPortConflicts);
             Run("Managed LM service spec contains no credentials", ManagedLmServiceSpecContainsNoCredentials);
@@ -1359,6 +1360,50 @@ namespace EsmTspiot.Shared.Tests
                 "A foreign listener in either column must reserve the number globally.");
             AssertEqual(15002, plan.Items[1].Spec.Ports.RestPort,
                 "An ambiguous listener must be skipped instead of adopted.");
+        }
+
+        private static void LmListenerSnapshotProjectsOnlyReadyManagedOwners()
+        {
+            const string readySerial = "00105700000001";
+            const string unreadySerial = "00105700000002";
+            string readyService = LmServiceIdentity.CreateName(readySerial);
+            IList<LmServiceInventoryItem> inventory = new List<LmServiceInventoryItem>
+            {
+                new LmServiceInventoryItem
+                {
+                    KktSerial = readySerial,
+                    ServiceName = readyService,
+                    Role = LmServiceRole.Managed,
+                    Ports = new LmGatewayPorts(55000, 15000),
+                    IsRunning = true,
+                    IsReady = true
+                },
+                new LmServiceInventoryItem
+                {
+                    KktSerial = unreadySerial,
+                    ServiceName = LmServiceIdentity.CreateName(unreadySerial),
+                    Role = LmServiceRole.Managed,
+                    Ports = new LmGatewayPorts(55001, 15001),
+                    IsRunning = true,
+                    IsReady = false
+                }
+            };
+
+            IList<TcpListenerSnapshotItem> snapshot = LmTcpListenerSnapshotBuilder.Build(
+                new[] { 55000, 15000, 55001, 15001, 55002 },
+                inventory);
+
+            AssertEqual(5, snapshot.Count, "Every occupied port must remain in the snapshot.");
+            AssertTrue(snapshot[0].IsOwnerVerified && snapshot[0].OwnerServiceName == readyService,
+                "A readiness-probed managed gRPC listener must retain its verified owner.");
+            AssertTrue(snapshot[1].IsOwnerVerified && snapshot[1].OwnerServiceName == readyService,
+                "A readiness-probed managed REST listener must retain its verified owner.");
+            AssertFalse(snapshot[2].IsOwnerVerified,
+                "An unready managed service must not claim an occupied port.");
+            AssertFalse(snapshot[3].IsOwnerVerified,
+                "Both ports of an unready managed service must remain unverified.");
+            AssertFalse(snapshot[4].IsOwnerVerified,
+                "An unrelated occupied port must remain unverified.");
         }
 
         private static void LmGatewayPlannerPreservesMatchingManagedAssignment()
