@@ -8,13 +8,6 @@ namespace EsmTspiot.Shared.Logging
     {
         private static readonly Regex FiscalIdentifierPattern =
             new Regex(@"(?<![0-9])[0-9]{10,16}(?![0-9])", RegexOptions.Compiled);
-        private static readonly Regex SensitiveJsonValuePattern = new Regex(
-            @"(?<prefix>""(?:password|token|secret|authorization|apiKey|connectionString)""\s*:\s*"")(?<value>[^""]*)",
-            RegexOptions.Compiled | RegexOptions.IgnoreCase);
-        private static readonly Regex SensitiveKeyValuePattern = new Regex(
-            @"(?<prefix>\b(?:password|token|secret|authorization|apiKey)\s*=\s*)(?<value>[^&\s;]+)",
-            RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
         public static string Mask(string text)
         {
             if (string.IsNullOrEmpty(text))
@@ -22,7 +15,8 @@ namespace EsmTspiot.Shared.Logging
                 return text ?? string.Empty;
             }
 
-            string masked = ReplacePath(text, Path.GetTempPath(), "%TEMP%");
+            string masked = SensitiveDataMasker.Mask(text);
+            masked = ReplacePath(masked, Path.GetTempPath(), "%TEMP%");
             masked = ReplacePath(
                 masked,
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -31,9 +25,6 @@ namespace EsmTspiot.Shared.Logging
                 masked,
                 Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
                 "%USERPROFILE%");
-            masked = MaskSensitiveValues(masked, SensitiveJsonValuePattern);
-            masked = MaskSensitiveValues(masked, SensitiveKeyValuePattern);
-
             return FiscalIdentifierPattern.Replace(masked, delegate(Match match)
             {
                 if (match.Value.Length <= 5)
@@ -62,14 +53,6 @@ namespace EsmTspiot.Shared.Logging
                 Regex.Escape(normalized),
                 delegate { return replacement; },
                 RegexOptions.IgnoreCase);
-        }
-
-        private static string MaskSensitiveValues(string text, Regex pattern)
-        {
-            return pattern.Replace(text, delegate(Match match)
-            {
-                return match.Groups["prefix"].Value + "***";
-            });
         }
     }
 }
