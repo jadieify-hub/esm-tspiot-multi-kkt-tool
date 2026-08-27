@@ -13,5 +13,11 @@ namespace EsmTspiot.Shared.Models
 
         [DataMember(Order = 3)]
         public string Message { get; set; }
+
+        [DataMember(Order = 4)]
+        public string OperationId { get; set; }
+
+        [DataMember(Order = 5)]
+        public string PlanHash { get; set; }
     }
 }

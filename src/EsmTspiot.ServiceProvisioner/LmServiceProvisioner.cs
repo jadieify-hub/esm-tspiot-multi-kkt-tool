@@ -212,7 +212,9 @@ namespace EsmTspiot.ServiceProvisioner
                     Status = LmServiceProvisioningStatus.Failed,
                     Message = validation.IsValid
                         ? "Запрошена неверная операция помощника."
-                        : validation.JoinMessages()
+                        : validation.JoinMessages(),
+                    OperationId = request == null ? string.Empty : request.OperationId,
+                    PlanHash = request == null ? string.Empty : request.PlanHash
                 };
             }
 
@@ -238,7 +240,10 @@ namespace EsmTspiot.ServiceProvisioner
                         _platform.RequestStop(item);
                     }
 
-                    return installer.Run();
+                    LmControllerInstallResult installed = installer.Run();
+                    installed.OperationId = request.OperationId;
+                    installed.PlanHash = request.PlanHash;
+                    return installed;
                 }
             }
             catch (Exception ex)
@@ -248,7 +253,9 @@ namespace EsmTspiot.ServiceProvisioner
                     Status = ex is NotSupportedException
                         ? LmServiceProvisioningStatus.UnsupportedController
                         : LmServiceProvisioningStatus.Failed,
-                    Message = SafeMessage(ex)
+                    Message = SafeMessage(ex),
+                    OperationId = request == null ? string.Empty : request.OperationId,
+                    PlanHash = request == null ? string.Empty : request.PlanHash
                 };
             }
         }

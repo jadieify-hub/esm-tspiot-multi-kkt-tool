@@ -57,11 +57,15 @@ namespace EsmTspiot.ServiceProvisioner
                         LmServiceProvisioner provisioner = new LmServiceProvisioner(platform);
                         if (request.Operation == LmServiceOperation.EnsureBatch)
                         {
-                            LmServiceProvisioningBatchResult result = provisioner.EnsureBatch(
-                                request,
-                                NeverCancelLmProvisioning.Instance);
-                            channel.WriteMessage(result);
-                            return ToExitCode(result.Status);
+                            using (PipeProvisioningCancellation cancellation =
+                                new PipeProvisioningCancellation(channel, request.OperationId))
+                            {
+                                LmServiceProvisioningBatchResult result = provisioner.EnsureBatch(
+                                    request,
+                                    cancellation);
+                                channel.WriteMessage(result);
+                                return ToExitCode(result.Status);
+                            }
                         }
                         if (request.Operation == LmServiceOperation.InstallControllerVersion)
                         {
@@ -144,7 +148,9 @@ namespace EsmTspiot.ServiceProvisioner
                 channel.WriteMessage(new LmControllerInstallResult
                 {
                     Status = status,
-                    Message = message
+                    Message = message,
+                    OperationId = request.OperationId,
+                    PlanHash = request.PlanHash
                 });
                 return;
             }

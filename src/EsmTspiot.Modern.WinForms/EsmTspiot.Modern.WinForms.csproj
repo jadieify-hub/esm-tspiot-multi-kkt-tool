@@ -22,9 +22,15 @@
     <Compile Include="..\EsmTspiot.WinForms.Shared\MainForm.cs" Link="MainForm.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayPage.cs" Link="LmGatewayPage.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayPage.Layout.cs" Link="LmGatewayPage.Layout.cs" />
+    <Compile Include="..\EsmTspiot.WinForms.Shared\LmServiceProvisionerClient.cs" Link="LmServiceProvisionerClient.cs" />
+    <Compile Include="..\EsmTspiot.WinForms.Shared\LmServiceInventoryReader.cs" Link="LmServiceInventoryReader.cs" />
+    <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayProbe.cs" Link="LmGatewayProbe.cs" />
+    <Compile Include="..\EsmTspiot.WinForms.Shared\ProvisionerProcessLauncher.cs" Link="ProvisionerProcessLauncher.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\BulkRegistrationDialog.cs" Link="BulkRegistrationDialog.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\KktDeletionConfirmationDialog.cs" Link="KktDeletionConfirmationDialog.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\KktSelectionDialog.cs" Link="KktSelectionDialog.cs" />
     <None Include="..\EsmTspiot.WinForms.Shared\Assets\app.ico" Link="app.ico" />
   </ItemGroup>
+
+  <Import Project="..\..\build\EsmTspiot.Provisioner.targets" />
 </Project>

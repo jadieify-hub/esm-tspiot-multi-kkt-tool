@@ -8,6 +8,7 @@ using System.Runtime.Serialization.Json;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text;
+using System.Threading;
 using Microsoft.Win32.SafeHandles;
 using EsmTspiot.Shared.Models;
 
@@ -319,6 +320,61 @@ namespace EsmTspiot.ServiceProvisioner
 
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern bool CloseHandle(IntPtr handle);
+    }
+
+    internal sealed class PipeProvisioningCancellation :
+        ILmProvisioningCancellation,
+        IDisposable
+    {
+        private readonly NamedPipeProvisioningChannel _channel;
+        private readonly string _operationId;
+        private volatile bool _requested;
+        private volatile bool _disposed;
+
+        internal PipeProvisioningCancellation(
+            NamedPipeProvisioningChannel channel,
+            string operationId)
+        {
+            _channel = channel ?? throw new ArgumentNullException("channel");
+            _operationId = operationId;
+            Thread reader = new Thread(ReadControl);
+            reader.IsBackground = true;
+            reader.Name = "LM provisioning cancellation";
+            reader.Start();
+        }
+
+        public bool IsCancellationRequested
+        {
+            get { return _requested; }
+        }
+
+        public void Dispose()
+        {
+            _disposed = true;
+        }
+
+        private void ReadControl()
+        {
+            try
+            {
+                LmProvisioningControlMessage message =
+                    _channel.ReadMessage<LmProvisioningControlMessage>();
+                if (!_disposed && _channel.ValidateControlMessage(message, _operationId))
+                {
+                    _requested = true;
+                }
+            }
+            catch (IOException)
+            {
+                if (!_disposed)
+                {
+                    _requested = true;
+                }
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
     }
 
     internal static class PeerImagePathSafety
