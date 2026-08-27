@@ -1303,7 +1303,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\package_compact_rele
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 ```
 
-Expected: 121 shared tests and 60 helper tests pass, zero compile/package errors. If review added tests, record the larger exact counts.
+Expected: 122 shared tests and 60 helper tests pass, zero compile/package errors. If review added tests, record the larger exact counts.
 
 - [ ] **Step 2: Run the same fail-fast static safety gate as CI**
 

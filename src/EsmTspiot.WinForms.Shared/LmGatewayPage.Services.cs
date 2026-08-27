@@ -331,6 +331,7 @@ namespace EsmTspiot.WinForms.Shared
                 LmGatewayProbeResult probe = await _serviceProbe.ProbeAsync(
                     new ManagedLmServiceSpec(item.KktSerial, item.Ports, item.Target),
                     cancellation);
+                item.IsReady = probe.IsReady;
                 if (probe.IsReady)
                 {
                     item.Message = "Служба и оба локальных порта готовы.";
@@ -562,18 +563,18 @@ namespace EsmTspiot.WinForms.Shared
 
         private IList<TcpListenerSnapshotItem> ReadListenerSnapshot()
         {
-            List<TcpListenerSnapshotItem> result = new List<TcpListenerSnapshotItem>();
-            AddListeners(result, 55000, 55031);
-            AddListeners(result, 15000, 15031);
-            return result;
+            List<int> occupiedPorts = new List<int>();
+            AddOccupiedPorts(occupiedPorts, 55000, 55031);
+            AddOccupiedPorts(occupiedPorts, 15000, 15031);
+            return LmTcpListenerSnapshotBuilder.Build(occupiedPorts, _serviceInventory);
         }
 
-        private void AddListeners(ICollection<TcpListenerSnapshotItem> target, int first, int last)
+        private void AddOccupiedPorts(ICollection<int> target, int first, int last)
         {
             IList<int> ports = _listenerReader.FindPorts(first, last);
             for (int index = 0; index < ports.Count; index++)
             {
-                target.Add(new TcpListenerSnapshotItem(ports[index], string.Empty, false));
+                target.Add(ports[index]);
             }
         }
 
