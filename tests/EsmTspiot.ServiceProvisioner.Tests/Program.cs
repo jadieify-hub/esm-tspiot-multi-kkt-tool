@@ -71,10 +71,20 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Install version never runs a substituted or unlocked installer", InstallVersionNeverRunsSubstitutedOrUnlockedInstaller);
             Run("Install version leaves services stopped when verification fails", InstallVersionLeavesServicesStoppedWhenVerificationFails);
             Run("Ensure clears version pending only after recreated artifacts are ready", EnsureClearsVersionPendingOnlyAfterRecreatedArtifactsAreReady);
+            Run("Remove deletes only fully owned freshly confirmed service", RemoveDeletesOnlyFullyOwnedFreshlyConfirmedService);
+            Run("Remove blocks official base service", RemoveBlocksOfficialBaseService);
+            Run("Remove blocks service on marker mismatch", RemoveBlocksServiceOnMarkerMismatch);
+            Run("Remove blocks service on image mismatch", RemoveBlocksServiceOnImageMismatch);
+            Run("Remove stops before delete and waits", RemoveStopsBeforeDeleteAndWaits);
+            Run("Remove deletes profile manifest and app metadata", RemoveDeletesProfileManifestAndAppMetadata);
+            Run("Remove reports marked for delete until SCM absence", RemoveReportsMarkedForDeleteUntilScmAbsence);
+            Run("Remove does not claim ESM binding was cleared", RemoveDoesNotClaimEsmBindingWasCleared);
+            Run("Remove projects cleanup pending across restart and supports retry", RemoveProjectsCleanupPendingAcrossRestartAndSupportsRetry);
+            Run("Remove remains possible after vendor binary update", RemoveRemainsPossibleAfterVendorBinaryUpdate);
 
             if (_failures == 0)
             {
-                Console.WriteLine("All 50 provisioner tests passed.");
+                Console.WriteLine("All 60 provisioner tests passed.");
                 return 0;
             }
 
@@ -1295,6 +1305,49 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                            platform.Events.IndexOf("VerifyController"),
                     "Recovery must precede fresh mutation after " + stages[index] + ".");
             }
+
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                ProvisioningOperationJournalStore store =
+                    new ProvisioningOperationJournalStore(root, new FakePathSafety(true));
+                string operationId = Guid.NewGuid().ToString("N");
+                ProvisioningOperationJournal first = CreateTestJournal(
+                    operationId,
+                    "00105700000001",
+                    55000,
+                    15000);
+                ProvisioningOperationJournal second = CreateTestJournal(
+                    operationId,
+                    "00105700000002",
+                    55001,
+                    15001);
+                store.Write(first);
+                store.Write(second);
+
+                AssertEqual(
+                    "00105700000001",
+                    store.Read(operationId, "00105700000001").KktSerial,
+                    "Batch journals must not overwrite the first KKT under one operation id.");
+                AssertEqual(
+                    "00105700000002",
+                    store.Read(operationId, "00105700000002").KktSerial,
+                    "Batch journals must retain an independent second KKT record.");
+                AssertTrue(store.GetFingerprint(operationId, "00105700000001").Length == 64,
+                    "A journal-only recovery projection needs a stable confirmation fingerprint.");
+                store.DeleteForKkt("00105700000001");
+                AssertEqual(
+                    "00105700000002",
+                    store.Read(operationId, "00105700000002").KktSerial,
+                    "Completing one KKT must not delete another row's journal.");
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
         }
 
         private static void EnsureSerializesConcurrentMutations()
@@ -1421,6 +1474,183 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 CreateEnsureRequest(1), NeverCancelLmProvisioning.Instance);
             AssertFalse(failure.ContainsEventPrefix("Manifest:"),
                 "A failed recreate must retain VersionVerificationPending ownership state.");
+        }
+
+        private static void RemoveDeletesOnlyFullyOwnedFreshlyConfirmedService()
+        {
+            FakeLmRemovalPlatform platform = new FakeLmRemovalPlatform();
+            LmServiceProvisioningItemResult result = new LmServiceRemovalWorkflow(platform)
+                .RemoveManaged(CreateRemovalRequest());
+
+            AssertEqual(
+                LmServiceProvisioningStatus.RemovedLocalArtifactsBindingRetained,
+                result.Status,
+                "A fully owned and freshly confirmed instance must be removed locally.");
+
+            FakeLmRemovalPlatform stale = new FakeLmRemovalPlatform();
+            stale.ConfirmationMatches = false;
+            LmServiceProvisioningItemResult staleResult =
+                new LmServiceRemovalWorkflow(stale).RemoveManaged(CreateRemovalRequest());
+            AssertEqual(LmServiceProvisioningStatus.RemovalBlocked, staleResult.Status,
+                "A changed manifest fingerprint must require a fresh confirmation.");
+            AssertFalse(stale.ContainsEventPrefix("Stop:"),
+                "A stale confirmation must fail before stopping the service.");
+        }
+
+        private static void RemoveBlocksOfficialBaseService()
+        {
+            FakeLmRemovalPlatform platform = new FakeLmRemovalPlatform();
+            platform.Ownership = LmRemovalOwnershipState.OfficialBase;
+
+            LmServiceProvisioningItemResult result = new LmServiceRemovalWorkflow(platform)
+                .RemoveManaged(CreateRemovalRequest());
+
+            AssertEqual(LmServiceProvisioningStatus.RemovalBlocked, result.Status,
+                "The official vendor service must never be removed by this workflow.");
+            AssertFalse(platform.ContainsEventPrefix("Stop:"),
+                "The official service must not be stopped.");
+        }
+
+        private static void RemoveBlocksServiceOnMarkerMismatch()
+        {
+            FakeLmRemovalPlatform platform = new FakeLmRemovalPlatform();
+            platform.Ownership = LmRemovalOwnershipState.MarkerMismatch;
+
+            LmServiceProvisioningItemResult result = new LmServiceRemovalWorkflow(platform)
+                .RemoveManaged(CreateRemovalRequest());
+
+            AssertEqual(LmServiceProvisioningStatus.RemovalBlocked, result.Status,
+                "A service-description marker mismatch must block removal.");
+            AssertFalse(platform.ContainsEventPrefix("Stop:"),
+                "Marker mismatch must not mutate SCM.");
+        }
+
+        private static void RemoveBlocksServiceOnImageMismatch()
+        {
+            FakeLmRemovalPlatform platform = new FakeLmRemovalPlatform();
+            platform.Ownership = LmRemovalOwnershipState.ImageMismatch;
+
+            LmServiceProvisioningItemResult result = new LmServiceRemovalWorkflow(platform)
+                .RemoveManaged(CreateRemovalRequest());
+
+            AssertEqual(LmServiceProvisioningStatus.RemovalBlocked, result.Status,
+                "An ImagePath mismatch must block removal.");
+            AssertFalse(platform.ContainsEventPrefix("Stop:"),
+                "Image mismatch must not mutate SCM.");
+        }
+
+        private static void RemoveStopsBeforeDeleteAndWaits()
+        {
+            FakeLmRemovalPlatform platform = new FakeLmRemovalPlatform();
+            new LmServiceRemovalWorkflow(platform).RemoveManaged(CreateRemovalRequest());
+
+            AssertEventOrder(platform.Events,
+                "Journal:Deleting", "Stop:00105700000001", "WaitStopped:00105700000001",
+                "DeleteService:00105700000001", "ConfirmScmAbsent:00105700000001",
+                "Journal:Cleaning");
+        }
+
+        private static void RemoveDeletesProfileManifestAndAppMetadata()
+        {
+            FakeLmRemovalPlatform platform = new FakeLmRemovalPlatform();
+            new LmServiceRemovalWorkflow(platform).RemoveManaged(CreateRemovalRequest());
+
+            AssertEventOrder(platform.Events,
+                "CleanupProfile:00105700000001",
+                "CleanupManifest:00105700000001",
+                "CompleteRemoval:00105700000001");
+
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                ManagedServiceManifestStore store = new ManagedServiceManifestStore(
+                    root,
+                    new FakePathSafety(true),
+                    "S-1-5-21-111-222-333-1001");
+                string profile = store.EnsureProfileContentDirectory(
+                    "00105700000001",
+                    TestServiceSid(),
+                    "ESP",
+                    "lmcontroller");
+                string file = Path.Combine(profile, "runtime.tmp");
+                File.WriteAllText(file, "runtime");
+                File.SetAttributes(file, FileAttributes.ReadOnly);
+
+                store.DeleteProfile("00105700000001", TestServiceSid());
+
+                AssertFalse(Directory.Exists(store.GetProfileRoot("00105700000001")),
+                    "Cleanup must remove the entire derived profile, including read-only files.");
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
+        private static void RemoveReportsMarkedForDeleteUntilScmAbsence()
+        {
+            FakeLmRemovalPlatform platform = new FakeLmRemovalPlatform();
+            platform.DeletionState = LmScmDeletionState.MarkedForDelete;
+
+            LmServiceProvisioningItemResult result = new LmServiceRemovalWorkflow(platform)
+                .RemoveManaged(CreateRemovalRequest());
+
+            AssertEqual(LmServiceProvisioningStatus.MarkedForDelete, result.Status,
+                "SCM marked-for-delete is not confirmed absence.");
+            AssertFalse(platform.ContainsEventPrefix("CleanupProfile:"),
+                "Local data must remain until SCM confirms exact absence.");
+        }
+
+        private static void RemoveDoesNotClaimEsmBindingWasCleared()
+        {
+            FakeLmRemovalPlatform platform = new FakeLmRemovalPlatform();
+            LmServiceProvisioningItemResult result = new LmServiceRemovalWorkflow(platform)
+                .RemoveManaged(CreateRemovalRequest());
+
+            AssertContains(result.Message, "ЕСМ");
+            AssertContains(result.Message, "не очищена");
+        }
+
+        private static void RemoveProjectsCleanupPendingAcrossRestartAndSupportsRetry()
+        {
+            FakeLmRemovalPlatform platform = new FakeLmRemovalPlatform();
+            platform.CleanupFails = true;
+            LmServiceProvisioningItemResult first = new LmServiceRemovalWorkflow(platform)
+                .RemoveManaged(CreateRemovalRequest());
+            AssertEqual(LmServiceProvisioningStatus.CleanupPending, first.Status,
+                "A locked local file must remain visible as CleanupPending.");
+            AssertTrue(platform.ManifestProjectedCleanupPending,
+                "CleanupPending must be persisted before recursive deletion.");
+
+            platform.CleanupFails = false;
+            platform.Events.Clear();
+            LmServiceProvisioningItemResult retried = new LmServiceRemovalWorkflow(platform)
+                .CleanupManaged(CreateCleanupRequest());
+            AssertEqual(
+                LmServiceProvisioningStatus.RemovedLocalArtifactsBindingRetained,
+                retried.Status,
+                "A later in-app cleanup must finish without manual folder search.");
+            AssertTrue(platform.ContainsEventPrefix("CleanupProfile:"),
+                "The reopened cleanup path must retry derived local artifacts.");
+        }
+
+        private static void RemoveRemainsPossibleAfterVendorBinaryUpdate()
+        {
+            FakeLmRemovalPlatform platform = new FakeLmRemovalPlatform();
+            platform.CurrentVendorBinaryMatchesManifest = false;
+
+            LmServiceProvisioningItemResult result = new LmServiceRemovalWorkflow(platform)
+                .RemoveManaged(CreateRemovalRequest());
+
+            AssertEqual(
+                LmServiceProvisioningStatus.RemovedLocalArtifactsBindingRetained,
+                result.Status,
+                "Removal must validate stored ownership paths without executing an old vendor binary.");
+            AssertFalse(platform.Events.Contains("VerifyCurrentVendorBinary"),
+                "Removal must not require the replaced vendor binary identity.");
         }
 
         private static void AssertEventOrder(IList<string> events, params string[] expected)
@@ -1732,7 +1962,41 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 new string('b', 64),
                 "S-1-5-80-123456789-123456789-123456789-123456789-123456789",
                 Guid.NewGuid().ToString("N"),
-                state);
+                state,
+                @"C:\Program Files\KRS\MultiKKT\Provisioner\EsmTspiot.ServiceProvisioner.exe",
+                @"C:\ProgramData\KRS\MultiKKT\Profiles\krs-esm-lm-00105700000001");
+        }
+
+        private static ProvisioningOperationJournal CreateTestJournal(
+            string operationId,
+            string kktSerial,
+            int grpcPort,
+            int restPort)
+        {
+            string serviceName = LmServiceIdentity.CreateName(kktSerial);
+            return new ProvisioningOperationJournal
+            {
+                SchemaVersion = 1,
+                OperationId = operationId,
+                Operation = LmServiceOperation.EnsureBatch,
+                KktSerial = kktSerial,
+                State = ManagedServiceLifecycleState.Creating,
+                ManifestFingerprint = string.Empty,
+                UpdatedUtc = DateTime.UtcNow.ToString("o"),
+                Stage = LmProvisioningJournalStage.Preparing,
+                GrpcPort = grpcPort,
+                RestPort = restPort,
+                TargetAddress = "10.20.30.40",
+                TargetPort = 5995,
+                ServiceName = serviceName,
+                SupervisorImagePath =
+                    @"C:\Program Files\KRS\MultiKKT\Provisioner\EsmTspiot.ServiceProvisioner.exe",
+                ProfilePath = @"C:\ProgramData\KRS\MultiKKT\Profiles\" + serviceName,
+                ServiceSid = RestrictedServiceSid.Derive(serviceName),
+                ControllerVersion = "1.6.3.2",
+                ControllerBinarySha256 = new string('a', 64),
+                SupervisorSha256 = new string('b', 64)
+            };
         }
 
         private static string ComputeSha256(byte[] content)
@@ -1847,6 +2111,129 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             public bool IsCancellationRequested
             {
                 get { return _platform.CompletedItems >= _completedItems; }
+            }
+        }
+
+        private sealed class FakeLmRemovalPlatform : ILmServiceRemovalPlatform
+        {
+            internal FakeLmRemovalPlatform()
+            {
+                Events = new List<string>();
+                Ownership = LmRemovalOwnershipState.FullyOwnedRunning;
+                DeletionState = LmScmDeletionState.Absent;
+                ConfirmationMatches = true;
+                CurrentVendorBinaryMatchesManifest = true;
+            }
+
+            internal List<string> Events { get; private set; }
+            internal LmRemovalOwnershipState Ownership { get; set; }
+            internal LmScmDeletionState DeletionState { get; set; }
+            internal bool ConfirmationMatches { get; set; }
+            internal bool CleanupFails { get; set; }
+            internal bool ManifestProjectedCleanupPending { get; private set; }
+            internal bool CurrentVendorBinaryMatchesManifest { get; set; }
+
+            internal bool ContainsEventPrefix(string prefix)
+            {
+                for (int index = 0; index < Events.Count; index++)
+                {
+                    if (Events[index].StartsWith(prefix, StringComparison.Ordinal))
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            public IDisposable AcquireMachineLock()
+            {
+                Events.Add("MachineLock");
+                return new CallbackDisposable(delegate { });
+            }
+
+            public IDisposable AcquireItemLock(string kktSerial)
+            {
+                Events.Add("ItemLock:" + kktSerial);
+                return new CallbackDisposable(delegate { });
+            }
+
+            public void ReconcileRemoval(string kktSerial, string operationId)
+            {
+                Events.Add("ReconcileRemoval:" + kktSerial);
+            }
+
+            public LmRemovalOwnershipState InspectRemoval(
+                string kktSerial,
+                string manifestFingerprint,
+                bool cleanupOnly)
+            {
+                Events.Add("InspectRemoval:" + kktSerial);
+                if (!ConfirmationMatches)
+                {
+                    return LmRemovalOwnershipState.ConfirmationMismatch;
+                }
+                if (cleanupOnly && ManifestProjectedCleanupPending)
+                {
+                    return LmRemovalOwnershipState.CleanupOnly;
+                }
+                return Ownership;
+            }
+
+            public void WriteRemovalJournal(
+                string kktSerial,
+                string operationId,
+                LmServiceOperation operation,
+                ManagedServiceLifecycleState state,
+                string manifestFingerprint)
+            {
+                Events.Add("Journal:" + state.ToString());
+            }
+
+            public void RequestNormalStop(string kktSerial)
+            {
+                Events.Add("Stop:" + kktSerial);
+            }
+
+            public void WaitUntilStopped(string kktSerial)
+            {
+                Events.Add("WaitStopped:" + kktSerial);
+            }
+
+            public LmScmDeletionState DeleteServiceAndConfirmAbsent(string kktSerial)
+            {
+                Events.Add("DeleteService:" + kktSerial);
+                Events.Add("ConfirmScmAbsent:" + kktSerial);
+                return DeletionState;
+            }
+
+            public void MarkCleanupPending(
+                string kktSerial,
+                string operationId,
+                string errorClass)
+            {
+                ManifestProjectedCleanupPending = true;
+                Events.Add("CleanupPending:" + kktSerial);
+            }
+
+            public void CleanupProfile(string kktSerial)
+            {
+                Events.Add("CleanupProfile:" + kktSerial);
+                if (CleanupFails)
+                {
+                    throw new IOException("profile locked");
+                }
+            }
+
+            public void CleanupManifest(string kktSerial)
+            {
+                Events.Add("CleanupManifest:" + kktSerial);
+            }
+
+            public void CompleteRemoval(string kktSerial)
+            {
+                Events.Add("CompleteRemoval:" + kktSerial);
+                Ownership = LmRemovalOwnershipState.Missing;
+                ManifestProjectedCleanupPending = false;
             }
         }
 

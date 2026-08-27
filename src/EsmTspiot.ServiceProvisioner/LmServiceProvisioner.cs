@@ -23,7 +23,9 @@ namespace EsmTspiot.ServiceProvisioner
         ProfileReady = 3,
         ServiceReady = 4,
         Started = 5,
-        Failed = 6
+        Failed = 6,
+        Deleting = 7,
+        Cleaning = 8
     }
 
     internal sealed class LmVerifiedController
@@ -119,10 +121,32 @@ namespace EsmTspiot.ServiceProvisioner
     internal sealed class LmServiceProvisioner
     {
         private readonly ILmProvisioningPlatform _platform;
+        private readonly ILmServiceRemovalPlatform _removalPlatform;
 
         internal LmServiceProvisioner(ILmProvisioningPlatform platform)
         {
             _platform = platform ?? throw new ArgumentNullException("platform");
+            _removalPlatform = platform as ILmServiceRemovalPlatform;
+        }
+
+        internal LmServiceProvisioningItemResult RemoveManaged(
+            LmServiceProvisioningBatchRequest request)
+        {
+            if (_removalPlatform == null)
+            {
+                throw new NotSupportedException("Removal platform is unavailable.");
+            }
+            return new LmServiceRemovalWorkflow(_removalPlatform).RemoveManaged(request);
+        }
+
+        internal LmServiceProvisioningItemResult CleanupManaged(
+            LmServiceProvisioningBatchRequest request)
+        {
+            if (_removalPlatform == null)
+            {
+                throw new NotSupportedException("Cleanup platform is unavailable.");
+            }
+            return new LmServiceRemovalWorkflow(_removalPlatform).CleanupManaged(request);
         }
 
         internal LmServiceProvisioningBatchResult EnsureBatch(

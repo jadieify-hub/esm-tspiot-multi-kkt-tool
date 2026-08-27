@@ -255,6 +255,55 @@ namespace EsmTspiot.ServiceProvisioner
             }
         }
 
+        internal void DeleteProfile(string kktSerial, string serviceSid)
+        {
+            string profileRoot = GetProfileRoot(kktSerial);
+            EnsureStructuralSafety(profileRoot);
+            if (!Directory.Exists(profileRoot))
+            {
+                return;
+            }
+            EnsureProtectedSafety(profileRoot, serviceSid);
+            DeleteDirectoryContents(profileRoot, profileRoot, serviceSid);
+            Directory.Delete(profileRoot, false);
+            if (Directory.Exists(profileRoot))
+            {
+                throw new IOException("Managed profile removal could not be confirmed.");
+            }
+        }
+
+        private void DeleteDirectoryContents(
+            string directory,
+            string profileRoot,
+            string serviceSid)
+        {
+            string[] entries = Directory.GetFileSystemEntries(directory);
+            for (int index = 0; index < entries.Length; index++)
+            {
+                string entry = Path.GetFullPath(entries[index]);
+                if (!PathSafety.IsUnderRoot(entry, profileRoot))
+                {
+                    throw new InvalidDataException("Managed profile entry escapes its derived root.");
+                }
+                FileAttributes attributes = File.GetAttributes(entry);
+                if ((attributes & FileAttributes.ReparsePoint) != 0)
+                {
+                    throw new InvalidDataException("Reparse points are forbidden during profile cleanup.");
+                }
+                EnsureProtectedSafety(entry, serviceSid);
+                if ((attributes & FileAttributes.Directory) != 0)
+                {
+                    DeleteDirectoryContents(entry, profileRoot, serviceSid);
+                    Directory.Delete(entry, false);
+                }
+                else
+                {
+                    File.SetAttributes(entry, attributes & ~FileAttributes.ReadOnly);
+                    File.Delete(entry);
+                }
+            }
+        }
+
         private ManagedServiceManifest ReadRaw(string path)
         {
             using (FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
@@ -329,6 +378,21 @@ namespace EsmTspiot.ServiceProvisioner
                 string.IsNullOrWhiteSpace(manifest.UpdatedUtc))
             {
                 throw new InvalidDataException("Manifest trust or lifecycle metadata is invalid.");
+            }
+            if (string.IsNullOrWhiteSpace(manifest.SupervisorImagePath) ||
+                !Path.IsPathRooted(manifest.SupervisorImagePath) ||
+                !string.Equals(
+                    Path.GetFileName(manifest.SupervisorImagePath),
+                    "EsmTspiot.ServiceProvisioner.exe",
+                    StringComparison.OrdinalIgnoreCase) ||
+                string.IsNullOrWhiteSpace(manifest.ProfilePath) ||
+                !Path.IsPathRooted(manifest.ProfilePath) ||
+                !string.Equals(
+                    Path.GetFileName(manifest.ProfilePath),
+                    expectedServiceName,
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidDataException("Manifest canonical paths are invalid.");
             }
         }
 

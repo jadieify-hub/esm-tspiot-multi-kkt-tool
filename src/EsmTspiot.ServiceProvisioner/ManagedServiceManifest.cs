@@ -81,6 +81,12 @@ namespace EsmTspiot.ServiceProvisioner
         [DataMember(Order = 16)]
         internal string UpdatedUtc { get; set; }
 
+        [DataMember(Order = 17)]
+        internal string SupervisorImagePath { get; set; }
+
+        [DataMember(Order = 18)]
+        internal string ProfilePath { get; set; }
+
         internal static ManagedServiceManifest Create(
             string kktSerial,
             LmGatewayPorts ports,
@@ -90,7 +96,9 @@ namespace EsmTspiot.ServiceProvisioner
             string supervisorSha256,
             string serviceSid,
             string operationId,
-            ManagedServiceLifecycleState state)
+            ManagedServiceLifecycleState state,
+            string supervisorImagePath,
+            string profilePath)
         {
             if (ports == null)
             {
@@ -128,7 +136,9 @@ namespace EsmTspiot.ServiceProvisioner
                 OperationId = operationId,
                 LocalLifecycleState = state,
                 LastCleanupErrorClass = string.Empty,
-                UpdatedUtc = DateTime.UtcNow.ToString("o")
+                UpdatedUtc = DateTime.UtcNow.ToString("o"),
+                SupervisorImagePath = supervisorImagePath,
+                ProfilePath = profilePath
             };
         }
     }

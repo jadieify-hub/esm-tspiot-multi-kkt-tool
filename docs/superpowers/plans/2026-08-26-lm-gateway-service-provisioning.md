@@ -808,7 +808,7 @@ git commit -m "Добавить создание экземпляров конт
 - Accepts one KKT identity; derives every target and uses the same mutex/journal boundary.
 - Result distinguishes `RemovedLocalArtifactsBindingRetained`, `CleanupPending`, `MarkedForDelete`, `RemovalBlocked`, `RequiresAttention`.
 
-- [ ] **Step 1: Add ten removal tests**
+- [x] **Step 1: Add ten removal tests**
 
 Register:
 
@@ -825,11 +825,11 @@ Run("Remove projects cleanup pending across restart and supports retry", RemoveP
 Run("Remove remains possible after vendor binary update", RemoveRemainsPossibleAfterVendorBinaryUpdate);
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Expected: missing removal workflow/status behavior.
 
-- [ ] **Step 3: Implement exact removal preconditions**
+- [x] **Step 3: Implement exact removal preconditions**
 
 Acquire the machine-wide and per-KKT mutex and reconcile pending journals first. Then all must match:
 
@@ -841,7 +841,7 @@ Acquire the machine-wide and per-KKT mutex and reconcile pending journals first.
 
 If the service exists but any ownership/path/confirmation-fingerprint check fails, return `RemovalBlocked`; do not stop it. The first removal test includes a stale/mismatched confirmation hash subcase and proves no stop call occurs. Deletion must remain possible when the official executable was legitimately updated or removed: creation/start still require the exact supported capability profile, but removal never executes that binary and therefore validates the stored canonical path and ownership boundary instead of requiring the old file hash/version.
 
-- [ ] **Step 4: Implement complete local removal**
+- [x] **Step 4: Implement complete local removal**
 
 For an owned service:
 
@@ -858,15 +858,15 @@ For an owned service:
 
 Never call `taskkill`, delete the official binary or touch the base service. Never recursively delete a caller-supplied or unresolved path.
 
-- [ ] **Step 5: Handle interrupted cleanup**
+- [x] **Step 5: Handle interrupted cleanup**
 
 If SCM is already absent but a valid manifest or `Deleting/Cleaning` journal and ownership artifacts remain, continue only cleanup. A valid manifest plus absent SCM is conservatively projected as `CleanupPending` even after a crash before the state update. If a file is locked or deletion cannot be confirmed, retain both manifest projection and journal and return `CleanupPending`; after UI restart a later `CleanupManaged` repeats all SCM/manifest/journal/path/ACL/reparse checks and cleanup. The test closes/reopens the inventory reader between failure and retry. If neither service nor valid manifest/journal exists, return `RemovalBlocked`, not success.
 
-- [ ] **Step 6: Run helper tests and verify GREEN**
+- [x] **Step 6: Run helper tests and verify GREEN**
 
 Expected: 60/60 helper tests pass. Source scan shows no forced-process termination or shell command.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add src/EsmTspiot.ServiceProvisioner tests/EsmTspiot.ServiceProvisioner.Tests/Program.cs

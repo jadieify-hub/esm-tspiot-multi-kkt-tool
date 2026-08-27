@@ -70,6 +70,24 @@ namespace EsmTspiot.ServiceProvisioner
                             channel.WriteMessage(result);
                             return ToExitCode(result.Status);
                         }
+                        if (request.Operation == LmServiceOperation.RemoveManaged)
+                        {
+                            LmServiceProvisioningItemResult item =
+                                provisioner.RemoveManaged(request);
+                            LmServiceProvisioningBatchResult result =
+                                CreateSingleItemResult(request, item);
+                            channel.WriteMessage(result);
+                            return ToExitCode(item.Status);
+                        }
+                        if (request.Operation == LmServiceOperation.CleanupManaged)
+                        {
+                            LmServiceProvisioningItemResult item =
+                                provisioner.CleanupManaged(request);
+                            LmServiceProvisioningBatchResult result =
+                                CreateSingleItemResult(request, item);
+                            channel.WriteMessage(result);
+                            return ToExitCode(item.Status);
+                        }
                     }
                     catch (NotSupportedException ex)
                     {
@@ -138,7 +156,7 @@ namespace EsmTspiot.ServiceProvisioner
                 PlanHash = request.PlanHash,
                 Status = status
             };
-            if (request.Items != null)
+            if (request.Items != null && request.Items.Count > 0)
             {
                 for (int index = 0; index < request.Items.Count; index++)
                 {
@@ -152,6 +170,24 @@ namespace EsmTspiot.ServiceProvisioner
                     });
                 }
             }
+            else if (request.RemovalConfirmation != null)
+            {
+                result.Items.Add(new LmServiceProvisioningItemResult
+                {
+                    KktSerial = request.RemovalConfirmation.KktSerial,
+                    Status = status,
+                    Message = message
+                });
+            }
+            else if (request.CleanupConfirmation != null)
+            {
+                result.Items.Add(new LmServiceProvisioningItemResult
+                {
+                    KktSerial = request.CleanupConfirmation.KktSerial,
+                    Status = status,
+                    Message = message
+                });
+            }
             channel.WriteMessage(result);
         }
 
@@ -159,7 +195,11 @@ namespace EsmTspiot.ServiceProvisioner
         {
             if (status == LmServiceProvisioningStatus.Succeeded ||
                 status == LmServiceProvisioningStatus.Cancelled ||
-                status == LmServiceProvisioningStatus.RequiresAttention)
+                status == LmServiceProvisioningStatus.RequiresAttention ||
+                status == LmServiceProvisioningStatus.CleanupPending ||
+                status == LmServiceProvisioningStatus.RemovalBlocked ||
+                status == LmServiceProvisioningStatus.MarkedForDelete ||
+                status == LmServiceProvisioningStatus.RemovedLocalArtifactsBindingRetained)
             {
                 return ExitResultSent;
             }
@@ -169,6 +209,21 @@ namespace EsmTspiot.ServiceProvisioner
                 return ExitUnsupportedController;
             }
             return ExitOperationFailed;
+        }
+
+        private static LmServiceProvisioningBatchResult CreateSingleItemResult(
+            LmServiceProvisioningBatchRequest request,
+            LmServiceProvisioningItemResult item)
+        {
+            LmServiceProvisioningBatchResult result = new LmServiceProvisioningBatchResult
+            {
+                SchemaVersion = ProvisioningRequestValidator.CurrentSchemaVersion,
+                OperationId = request.OperationId,
+                PlanHash = request.PlanHash,
+                Status = item.Status
+            };
+            result.Items.Add(item);
+            return result;
         }
 
         private static LmServiceProvisioningBatchResult CreateUnsupportedResult(
