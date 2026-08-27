@@ -36,10 +36,20 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Manifest and profile stores reject reparse points", ManifestAndProfileStoresRejectReparsePoints);
             Run("Manifest is atomic credential free and projects cleanup state", ManifestIsAtomicCredentialFreeAndProjectsCleanupState);
             Run("Manifest ownership mismatch blocks mutation", ManifestOwnershipMismatchBlocksMutation);
+            Run("SCM adapter derives service name internally", ScmAdapterDerivesServiceNameInternally);
+            Run("SCM adapter uses exact verified image path", ScmAdapterUsesExactVerifiedImagePath);
+            Run("SCM adapter enforces restrictive service DACL", ScmAdapterEnforcesRestrictiveServiceDacl);
+            Run("SCM adapter never force kills process", ScmAdapterNeverForceKillsProcess);
+            Run("SCM handles are disposed on every failure", ScmHandlesAreDisposedOnEveryFailure);
+            Run("SCM configures restricted service SID", ScmConfiguresRestrictedServiceSid);
+            Run("SCM image path targets only protected supervisor mode", ScmImagePathTargetsOnlyProtectedSupervisorMode);
+            Run("Supervisor replaces only child ProgramData", SupervisorReplacesOnlyChildProgramData);
+            Run("Supervisor rejects caller supplied environment and arguments", SupervisorRejectsCallerSuppliedEnvironmentAndArguments);
+            Run("Supervisor stops child gracefully without process kill", SupervisorStopsChildGracefullyWithoutProcessKill);
 
             if (_failures == 0)
             {
-                Console.WriteLine("All 17 provisioner tests passed.");
+                Console.WriteLine("All 27 provisioner tests passed.");
                 return 0;
             }
 
@@ -589,6 +599,233 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             }
         }
 
+        private static void ScmAdapterDerivesServiceNameInternally()
+        {
+            FakeWindowsServiceApi api = new FakeWindowsServiceApi();
+            LmGatewaySupervisorService service = CreateTestSupervisorService(api);
+
+            service.EnsureConfigured("00105700000001");
+
+            AssertEqual("krs-esm-lm-00105700000001", api.LastDefinition.ServiceName,
+                "SCM identity must be derived only from the validated KKT serial.");
+            AssertThrows<ArgumentException>(delegate { service.EnsureConfigured("foreign-service"); },
+                "A caller-supplied service name must not cross the adapter boundary.");
+        }
+
+        private static void ScmAdapterUsesExactVerifiedImagePath()
+        {
+            FakeWindowsServiceApi api = new FakeWindowsServiceApi();
+            string expectedPath = @"C:\Program Files\KRS\MultiKKT\Provisioner\EsmTspiot.ServiceProvisioner.exe";
+            LmGatewaySupervisorService service = new LmGatewaySupervisorService(
+                api,
+                ControllerCapabilityProfile.SupportedVersion1632(),
+                VerifiedProvisionerBinary.CreateForTesting(expectedPath));
+
+            service.EnsureConfigured("00105700000001");
+
+            AssertEqual(
+                WindowsCommandLine.QuoteArgument(expectedPath) +
+                    " --supervise krs-esm-lm-00105700000001",
+                api.LastDefinition.ImagePath,
+                "CreateService must receive the exact verified provisioner image.");
+            AssertEqual(@"""C:\tail\\""", WindowsCommandLine.QuoteArgument(@"C:\tail\"),
+                "Windows quoting must preserve a trailing backslash before the closing quote.");
+        }
+
+        private static void ScmAdapterEnforcesRestrictiveServiceDacl()
+        {
+            FakeWindowsServiceApi api = new FakeWindowsServiceApi();
+            string operatorSid = "S-1-5-21-111-222-333-1001";
+            CreateTestSupervisorService(api).EnsureConfigured("00105700000001", operatorSid);
+
+            AssertTrue(api.LastDefinition.SecurityDescriptor.IsRestrictive,
+                "Managed service DACL must contain only the fixed privileged trustees and rights.");
+            AssertEqual(operatorSid, api.LastDefinition.SecurityDescriptor.OperatorSid,
+                "The initiating user may receive only the typed read-only service projection.");
+            RawSecurityDescriptor raw = new RawSecurityDescriptor(
+                api.LastDefinition.SecurityDescriptor.Sddl);
+            int forbiddenOperatorRights = 0x00000002 | 0x00000010 | 0x00000020 |
+                0x00010000 | 0x00040000;
+            for (int index = 0; index < raw.DiscretionaryAcl.Count; index++)
+            {
+                CommonAce ace = raw.DiscretionaryAcl[index] as CommonAce;
+                if (ace != null && ace.SecurityIdentifier != null &&
+                    string.Equals(ace.SecurityIdentifier.Value, operatorSid, StringComparison.Ordinal))
+                {
+                    AssertEqual(0, ace.AccessMask & forbiddenOperatorRights,
+                        "The operator SID must not change, start, stop or delete the service.");
+                }
+            }
+            AssertThrows<ArgumentException>(delegate {
+                ServiceSecurityDescriptor.CreateRestrictive("S-1-5-11");
+            }, "Authenticated Users must never become the service operator trustee.");
+            AssertFalse(api.LastDefinition.SecurityDescriptor.Sddl.IndexOf(";;;AU)", StringComparison.Ordinal) >= 0 ||
+                        api.LastDefinition.SecurityDescriptor.Sddl.IndexOf(";;;BU)", StringComparison.Ordinal) >= 0 ||
+                        api.LastDefinition.SecurityDescriptor.Sddl.IndexOf(";;;IU)", StringComparison.Ordinal) >= 0 ||
+                        api.LastDefinition.SecurityDescriptor.Sddl.IndexOf(";;;WD)", StringComparison.Ordinal) >= 0,
+                "Interactive or broad user trustees must not control the service.");
+        }
+
+        private static void ScmAdapterNeverForceKillsProcess()
+        {
+            string sourceRoot = Path.Combine("src", "EsmTspiot.ServiceProvisioner");
+            string[] files = Directory.GetFiles(sourceRoot, "*.cs", SearchOption.AllDirectories);
+            string[] forbidden = { "taskkill", "Kill(", "sc.exe", "powershell", "cmd.exe", "TerminateProcess" };
+            for (int fileIndex = 0; fileIndex < files.Length; fileIndex++)
+            {
+                string source = File.ReadAllText(files[fileIndex]);
+                for (int tokenIndex = 0; tokenIndex < forbidden.Length; tokenIndex++)
+                {
+                    AssertFalse(source.IndexOf(forbidden[tokenIndex], StringComparison.OrdinalIgnoreCase) >= 0,
+                        "Forced termination or shell token found in " + files[fileIndex] + ".");
+                }
+            }
+        }
+
+        private static void ScmHandlesAreDisposedOnEveryFailure()
+        {
+            bool released = false;
+            try
+            {
+                using (SafeServiceHandle handle = SafeServiceHandle.CreateForTesting(
+                    new IntPtr(123),
+                    delegate { released = true; return true; }))
+                {
+                    throw new InvalidOperationException("injected failure");
+                }
+            }
+            catch (InvalidOperationException)
+            {
+            }
+
+            AssertTrue(released, "Safe SCM handles must close during exception unwinding.");
+        }
+
+        private static void ScmConfiguresRestrictedServiceSid()
+        {
+            FakeWindowsServiceApi api = new FakeWindowsServiceApi();
+            CreateTestSupervisorService(api).EnsureConfigured("00105700000001");
+
+            AssertEqual(WindowsServiceSidType.Restricted, api.LastDefinition.ServiceSidType,
+                "Every managed service must use SERVICE_SID_TYPE_RESTRICTED.");
+            AssertTrue(api.LastDefinition.RecoveryPolicy != null &&
+                       api.LastDefinition.RecoveryPolicy.RestartDelaysMilliseconds.Count == 3,
+                "The exact characterized recovery policy must accompany creation.");
+        }
+
+        private static void ScmImagePathTargetsOnlyProtectedSupervisorMode()
+        {
+            FakeWindowsServiceApi api = new FakeWindowsServiceApi();
+            CreateTestSupervisorService(api).EnsureConfigured("00105700000001");
+            ProvisionerCommandLine parsed;
+
+            AssertTrue(ProvisionerCommandLine.TryParse(
+                new[] { "--supervise", api.LastDefinition.ServiceName }, out parsed),
+                "The internally generated supervisor mode must parse.");
+            AssertEqual(ProvisionerMode.Supervisor, parsed.Mode,
+                "The managed ImagePath must select only supervisor mode.");
+            AssertFalse(ProvisionerCommandLine.TryParse(
+                new[] { "--supervise", api.LastDefinition.ServiceName, "--environment", "x" }, out parsed),
+                "Supervisor mode must reject appended arguments.");
+            AssertFalse(api.LastDefinition.ImagePath.IndexOf("--pipe", StringComparison.Ordinal) >= 0,
+                "SCM must not target the elevated IPC mode.");
+        }
+
+        private static void SupervisorReplacesOnlyChildProgramData()
+        {
+            Dictionary<string, string> baseline = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                { "Path", @"C:\Windows\System32" },
+                { "TEMP", @"C:\Windows\Temp" },
+                { "ProgramData", @"C:\ProgramData" }
+            };
+            FakeControllerChildRuntime runtime = new FakeControllerChildRuntime();
+            LmControllerChildProcess child = CreateTestChildProcess(baseline, runtime);
+
+            child.Start();
+
+            AssertEqual(@"C:\ProgramData\KRS\MultiKKT\Profiles\krs-esm-lm-00105700000001",
+                runtime.LastPlan.Environment["ProgramData"],
+                "Only the process-local ProgramData root may select the profile.");
+            AssertEqual(baseline["Path"], runtime.LastPlan.Environment["Path"],
+                "PATH must be inherited unchanged.");
+            AssertEqual(baseline["TEMP"], runtime.LastPlan.Environment["TEMP"],
+                "TEMP must be inherited unchanged.");
+            AssertEqual(3, runtime.LastPlan.Environment.Count,
+                "The supervisor must not add arbitrary environment variables.");
+        }
+
+        private static void SupervisorRejectsCallerSuppliedEnvironmentAndArguments()
+        {
+            FakeControllerChildRuntime runtime = new FakeControllerChildRuntime();
+            LmControllerChildProcess child = CreateTestChildProcess(
+                new Dictionary<string, string> { { "ProgramData", @"C:\ProgramData" } },
+                runtime);
+
+            child.Start();
+
+            AssertEqual(string.Empty, runtime.LastPlan.Arguments,
+                "The exact-version terminal contract takes no caller arguments.");
+            MethodInfo[] methods = typeof(LmControllerChildProcess).GetMethods(
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
+            for (int index = 0; index < methods.Length; index++)
+            {
+                if (methods[index].Name == "Start" || methods[index].Name == "StopGracefully")
+                {
+                    AssertEqual(0, methods[index].GetParameters().Length,
+                        "Runtime methods must not accept caller environment or arguments.");
+                }
+            }
+        }
+
+        private static void SupervisorStopsChildGracefullyWithoutProcessKill()
+        {
+            FakeControllerChildRuntime runtime = new FakeControllerChildRuntime();
+            LmControllerChildProcess child = CreateTestChildProcess(
+                new Dictionary<string, string> { { "ProgramData", @"C:\ProgramData" } },
+                runtime);
+
+            int processId = child.Start();
+            bool stopped = child.StopGracefully();
+
+            AssertTrue(stopped, "A graceful console stop followed by bounded wait must succeed.");
+            AssertEqual(processId, runtime.GracefulStopProcessId,
+                "The supervisor must signal only its own verified child PID.");
+            AssertEqual(processId, runtime.WaitProcessId,
+                "The supervisor must wait for the same child PID.");
+            AssertTrue(runtime.WaitMilliseconds > 0 && runtime.WaitMilliseconds <= 60000,
+                "Graceful stop wait must be bounded.");
+        }
+
+        private static LmGatewaySupervisorService CreateTestSupervisorService(
+            FakeWindowsServiceApi api)
+        {
+            return new LmGatewaySupervisorService(
+                api,
+                ControllerCapabilityProfile.SupportedVersion1632(),
+                VerifiedProvisionerBinary.CreateForTesting(
+                    @"C:\Program Files\KRS\MultiKKT\Provisioner\EsmTspiot.ServiceProvisioner.exe"));
+        }
+
+        private static LmControllerChildProcess CreateTestChildProcess(
+            IDictionary<string, string> environment,
+            FakeControllerChildRuntime runtime)
+        {
+            return new LmControllerChildProcess(
+                ControllerCapabilityProfile.SupportedVersion1632(),
+                new VerifiedControllerBinary
+                {
+                    FullPath = @"C:\Program Files\ESP\LMController\bin\lmcontroller.exe",
+                    Version = "1.6.3.2",
+                    Sha256 = new string('a', 64),
+                    SignerThumbprint = "1CD26372850FE30F1559821CF5D318591695271A",
+                    Machine = PeMachine.Amd64
+                },
+                @"C:\ProgramData\KRS\MultiKKT\Profiles\krs-esm-lm-00105700000001",
+                new FakeProcessEnvironmentReader(environment),
+                runtime);
+        }
+
         private static LmServiceProvisioningBatchRequest CreateEnsureRequest(int count)
         {
             LmServiceProvisioningBatchRequest request = CreateRequest(LmServiceOperation.EnsureBatch);
@@ -933,6 +1170,104 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     throw new InvalidDataException("reparse path rejected");
                 }
                 Directory.CreateDirectory(path);
+            }
+        }
+
+        private sealed class FakeWindowsServiceApi : IWindowsServiceApi
+        {
+            private WindowsServiceRecord _record;
+
+            internal WindowsServiceDefinition LastDefinition { get; private set; }
+
+            public WindowsServiceRecord Query(string serviceName)
+            {
+                if (_record == null ||
+                    !string.Equals(_record.ServiceName, serviceName, StringComparison.Ordinal))
+                {
+                    return null;
+                }
+                return _record;
+            }
+
+            public void Create(WindowsServiceDefinition definition)
+            {
+                LastDefinition = definition;
+                _record = WindowsServiceRecord.FromDefinition(definition);
+            }
+
+            public void Update(WindowsServiceDefinition definition)
+            {
+                LastDefinition = definition;
+                _record = WindowsServiceRecord.FromDefinition(definition);
+            }
+
+            public void Start(string serviceName)
+            {
+                EnsureExact(serviceName);
+                _record.State = WindowsServiceState.Running;
+            }
+
+            public void RequestStop(string serviceName)
+            {
+                EnsureExact(serviceName);
+                _record.State = WindowsServiceState.Stopped;
+            }
+
+            public void Delete(string serviceName)
+            {
+                EnsureExact(serviceName);
+                _record = null;
+            }
+
+            private void EnsureExact(string serviceName)
+            {
+                if (_record == null ||
+                    !string.Equals(_record.ServiceName, serviceName, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException("unexpected service identity");
+                }
+            }
+        }
+
+        private sealed class FakeProcessEnvironmentReader : IProcessEnvironmentReader
+        {
+            private readonly IDictionary<string, string> _environment;
+
+            internal FakeProcessEnvironmentReader(IDictionary<string, string> environment)
+            {
+                _environment = environment;
+            }
+
+            public IDictionary<string, string> ReadCurrent()
+            {
+                return new Dictionary<string, string>(_environment, StringComparer.OrdinalIgnoreCase);
+            }
+        }
+
+        private sealed class FakeControllerChildRuntime : IControllerChildRuntime
+        {
+            internal ControllerChildStartPlan LastPlan { get; private set; }
+            internal int GracefulStopProcessId { get; private set; }
+            internal int WaitProcessId { get; private set; }
+            internal int WaitMilliseconds { get; private set; }
+
+            public int Start(ControllerChildStartPlan plan)
+            {
+                LastPlan = plan;
+                return 4321;
+            }
+
+            public bool SendGracefulStop(int processId)
+            {
+                GracefulStopProcessId = processId;
+                return true;
+            }
+
+            public bool WaitForExit(int processId, int milliseconds)
+            {
+                WaitProcessId = processId;
+                WaitMilliseconds = milliseconds;
+                return true;
             }
         }
 

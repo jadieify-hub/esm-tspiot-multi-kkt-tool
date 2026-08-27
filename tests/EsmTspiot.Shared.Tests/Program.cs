@@ -1161,11 +1161,18 @@ namespace EsmTspiot.Shared.Tests
             string first = LmServiceIdentity.CreateName("00105700000001");
             string repeated = LmServiceIdentity.CreateName("00105700000001");
             string second = LmServiceIdentity.CreateName("00105700000002");
+            string parsedSerial;
 
             AssertEqual("krs-esm-lm-00105700000001", first, "Expected the fixed app-owned service prefix.");
             AssertEqual(first, repeated, "The same KKT must always produce the same service identity.");
             AssertFalse(string.Equals(first, second, StringComparison.Ordinal),
                 "Different KKT must never share a service identity.");
+            AssertTrue(LmServiceIdentity.TryParseName(first, out parsedSerial),
+                "The exact derived identity must round-trip.");
+            AssertEqual("00105700000001", parsedSerial,
+                "The derived identity must retain only the KKT serial.");
+            AssertFalse(LmServiceIdentity.TryParseName("esm-lm-controller", out parsedSerial),
+                "The official base service must never parse as app-owned.");
         }
 
         private static void LmServiceIdentityRejectsUnsafeSerial()

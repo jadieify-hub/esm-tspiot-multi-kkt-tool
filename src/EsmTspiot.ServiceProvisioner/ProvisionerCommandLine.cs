@@ -1,15 +1,36 @@
 using System;
+using EsmTspiot.Shared.Services;
 
 namespace EsmTspiot.ServiceProvisioner
 {
+    internal enum ProvisionerMode
+    {
+        ElevatedOperation = 1,
+        Supervisor = 2
+    }
+
     internal sealed class ProvisionerCommandLine
     {
+        internal ProvisionerMode Mode { get; private set; }
         internal string PipeName { get; private set; }
         internal string OperationId { get; private set; }
+        internal string ServiceName { get; private set; }
 
         internal static bool TryParse(string[] args, out ProvisionerCommandLine result)
         {
             result = null;
+            string serial;
+            if (args != null && args.Length == 2 &&
+                string.Equals(args[0], "--supervise", StringComparison.Ordinal) &&
+                LmServiceIdentity.TryParseName(args[1], out serial))
+            {
+                result = new ProvisionerCommandLine
+                {
+                    Mode = ProvisionerMode.Supervisor,
+                    ServiceName = LmServiceIdentity.CreateName(serial)
+                };
+                return true;
+            }
             if (args == null || args.Length != 4 ||
                 !string.Equals(args[0], "--pipe", StringComparison.Ordinal) ||
                 !string.Equals(args[2], "--operation", StringComparison.Ordinal) ||
@@ -21,6 +42,7 @@ namespace EsmTspiot.ServiceProvisioner
 
             result = new ProvisionerCommandLine
             {
+                Mode = ProvisionerMode.ElevatedOperation,
                 PipeName = args[1].ToLowerInvariant(),
                 OperationId = args[3].ToLowerInvariant()
             };
