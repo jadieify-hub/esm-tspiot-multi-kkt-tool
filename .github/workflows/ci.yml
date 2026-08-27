@@ -39,6 +39,14 @@ jobs:
           & "$env:TEMP\SharedTests.exe"
           exit $LASTEXITCODE
 
+      - name: Собрать и запустить тесты provisioner
+        shell: powershell
+        run: |
+          msbuild tests\EsmTspiot.ServiceProvisioner.Tests\EsmTspiot.ServiceProvisioner.Tests.csproj /restore /p:Configuration=Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "tests\EsmTspiot.ServiceProvisioner.Tests\bin\Release\net48\EsmTspiot.ServiceProvisioner.Tests.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Собрать Legacy
         run: msbuild src\EsmTspiot.Legacy.WinForms\EsmTspiot.Legacy.WinForms.csproj /restore /p:Configuration=Release
 

@@ -10,6 +10,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EsmTspiot.Modern.WinForms",
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EsmTspiot.Shared.Tests", "tests\EsmTspiot.Shared.Tests\EsmTspiot.Shared.Tests.csproj", "{B70C42C0-BE21-4C27-AC2D-7962045D53A6}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EsmTspiot.ServiceProvisioner", "src\EsmTspiot.ServiceProvisioner\EsmTspiot.ServiceProvisioner.csproj", "{44D1F05A-CABF-4D96-A7BB-EF37F4D58F93}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EsmTspiot.ServiceProvisioner.Tests", "tests\EsmTspiot.ServiceProvisioner.Tests\EsmTspiot.ServiceProvisioner.Tests.csproj", "{B6A557CD-F08C-45F7-820B-143908BBD649}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -32,6 +36,14 @@ Global
 		{B70C42C0-BE21-4C27-AC2D-7962045D53A6}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{B70C42C0-BE21-4C27-AC2D-7962045D53A6}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{B70C42C0-BE21-4C27-AC2D-7962045D53A6}.Release|Any CPU.Build.0 = Release|Any CPU
+		{44D1F05A-CABF-4D96-A7BB-EF37F4D58F93}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{44D1F05A-CABF-4D96-A7BB-EF37F4D58F93}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{44D1F05A-CABF-4D96-A7BB-EF37F4D58F93}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{44D1F05A-CABF-4D96-A7BB-EF37F4D58F93}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B6A557CD-F08C-45F7-820B-143908BBD649}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B6A557CD-F08C-45F7-820B-143908BBD649}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B6A557CD-F08C-45F7-820B-143908BBD649}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B6A557CD-F08C-45F7-820B-143908BBD649}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
