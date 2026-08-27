@@ -4,7 +4,7 @@
 
 **Goal:** После обязательной проверки совместимости официального контроллера добавить компактный привилегированный помощник, который безопасно создает, обновляет и удаляет отдельные Windows-службы контроллера ЛМ ЧЗ, а также завершить единый WinForms-интерфейс «ККТ → контроллер → целевой ЛМ».
 
-**Architecture:** Чистый `LmGatewayPlanner` строит детерминированный план на ККТ, `LmGatewayLifecycleWorkflow` координирует один привилегированный batch, проверку слушателей и уже реализованную привязку ЕСМ. SCM-операции изолированы в маленьком `net48`-помощнике с типизированным named-pipe контрактом и native Windows API. UI вынесен в отдельный `LmGatewayPage`; удаление разрешено только для службы, подтвержденной app-owned manifest, ImagePath и меткой в описании (либо валидным pending journal вместе с оставшимися признаками), и завершается автоматической очисткой профиля.
+**Architecture:** Чистый `LmGatewayPlanner` строит детерминированный план на ККТ, `LmGatewayLifecycleWorkflow` координирует один привилегированный batch, проверку слушателей и уже реализованную привязку ЕСМ. SCM-операции изолированы в маленьком `net48`-помощнике с типизированным named-pipe контрактом и native Windows API. Тот же защищённый EXE имеет отдельный SCM-only supervisor mode: служба с restricted SID запускает проверенный официальный контроллер дочерним процессом и заменяет только его process-local `ProgramData` на производный профиль. UI вынесен в отдельный `LmGatewayPage`; удаление разрешено только для службы, подтвержденной app-owned manifest, ImagePath и меткой в описании (либо валидным pending journal вместе с оставшимися признаками), и завершается автоматической очисткой профиля.
 
 **Tech Stack:** C# 5-compatible syntax, WinForms, `net48` helper, `net48;net8.0` shared library, Windows SCM/Registry/IP Helper API through P/Invoke, `DataContractJsonSerializer`, existing package-free test style.
 
@@ -59,7 +59,7 @@ if (-not $msbuild -or -not (Test-Path -LiteralPath $msbuild)) { throw 'Visual St
 - При неизвестном состоянии не выполнять разрушительный rollback; повторно прочитать состояние и поставить `RequiresAttention`.
 - Один запуск создания/обновления использует `EnsureBatch` не более чем для 32 ККТ и один UAC. Удаление остается отдельной одноэлементной операцией и отдельным UAC.
 - До любой SCM-мутации создавать crash journal и брать machine-wide плюс per-KKT mutex; при старте helper сначала reconciles незавершенные операции.
-- Запрещен недокументированный per-service `ProgramData`/environment. Technical gate проходит только при доказанном безопасном режиме изоляции из порядка Task 1; произвольный fallback запрещён.
+- Для `1.6.3.2` разрешён только доказанный capability mode: supervisor заменяет `ProgramData` в environment block своего дочернего процесса. Machine-wide/SCM environment, произвольные environment/arguments из UI/IPC и любой fallback запрещены.
 - Elevation разрешена только из не доступного обычному пользователю каталога установки и только при split-token повышении того же локального администратора. Portable/user-writable режим поддерживает только просмотр и binding-only.
 - Реализация остается C# 5-compatible и без новых внешних пакетов.
 - После каждой задачи RED → GREEN → commit. Не пушить и не публиковать без отдельного указания.
@@ -90,7 +90,7 @@ if (-not $msbuild -or -not (Test-Path -LiteralPath $msbuild)) { throw 'Visual St
 - Maintains `PublicSourcePending/Ready/Rejected` independently; this status controls publication, not VM access.
 - A fact observed only in VM may be encoded solely in the private, exact-version capability profile. It is not thereby approved for public source/builds.
 
-- [ ] **Step 0: Verify the official package and open only the technical characterization gate**
+- [x] **Step 0: Verify the official package and open only the technical characterization gate**
 
 Use the user-supplied `esm-lm-controller_1.6.3.2-windows-setup.exe`. Before mapping it into Sandbox, verify filename, size, SHA-256, Authenticode status, signer subject, certificate chain/code-signing EKU and file/product version. The expected installer SHA-256 is `822e047dbef62cbdbe2cf1ae22c457f43930c574fbcf265170987b9c7eae91e7`, expected signer is `JSC ESP`, and expected version is `1.6.3.2`. A mismatch is `TechnicalCompatibilityRejected`; never offer an override.
 
@@ -105,7 +105,7 @@ For each group, record whether it is supported by an official public URL/permiss
 
 If a publication group lacks a complete basis, keep `PublicSourcePending` and the repository/build private. Set `CharacterizationReady` and continue to Step 1 only after the installer identity check passes and Windows Sandbox is available with networking disabled and a read-only installer mapping. Tasks 2–13 still remain blocked until Step 7 produces `TechnicalCompatibilityReady`.
 
-- [ ] **Step 1: Capture the clean VM baseline**
+- [x] **Step 1: Capture the clean VM baseline**
 
 On the host, capture the reviewed repository commit before launching the VM:
 
@@ -155,7 +155,7 @@ $evidenceIndex | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $
 
 Verify the resulting DACL has only the current user, local administrators and `SYSTEM`. Append one indexed item for every later command/output, then take a VM snapshot. Do not execute any third-party comparison utility. Nothing under `$evidenceRoot` is copied into Git.
 
-- [ ] **Step 2: Install only the official controller and capture identity**
+- [x] **Step 2: Install only the official controller and capture identity**
 
 After interactive installation identify only service IDs present in the before/after diff. Do not select a service by a broad name regex. For each new service record:
 
@@ -178,7 +178,7 @@ try { ([BitConverter]::ToString($sha256.ComputeHash($stream))).Replace('-', '').
 
 The parser accepts a correctly quoted executable or an unquoted path without whitespace. An unquoted executable path containing whitespace or any ambiguous command line produces `Gate: FAIL`. Record exact service details, resolved root, DACLs, account, dependencies, start/recovery configuration and raw signer output only in the local evidence pack. The private summary may contain version, PE product/architecture, signer identity, SHA-256, high-level trust conclusion and evidence IDs/digests, but no raw SCM/path/DACL dump. Any unprivileged write/modify access to the binary or its ancestors produces FAIL. Do not commit the vendor binary or raw evidence.
 
-- [ ] **Step 3: Determine official configuration behavior**
+- [x] **Step 3: Determine official configuration behavior**
 
 Start and stop only the official service, then diff filesystem and service registry state. Store sanitized raw diffs, observed relative/absolute paths, registry names, field paths/types/defaults and raw CLI output only in the local evidence pack. The private summary contains evidence IDs/digests and conclusions, not raw output or internal schema. Never record certificate/private-key contents, tokens, passwords, organization identifiers or a full production config dump anywhere.
 
@@ -192,9 +192,11 @@ Bundled documentation, self-documenting CLI output and observed runtime behavior
 
 Confirm where local gRPC, local REST and target LM address/port are represented. Separately prove that the controller profile itself needs no login/password/token beyond credentials sent to ESM through the documented PUT. If the controller requires any additional per-profile secret, mark the technical gate failed rather than extending the privileged protocol with credentials. Facts supported only by observation are tagged `PrivateBlackBox` and keep the implementation private.
 
-- [ ] **Step 4: Prove the documented isolation mode**
+- [x] **Step 4: Prove the exact-version isolation mode**
 
-First test an official document/self-documenting CLI data/config-directory argument. If absent, characterize whether configuration is resolved from the launched executable path or working directory. Then test a separate non-reparse path/hard link and, independently, an app-owned supervisor. Do not patch or unpack the binary, copy secrets/full profiles, use per-service `ProgramData`, or carry a test mechanism into production by assumption. A junction may be used only as a final VM control to distinguish path resolution behavior; it cannot produce `TechnicalCompatibilityReady` under the current spec.
+First test an official document/self-documenting CLI data/config-directory argument. If absent, characterize whether configuration is resolved from the launched executable path or working directory. Then test a separate non-reparse path/hard link and, independently, an app-owned supervisor. Do not patch or unpack the binary, copy secrets/full profiles or carry a test mechanism into production by assumption. A junction may be used only as a final VM control to distinguish path resolution behavior; it cannot produce `TechnicalCompatibilityReady` under the current spec.
+
+Result for `1.6.3.2`: CLI has no data/config switch; process-local `ProgramData` is the only selected discriminator and `ALLUSERSPROFILE` is ignored. Two simultaneous terminal-mode child processes used separate profiles, local listeners and target LM endpoints in two clean runs. A third control started from config only and independently generated CA/server certificates and keys. Production therefore uses only an app-owned supervisor that sets the single pinned environment key internally; it never writes SCM-registry or machine-wide environment.
 
 For the test service use an obvious temporary name not equal to the product's future name, a new empty data directory and the same verified binary. Create it only inside the VM. Confirm all of the following:
 
@@ -203,25 +205,26 @@ For the test service use an obvious temporary name not equal to the product's fu
 - changing target LM address/port in the second profile does not alter the first;
 - both can run simultaneously;
 - uninstalling/stopping the test service leaves the official service operational;
-- no junction, environment override, copied secret or shared mutable machine-wide key is involved;
-- each instance uses a unique service SID/account and the effective profile DACL prevents the second managed service from reading the first profile; a shared powerful principal without proven equivalent isolation fails the gate.
+- no junction, copied secret or shared mutable machine-wide key is involved;
+- the only environment override is the pinned process-local `ProgramData` set by the app-owned supervisor;
+- each production instance uses a restricted unique service SID and the effective profile DACL prevents the second managed service from reading the first profile; this security property is re-proven by the supervisor integration tests before release.
 
-- [ ] **Step 5: Prove process/listener ownership**
+- [x] **Step 5: Prove process/listener ownership**
 
-For both services record service PID and TCP listener PID. A pass requires the listener to belong either to the service PID or to a signed child process whose path and parent relationship can be checked deterministically. Record the readiness evidence available without real credentials: expected listeners plus any official local health/status endpoint. Record the default and VM-configured Windows IPv4/IPv6 dynamic ranges as characterization evidence, then select two finite managed-port pools outside those observed ranges and prove the controller accepts ports from them. Record the exact loopback/wildcard endpoints and IPv6-only/dual-stack behavior. Verify that a probe using `ExclusiveAddressUse=true`, no `ReuseAddress` and the same endpoint set rejects occupied IPv4, IPv6, dual-stack and OS-excluded ports. The official base ports are not part of these pools.
+For both services record service PID and TCP listener PID. A pass requires the listener to belong either to the service PID or to a signed child process whose path and parent relationship can be checked deterministically. Record the readiness evidence available without real credentials: expected listeners plus any official local health/status endpoint. Characterization confirmed both listener families on the expected child PID and independent target LM attempts. Dynamic/excluded port enumeration and the product's `ExclusiveAddressUse=true` probe are Windows implementation tests in Task 7, not vendor-gate assumptions. The official base ports are not part of the managed pools.
 
-- [ ] **Step 6: Repeat once from a second clean VM instance**
+- [x] **Step 6: Repeat once from a second clean VM instance**
 
 Do not revert or discard the first VM while its local evidence pack is the only copy. Create a second disposable VM from the same clean base snapshot/clone, use a new `EvidenceSetId`, and repeat the selected isolation procedure from the written notes. A second successful run must produce the same relative paths, schema, port behavior and process ownership. Before disposing either VM, copy both evidence roots to access-controlled host storage outside the repository, re-hash after transfer and retain the VM-local packs until the transferred digests match.
 
-- [ ] **Step 7: Write the capability profile and gate decision**
+- [x] **Step 7: Write the capability profile and gate decision**
 
 The private summary committed to Git must include only:
 
 - `TechnicalCompatibilityReady` or `TechnicalCompatibilityRejected`, independent publication status, date, supported official version and Windows versions;
 - public vendor version, SHA-256, signer identity and high-level trust conclusion;
 - links to official public sources and the provenance class of each relied-on fact;
-- high-level invariants: the selected exact-version isolation mode is proven, profiles and service identities are isolated, no production junction/environment fallback is used, required listener families are supported;
+- high-level invariants: the selected exact-version supervisor mode is proven, profiles and service identities are isolated, no production junction/arbitrary environment fallback is used, required listener families are supported;
 - target LM authentication conclusion without credentials or internal config paths;
 - unsupported conditions, known limitations and two-run conclusion without raw output;
 - `EvidenceId` plus SHA-256 for each relied-on local evidence item and a digest of the sorted local `SHA256SUMS` manifest.
@@ -230,7 +233,7 @@ The local access-controlled evidence pack must include exact binary/service path
 
 Pass the technical gate only when every technical requirement in spec section 9 is independently reproducible twice for the exact installer version. A failed publication basis leaves `PublicSourcePending` but does not change the technical result. On technical failure, stop the plan and report the exact missing capability; do not invent a fallback.
 
-- [ ] **Step 8: Hash local evidence, update private provenance and commit only the summary**
+- [x] **Step 8: Hash local evidence, update private provenance and commit only the summary**
 
 Generate a sorted `SHA256SUMS` inside `$evidenceRoot`, add its own digest plus referenced `EvidenceId` values to the private summary/provenance, then verify no raw evidence path is inside the worktree. Review the staged diff for absolute user/VM paths, SIDs, account names, internal registry/config paths and raw command output; any hit blocks the commit.
 
@@ -524,7 +527,7 @@ Expected: missing trust and manifest types.
 
 - [ ] **Step 3: Encode only the passed capability profile**
 
-Transcribe only facts accepted by `TechnicalCompatibilityReady` for the exact version—controller version, allowed installation root/relative executable, PE architecture/product identity, code-signing EKU, valid SHA-256, Authenticode signer and the selected isolation mode—into `ControllerCapabilityProfile`. Tag each fact with its provenance class. A `PrivateBlackBox` fact keeps the branch/build private. Supporting another version requires a new independently reviewed profile; do not accept «any signed file» or a wildcard publisher.
+Transcribe only facts accepted by `TechnicalCompatibilityReady` for the exact version—controller version, allowed installation root/relative executable, PE architecture/product identity, code-signing EKU, valid SHA-256, Authenticode signer, fixed profile/config contract, the single `ProgramData` environment key and supervisor terminal-mode contract—into `ControllerCapabilityProfile`. Tag each fact with its provenance class. A `PrivateBlackBox` fact keeps the branch/build private. Supporting another version requires a new independently reviewed profile; do not accept «any signed file» or a wildcard publisher.
 
 - [ ] **Step 4: Implement path and trust checks**
 
@@ -543,7 +546,7 @@ For installer selection, require basename `esm-lm-controller_<version>-windows-s
 
 - [ ] **Step 5: Implement manifest store and ACL**
 
-Create physically separate roots. Inventory-manifest DACL: `SYSTEM` and `Builtin Administrators` full, initiating user SID read-only, no `Builtin Users`/`Authenticated Users`. Its nonsecret state projection contains `LocalLifecycleState`, `OperationId`, `LastCleanupErrorClass` and `UpdatedUtc`, while the authoritative journal remains administrators/SYSTEM only. Profile DACL grants runtime access only to a unique per-instance service SID/account proven by Task 1; a common `LocalSystem`, `LocalService`, `NetworkService` or shared account without demonstrably equivalent per-instance isolation is `Gate: FAIL`. If Windows Service SID is used, capability profile records the exact SID type and the VM test proves the second service cannot read the first profile. UI/initiating user cannot read profiles. Split immutable config from writable runtime state/logs when the controller supports it. Writes use temp + flush + atomic replace. On every operation validate ACL and reparse status of every existing component.
+Create physically separate roots. Inventory-manifest DACL: `SYSTEM` and `Builtin Administrators` full, initiating user SID read-only, no `Builtin Users`/`Authenticated Users`. Its nonsecret state projection contains `LocalLifecycleState`, `OperationId`, `LastCleanupErrorClass` and `UpdatedUtc`, while the authoritative journal remains administrators/SYSTEM only. Profile DACL grants runtime access to the unique per-instance service SID and management access to administrators/SYSTEM. Configure `SERVICE_SID_TYPE_RESTRICTED`; the supervisor and child inherit the restricted token, so the normal `SYSTEM` grant and restricted service-SID grant must both pass. A peer service SID is absent and cannot read the profile. UI/initiating user cannot read profiles. Split immutable config from writable runtime state/logs when the controller supports it. Writes use temp + flush + atomic replace. On every operation validate ACL and reparse status of every existing component.
 
 - [ ] **Step 6: Run helper tests and verify GREEN**
 
@@ -567,6 +570,9 @@ git commit -m "Проверять официальный контроллер и
 - Create: `src/EsmTspiot.ServiceProvisioner/WindowsServiceRecord.cs`
 - Create: `src/EsmTspiot.ServiceProvisioner/SafeServiceHandle.cs`
 - Create: `src/EsmTspiot.ServiceProvisioner/ServiceSecurityDescriptor.cs`
+- Create: `src/EsmTspiot.ServiceProvisioner/LmGatewaySupervisorService.cs`
+- Create: `src/EsmTspiot.ServiceProvisioner/LmControllerChildProcess.cs`
+- Create: `src/EsmTspiot.ServiceProvisioner/RestrictedServiceSid.cs`
 - Modify: `tests/EsmTspiot.ServiceProvisioner.Tests/Program.cs`
 
 **Interfaces:**
@@ -585,6 +591,11 @@ Run("SCM adapter uses exact verified image path", ScmAdapterUsesExactVerifiedIma
 Run("SCM adapter enforces restrictive service DACL", ScmAdapterEnforcesRestrictiveServiceDacl);
 Run("SCM adapter never force kills process", ScmAdapterNeverForceKillsProcess);
 Run("SCM handles are disposed on every failure", ScmHandlesAreDisposedOnEveryFailure);
+Run("SCM configures restricted service SID", ScmConfiguresRestrictedServiceSid);
+Run("SCM image path targets only protected supervisor mode", ScmImagePathTargetsOnlyProtectedSupervisorMode);
+Run("Supervisor replaces only child ProgramData", SupervisorReplacesOnlyChildProgramData);
+Run("Supervisor rejects caller supplied environment and arguments", SupervisorRejectsCallerSuppliedEnvironmentAndArguments);
+Run("Supervisor stops child gracefully without process kill", SupervisorStopsChildGracefullyWithoutProcessKill);
 ```
 
 Static/source assertion for the fourth test is acceptable: helper production sources must contain no `taskkill`, `Kill(`, `sc.exe`, `powershell` or `cmd.exe` call.
@@ -610,7 +621,9 @@ Request the minimum access mask for each operation. Do not grant interactive-use
 
 - [ ] **Step 4: Apply only the isolation mode selected by Task 1**
 
-Build the service ImagePath/execution contract solely from the exact-version `ControllerCapabilityProfile`: verified executable plus a fixed data-directory switch, a verified non-reparse per-instance execution path, or the app-owned supervisor selected by Task 1. Do not mix modes, write per-service environment or accept caller-provided arguments. Unit-test any Windows command-line quoting, including spaces and trailing backslashes.
+Build ImagePath only from the protected provisioner executable plus the internally derived `--supervise <service-name>` mode. The supervisor re-derives service/profile identity, verifies its restricted service SID/token and exact capability profile, then launches the verified official binary in terminal mode. It builds a fresh child environment from the service environment and replaces only the pinned `ProgramData` key with the derived profile root. Do not write per-service SCM environment or accept caller-provided paths, environment keys or vendor arguments. Unit-test Windows command-line quoting, spaces and trailing backslashes.
+
+On service stop, the supervisor sends the proven graceful console-control signal, waits a bounded interval and reports failure if the child remains. It never calls `Process.Kill`, `TerminateProcess`, `taskkill` or closes the job as a kill mechanism. Listener readiness accepts only the verified child PID whose parent is the supervisor PID.
 
 - [ ] **Step 5: Mirror only verified official service facts**
 
@@ -618,7 +631,7 @@ Service account, dependencies, start mode and recovery actions come from the exa
 
 - [ ] **Step 6: Run helper tests and verify GREEN**
 
-Expected: 22/22 helper tests pass; helper builds as AnyCPU net48 without external packages.
+Expected: 27/27 helper tests pass; helper builds as AnyCPU net48 without external packages.
 
 - [ ] **Step 7: Commit**
 
@@ -671,11 +684,11 @@ Expected: missing profile adapter.
 
 Do not add heuristic key search. Require the expected object path, field types and schema discriminator from the exact-version capability profile recorded in Task 1. If schema differs, return `UnsupportedController` before changing a service.
 
-For a new profile, independently generate the minimum supported schema from the exact-version capability profile; never copy the full official profile. Write only local ports and target address/port—never credentials. For an owned existing profile, patch the supported fields only while every service/child/listener PID is stopped, then replace the config atomically.
+For a new profile, independently generate the minimum supported schema from the exact-version capability profile; never copy the full official profile, CA, certificate or key. Write only local ports and target address/port—never credentials. The controller must generate unique CA/server material on first start; readiness fails if expected generated artifacts are missing or shared with another managed profile. For an owned existing profile, patch the supported fields only while every service/child/listener PID is stopped, then replace the config atomically.
 
 - [ ] **Step 5: Run helper tests and verify GREEN**
 
-Expected: 28/28 helper tests pass.
+Expected: 33/33 helper tests pass.
 
 - [ ] **Step 6: Commit**
 
@@ -752,10 +765,10 @@ Exact order for new service:
 4. re-read listeners, then bind both managed ports to the exact capability-profile endpoints with `ExclusiveAddressUse=true`, no `ReuseAddress` and explicit IPv6-only/dual-stack mode; keep every probe socket while preparing the profile and creating the stopped service;
 5. atomically create `Preparing` operation journal before any profile/SCM mutation;
 6. prepare isolated profile and atomically generate/apply the exact-version capability configuration;
-7. create service stopped with marker and restrictive service DACL, updating journal stage after success;
-8. release the two probe sockets immediately before `StartService`, then start service;
+7. create supervisor service stopped with marker, restricted service SID and restrictive service DACL, updating journal stage after success;
+8. release the two probe sockets immediately before `StartService`, then start supervisor; supervisor launches the verified child with the derived process-local `ProgramData`;
 9. wait bounded time for `Running` and both listeners;
-10. verify service/child/listener ownership;
+10. verify supervisor/child parentage, exact child identity, restricted profile access and listener ownership;
 11. atomically write ready manifest, set journal terminal, then remove the completed journal;
 12. release per-KKT mutex and continue the next batch item even after an item-level failure.
 
@@ -769,7 +782,7 @@ If a just-created service fails readiness, request a normal stop, keep the servi
 
 - [ ] **Step 7: Run helper tests and verify GREEN**
 
-Expected: 45/45 helper tests pass.
+Expected: 50/50 helper tests pass.
 
 - [ ] **Step 8: Commit**
 
@@ -851,7 +864,7 @@ If SCM is already absent but a valid manifest or `Deleting/Cleaning` journal and
 
 - [ ] **Step 6: Run helper tests and verify GREEN**
 
-Expected: 55/55 helper tests pass. Source scan shows no forced-process termination or shell command.
+Expected: 60/60 helper tests pass. Source scan shows no forced-process termination or shell command.
 
 - [ ] **Step 7: Commit**
 
@@ -1290,7 +1303,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\package_compact_rele
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 ```
 
-Expected: 116 shared tests and 55 helper tests pass, zero compile/package errors. If review added tests, record the larger exact counts.
+Expected: 116 shared tests and 60 helper tests pass, zero compile/package errors. If review added tests, record the larger exact counts.
 
 - [ ] **Step 2: Run the same fail-fast static safety gate as CI**
 
