@@ -5,6 +5,7 @@
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
     <PlatformTarget>AnyCPU</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <AssemblyName>EsmTspiot.ServiceProvisioner</AssemblyName>
     <RootNamespace>EsmTspiot.ServiceProvisioner</RootNamespace>

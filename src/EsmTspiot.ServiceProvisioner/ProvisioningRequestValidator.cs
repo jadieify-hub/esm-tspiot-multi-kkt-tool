@@ -244,7 +244,7 @@ namespace EsmTspiot.ServiceProvisioner
                 result.Add("Размер и SHA-256 установщика неверны.");
             }
             if (string.IsNullOrWhiteSpace(selection.FileVersion) ||
-                string.IsNullOrWhiteSpace(selection.ProductVersion) ||
+                selection.ProductVersion == null ||
                 string.IsNullOrWhiteSpace(selection.SignerSubject) ||
                 !IsHex(selection.SignerThumbprint, 40))
             {
