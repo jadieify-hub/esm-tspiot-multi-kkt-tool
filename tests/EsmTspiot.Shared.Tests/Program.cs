@@ -88,6 +88,10 @@ namespace EsmTspiot.Shared.Tests
             Run("Diagnostic masker hides fiscal identifiers", DiagnosticMaskerHidesFiscalIdentifiers);
             Run("Diagnostic masker hides local user paths", DiagnosticMaskerHidesLocalUserPaths);
             Run("Diagnostic masker hides common secrets", DiagnosticMaskerHidesCommonSecrets);
+            Run("Sensitive masker redacts JSON credentials", SensitiveMaskerRedactsJsonCredentials);
+            Run("Sensitive masker redacts key value credentials", SensitiveMaskerRedactsKeyValueCredentials);
+            Run("Log formatter never persists reflected password", LogFormatterNeverPersistsReflectedPassword);
+            Run("Sensitive masker preserves ordinary fields", SensitiveMaskerPreservesOrdinaryFields);
             Run("Display log trimmer preserves the newest half", DisplayLogTrimmerPreservesNewestHalf);
             Run("File log sink persists text without blocking", FileLogSinkPersistsTextWithoutBlocking);
 
@@ -1288,6 +1292,76 @@ namespace EsmTspiot.Shared.Tests
             AssertFalse(masked.Contains("Server=local"), "Connection string must be masked.");
             AssertFalse(masked.Contains("BearerValue"), "Authorization value must be masked.");
             AssertFalse(masked.Contains("KeyValue"), "API key value must be masked.");
+        }
+
+        private static void SensitiveMaskerRedactsJsonCredentials()
+        {
+            string escapedPassword = "alpha\\\"quote\\\\path\\nomega\\u041f";
+            string source =
+                "{\"password\":\"" + escapedPassword + "\"," +
+                "\"NeWpAsSwOrD\":\"new-value\"," +
+                "\"token\":\"token-value\"," +
+                "\"secret\":\"secret-value\"," +
+                "\"authorization\":\"Bearer value\"," +
+                "\"apiKey\":\"key-value\"," +
+                "\"connectionString\":\"Server=local;Password=qwerty\"}";
+
+            string masked = SensitiveDataMasker.Mask(source);
+
+            AssertContains(masked, "\"password\":\"***\"");
+            AssertContains(masked, "\"NeWpAsSwOrD\":\"***\"");
+            AssertContains(masked, "\"token\":\"***\"");
+            AssertContains(masked, "\"secret\":\"***\"");
+            AssertContains(masked, "\"authorization\":\"***\"");
+            AssertContains(masked, "\"apiKey\":\"***\"");
+            AssertContains(masked, "\"connectionString\":\"***\"");
+            AssertFalse(masked.Contains("alpha"), "Escaped password prefix must be masked.");
+            AssertFalse(masked.Contains("quote"), "Text after an escaped quote must be masked.");
+            AssertFalse(masked.Contains("path"), "Text after an escaped backslash must be masked.");
+            AssertFalse(masked.Contains("omega"), "Text after an escaped newline must be masked.");
+            AssertFalse(masked.Contains("\\u041f"), "Unicode escape must be masked.");
+        }
+
+        private static void SensitiveMaskerRedactsKeyValueCredentials()
+        {
+            string masked = SensitiveDataMasker.Mask("password=secret-value&status=ready");
+
+            AssertEqual("password=***&status=ready", masked, "Expected only the password value to be masked.");
+        }
+
+        private static void LogFormatterNeverPersistsReflectedPassword()
+        {
+            string escapedPassword = "alpha\\\"quote\\\\path\\nomega\\u041f";
+            ApiResponse response = new ApiResponse
+            {
+                Method = "PUT",
+                Url = "http://127.0.0.1:51077/api/v1/settings/lm/test",
+                RequestBody = "{\"password\":\"" + escapedPassword + "\"}",
+                StatusCode = 400,
+                ReasonPhrase = "Bad Request",
+                ResponseBody = "{\"error\":{\"password\":\"" + escapedPassword + "\"}}",
+                DecodedMessage = "Сервер вернул {\"password\":\"" + escapedPassword + "\"}"
+            };
+
+            string formatted = LogFormatter.Format(response);
+
+            AssertFalse(formatted.Contains("alpha"), "Password prefix must not reach the formatted log.");
+            AssertFalse(formatted.Contains("quote"), "Reflected text after an escaped quote must be masked.");
+            AssertFalse(formatted.Contains("path"), "Reflected text after an escaped backslash must be masked.");
+            AssertFalse(formatted.Contains("omega"), "Reflected text after an escaped newline must be masked.");
+            AssertFalse(formatted.Contains("\\u041f"), "Reflected Unicode escape must be masked.");
+            AssertContains(formatted, "\"password\":\"***\"");
+        }
+
+        private static void SensitiveMaskerPreservesOrdinaryFields()
+        {
+            string source =
+                "{\"address\":\"127.0.0.1\",\"port\":50063,\"login\":\"operator\"," +
+                "\"kktSerial\":\"test-serial\",\"message\":\"Обычный русский текст\"}";
+
+            string masked = SensitiveDataMasker.Mask(source);
+
+            AssertEqual(source, masked, "Ordinary LM connection fields must stay unchanged.");
         }
 
         private static void DisplayLogTrimmerPreservesNewestHalf()

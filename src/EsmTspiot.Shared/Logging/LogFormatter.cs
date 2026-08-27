@@ -15,12 +15,12 @@ namespace EsmTspiot.Shared.Logging
             if (!string.IsNullOrEmpty(response.RequestBody))
             {
                 builder.AppendLine("Тело запроса:");
-                builder.AppendLine(response.RequestBody);
+                builder.AppendLine(SensitiveDataMasker.Mask(response.RequestBody));
             }
 
             if (response.StatusCode > 0)
             {
-                builder.AppendLine("HTTP-статус: " + response.StatusCode.ToString() + " " + (response.ReasonPhrase ?? string.Empty));
+                builder.AppendLine("HTTP-статус: " + response.StatusCode.ToString() + " " + SensitiveDataMasker.Mask(response.ReasonPhrase));
             }
             else
             {
@@ -30,13 +30,13 @@ namespace EsmTspiot.Shared.Logging
             if (!string.IsNullOrEmpty(response.ResponseBody))
             {
                 builder.AppendLine("Ответ сервера:");
-                builder.AppendLine(response.ResponseBody);
+                builder.AppendLine(SensitiveDataMasker.Mask(response.ResponseBody));
             }
 
             if (!string.IsNullOrEmpty(response.DecodedMessage))
             {
                 builder.AppendLine("Пояснение:");
-                builder.AppendLine(response.DecodedMessage);
+                builder.AppendLine(SensitiveDataMasker.Mask(response.DecodedMessage));
             }
 
             builder.AppendLine();
