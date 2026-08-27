@@ -73,6 +73,12 @@ namespace EsmTspiot.Shared.Tests
             Run("LM discovery continues after one malformed detail", LmDiscoveryContinuesAfterOneMalformedDetail);
             Run("LM discovery excludes unregistered instance", LmDiscoveryExcludesUnregisteredInstance);
             Run("LM discovery honors cancellation", LmDiscoveryHonorsCancellation);
+            Run("LM binding planner matches by KKT identity", LmBindingPlannerMatchesByKktIdentity);
+            Run("LM binding planner keeps different INNs separate", LmBindingPlannerKeepsDifferentInnsSeparate);
+            Run("LM binding planner requires one input per KKT", LmBindingPlannerRequiresOneInputPerKkt);
+            Run("LM binding planner rejects duplicate local endpoints", LmBindingPlannerRejectsDuplicateLocalEndpoints);
+            Run("LM binding planner rejects invalid loopback and port", LmBindingPlannerRejectsInvalidLoopbackAndPort);
+            Run("LM binding plan cannot contain credentials", LmBindingPlanCannotContainCredentials);
             Run("API client preserves an injected timeout", ApiClientPreservesInjectedTimeout);
             Run("Instruction selector uses the newest file time", InstructionSelectorUsesNewestFileTime);
             Run("Deletion planner protects primary KKT", DeletionPlannerProtectsPrimaryKkt);
@@ -1009,6 +1015,150 @@ namespace EsmTspiot.Shared.Tests
             }
 
             AssertTrue(cancellationObserved, "Discovery cancellation must propagate to the caller.");
+        }
+
+        private static void LmBindingPlannerMatchesByKktIdentity()
+        {
+            LmGatewayDiscovery discovery = CreateLmDiscovery(
+                new LmGatewayKkt { InstanceId = "00105700000001", KktSerial = "00105700000001", KktInn = "1234567894" },
+                new LmGatewayKkt { InstanceId = "00105700000002", KktSerial = "00105700000002", KktInn = "1234567894" });
+            IList<LmGatewayBindingInput> inputs = new List<LmGatewayBindingInput>
+            {
+                CreateLmBindingInput(" 00105700000002 ", "1234567894", "localhost", "50064"),
+                CreateLmBindingInput("00105700000001", "1234567894", "::1", "50063")
+            };
+
+            LmGatewayBindingPlan plan = LmGatewayBindingPlanner.Build(discovery, inputs);
+            inputs[1].ControllerGrpcPort = "59999";
+
+            AssertEqual(2, plan.Items.Count, "Expected one plan row per discovered KKT.");
+            AssertEqual("00105700000001", plan.Items[0].Kkt.KktSerial, "Expected discovery order.");
+            AssertEqual("50063", plan.Items[0].Input.ControllerGrpcPort, "Inputs must match by KKT serial, not list order or INN.");
+            AssertFalse(object.ReferenceEquals(inputs[1], plan.Items[0].Input), "Plan must copy mutable UI input.");
+            AssertEqual("127.0.0.1", plan.Items[0].Input.ControllerAddress, "IPv6 loopback must normalize for the request.");
+            AssertEqual("50064", plan.Items[1].Input.ControllerGrpcPort, "Expected the second serial's input.");
+        }
+
+        private static void LmBindingPlannerKeepsDifferentInnsSeparate()
+        {
+            LmGatewayDiscovery discovery = CreateLmDiscovery(
+                new LmGatewayKkt { InstanceId = "00105700000001", KktSerial = "00105700000001", KktInn = "1234567894" },
+                new LmGatewayKkt { InstanceId = "00105700000002", KktSerial = "00105700000002", KktInn = "7707083893" });
+            IList<LmGatewayBindingInput> inputs = new List<LmGatewayBindingInput>
+            {
+                CreateLmBindingInput("00105700000001", "1234567894", "localhost", "50063"),
+                CreateLmBindingInput("00105700000002", "7707083893", "127.0.0.1", "50063")
+            };
+
+            LmGatewayBindingPlan plan = LmGatewayBindingPlanner.Build(discovery, inputs);
+
+            AssertEqual(2, plan.Items.Count, "Different INNs must remain separate rows.");
+            AssertEqual("1234567894", plan.Items[0].Kkt.KktInn, "Expected first INN.");
+            AssertEqual("7707083893", plan.Items[1].Kkt.KktInn, "Expected second INN.");
+            AssertFalse(plan.Items[0].Validation.IsValid, "Shared endpoint must block the first row, not merge it.");
+            AssertFalse(plan.Items[1].Validation.IsValid, "Shared endpoint must block the second row, not merge it.");
+        }
+
+        private static void LmBindingPlannerRequiresOneInputPerKkt()
+        {
+            LmGatewayDiscovery discovery = CreateLmDiscovery(
+                new LmGatewayKkt { InstanceId = "00105700000001", KktSerial = "00105700000001", KktInn = "1234567894" },
+                new LmGatewayKkt { InstanceId = "00105700000002", KktSerial = "00105700000002", KktInn = "7707083893" });
+            IList<LmGatewayBindingInput> inputs = new List<LmGatewayBindingInput>
+            {
+                CreateLmBindingInput("00105700000001", "1234567894", "127.0.0.1", "50063"),
+                CreateLmBindingInput("00105700000001", "1234567894", "127.0.0.1", "50064")
+            };
+
+            LmGatewayBindingPlan plan = LmGatewayBindingPlanner.Build(discovery, inputs);
+
+            AssertFalse(plan.Items[0].Validation.IsValid, "Duplicate input must block its KKT row.");
+            AssertContains(plan.Items[0].Validation.JoinMessages(), "несколько наборов");
+            AssertFalse(plan.Items[1].Validation.IsValid, "Missing input must block its KKT row.");
+            AssertContains(plan.Items[1].Validation.JoinMessages(), "не заданы");
+        }
+
+        private static void LmBindingPlannerRejectsDuplicateLocalEndpoints()
+        {
+            LmGatewayDiscovery discovery = CreateLmDiscovery(
+                new LmGatewayKkt { InstanceId = "00105700000001", KktSerial = "00105700000001", KktInn = "1234567894" },
+                new LmGatewayKkt { InstanceId = "00105700000002", KktSerial = "00105700000002", KktInn = "7707083893" });
+            IList<LmGatewayBindingInput> inputs = new List<LmGatewayBindingInput>
+            {
+                CreateLmBindingInput("00105700000001", "1234567894", "localhost", "50063"),
+                CreateLmBindingInput("00105700000002", "7707083893", "127.0.0.1", "50063")
+            };
+
+            LmGatewayBindingPlan plan = LmGatewayBindingPlanner.Build(discovery, inputs);
+
+            AssertContains(plan.Items[0].Validation.JoinMessages(), "Локальный endpoint");
+            AssertContains(plan.Items[1].Validation.JoinMessages(), "Локальный endpoint");
+        }
+
+        private static void LmBindingPlannerRejectsInvalidLoopbackAndPort()
+        {
+            LmGatewayBindingInput input = CreateLmBindingInput(
+                "00105700000001", "1234567894", "192.168.1.10", "70000");
+
+            ValidationResult validation = LmGatewayInputValidator.ValidateBinding(input);
+
+            AssertFalse(validation.IsValid, "Remote address and out-of-range port must be rejected.");
+            AssertContains(validation.JoinMessages(), "loopback");
+            AssertContains(validation.JoinMessages(), "1-65535");
+        }
+
+        private static void LmBindingPlanCannotContainCredentials()
+        {
+            Type[] planTypes =
+            {
+                typeof(LmGatewayBindingInput),
+                typeof(LmGatewayBindingItem),
+                typeof(LmGatewayBindingPlan)
+            };
+
+            for (int typeIndex = 0; typeIndex < planTypes.Length; typeIndex++)
+            {
+                System.Reflection.PropertyInfo[] properties = planTypes[typeIndex].GetProperties();
+                for (int propertyIndex = 0; propertyIndex < properties.Length; propertyIndex++)
+                {
+                    string propertyName = properties[propertyIndex].Name;
+                    string propertyTypeName = properties[propertyIndex].PropertyType.FullName ?? string.Empty;
+                    AssertFalse(propertyName.IndexOf("Password", StringComparison.OrdinalIgnoreCase) >= 0,
+                        "Plan model must not expose a password property.");
+                    AssertFalse(propertyName.IndexOf("Token", StringComparison.OrdinalIgnoreCase) >= 0,
+                        "Plan model must not expose a token property.");
+                    AssertFalse(propertyName.IndexOf("Secret", StringComparison.OrdinalIgnoreCase) >= 0,
+                        "Plan model must not expose a secret property.");
+                    AssertFalse(propertyTypeName.IndexOf("Credential", StringComparison.OrdinalIgnoreCase) >= 0,
+                        "Plan model must not retain a credential object.");
+                }
+            }
+        }
+
+        private static LmGatewayDiscovery CreateLmDiscovery(params LmGatewayKkt[] items)
+        {
+            LmGatewayDiscovery discovery = new LmGatewayDiscovery();
+            for (int index = 0; index < items.Length; index++)
+            {
+                discovery.Items.Add(items[index]);
+            }
+
+            return discovery;
+        }
+
+        private static LmGatewayBindingInput CreateLmBindingInput(
+            string kktSerial,
+            string kktInn,
+            string address,
+            string port)
+        {
+            return new LmGatewayBindingInput
+            {
+                KktSerial = kktSerial,
+                KktInn = kktInn,
+                ControllerAddress = address,
+                ControllerGrpcPort = port
+            };
         }
 
         private static void ApiClientPreservesInjectedTimeout()
