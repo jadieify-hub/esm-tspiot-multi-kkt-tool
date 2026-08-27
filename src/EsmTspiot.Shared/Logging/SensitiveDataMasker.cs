@@ -18,7 +18,8 @@ namespace EsmTspiot.Shared.Logging
         };
 
         private static readonly Regex SensitiveKeyValuePattern = new Regex(
-            @"(?<prefix>\b(?:password|newPassword|token|secret|authorization|apiKey|connectionString)\s*=\s*)(?<value>""(?:\\.|[^""])*""|'(?:\\.|[^'])*'|[^&\s;]+)",
+            @"(?<prefix>\b(?:" + string.Join("|", SensitiveKeys) +
+            @")\s*=\s*)(?<value>""(?:\\.|[^""])*""|'(?:\\.|[^'])*'|[^&;\r\n]+)",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         public static string Mask(string text)

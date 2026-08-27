@@ -1865,9 +1865,13 @@ namespace EsmTspiot.Shared.Tests
 
         private static void SensitiveMaskerRedactsKeyValueCredentials()
         {
-            string masked = SensitiveDataMasker.Mask("password=secret-value&status=ready");
+            string masked = SensitiveDataMasker.Mask(
+                "password=secret-value&authorization=Bearer auth-token&status=ready");
 
-            AssertEqual("password=***&status=ready", masked, "Expected only the password value to be masked.");
+            AssertEqual(
+                "password=***&authorization=***&status=ready",
+                masked,
+                "Expected password and the complete authorization value to be masked.");
         }
 
         private static void LogFormatterNeverPersistsReflectedPassword()
