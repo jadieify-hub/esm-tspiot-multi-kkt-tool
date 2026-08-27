@@ -79,6 +79,12 @@ namespace EsmTspiot.Shared.Tests
             Run("LM binding planner rejects duplicate local endpoints", LmBindingPlannerRejectsDuplicateLocalEndpoints);
             Run("LM binding planner rejects invalid loopback and port", LmBindingPlannerRejectsInvalidLoopbackAndPort);
             Run("LM binding plan cannot contain credentials", LmBindingPlanCannotContainCredentials);
+            Run("LM binding workflow sends items sequentially", LmBindingWorkflowSendsItemsSequentially);
+            Run("LM binding workflow skips invalid item and continues", LmBindingWorkflowSkipsInvalidItemAndContinues);
+            Run("LM binding workflow marks lost response for attention", LmBindingWorkflowMarksLostResponseForAttention);
+            Run("LM binding workflow does not retry permanent HTTP error", LmBindingWorkflowDoesNotRetryPermanentHttpError);
+            Run("LM binding workflow preserves partial results on cancellation", LmBindingWorkflowPreservesPartialResultsOnCancellation);
+            Run("LM binding workflow progress never contains password", LmBindingWorkflowProgressNeverContainsPassword);
             Run("API client preserves an injected timeout", ApiClientPreservesInjectedTimeout);
             Run("Instruction selector uses the newest file time", InstructionSelectorUsesNewestFileTime);
             Run("Deletion planner protects primary KKT", DeletionPlannerProtectsPrimaryKkt);
@@ -1161,6 +1167,204 @@ namespace EsmTspiot.Shared.Tests
             };
         }
 
+        private static void LmBindingWorkflowSendsItemsSequentially()
+        {
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            LmGatewayBindingPlan plan = CreateValidLmBindingPlan(2);
+            List<string> events = new List<string>();
+            api.LmGatewayCallObserved = delegate(int callNumber)
+            {
+                events.Add("put:" + api.LmGatewayCalls[callNumber - 1].Id);
+            };
+            LmGatewayBindingWorkflow workflow = new LmGatewayBindingWorkflow(api);
+
+            LmGatewayBindingOutcome outcome = workflow.ExecuteAsync(
+                "http://127.0.0.1:51077",
+                plan,
+                delegate(string kktSerial)
+                {
+                    events.Add("credentials:" + kktSerial);
+                    return new LmGatewayCredentials { Login = "operator-" + kktSerial, Password = "test-password" };
+                },
+                null,
+                CancellationToken.None).Result;
+
+            AssertEqual(2, api.LmGatewayCalls.Count, "Expected one sequential PUT per valid KKT.");
+            AssertEqual("credentials:00105700000001", events[0], "Credentials must be requested immediately before the first row.");
+            AssertEqual("put:00105700000001", events[1], "Expected the first PUT before reading the next credentials.");
+            AssertEqual("credentials:00105700000002", events[2], "Expected second-row credentials only after the first PUT.");
+            AssertEqual("put:00105700000002", events[3], "Expected the second PUT last.");
+            AssertEqual("127.0.0.1", api.LmGatewayCalls[0].Request.Address, "Expected normalized local controller address.");
+            AssertEqual(50063, api.LmGatewayCalls[0].Request.Port, "Expected the first controller gRPC port.");
+            AssertEqual(LmGatewayBindingStatus.BindingAccepted, outcome.Results[0].Status, "Expected accepted first binding.");
+            AssertEqual(LmGatewayBindingStatus.BindingAccepted, outcome.Results[1].Status, "Expected accepted second binding.");
+        }
+
+        private static void LmBindingWorkflowSkipsInvalidItemAndContinues()
+        {
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            LmGatewayDiscovery discovery = CreateLmDiscovery(
+                new LmGatewayKkt { InstanceId = "00105700000001", KktSerial = "00105700000001", KktInn = "1234567894" },
+                new LmGatewayKkt { InstanceId = "00105700000002", KktSerial = "00105700000002", KktInn = "7707083893" });
+            IList<LmGatewayBindingInput> inputs = new List<LmGatewayBindingInput>
+            {
+                CreateLmBindingInput("00105700000002", "7707083893", "127.0.0.1", "50064")
+            };
+            LmGatewayBindingPlan plan = LmGatewayBindingPlanner.Build(discovery, inputs);
+            List<string> credentialCalls = new List<string>();
+            LmGatewayBindingWorkflow workflow = new LmGatewayBindingWorkflow(api);
+
+            LmGatewayBindingOutcome outcome = workflow.ExecuteAsync(
+                "http://127.0.0.1:51077",
+                plan,
+                delegate(string serial)
+                {
+                    credentialCalls.Add(serial);
+                    return new LmGatewayCredentials { Login = "operator", Password = "test-password" };
+                },
+                null,
+                CancellationToken.None).Result;
+
+            AssertEqual(LmGatewayBindingStatus.Invalid, outcome.Results[0].Status, "Invalid row must be recorded.");
+            AssertEqual(LmGatewayBindingStatus.BindingAccepted, outcome.Results[1].Status, "Valid row after it must still execute.");
+            AssertEqual(1, credentialCalls.Count, "Invalid row must not request credentials.");
+            AssertEqual("00105700000002", credentialCalls[0], "Expected credentials only for the valid KKT.");
+            AssertEqual(1, api.LmGatewayCalls.Count, "Invalid row must not call PUT.");
+        }
+
+        private static void LmBindingWorkflowMarksLostResponseForAttention()
+        {
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            api.LmGatewayResponses.Enqueue(ConnectionFailure());
+            LmGatewayBindingWorkflow workflow = new LmGatewayBindingWorkflow(api);
+
+            LmGatewayBindingOutcome outcome = workflow.ExecuteAsync(
+                "http://127.0.0.1:51077",
+                CreateValidLmBindingPlan(1),
+                delegate { return new LmGatewayCredentials { Login = "operator", Password = "test-password" }; },
+                null,
+                CancellationToken.None).Result;
+
+            AssertEqual(1, api.LmGatewayCalls.Count, "Lost response must not trigger an automatic retry.");
+            AssertEqual(LmGatewayBindingStatus.RequiresAttention, outcome.Results[0].Status,
+                "Unknown remote outcome must require manual attention.");
+        }
+
+        private static void LmBindingWorkflowDoesNotRetryPermanentHttpError()
+        {
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            api.LmGatewayResponses.Enqueue(Failure(400, "{\"error\":\"invalid settings\"}"));
+            LmGatewayBindingWorkflow workflow = new LmGatewayBindingWorkflow(api);
+
+            LmGatewayBindingOutcome outcome = workflow.ExecuteAsync(
+                "http://127.0.0.1:51077",
+                CreateValidLmBindingPlan(1),
+                delegate { return new LmGatewayCredentials { Login = "operator", Password = "test-password" }; },
+                null,
+                CancellationToken.None).Result;
+
+            AssertEqual(1, api.LmGatewayCalls.Count, "Permanent HTTP error must be recorded without retry.");
+            AssertEqual(LmGatewayBindingStatus.BindingFailed, outcome.Results[0].Status,
+                "Expected a permanent binding failure.");
+        }
+
+        private static void LmBindingWorkflowPreservesPartialResultsOnCancellation()
+        {
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            CancellationTokenSource cancellation = new CancellationTokenSource();
+            api.LmGatewayCallObserved = delegate(int callNumber)
+            {
+                if (callNumber == 1)
+                {
+                    cancellation.Cancel();
+                }
+            };
+            int credentialCalls = 0;
+            LmGatewayBindingWorkflow workflow = new LmGatewayBindingWorkflow(api);
+
+            LmGatewayBindingOutcome outcome = workflow.ExecuteAsync(
+                "http://127.0.0.1:51077",
+                CreateValidLmBindingPlan(3),
+                delegate
+                {
+                    credentialCalls++;
+                    return new LmGatewayCredentials { Login = "operator", Password = "test-password" };
+                },
+                null,
+                cancellation.Token).Result;
+
+            AssertTrue(outcome.Cancelled, "Expected a cancelled outcome.");
+            AssertEqual(3, outcome.Results.Count, "Completed and untouched rows must all remain visible.");
+            AssertEqual(LmGatewayBindingStatus.BindingAccepted, outcome.Results[0].Status, "First completed row must be preserved.");
+            AssertEqual(LmGatewayBindingStatus.Cancelled, outcome.Results[1].Status, "Second untouched row must be cancelled.");
+            AssertEqual(LmGatewayBindingStatus.Cancelled, outcome.Results[2].Status, "Third untouched row must be cancelled.");
+            AssertEqual(1, credentialCalls, "Untouched rows must not request credentials.");
+            AssertEqual(1, api.LmGatewayCalls.Count, "Untouched rows must not call PUT.");
+        }
+
+        private static void LmBindingWorkflowProgressNeverContainsPassword()
+        {
+            const string password = "workflow-secret-value";
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            api.LmGatewayResponses.Enqueue(new ApiResponse
+            {
+                IsSuccess = true,
+                StatusCode = 200,
+                RequestBody = "{\"password\":\"" + password + "\"}",
+                ResponseBody = "{\"password\":\"" + password + "\"}",
+                DecodedMessage = "password=" + password
+            });
+            List<LmGatewayBindingProgress> progressItems = new List<LmGatewayBindingProgress>();
+            LmGatewayBindingWorkflow workflow = new LmGatewayBindingWorkflow(api);
+
+            LmGatewayBindingOutcome outcome = workflow.ExecuteAsync(
+                "http://127.0.0.1:51077",
+                CreateValidLmBindingPlan(1),
+                delegate { return new LmGatewayCredentials { Login = "operator", Password = password }; },
+                delegate(LmGatewayBindingProgress progress) { progressItems.Add(progress); },
+                CancellationToken.None).Result;
+
+            AssertTrue(progressItems.Count > 0, "Expected binding progress.");
+            for (int index = 0; index < progressItems.Count; index++)
+            {
+                LmGatewayBindingProgress progress = progressItems[index];
+                string progressText = (progress.KktSerial ?? string.Empty) + (progress.Stage ?? string.Empty) +
+                    (progress.Message ?? string.Empty);
+                if (progress.Response != null)
+                {
+                    progressText += (progress.Response.RequestBody ?? string.Empty) +
+                        (progress.Response.ResponseBody ?? string.Empty) +
+                        (progress.Response.DecodedMessage ?? string.Empty);
+                }
+                AssertFalse(progressText.Contains(password), "Progress object must not retain the password.");
+            }
+            AssertFalse(outcome.Results[0].Details.Contains(password), "Result details must not retain the password.");
+        }
+
+        private static LmGatewayBindingPlan CreateValidLmBindingPlan(int count)
+        {
+            LmGatewayDiscovery discovery = new LmGatewayDiscovery();
+            IList<LmGatewayBindingInput> inputs = new List<LmGatewayBindingInput>();
+            for (int index = 1; index <= count; index++)
+            {
+                string serial = "001057" + index.ToString("00000000");
+                string inn = index % 2 == 0 ? "7707083893" : "1234567894";
+                discovery.Items.Add(new LmGatewayKkt
+                {
+                    InstanceId = serial,
+                    KktSerial = serial,
+                    KktInn = inn
+                });
+                inputs.Add(CreateLmBindingInput(
+                    serial,
+                    inn,
+                    "127.0.0.1",
+                    (50062 + index).ToString()));
+            }
+
+            return LmGatewayBindingPlanner.Build(discovery, inputs);
+        }
+
         private static void ApiClientPreservesInjectedTimeout()
         {
             HttpClient httpClient = new HttpClient(new RecordingHttpHandler());
@@ -1822,6 +2026,7 @@ namespace EsmTspiot.Shared.Tests
             public int InstanceCalls { get; private set; }
             public int InstancesCalls { get; private set; }
             public int CancelOnInstanceCall { get; set; }
+            public Action<int> LmGatewayCallObserved { get; set; }
             public string LastDeletedId { get; private set; }
 
             public Task<ApiResponse> GetInstancesAsync(string baseUrl, CancellationToken cancellationToken)
@@ -1883,6 +2088,10 @@ namespace EsmTspiot.Shared.Tests
                     Id = id,
                     Request = request
                 });
+                if (LmGatewayCallObserved != null)
+                {
+                    LmGatewayCallObserved(LmGatewayCalls.Count);
+                }
                 return Task.FromResult(LmGatewayResponses.Count == 0
                     ? Success("{}")
                     : LmGatewayResponses.Dequeue());
