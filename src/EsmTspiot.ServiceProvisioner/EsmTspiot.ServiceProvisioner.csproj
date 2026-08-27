@@ -14,5 +14,6 @@
   <ItemGroup>
     <ProjectReference Include="..\EsmTspiot.Shared\EsmTspiot.Shared.csproj" />
     <Reference Include="System.Runtime.Serialization" />
+    <Reference Include="System.ServiceProcess" />
   </ItemGroup>
 </Project>

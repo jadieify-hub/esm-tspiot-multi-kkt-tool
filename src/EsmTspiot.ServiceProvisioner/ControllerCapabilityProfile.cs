@@ -58,6 +58,13 @@ namespace EsmTspiot.ServiceProvisioner
         internal string ProfileEnvironmentKey { get; private set; }
         internal string VendorProfileRelativePath { get; private set; }
         internal string VendorConfigFileName { get; private set; }
+        internal string ServiceAccountName { get; private set; }
+        internal IList<string> ServiceDependencies { get; private set; }
+        internal WindowsServiceStartMode ServiceStartMode { get; private set; }
+        internal WindowsServiceErrorControl ServiceErrorControl { get; private set; }
+        internal WindowsServiceRecoveryPolicy ServiceRecoveryPolicy { get; private set; }
+        internal string TerminalArguments { get; private set; }
+        internal int GracefulStopTimeoutMilliseconds { get; private set; }
         internal IDictionary<string, CapabilityFactProvenance> Provenance { get; private set; }
 
         internal static ControllerCapabilityProfile SupportedVersion1632()
@@ -76,6 +83,15 @@ namespace EsmTspiot.ServiceProvisioner
                 ProfileEnvironmentKey = "ProgramData",
                 VendorProfileRelativePath = Path.Combine("ESP", "lmcontroller"),
                 VendorConfigFileName = "config.yml",
+                ServiceAccountName = "LocalSystem",
+                ServiceDependencies = new List<string>(),
+                ServiceStartMode = WindowsServiceStartMode.AutoStart,
+                ServiceErrorControl = WindowsServiceErrorControl.Ignore,
+                ServiceRecoveryPolicy = new WindowsServiceRecoveryPolicy(
+                    60,
+                    new[] { 30000, 60000, 60000 }),
+                TerminalArguments = string.Empty,
+                GracefulStopTimeoutMilliseconds = 30000,
                 ControllerBinary = new TrustedFileExpectation
                 {
                     FileName = "lmcontroller.exe",
@@ -126,7 +142,16 @@ namespace EsmTspiot.ServiceProvisioner
                 Installer = installer.Clone(),
                 ProfileEnvironmentKey = profileEnvironmentKey,
                 VendorProfileRelativePath = Path.Combine("ESP", "lmcontroller"),
-                VendorConfigFileName = "config.yml"
+                VendorConfigFileName = "config.yml",
+                ServiceAccountName = "LocalSystem",
+                ServiceDependencies = new List<string>(),
+                ServiceStartMode = WindowsServiceStartMode.AutoStart,
+                ServiceErrorControl = WindowsServiceErrorControl.Ignore,
+                ServiceRecoveryPolicy = new WindowsServiceRecoveryPolicy(
+                    60,
+                    new[] { 30000, 60000, 60000 }),
+                TerminalArguments = string.Empty,
+                GracefulStopTimeoutMilliseconds = 30000
             };
             profile.TagProductionFacts();
             return profile;
@@ -143,6 +168,11 @@ namespace EsmTspiot.ServiceProvisioner
             Provenance["VendorProfileRelativePath"] = CapabilityFactProvenance.PrivateBlackBox;
             Provenance["VendorConfigFileName"] = CapabilityFactProvenance.PrivateBlackBox;
             Provenance["TerminalMode"] = CapabilityFactProvenance.SelfDocumentingCli;
+            Provenance["ServiceAccountName"] = CapabilityFactProvenance.PrivateBlackBox;
+            Provenance["ServiceDependencies"] = CapabilityFactProvenance.PrivateBlackBox;
+            Provenance["ServiceStartMode"] = CapabilityFactProvenance.PrivateBlackBox;
+            Provenance["ServiceErrorControl"] = CapabilityFactProvenance.PrivateBlackBox;
+            Provenance["ServiceRecoveryPolicy"] = CapabilityFactProvenance.PrivateBlackBox;
         }
     }
 }

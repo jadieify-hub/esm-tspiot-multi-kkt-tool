@@ -18,6 +18,10 @@ namespace EsmTspiot.ServiceProvisioner
             {
                 return ExitInvalidRequest;
             }
+            if (commandLine.Mode == ProvisionerMode.Supervisor)
+            {
+                return LmGatewaySupervisorService.RunServiceMode(commandLine.ServiceName);
+            }
 
             try
             {

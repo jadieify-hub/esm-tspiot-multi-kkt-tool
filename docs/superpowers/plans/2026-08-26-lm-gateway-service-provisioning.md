@@ -581,7 +581,7 @@ git commit -m "Проверять официальный контроллер и
 - Mutations: create, update fixed configuration, set typed description marker, start, stop and delete.
 - No method accepts shell text or an unvalidated registry path.
 
-- [ ] **Step 1: Add contract tests using a fake SCM**
+- [x] **Step 1: Add contract tests using a fake SCM**
 
 Register:
 
@@ -600,11 +600,11 @@ Run("Supervisor stops child gracefully without process kill", SupervisorStopsChi
 
 Static/source assertion for the fourth test is acceptable: helper production sources must contain no `taskkill`, `Kill(`, `sc.exe`, `powershell` or `cmd.exe` call.
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Expected: missing SCM abstraction.
 
-- [ ] **Step 3: Implement native SCM calls**
+- [x] **Step 3: Implement native SCM calls**
 
 Use Unicode APIs and `SafeHandle`:
 
@@ -619,21 +619,21 @@ Use Unicode APIs and `SafeHandle`:
 
 Request the minimum access mask for each operation. Do not grant interactive-user control over the resulting service ACL.
 
-- [ ] **Step 4: Apply only the isolation mode selected by Task 1**
+- [x] **Step 4: Apply only the isolation mode selected by Task 1**
 
 Build ImagePath only from the protected provisioner executable plus the internally derived `--supervise <service-name>` mode. The supervisor re-derives service/profile identity, verifies its restricted service SID/token and exact capability profile, then launches the verified official binary in terminal mode. It builds a fresh child environment from the service environment and replaces only the pinned `ProgramData` key with the derived profile root. Do not write per-service SCM environment or accept caller-provided paths, environment keys or vendor arguments. Unit-test Windows command-line quoting, spaces and trailing backslashes.
 
 On service stop, the supervisor sends the proven graceful console-control signal, waits a bounded interval and reports failure if the child remains. It never calls `Process.Kill`, `TerminateProcess`, `taskkill` or closes the job as a kill mechanism. Listener readiness accepts only the verified child PID whose parent is the supervisor PID.
 
-- [ ] **Step 5: Mirror only verified official service facts**
+- [x] **Step 5: Mirror only verified official service facts**
 
 Service account, dependencies, start mode and recovery actions come from the exact-version `ControllerCapabilityProfile`, not from UI or discovery of an arbitrary similarly named service. If any required value was not proven by the technical gate, stop before this task; if it is `PrivateBlackBox`, retain the private-only publication status. After creation set and re-read an explicit service-object DACL: `SYSTEM` and Administrators receive only required management rights; operator/initiating SID gets no `CHANGE_CONFIG`, `WRITE_DAC`, `DELETE`, `START` or `STOP`. Do not silently elevate privileges beyond the official service configuration verified in Task 1.
 
-- [ ] **Step 6: Run helper tests and verify GREEN**
+- [x] **Step 6: Run helper tests and verify GREEN**
 
 Expected: 27/27 helper tests pass; helper builds as AnyCPU net48 without external packages.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add src/EsmTspiot.ServiceProvisioner tests/EsmTspiot.ServiceProvisioner.Tests/Program.cs
