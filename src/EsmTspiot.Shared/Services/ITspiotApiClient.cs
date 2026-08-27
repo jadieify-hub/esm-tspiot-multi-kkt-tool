@@ -13,5 +13,10 @@ namespace EsmTspiot.Shared.Services
         Task<ApiResponse> AddInstanceAsync(string baseUrl, AddTspiotRequest request, CancellationToken cancellationToken);
         Task<ApiResponse> RegisterInstanceAsync(string baseUrl, RegisterTspiotRequest request, CancellationToken cancellationToken);
         Task<ApiResponse> DeleteInstanceAsync(string baseUrl, string id, CancellationToken cancellationToken);
+        Task<ApiResponse> ConfigureLmGatewayAsync(
+            string baseUrl,
+            string id,
+            LmConnectionRequest request,
+            CancellationToken cancellationToken);
     }
 }

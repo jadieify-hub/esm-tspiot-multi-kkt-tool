@@ -11,5 +11,6 @@ namespace EsmTspiot.Shared.Models
         public const string TspiotPath = "/api/v1/tspiot";
         public const string DkktListPath = "/api/v1/dkktList";
         public const string SettingsPath = "/api/v1/settings";
+        public const string LmSettingsPath = "/api/v1/settings/lm";
     }
 }

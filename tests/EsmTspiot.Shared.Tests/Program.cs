@@ -65,6 +65,9 @@ namespace EsmTspiot.Shared.Tests
             Run("Instance details parser reads registration data", InstanceDetailsParserReadsRegistrationData);
             Run("Instance details parser rejects malformed registration data", InstanceDetailsParserRejectsMalformedRegistrationData);
             Run("API client uses documented HTTP contracts", ApiClientUsesDocumentedHttpContracts);
+            Run("LM gateway API uses documented PUT contract", LmGatewayApiUsesDocumentedPutContract);
+            Run("LM gateway API escapes instance id", LmGatewayApiEscapesInstanceId);
+            Run("LM gateway API response stores redacted request", LmGatewayApiResponseStoresRedactedRequest);
             Run("API client preserves an injected timeout", ApiClientPreservesInjectedTimeout);
             Run("Instruction selector uses the newest file time", InstructionSelectorUsesNewestFileTime);
             Run("Deletion planner protects primary KKT", DeletionPlannerProtectsPrimaryKkt);
@@ -807,8 +810,15 @@ namespace EsmTspiot.Shared.Tests
                 KktInn = "1234567894"
             }, CancellationToken.None).Wait();
             client.DeleteInstanceAsync(baseUrl, "00105700000001", CancellationToken.None).Wait();
+            client.ConfigureLmGatewayAsync(baseUrl, "00105700000001", new LmConnectionRequest
+            {
+                Address = "127.0.0.1",
+                Port = 50063,
+                Login = "operator",
+                Password = "raw-test-password"
+            }, CancellationToken.None).Wait();
 
-            AssertEqual(7, handler.Requests.Count, "Expected seven requests.");
+            AssertEqual(8, handler.Requests.Count, "Expected eight requests.");
             AssertRequest(handler.Requests[0], "GET", baseUrl + "/api/v1/instances/info");
             AssertRequest(handler.Requests[1], "GET", baseUrl + "/api/v1/dkktList");
             AssertRequest(handler.Requests[2], "GET", baseUrl + "/api/v1/instances/info/00105700000001");
@@ -822,6 +832,74 @@ namespace EsmTspiot.Shared.Tests
             AssertContains(handler.Requests[5].Body, "\"fnSerial\":\"7300000000000001\"");
             AssertContains(handler.Requests[5].Body, "\"kktInn\":\"1234567894\"");
             AssertRequest(handler.Requests[6], "DELETE", baseUrl + "/api/v1/tspiot/00105700000001");
+            AssertRequest(handler.Requests[7], "PUT", baseUrl + "/api/v1/settings/lm/00105700000001");
+        }
+
+        private static void LmGatewayApiUsesDocumentedPutContract()
+        {
+            RecordingHttpHandler handler = new RecordingHttpHandler();
+            TspiotApiClient client = new TspiotApiClient(new HttpClient(handler));
+
+            client.ConfigureLmGatewayAsync(
+                "http://127.0.0.1:51077",
+                "00105700000001",
+                new LmConnectionRequest
+                {
+                    Address = "127.0.0.1",
+                    Port = 50063,
+                    Login = "operator",
+                    Password = "raw-test-password"
+                },
+                CancellationToken.None).Wait();
+
+            AssertEqual(1, handler.Requests.Count, "Expected one LM settings request.");
+            RecordedHttpRequest request = handler.Requests[0];
+            AssertRequest(request, "PUT", "http://127.0.0.1:51077/api/v1/settings/lm/00105700000001");
+            AssertEqual("application/json; charset=utf-8", request.ContentType, "Expected JSON UTF-8 content type.");
+            AssertEqual(
+                "{\"address\":\"127.0.0.1\",\"login\":\"operator\",\"password\":\"raw-test-password\",\"port\":50063}",
+                request.Body,
+                "Expected exactly the documented LM settings fields and a numeric port.");
+        }
+
+        private static void LmGatewayApiEscapesInstanceId()
+        {
+            RecordingHttpHandler handler = new RecordingHttpHandler();
+            TspiotApiClient client = new TspiotApiClient(new HttpClient(handler));
+
+            client.ConfigureLmGatewayAsync(
+                "http://127.0.0.1:51077",
+                "a/b c",
+                new LmConnectionRequest(),
+                CancellationToken.None).Wait();
+
+            AssertEqual(
+                "http://127.0.0.1:51077/api/v1/settings/lm/a%2Fb%20c",
+                handler.Requests[0].Url,
+                "Expected the instance id to be escaped as one URI segment.");
+        }
+
+        private static void LmGatewayApiResponseStoresRedactedRequest()
+        {
+            const string password = "raw-test-password";
+            RecordingHttpHandler handler = new RecordingHttpHandler();
+            TspiotApiClient client = new TspiotApiClient(new HttpClient(handler));
+
+            ApiResponse response = client.ConfigureLmGatewayAsync(
+                "http://127.0.0.1:51077",
+                "00105700000001",
+                new LmConnectionRequest
+                {
+                    Address = "127.0.0.1",
+                    Port = 50063,
+                    Login = "operator",
+                    Password = password
+                },
+                CancellationToken.None).Result;
+
+            AssertContains(handler.Requests[0].Body, "\"password\":\"" + password + "\"");
+            AssertContains(response.RequestBody, "\"password\":\"***\"");
+            AssertFalse(response.RequestBody.Contains(password), "ApiResponse must not retain the raw password.");
         }
 
         private static void ApiClientPreservesInjectedTimeout()
@@ -1452,6 +1530,7 @@ namespace EsmTspiot.Shared.Tests
             public string Method { get; set; }
             public string Url { get; set; }
             public string Body { get; set; }
+            public string ContentType { get; set; }
         }
 
         private sealed class FakeTspiotApiClient : ITspiotApiClient
@@ -1463,6 +1542,8 @@ namespace EsmTspiot.Shared.Tests
                 DeleteResponses = new Queue<ApiResponse>();
                 InstanceResponses = new Queue<ApiResponse>();
                 InstancesResponses = new Queue<ApiResponse>();
+                LmGatewayResponses = new Queue<ApiResponse>();
+                LmGatewayCalls = new List<LmGatewayCall>();
                 SettingsResponse = Success("[]");
             }
 
@@ -1474,6 +1555,8 @@ namespace EsmTspiot.Shared.Tests
             public Queue<ApiResponse> DeleteResponses { get; private set; }
             public Queue<ApiResponse> InstanceResponses { get; private set; }
             public Queue<ApiResponse> InstancesResponses { get; private set; }
+            public Queue<ApiResponse> LmGatewayResponses { get; private set; }
+            public IList<LmGatewayCall> LmGatewayCalls { get; private set; }
             public int AddCalls { get; private set; }
             public int RegisterCalls { get; private set; }
             public int DeleteCalls { get; private set; }
@@ -1528,6 +1611,30 @@ namespace EsmTspiot.Shared.Tests
                 LastDeletedId = id;
                 return Task.FromResult(DeleteResponses.Count == 0 ? Success("{}") : DeleteResponses.Dequeue());
             }
+
+            public Task<ApiResponse> ConfigureLmGatewayAsync(
+                string baseUrl,
+                string id,
+                LmConnectionRequest request,
+                CancellationToken cancellationToken)
+            {
+                LmGatewayCalls.Add(new LmGatewayCall
+                {
+                    BaseUrl = baseUrl,
+                    Id = id,
+                    Request = request
+                });
+                return Task.FromResult(LmGatewayResponses.Count == 0
+                    ? Success("{}")
+                    : LmGatewayResponses.Dequeue());
+            }
+        }
+
+        private sealed class LmGatewayCall
+        {
+            public string BaseUrl { get; set; }
+            public string Id { get; set; }
+            public LmConnectionRequest Request { get; set; }
         }
 
         private sealed class RecordingHttpHandler : HttpMessageHandler
@@ -1545,8 +1652,11 @@ namespace EsmTspiot.Shared.Tests
                 Requests.Add(new RecordedHttpRequest
                 {
                     Method = request.Method.Method,
-                    Url = request.RequestUri.ToString(),
-                    Body = body
+                    Url = request.RequestUri.OriginalString,
+                    Body = body,
+                    ContentType = request.Content == null || request.Content.Headers.ContentType == null
+                        ? string.Empty
+                        : request.Content.Headers.ContentType.ToString()
                 });
 
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
