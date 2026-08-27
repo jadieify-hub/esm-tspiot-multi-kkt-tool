@@ -286,7 +286,7 @@ git commit -m "Проверить совместимость контролле�
 - `LmGatewayPlanner.Build(discovery, drafts, inventory, portPolicy, tcpListeners) : LmGatewayPlan`.
 - `ManagedLmServiceSpec` contains KKT identity, local ports and target LM endpoint, but no login/password and no arbitrary service/path values.
 
-- [ ] **Step 1: Add eight failing tests**
+- [x] **Step 1: Add eight failing tests**
 
 Register:
 
@@ -303,15 +303,15 @@ Run("Managed LM service spec contains no credentials", ManagedLmServiceSpecConta
 
 Use three KKT with three different INNs in the primary happy-path fixture. Assert three managed roles and unique pairs. A service marked `VerifiedOfficial` appears only in inventory/occupied ports and never becomes a plan item. Rows with equal INN also remain individual KKT rows.
 
-- [ ] **Step 2: Run shared tests and verify RED**
+- [x] **Step 2: Run shared tests and verify RED**
 
 Run both Phase 1 test commands. Expected: missing plan types.
 
-- [ ] **Step 3: Implement strict identity and value models**
+- [x] **Step 3: Implement strict identity and value models**
 
 `LmGatewayTarget` contains only target `Address` and integer `Port`. Credentials remain in the short-lived Phase 1 credential provider. Target validation accepts only a plain IPv4, IPv6 or DNS hostname: reject scheme, userinfo, path, query, fragment, whitespace/CRLF, control characters and ambiguous Unicode. Normalize all loopback representations before conflict checks. `ManagedLmServiceSpec` receives its `ServiceName` and profile identity from `LmServiceIdentity`, never from UI text.
 
-- [ ] **Step 4: Implement deterministic allocation**
+- [x] **Step 4: Implement deterministic allocation**
 
 Rules:
 
@@ -325,7 +325,7 @@ Rules:
 
 Do not call `KktPortPairAllocator`; its `504xx/514xx` domain is unrelated.
 
-- [ ] **Step 5: Produce explicit plan actions**
+- [x] **Step 5: Produce explicit plan actions**
 
 Actions:
 
@@ -338,11 +338,11 @@ Actions:
 
 Each plan item has separate service and binding validation. Plan formatters show target address/port and local ports but never accept or show password.
 
-- [ ] **Step 6: Run net8 and net48 tests and verify GREEN**
+- [x] **Step 6: Run net8 and net48 tests and verify GREEN**
 
 Expected: all previous tests plus 8 new tests pass in both frameworks.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add src/EsmTspiot.Shared/Models src/EsmTspiot.Shared/Services/LmServiceIdentity.cs src/EsmTspiot.Shared/Services/LmGatewayPlanner.cs src/EsmTspiot.Shared/Validation/LmGatewayInputValidator.cs tests/EsmTspiot.Shared.Tests/Program.cs
