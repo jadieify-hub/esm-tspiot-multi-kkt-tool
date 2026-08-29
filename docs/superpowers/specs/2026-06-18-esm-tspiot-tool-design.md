@@ -19,7 +19,7 @@ The form contains five groups:
 
 - Connection to ESM/TS PIoT: editable service base URL, default `http://127.0.0.1:51077`.
 - Second KKT data: second KKT serial number, FN serial number, owner INN.
-- Ports: `port` default `50402`, `softPort` default `51402`, `dkktPort` default `4041`.
+- Ports: `port` default `50402`, `softPort` default `51402`, `dkktPort` default `4042` (ESM DKKt orchestrator; ATOL KKM service uses `4041`).
 - Actions: check current KKT instances, fill second KKT data, add second instance, register second KKT, clear log.
 - Execution log: large read-only text area with timestamped request, response, and error details.
 
@@ -44,7 +44,7 @@ POST body:
   "id": "second KKT serial",
   "port": 50402,
   "softPort": 51402,
-  "dkktPort": 4041
+  "dkktPort": 4042
 }
 ```
 
@@ -82,7 +82,7 @@ The log and user-facing messages must decode these common errors:
 
 - `1010`: service with this id already exists; the KKT may already be added.
 - `1001`: invalid request body; check entered fields.
-- `1015`: DKKt agent service is not running; check `ATOL: Fptr grpc service` and `dkktPort`, normally `4041`.
+- `1015`: DKKt service chain is not running; check ATOL/orchestrator services and `dkktPort`, normally `4042` for the ESM orchestrator (`4041` is the ATOL KKM service port).
 - `2046`: ESM service is not registered or not running; also check driver connection with the second KKT.
 - HTTP `403`: check registration, certificates, access rights, and ESM/TS PIoT state.
 - Connection failure: check that the ESM/TS PIoT service is running and the address is correct.

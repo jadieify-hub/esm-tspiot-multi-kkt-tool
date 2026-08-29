@@ -13,6 +13,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\EsmTspiot.Shared\EsmTspiot.Shared.csproj" />
+    <Compile Include="..\EsmTspiot.WindowsSecurity.Shared\ProtectedAclPolicy.cs" Link="ProtectedAclPolicy.cs" />
     <Reference Include="System.Runtime.Serialization" />
     <Reference Include="System.ServiceProcess" />
   </ItemGroup>

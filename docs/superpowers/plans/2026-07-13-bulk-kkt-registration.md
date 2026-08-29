@@ -1,5 +1,7 @@
 # Experimental Bulk KKT Registration Implementation Plan
 
+> Исторический план отдельного `BulkRegistrationWorkflow`. В текущем интерфейсе его результат передаётся в общий автоматический сценарий контроллеров ЛМ ЧЗ; актуальное поведение описано в `../specs/2026-08-26-multi-inn-lm-gateways-design.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Добавить отдельную экспериментальную кнопку, которая находит все новые ККТ, назначает им последовательные пары портов и независимо выполняет POST/PUT для каждой с полным итоговым журналом.

@@ -42,10 +42,20 @@ namespace EsmTspiot.Shared.Services
                 return;
             }
 
-            HashSet<string> added = new HashSet<string>(StringComparer.Ordinal);
+            List<LmGatewayKkt> ordered = new List<LmGatewayKkt>();
             for (int index = 0; index < discovery.Items.Count; index++)
             {
-                LmGatewayKkt kkt = CopyKkt(discovery.Items[index]);
+                ordered.Add(CopyKkt(discovery.Items[index]));
+            }
+            ordered.Sort(delegate(LmGatewayKkt left, LmGatewayKkt right)
+            {
+                return string.Compare(GetSerial(left), GetSerial(right), StringComparison.Ordinal);
+            });
+
+            HashSet<string> added = new HashSet<string>(StringComparer.Ordinal);
+            for (int index = 0; index < ordered.Count; index++)
+            {
+                LmGatewayKkt kkt = ordered[index];
                 string serial = GetSerial(kkt);
                 if (string.IsNullOrEmpty(serial) || !added.Add(serial))
                 {
@@ -66,7 +76,8 @@ namespace EsmTspiot.Shared.Services
                 {
                     row = new LmGatewayBindingSessionRow
                     {
-                        ControllerAddress = "127.0.0.1",
+                        IsSelected = true,
+                        ControllerAddress = LmGatewayDraftDefaults.ControllerAddress,
                         ControllerGrpcPort = string.Empty,
                         LastMessage = string.Empty
                     };
@@ -97,6 +108,17 @@ namespace EsmTspiot.Shared.Services
             row.ControllerGrpcPort = Trim(controllerGrpcPort);
             row.IsSelected = isSelected;
             return true;
+        }
+
+        public void SelectAll()
+        {
+            for (int index = 0; index < _rows.Count; index++)
+            {
+                if (_rows[index] != null && _rows[index].Kkt != null)
+                {
+                    _rows[index].IsSelected = true;
+                }
+            }
         }
 
         public LmGatewayBindingPlan BuildSelectedPlan()
@@ -143,6 +165,54 @@ namespace EsmTspiot.Shared.Services
 
                 row.LastBindingStatus = result.Status;
                 row.LastMessage = SensitiveDataMasker.Mask(result.Details);
+            }
+        }
+
+        public void ApplyReadback(IList<LmGatewayReadbackObservation> observations)
+        {
+            if (observations == null)
+            {
+                return;
+            }
+
+            for (int index = 0; index < observations.Count; index++)
+            {
+                LmGatewayReadbackObservation observation = observations[index];
+                LmGatewayBindingSessionRow row = FindRow(
+                    observation == null ? null : observation.KktSerial);
+                if (row == null || row.Kkt == null || observation == null ||
+                    !string.Equals(
+                        Trim(row.Kkt.KktInn),
+                        Trim(observation.KktInn),
+                        StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                row.LastMessage = SensitiveDataMasker.Mask(observation.Details);
+                row.ObservedLmAddress = observation.IsAvailable && observation.HasLmConfiguration
+                    ? Trim(observation.LmAddress)
+                    : string.Empty;
+                row.ObservedLmPort = observation.IsAvailable && observation.HasLmConfiguration
+                    ? Trim(observation.LmPort)
+                    : string.Empty;
+                if (!observation.IsAvailable || !observation.HasLmConfiguration)
+                {
+                    row.LastBindingStatus = null;
+                    continue;
+                }
+                if (observation.IsVerified)
+                {
+                    row.LastBindingStatus = LmGatewayBindingStatus.BindingVerified;
+                    continue;
+                }
+                if (observation.IdentityMatches && !observation.EndpointMatches.HasValue)
+                {
+                    row.LastBindingStatus = LmGatewayBindingStatus.BindingObserved;
+                    continue;
+                }
+
+                row.LastBindingStatus = LmGatewayBindingStatus.RequiresAttention;
             }
         }
 

@@ -55,6 +55,10 @@ namespace EsmTspiot.ServiceProvisioner
             {
                 ValidateCleanup(request, result);
             }
+            else if (request.Operation == LmServiceOperation.RemoveAllManaged)
+            {
+                ValidateRemoveAll(request, result);
+            }
             else
             {
                 result.Add("Операция помощника не поддерживается.");
@@ -110,7 +114,8 @@ namespace EsmTspiot.ServiceProvisioner
             }
             if (request.InstallerSelection != null ||
                 request.RemovalConfirmation != null ||
-                request.CleanupConfirmation != null)
+                request.CleanupConfirmation != null ||
+                HasRemovalConfirmations(request))
             {
                 result.Add("EnsureBatch не принимает payload другой операции.");
             }
@@ -165,7 +170,8 @@ namespace EsmTspiot.ServiceProvisioner
             LmServiceProvisioningBatchRequest request,
             ValidationResult result)
         {
-            if (HasItems(request) || request.RemovalConfirmation != null || request.CleanupConfirmation != null)
+            if (HasItems(request) || request.RemovalConfirmation != null ||
+                request.CleanupConfirmation != null || HasRemovalConfirmations(request))
             {
                 result.Add("InstallControllerVersion принимает ровно один выбранный установщик.");
             }
@@ -176,7 +182,8 @@ namespace EsmTspiot.ServiceProvisioner
             LmServiceProvisioningBatchRequest request,
             ValidationResult result)
         {
-            if (HasItems(request) || request.InstallerSelection != null || request.CleanupConfirmation != null)
+            if (HasItems(request) || request.InstallerSelection != null ||
+                request.CleanupConfirmation != null || HasRemovalConfirmations(request))
             {
                 result.Add("RemoveManaged принимает только одно подтверждение удаления.");
             }
@@ -186,24 +193,15 @@ namespace EsmTspiot.ServiceProvisioner
                 result.Add("Не задано подтверждение удаления.");
                 return;
             }
-            ValidateSerialAndFingerprint(confirmation.KktSerial, confirmation.ManifestFingerprint, result);
-            if (confirmation.GrpcPort < 1 || confirmation.GrpcPort > 65535 ||
-                confirmation.RestPort < 1 || confirmation.RestPort > 65535 ||
-                confirmation.GrpcPort == confirmation.RestPort)
-            {
-                result.Add("Порты в подтверждении удаления неверны.");
-            }
-            if (!confirmation.RetainedEsmWarningAccepted)
-            {
-                result.Add("Не подтверждено, что настройка в ЕСМ может остаться после локального удаления.");
-            }
+            ValidateRemovalConfirmation(confirmation, result);
         }
 
         private static void ValidateCleanup(
             LmServiceProvisioningBatchRequest request,
             ValidationResult result)
         {
-            if (HasItems(request) || request.InstallerSelection != null || request.RemovalConfirmation != null)
+            if (HasItems(request) || request.InstallerSelection != null ||
+                request.RemovalConfirmation != null || HasRemovalConfirmations(request))
             {
                 result.Add("CleanupManaged принимает только одно подтверждение очистки.");
             }
@@ -217,6 +215,71 @@ namespace EsmTspiot.ServiceProvisioner
             if (confirmation.DisplayedState != LmServiceProvisioningStatus.CleanupPending)
             {
                 result.Add("Очистка разрешена только из показанного состояния CleanupPending.");
+            }
+        }
+
+        private static void ValidateRemoveAll(
+            LmServiceProvisioningBatchRequest request,
+            ValidationResult result)
+        {
+            if (HasItems(request) || request.InstallerSelection != null ||
+                request.RemovalConfirmation != null || request.CleanupConfirmation != null)
+            {
+                result.Add("RemoveAllManaged принимает только список подтверждений удаления.");
+            }
+
+            int count = request.RemovalConfirmations == null
+                ? 0
+                : request.RemovalConfirmations.Count;
+            if (count < 1 || count > MaximumBatchSize)
+            {
+                result.Add("RemoveAllManaged должен содержать от 1 до 32 подтверждений.");
+                return;
+            }
+
+            HashSet<string> serials = new HashSet<string>(StringComparer.Ordinal);
+            string previousSerial = null;
+            for (int index = 0; index < count; index++)
+            {
+                LmRemovalConfirmation confirmation = request.RemovalConfirmations[index];
+                if (confirmation == null)
+                {
+                    result.Add("Подтверждение пакетного удаления не задано.");
+                    continue;
+                }
+
+                ValidateRemovalConfirmation(confirmation, result);
+                string serial = confirmation.KktSerial ?? string.Empty;
+                if (!serials.Add(serial))
+                {
+                    result.Add("В RemoveAllManaged повторяется серийный номер ККТ.");
+                }
+                if (previousSerial != null &&
+                    string.CompareOrdinal(previousSerial, serial) >= 0)
+                {
+                    result.Add("Подтверждения RemoveAllManaged должны быть отсортированы по серийному номеру ККТ.");
+                }
+                previousSerial = serial;
+            }
+        }
+
+        private static void ValidateRemovalConfirmation(
+            LmRemovalConfirmation confirmation,
+            ValidationResult result)
+        {
+            ValidateSerialAndFingerprint(
+                confirmation.KktSerial,
+                confirmation.ManifestFingerprint,
+                result);
+            if (confirmation.GrpcPort < 1 || confirmation.GrpcPort > 65535 ||
+                confirmation.RestPort < 1 || confirmation.RestPort > 65535 ||
+                confirmation.GrpcPort == confirmation.RestPort)
+            {
+                result.Add("Порты в подтверждении удаления неверны.");
+            }
+            if (!confirmation.RetainedEsmWarningAccepted)
+            {
+                result.Add("Не подтверждено, что настройка в ЕСМ может остаться после локального удаления.");
             }
         }
 
@@ -295,6 +358,11 @@ namespace EsmTspiot.ServiceProvisioner
         private static bool HasItems(LmServiceProvisioningBatchRequest request)
         {
             return request.Items != null && request.Items.Count > 0;
+        }
+
+        private static bool HasRemovalConfirmations(LmServiceProvisioningBatchRequest request)
+        {
+            return request.RemovalConfirmations != null && request.RemovalConfirmations.Count > 0;
         }
 
         private static bool IsVersionedInstallerFileName(string value)

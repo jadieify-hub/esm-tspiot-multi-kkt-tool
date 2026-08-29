@@ -4,7 +4,9 @@ using System.ComponentModel;
 using System.Drawing;
 using System.Globalization;
 using System.IO;
+using System.Runtime.Serialization;
 using System.Security.Cryptography;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -18,9 +20,8 @@ namespace EsmTspiot.WinForms.Shared
     {
         private readonly Button _selectInstallerButton = new Button();
         private readonly Button _installControllerButton = new Button();
-        private readonly Button _preparePlanButton = new Button();
-        private readonly Button _executePlanButton = new Button();
         private readonly Button _removeServiceButton = new Button();
+        private readonly Button _removeAllServicesButton = new Button();
         private readonly Button _cleanupButton = new Button();
         private readonly TextBox _installerPathTextBox = new TextBox();
         private readonly Label _installerStatusLabel = new Label();
@@ -32,15 +33,16 @@ namespace EsmTspiot.WinForms.Shared
             new Dictionary<string, LmGatewayDraft>(StringComparer.Ordinal);
         private readonly List<LmServiceInventoryItem> _serviceInventory =
             new List<LmServiceInventoryItem>();
+        private LmGatewayDraftSettingsStore _draftSettingsStore;
         private LmServiceProvisionerClient _serviceProvisioner;
         private LmServiceInventoryReader _inventoryReader;
         private LmGatewayProbe _serviceProbe;
         private ReadOnlyTcpListenerOwnerReader _listenerReader;
         private LmGatewayLifecycleWorkflow _lifecycleWorkflow;
         private LmGatewayRemovalWorkflow _removalWorkflow;
+        private LmAutomaticSetupCoordinator _automaticSetupCoordinator;
         private LmControllerInstallerSelection _installerSelection;
         private LmGatewayDiscovery _currentDiscovery;
-        private LmGatewayPlan _preparedPlan;
         private bool _controllerVersionVerified;
         private bool _helperAvailable;
         private string _helperUnavailableReason = string.Empty;
@@ -52,6 +54,7 @@ namespace EsmTspiot.WinForms.Shared
             _inventoryReader = new LmServiceInventoryReader();
             _serviceProbe = new LmGatewayProbe();
             _listenerReader = new ReadOnlyTcpListenerOwnerReader();
+            _draftSettingsStore = LmGatewayDraftSettingsStore.CreateDefault();
             _lifecycleWorkflow = new LmGatewayLifecycleWorkflow(
                 _serviceProvisioner,
                 _serviceProbe,
@@ -59,7 +62,9 @@ namespace EsmTspiot.WinForms.Shared
             _removalWorkflow = new LmGatewayRemovalWorkflow(
                 _serviceProvisioner,
                 delegate { return _inventoryReader.Read(); });
+            _automaticSetupCoordinator = new LmAutomaticSetupCoordinator();
             _helperAvailable = _serviceProvisioner.IsAvailable(out _helperUnavailableReason);
+            RefreshServiceInventory();
         }
 
         private Control BuildInstallerPanel()
@@ -79,17 +84,18 @@ namespace EsmTspiot.WinForms.Shared
                 ColumnCount = 4,
                 RowCount = 2
             };
+            table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 360F));
+            table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-            table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             _installerPathTextBox.Dock = DockStyle.Fill;
             _installerPathTextBox.ReadOnly = true;
             _installerPathTextBox.Tag = "Выберите esm-lm-controller_*-windows-setup.exe";
             ConfigureButton(_selectInstallerButton, "Выбрать…");
-            ConfigureButton(_installControllerButton, "Установить / проверить версию");
+            ConfigureButton(_installControllerButton, "Установить и настроить ККТ");
+            _installControllerButton.Tag = "AutomaticSetup";
             _selectInstallerButton.Click += delegate { SelectInstaller(); };
-            _installControllerButton.Click += async delegate { await ConfirmAndInstallControllerAsync(); };
+            _installControllerButton.Click += async delegate { await StartAutomaticSetupAsync(); };
             _installerStatusLabel.AutoSize = true;
             _installerStatusLabel.AutoEllipsis = true;
             _installerStatusLabel.Text = "Установщик не выбран.";
@@ -102,23 +108,42 @@ namespace EsmTspiot.WinForms.Shared
             return group;
         }
 
-        private void SelectInstaller()
+        private Control BuildOfficialControllerPanel()
+        {
+            GroupBox group = new GroupBox
+            {
+                Text = "Штатный контроллер ЛМ ЧЗ",
+                Dock = DockStyle.Fill,
+                AutoSize = true,
+                Margin = new Padding(0, 0, 0, 6),
+                Padding = new Padding(8, 4, 8, 5)
+            };
+            _officialControllerStatusLabel.AutoSize = true;
+            _officialControllerStatusLabel.Dock = DockStyle.Fill;
+            _officialControllerStatusLabel.Text =
+                "Не найден. Установите или проверьте официальную версию контроллера.";
+            group.Controls.Add(_officialControllerStatusLabel);
+            return group;
+        }
+
+        public bool SelectControllerInstaller(IWin32Window owner)
         {
             ClearInstallerSelection();
             try
             {
-                _installerSelection = LmControllerInstallerPicker.SelectAndInspect(this);
+                _installerSelection = LmControllerInstallerPicker.SelectAndInspect(owner ?? this);
                 if (_installerSelection == null)
                 {
                     _installerStatusLabel.Text = "Выбор отменён; путь к файлу очищен.";
                     UpdateActionState();
-                    return;
+                    return false;
                 }
                 _installerPathTextBox.Text = _installerSelection.SourcePath;
+                _serviceToolTip.SetToolTip(_installerPathTextBox, _installerSelection.SourcePath);
                 _installerStatusLabel.Text = _installerSelection.FileName +
                     " | версия " + _installerSelection.FileVersion +
-                    " | подписант " + ShortSigner(_installerSelection.SignerSubject) +
-                    " | SHA-256 " + ShortHash(_installerSelection.Sha256);
+                    " | цифровая подпись проверена";
+                RaiseInstallerSelectionChanged();
             }
             catch (Exception ex)
             {
@@ -127,47 +152,250 @@ namespace EsmTspiot.WinForms.Shared
                     "Проверка установщика", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             UpdateActionState();
+            return _installerSelection != null;
         }
 
-        private Task ConfirmAndInstallControllerAsync()
+        private void SelectInstaller()
+        {
+            SelectControllerInstaller(this);
+        }
+
+        private async Task StartAutomaticSetupAsync()
         {
             if (_installerSelection == null)
             {
-                return Task.FromResult(0);
+                return;
             }
-            int managedCount = 0;
-            for (int index = 0; index < _serviceInventory.Count; index++)
+
+            try
             {
-                if (_serviceInventory[index] != null &&
-                    _serviceInventory[index].Role == LmServiceRole.Managed)
+                SaveEditorWithoutChangingSelection();
+                if (!CollectAutomaticSetupParameters())
                 {
-                    managedCount++;
+                    return;
                 }
+                LmGatewayPlan plan = BuildServicePlan();
+                if (plan.Items.Count == 0)
+                {
+                    MessageBox.Show(this, "Нет выбранных ККТ для настройки.",
+                        "Автоматическая настройка", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                string validation = GetAutomaticPlanValidation(plan);
+                if (validation.Length > 0)
+                {
+                    MessageBox.Show(this, validation, "Исправьте параметры ККТ",
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                await RunOperationAsync(
+                    ExecuteAutomaticSetupAsync,
+                    "Запуск защищённой установки и настройки ККТ...");
             }
-            string confirmation =
-                "Файл: " + _installerSelection.FileName + "\r\n" +
-                "Версия: " + _installerSelection.FileVersion + "\r\n" +
-                "SHA-256: " + _installerSelection.Sha256 + "\r\n\r\n" +
-                "На время установки будут остановлены управляемые службы: " + managedCount +
-                ". После установки они останутся остановленными до явного создания/обновления.\r\n\r\nПродолжить?";
-            if (MessageBox.Show(this, confirmation, "Установка контроллера ЛМ",
-                MessageBoxButtons.YesNo, MessageBoxIcon.Warning,
-                MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+            finally
             {
-                ClearInstallerSelection();
-                UpdateActionState();
-                return Task.FromResult(0);
+                ClearAllCredentials();
             }
-            return RunOperationAsync(InstallControllerAsync, "Ожидание подтверждения UAC...");
         }
 
-        private async Task InstallControllerAsync(CancellationToken cancellation)
+        public async Task<bool> RunAutomaticSetupFromHostAsync(
+            CancellationToken externalCancellation)
+        {
+            bool completed = false;
+            try
+            {
+                await RunOperationAsync(
+                    async delegate(CancellationToken token)
+                    {
+                        await RefreshCoreAsync(token);
+                        SaveEditorWithoutChangingSelection();
+                        _session.SelectAll();
+                        FillRows(null);
+                        if (!CollectAutomaticSetupParameters())
+                        {
+                            throw new OperationCanceledException();
+                        }
+                        LmGatewayPlan plan = BuildServicePlan();
+                        if (plan.Items.Count == 0)
+                        {
+                            throw new InvalidOperationException(
+                                "В ЕСМ нет зарегистрированных ККТ для настройки контроллеров ЛМ ЧЗ.");
+                        }
+
+                        string validation = GetAutomaticPlanValidation(plan);
+                        if (validation.Length > 0)
+                        {
+                            throw new InvalidOperationException(validation);
+                        }
+
+                        completed = await ExecuteAutomaticSetupAsync(token);
+                    },
+                    "Получение ККТ и автоматическая настройка контроллеров ЛМ ЧЗ...",
+                    true,
+                    false,
+                    false,
+                    externalCancellation);
+                return completed;
+            }
+            finally
+            {
+                ClearAllCredentials();
+            }
+        }
+
+        private bool CollectAutomaticSetupParameters()
+        {
+            IList<LmAutomaticSetupDialogRow> rows = CreateAutomaticSetupDialogRows();
+            if (rows.Count == 0)
+            {
+                MessageBox.Show(this,
+                    "Нет выбранных ККТ для автоматической настройки.",
+                    "Автоматическая настройка",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+                return false;
+            }
+
+            using (LmAutomaticSetupDialog dialog = new LmAutomaticSetupDialog(rows))
+            {
+                if (dialog.ShowDialog(this) != DialogResult.OK ||
+                    dialog.Parameters == null)
+                {
+                    _statusLabel.Text = "Автоматическая настройка отменена до изменения служб.";
+                    return false;
+                }
+
+                ApplyAutomaticSetupParameters(dialog.Parameters);
+            }
+            return true;
+        }
+
+        private IList<LmAutomaticSetupDialogRow> CreateAutomaticSetupDialogRows()
+        {
+            List<LmAutomaticSetupDialogRow> result =
+                new List<LmAutomaticSetupDialogRow>();
+            for (int index = 0; index < _session.Rows.Count; index++)
+            {
+                LmGatewayBindingSessionRow sessionRow = _session.Rows[index];
+                if (sessionRow == null || sessionRow.Kkt == null ||
+                    !sessionRow.IsSelected)
+                {
+                    continue;
+                }
+
+                LmGatewayDraft draft = GetOrCreateServiceDraft(
+                    sessionRow.Kkt.KktSerial);
+                LmGatewayCredentials credentials = GetCredentials(
+                    sessionRow.Kkt.KktSerial);
+                result.Add(new LmAutomaticSetupDialogRow
+                {
+                    Ordinal = index + 1,
+                    KktSerial = sessionRow.Kkt.KktSerial,
+                    KktInn = sessionRow.Kkt.KktInn,
+                    SoftwarePort = sessionRow.Kkt.SoftPort,
+                    TargetAddress = draft.TargetAddress,
+                    TargetPort = draft.TargetPort,
+                    Login = credentials == null ? string.Empty : credentials.Login,
+                    Password = credentials == null ? string.Empty : credentials.Password
+                });
+            }
+            return result;
+        }
+
+        private void ApplyAutomaticSetupParameters(
+            IList<LmAutomaticSetupDialogRow> parameters)
+        {
+            string firstSerial = string.Empty;
+            for (int index = 0; index < parameters.Count; index++)
+            {
+                LmAutomaticSetupDialogRow item = parameters[index];
+                LmGatewayBindingSessionRow sessionRow = item == null
+                    ? null
+                    : FindSessionRow(item.KktSerial);
+                if (sessionRow == null || sessionRow.Kkt == null ||
+                    !string.Equals(
+                        (sessionRow.Kkt.KktInn ?? string.Empty).Trim(),
+                        (item.KktInn ?? string.Empty).Trim(),
+                        StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        "Состав ККТ изменился во время ввода параметров. Обновите список и повторите запуск.");
+                }
+
+                LmGatewayDraft draft = GetOrCreateServiceDraft(item.KktSerial);
+                draft.KktInn = (item.KktInn ?? string.Empty).Trim();
+                draft.TargetAddress = (item.TargetAddress ?? string.Empty).Trim();
+                draft.TargetPort = (item.TargetPort ?? string.Empty).Trim();
+                _session.TryUpdateDraft(
+                    item.KktSerial,
+                    LmGatewayDraftDefaults.ControllerAddress,
+                    draft.GrpcPort,
+                    true);
+                StoreCredentials(item.KktSerial, item.Login, item.Password);
+                if (firstSerial.Length == 0)
+                {
+                    firstSerial = item.KktSerial;
+                }
+            }
+
+            bool persisted = PersistServiceDrafts();
+            FillRows(firstSerial);
+            _statusLabel.Text = persisted
+                ? "Параметры всех выбранных ККТ приняты. Ожидается подтверждение UAC."
+                : "Параметры приняты только для текущего сеанса; файл несекретных настроек недоступен.";
+        }
+
+        private async Task<bool> ExecuteAutomaticSetupAsync(CancellationToken cancellation)
         {
             LmControllerInstallerSelection selection = _installerSelection;
             if (selection == null)
             {
-                return;
+                return false;
             }
+
+            try
+            {
+                bool installationCompleted = false;
+                bool completed = await _automaticSetupCoordinator.ExecuteAsync(
+                    async delegate(CancellationToken token)
+                    {
+                        installationCompleted = await InstallControllerStageAsync(selection, token);
+                        return installationCompleted;
+                    },
+                    delegate(CancellationToken token)
+                    {
+                        LmGatewayPlan currentPlan = BuildServicePlan();
+                        string validation = GetAutomaticPlanValidation(currentPlan);
+                        if (currentPlan.Items.Count == 0 || validation.Length > 0)
+                        {
+                            throw new InvalidOperationException(
+                                currentPlan.Items.Count == 0
+                                    ? "Нет выбранных ККТ для настройки."
+                                    : validation);
+                        }
+                        return ExecuteServicePlanAsync(currentPlan, token);
+                    },
+                    cancellation);
+                if (!completed && !installationCompleted)
+                {
+                    _statusLabel.Text =
+                        "Версия контроллера не прошла проверку; службы ККТ не изменялись.";
+                }
+                return completed;
+            }
+            finally
+            {
+                ClearAllCredentials();
+                ClearInstallerSelection();
+            }
+        }
+
+        private async Task<bool> InstallControllerStageAsync(
+            LmControllerInstallerSelection selection,
+            CancellationToken cancellation)
+        {
             selection.StopManagedInstancesWarningAccepted = true;
             string operationId = Guid.NewGuid().ToString("N");
             LmServiceProvisioningBatchRequest request = new LmServiceProvisioningBatchRequest
@@ -178,28 +406,48 @@ namespace EsmTspiot.WinForms.Shared
                 InstallerSelection = selection
             };
             string hash = CanonicalLmPlanHasher.Compute(request);
-            try
+            LmControllerInstallResult result =
+                await _serviceProvisioner.InstallControllerVersionAsync(
+                    selection,
+                    operationId,
+                    hash,
+                    cancellation);
+            _controllerVersionVerified = result != null &&
+                result.Status == LmServiceProvisioningStatus.Succeeded;
+            _statusLabel.Text = result == null
+                ? "Helper не вернул результат установки."
+                : result.Message;
+            Log("Контроллер ЛМ: " + _statusLabel.Text + "\r\n");
+            RefreshServiceInventory();
+            FillRows(null);
+            AppendServiceCapabilityStatus();
+            return _controllerVersionVerified;
+        }
+
+        private static string GetAutomaticPlanValidation(LmGatewayPlan plan)
+        {
+            StringBuilder result = new StringBuilder();
+            for (int index = 0; index < plan.Items.Count; index++)
             {
-                LmControllerInstallResult result =
-                    await _serviceProvisioner.InstallControllerVersionAsync(
-                        selection,
-                        operationId,
-                        hash,
-                        cancellation);
-                _controllerVersionVerified = result != null &&
-                    result.Status == LmServiceProvisioningStatus.Succeeded;
-                _statusLabel.Text = result == null
-                    ? "Helper не вернул результат установки."
-                    : result.Message;
-                Log("Контроллер ЛМ: " + _statusLabel.Text + "\r\n");
-                RefreshServiceInventory();
-                FillRows(null);
-                AppendServiceCapabilityStatus();
+                LmGatewayPlanItem item = plan.Items[index];
+                if (item != null && item.IsValid)
+                {
+                    continue;
+                }
+                result.Append("ККТ ");
+                result.Append(item == null || item.Kkt == null ? (index + 1).ToString() : item.Kkt.KktSerial);
+                result.Append(": ");
+                if (item == null)
+                {
+                    result.Append("строка плана отсутствует.");
+                }
+                else
+                {
+                    result.Append(item.ServiceValidation.JoinMessages().Replace("\r\n", "; "));
+                }
+                result.AppendLine();
             }
-            finally
-            {
-                ClearInstallerSelection();
-            }
+            return result.ToString().Trim();
         }
 
         private void RefreshServiceInventory()
@@ -218,7 +466,8 @@ namespace EsmTspiot.WinForms.Shared
             {
                 if (!(ex is IOException) && !(ex is UnauthorizedAccessException) &&
                     !(ex is InvalidDataException) && !(ex is ArgumentException) &&
-                    !(ex is Win32Exception) && !(ex is CryptographicException))
+                    !(ex is Win32Exception) && !(ex is CryptographicException) &&
+                    !(ex is System.Security.SecurityException))
                 {
                     throw;
                 }
@@ -238,6 +487,7 @@ namespace EsmTspiot.WinForms.Shared
                     break;
                 }
             }
+            UpdateOfficialControllerStatus();
             _helperAvailable = _serviceProvisioner.IsAvailable(out _helperUnavailableReason);
             if (!string.IsNullOrEmpty(_serviceInventoryWarning))
             {
@@ -259,8 +509,62 @@ namespace EsmTspiot.WinForms.Shared
             }
         }
 
+        private void UpdateOfficialControllerStatus()
+        {
+            if (!string.IsNullOrEmpty(_serviceInventoryWarning))
+            {
+                _officialControllerStatusLabel.Text = "Состояние штатного контроллера прочитать не удалось.";
+                return;
+            }
+            LmServiceInventoryDisplay display = LmServiceInventoryDisplay.Create(_serviceInventory);
+            if (display.OfficialControllers.Count == 0)
+            {
+                _officialControllerStatusLabel.Text =
+                    "Не найден. Установите или проверьте официальную версию контроллера.";
+                return;
+            }
+
+            LmServiceInventoryItem official = display.OfficialControllers[0];
+            _officialControllerStatusLabel.Text =
+                "Установлен, состояние: " + GetServiceStatusText(official) + "." +
+                (display.OfficialControllers.Count > 1
+                    ? " Внимание: найдено несколько штатных контроллеров."
+                    : string.Empty);
+        }
+
+        private void LoadPersistedServiceDrafts()
+        {
+            if (_draftSettingsStore == null || _currentDiscovery == null)
+            {
+                return;
+            }
+            try
+            {
+                IList<LmGatewayDraft> loaded = _draftSettingsStore.LoadFor(_currentDiscovery.Items);
+                for (int index = 0; index < loaded.Count; index++)
+                {
+                    LmGatewayDraft draft = loaded[index];
+                    if (draft != null && !string.IsNullOrEmpty(draft.KktSerial) &&
+                        !_serviceDrafts.ContainsKey(draft.KktSerial))
+                    {
+                        _serviceDrafts.Add(draft.KktSerial, draft);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                if (!IsDraftSettingsException(ex))
+                {
+                    throw;
+                }
+                Log("Не удалось прочитать сохранённые параметры контроллеров: " +
+                    ex.GetType().Name + ".\r\n");
+            }
+        }
+
         private void MergeServiceDrafts()
         {
+            LoadPersistedServiceDrafts();
             HashSet<string> existing = new HashSet<string>(StringComparer.Ordinal);
             for (int index = 0; index < _session.Rows.Count; index++)
             {
@@ -271,36 +575,30 @@ namespace EsmTspiot.WinForms.Shared
                 }
                 string serial = row.Kkt.KktSerial;
                 existing.Add(serial);
-                LmServiceInventoryItem inventory = FindInventory(serial);
+                LmGatewayDraft defaults = LmGatewayDraftDefaults.Create(row.Kkt, index + 1);
                 LmGatewayDraft draft;
                 if (!_serviceDrafts.TryGetValue(serial, out draft))
                 {
-                    draft = new LmGatewayDraft { KktSerial = serial };
+                    draft = defaults;
                     _serviceDrafts.Add(serial, draft);
                 }
-                if (inventory != null)
+                else if (!string.Equals(
+                    (draft.KktInn ?? string.Empty).Trim(),
+                    (row.Kkt.KktInn ?? string.Empty).Trim(),
+                    StringComparison.Ordinal))
                 {
-                    if (inventory.Target != null && string.IsNullOrWhiteSpace(draft.TargetAddress))
-                    {
-                        draft.TargetAddress = inventory.Target.Address;
-                        draft.TargetPort = inventory.Target.Port.ToString(CultureInfo.InvariantCulture);
-                    }
-                    if (inventory.Ports != null)
-                    {
-                        if (string.IsNullOrWhiteSpace(draft.GrpcPort))
-                        {
-                            draft.GrpcPort = inventory.Ports.GrpcPort.ToString(CultureInfo.InvariantCulture);
-                        }
-                        if (string.IsNullOrWhiteSpace(draft.RestPort))
-                        {
-                            draft.RestPort = inventory.Ports.RestPort.ToString(CultureInfo.InvariantCulture);
-                        }
-                        if (string.IsNullOrWhiteSpace(row.ControllerGrpcPort))
-                        {
-                            _session.TryUpdateDraft(serial, "127.0.0.1", draft.GrpcPort, row.IsSelected);
-                        }
-                    }
+                    draft = defaults;
+                    _serviceDrafts[serial] = draft;
                 }
+                else
+                {
+                    ApplyOrdinalDefaults(draft, defaults);
+                }
+                _session.TryUpdateDraft(
+                    serial,
+                    LmGatewayDraftDefaults.ControllerAddress,
+                    draft.GrpcPort,
+                    row.IsSelected);
             }
             List<string> stale = new List<string>();
             foreach (string serial in _serviceDrafts.Keys)
@@ -314,7 +612,34 @@ namespace EsmTspiot.WinForms.Shared
             {
                 _serviceDrafts.Remove(stale[index]);
             }
-            _preparedPlan = null;
+            PersistServiceDrafts();
+        }
+
+        private static void ApplyOrdinalDefaults(
+            LmGatewayDraft draft,
+            LmGatewayDraft defaults)
+        {
+            bool legacyEmptyAddress = string.IsNullOrWhiteSpace(draft.TargetAddress);
+            if (legacyEmptyAddress)
+            {
+                draft.TargetAddress = defaults.TargetAddress;
+            }
+            if (string.IsNullOrWhiteSpace(draft.TargetPort) ||
+                (legacyEmptyAddress && string.Equals(
+                    draft.TargetPort,
+                    LmGatewayDraftDefaults.TargetLmPort,
+                    StringComparison.Ordinal)))
+            {
+                draft.TargetPort = defaults.TargetPort;
+            }
+            if (string.IsNullOrWhiteSpace(draft.GrpcPort))
+            {
+                draft.GrpcPort = defaults.GrpcPort;
+            }
+            if (string.IsNullOrWhiteSpace(draft.RestPort))
+            {
+                draft.RestPort = defaults.RestPort;
+            }
         }
 
         private async Task ProbeManagedServicesAsync(CancellationToken cancellation)
@@ -346,14 +671,51 @@ namespace EsmTspiot.WinForms.Shared
             }
         }
 
-        private void SaveServiceDraft(string serial)
+        private bool SaveServiceDraft(string serial)
         {
             LmGatewayDraft draft = GetOrCreateServiceDraft(serial);
+            LmGatewayBindingSessionRow row = FindSessionRow(serial);
+            draft.KktInn = row == null || row.Kkt == null
+                ? string.Empty
+                : (row.Kkt.KktInn ?? string.Empty).Trim();
             draft.TargetAddress = (_targetAddressTextBox.Text ?? string.Empty).Trim();
             draft.TargetPort = (_targetPortTextBox.Text ?? string.Empty).Trim();
             draft.GrpcPort = (_portTextBox.Text ?? string.Empty).Trim();
             draft.RestPort = (_restPortTextBox.Text ?? string.Empty).Trim();
-            _preparedPlan = null;
+            return PersistServiceDrafts();
+        }
+
+        private bool PersistServiceDrafts()
+        {
+            if (_draftSettingsStore == null)
+            {
+                return false;
+            }
+            try
+            {
+                _draftSettingsStore.Save(new List<LmGatewayDraft>(_serviceDrafts.Values));
+                return true;
+            }
+            catch (Exception ex)
+            {
+                if (!IsDraftSettingsException(ex))
+                {
+                    throw;
+                }
+                Log("Не удалось сохранить несекретные параметры контроллеров: " +
+                    ex.GetType().Name + ".\r\n");
+                return false;
+            }
+        }
+
+        private static bool IsDraftSettingsException(Exception ex)
+        {
+            return ex is IOException ||
+                ex is UnauthorizedAccessException ||
+                ex is SerializationException ||
+                ex is InvalidDataException ||
+                ex is ArgumentException ||
+                ex is NotSupportedException;
         }
 
         private void LoadServiceDraft(LmGatewayBindingSessionRow row)
@@ -365,81 +727,38 @@ namespace EsmTspiot.WinForms.Shared
             _restPortTextBox.Text = draft == null ? string.Empty : draft.RestPort ?? string.Empty;
         }
 
-        private void PrepareServicePlan()
-        {
-            SaveEditorWithoutChangingSelection();
-            _preparedPlan = BuildServicePlan();
-            if (_preparedPlan.Items.Count == 0)
-            {
-                MessageBox.Show(this, "Выберите хотя бы одну ККТ.", "План контроллеров ЛМ",
-                    MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
-            int valid = 0;
-            for (int index = 0; index < _preparedPlan.Items.Count; index++)
-            {
-                if (_preparedPlan.Items[index] != null && _preparedPlan.Items[index].IsValid)
-                {
-                    valid++;
-                }
-            }
-            _statusLabel.Text = "План подготовлен: строк " + _preparedPlan.Items.Count +
-                ", готово " + valid + ". Нажмите «Создать / обновить выбранные» для подтверждения.";
-            UpdateActionState();
-        }
-
-        private Task ConfirmAndExecuteServicePlanAsync()
-        {
-            SaveEditorWithoutChangingSelection();
-            _preparedPlan = BuildServicePlan();
-            if (_preparedPlan.Items.Count == 0)
-            {
-                PrepareServicePlan();
-                return Task.FromResult(0);
-            }
-            using (LmGatewayPlanDialog dialog = new LmGatewayPlanDialog(
-                _preparedPlan,
-                HasCompleteCredentials))
-            {
-                if (dialog.ShowDialog(this) != DialogResult.OK || dialog.SelectedPlan == null)
-                {
-                    return Task.FromResult(0);
-                }
-                LmGatewayPlan selected = dialog.SelectedPlan;
-                bool mutation = HasServiceMutation(selected);
-                if (mutation && (!_controllerVersionVerified || !_helperAvailable))
-                {
-                    string reason = !_controllerVersionVerified
-                        ? "Сначала выберите и установите поддерживаемую версию контроллера ЛМ."
-                        : _helperUnavailableReason;
-                    MessageBox.Show(this, reason, "Изменение служб недоступно",
-                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return Task.FromResult(0);
-                }
-                return RunOperationAsync(
-                    delegate(CancellationToken token) { return ExecuteServicePlanAsync(selected, token); },
-                    mutation ? "Ожидание подтверждения UAC..." : "Проверка и привязка контроллеров...");
-            }
-        }
-
-        private async Task ExecuteServicePlanAsync(
+        private async Task<bool> ExecuteServicePlanAsync(
             LmGatewayPlan plan,
             CancellationToken cancellation)
         {
             string operationId = Guid.NewGuid().ToString("N");
             string hash = ComputeEnsureHash(plan, operationId);
-            LmGatewayLifecycleOutcome outcome = await _lifecycleWorkflow.ExecuteAsync(
-                ValidateAndReadBaseUrl(),
-                plan,
-                operationId,
-                hash,
-                GetCredentials,
-                ReportLifecycleProgress,
-                cancellation);
+            LmGatewayLifecycleOutcome outcome;
+            try
+            {
+                outcome = await _lifecycleWorkflow.ExecuteAsync(
+                    ValidateAndReadBaseUrl(),
+                    plan,
+                    operationId,
+                    hash,
+                    GetCredentials,
+                    ReportLifecycleProgress,
+                    cancellation);
+            }
+            finally
+            {
+                ClearCredentialsForLifecyclePlan(plan);
+            }
             ApplyLifecycleOutcome(outcome);
-            ClearCredentialsForLifecyclePlan(plan);
-            _preparedPlan = null;
+            bool completed = LmGatewayLifecycleWorkflow.IsFullyVerified(
+                outcome,
+                plan.Items.Count);
             await RefreshCoreAsync(CancellationToken.None);
+            _statusLabel.Text = completed
+                ? "Все выбранные ККТ настроены: службы контроллеров запущены, а каждая привязка подтверждена ЕСМ через /api/v2/info."
+                : "Службы контроллеров обработаны, но не все привязки подтверждены ЕСМ. " +
+                    "Статус «Запрос принят», недоступный read-back или ошибка TLS не считаются полным успехом. Проверьте строки и журнал.";
+            return completed;
         }
 
         private async Task ConfirmAndRemoveServiceAsync()
@@ -487,6 +806,186 @@ namespace EsmTspiot.WinForms.Shared
                     MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             await RefreshCoreAsync(CancellationToken.None);
+        }
+
+        private async Task ConfirmAndRemoveAllServicesAsync()
+        {
+            IList<LmServiceInventoryItem> items = GetRemovableManagedItems(_serviceInventory);
+            if (items.Count == 0)
+            {
+                MessageBox.Show(this,
+                    "Управляемые службы, которые можно безопасно удалить, не найдены.",
+                    "Полная очистка",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+                return;
+            }
+
+            using (LmGatewayRemoveAllDialog dialog = new LmGatewayRemoveAllDialog(items))
+            {
+                if (dialog.ShowDialog(this) != DialogResult.OK ||
+                    dialog.Confirmations == null)
+                {
+                    return;
+                }
+
+                IList<LmRemovalConfirmation> confirmations = dialog.Confirmations;
+                IList<LmServiceInventoryItem> fresh;
+                try
+                {
+                    fresh = _inventoryReader.Read();
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(this,
+                        "Не удалось повторно проверить службы перед удалением: " +
+                            SensitiveDataMasker.Mask(ex.Message),
+                        "Полная очистка",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Error);
+                    return;
+                }
+
+                if (!RemovalBatchStillMatches(confirmations, fresh))
+                {
+                    RefreshServiceInventory();
+                    FillRows(null);
+                    MessageBox.Show(this,
+                        "Состав или состояние служб изменились после подтверждения. " +
+                            "Список обновлён; проверьте его и подтвердите удаление заново.",
+                        "Полная очистка",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning);
+                    return;
+                }
+
+                string operationId = Guid.NewGuid().ToString("N");
+                string hash = ComputeRemoveAllHash(confirmations, operationId);
+                await RunOperationAsync(
+                    delegate(CancellationToken token)
+                    {
+                        return RemoveAllServicesAsync(
+                            confirmations,
+                            operationId,
+                            hash,
+                            token);
+                    },
+                    "Ожидание одного подтверждения UAC для удаления всех созданных служб...");
+            }
+        }
+
+        private async Task RemoveAllServicesAsync(
+            IList<LmRemovalConfirmation> confirmations,
+            string operationId,
+            string hash,
+            CancellationToken cancellation)
+        {
+            LmServiceProvisioningBatchResult result = await _serviceProvisioner.RemoveAllAsync(
+                confirmations,
+                operationId,
+                hash,
+                cancellation);
+            int removed = 0;
+            int pending = 0;
+            for (int index = 0; index < result.Items.Count; index++)
+            {
+                LmServiceProvisioningItemResult item = result.Items[index];
+                if (item.Status ==
+                    LmServiceProvisioningStatus.RemovedLocalArtifactsBindingRetained)
+                {
+                    removed++;
+                }
+                else
+                {
+                    pending++;
+                }
+                Log(item.KktSerial + ": " + item.Status.ToString() + ". " +
+                    (item.Message ?? string.Empty) + "\r\n");
+            }
+
+            RefreshServiceInventory();
+            FillRows(null);
+            string summary = "Удалено управляемых служб и их локальных данных: " +
+                removed.ToString(CultureInfo.InvariantCulture) + ".";
+            if (pending > 0)
+            {
+                summary += " Требуют внимания: " +
+                    pending.ToString(CultureInfo.InvariantCulture) +
+                    ". Подробности показаны в таблице и журнале.";
+            }
+            else
+            {
+                summary += " Штатная служба не изменена. Привязки в ЕСМ не очищались; " +
+                    "после перезагрузки можно повторить автоматическую настройку.";
+            }
+            _statusLabel.Text = summary;
+            Log(summary + "\r\n\r\n");
+            MessageBox.Show(this,
+                summary,
+                pending == 0 ? "Полная очистка завершена" : "Полная очистка завершена частично",
+                MessageBoxButtons.OK,
+                pending == 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+        }
+
+        private static IList<LmServiceInventoryItem> GetRemovableManagedItems(
+            IList<LmServiceInventoryItem> inventory)
+        {
+            List<LmServiceInventoryItem> items = new List<LmServiceInventoryItem>();
+            if (inventory != null)
+            {
+                for (int index = 0; index < inventory.Count; index++)
+                {
+                    LmServiceInventoryItem item = inventory[index];
+                    if (item != null && item.Role == LmServiceRole.Managed &&
+                        item.Ports != null && item.ManifestFingerprint != null &&
+                        CanonicalLmPlanHasher.FixedTimeEqualsHex(
+                            item.ManifestFingerprint.Sha256,
+                            item.ManifestFingerprint.Sha256) &&
+                        item.Ports.GrpcPort > 0 && item.Ports.GrpcPort <= 65535 &&
+                        item.Ports.RestPort > 0 && item.Ports.RestPort <= 65535 &&
+                        item.Ports.GrpcPort != item.Ports.RestPort)
+                    {
+                        items.Add(item);
+                    }
+                }
+            }
+            items.Sort(delegate(LmServiceInventoryItem left, LmServiceInventoryItem right)
+            {
+                return string.CompareOrdinal(left.KktSerial, right.KktSerial);
+            });
+            return items;
+        }
+
+        private static bool RemovalBatchStillMatches(
+            IList<LmRemovalConfirmation> confirmations,
+            IList<LmServiceInventoryItem> inventory)
+        {
+            if (confirmations == null)
+            {
+                return false;
+            }
+            IList<LmServiceInventoryItem> fresh = GetRemovableManagedItems(inventory);
+            if (fresh.Count != confirmations.Count)
+            {
+                return false;
+            }
+            for (int index = 0; index < confirmations.Count; index++)
+            {
+                LmRemovalConfirmation confirmation = confirmations[index];
+                LmServiceInventoryItem item = fresh[index];
+                if (confirmation == null ||
+                    !string.Equals(confirmation.KktSerial, item.KktSerial, StringComparison.Ordinal) ||
+                    confirmation.GrpcPort != item.Ports.GrpcPort ||
+                    confirmation.RestPort != item.Ports.RestPort ||
+                    confirmation.ManifestFingerprint == null ||
+                    !CanonicalLmPlanHasher.FixedTimeEqualsHex(
+                        confirmation.ManifestFingerprint.Sha256,
+                        item.ManifestFingerprint.Sha256))
+                {
+                    return false;
+                }
+            }
+            return true;
         }
 
         private Task ConfirmAndCleanupServiceAsync()
@@ -556,16 +1055,26 @@ namespace EsmTspiot.WinForms.Shared
                 drafts,
                 _serviceInventory,
                 new LmManagedPortPolicy(
-                    new TcpPortRange(55000, 55031),
-                    new TcpPortRange(15000, 15031)),
+                    new TcpPortRange(
+                        LmGatewayDraftDefaults.GrpcPortFirst,
+                        LmGatewayDraftDefaults.GrpcPortLast),
+                    new TcpPortRange(
+                        LmGatewayDraftDefaults.RestPortFirst,
+                        LmGatewayDraftDefaults.RestPortLast)),
                 ReadListenerSnapshot());
         }
 
         private IList<TcpListenerSnapshotItem> ReadListenerSnapshot()
         {
             List<int> occupiedPorts = new List<int>();
-            AddOccupiedPorts(occupiedPorts, 55000, 55031);
-            AddOccupiedPorts(occupiedPorts, 15000, 15031);
+            AddOccupiedPorts(
+                occupiedPorts,
+                LmGatewayDraftDefaults.GrpcPortFirst,
+                LmGatewayDraftDefaults.GrpcPortLast);
+            AddOccupiedPorts(
+                occupiedPorts,
+                LmGatewayDraftDefaults.RestPortFirst,
+                LmGatewayDraftDefaults.RestPortLast);
             return LmTcpListenerSnapshotBuilder.Build(occupiedPorts, _serviceInventory);
         }
 
@@ -621,26 +1130,31 @@ namespace EsmTspiot.WinForms.Shared
             LmServiceInventoryItem selected = GetSelectedInventoryItem();
             bool managed = selected != null && selected.Role == LmServiceRole.Managed;
             _selectInstallerButton.Enabled = idle;
-            _installControllerButton.Enabled = idle && _installerSelection != null && _helperAvailable;
-            _preparePlanButton.Enabled = idle && hasSelected;
-            _executePlanButton.Enabled = idle && hasSelected && _helperAvailable &&
-                _controllerVersionVerified;
+            _installControllerButton.Enabled = idle && _installerSelection != null &&
+                _helperAvailable && hasSelected;
             _removeServiceButton.Enabled = idle && managed && _helperAvailable &&
                 selected.Status != LmServiceProvisioningStatus.CleanupPending;
+            _removeAllServicesButton.Enabled = idle && _helperAvailable &&
+                GetRemovableManagedItems(_serviceInventory).Count > 0;
             _cleanupButton.Enabled = idle && managed && _helperAvailable &&
                 selected.Status == LmServiceProvisioningStatus.CleanupPending;
             _targetAddressTextBox.Enabled = idle && hasRow;
             _targetPortTextBox.Enabled = idle && hasRow;
             _restPortTextBox.Enabled = idle && hasRow;
-            _executePlanButton.Text = "Создать / обновить выбранные";
-            string mutationReason = !_helperAvailable
+            string setupReason = !_helperAvailable
                 ? _helperUnavailableReason
-                : !_controllerVersionVerified
-                    ? "Сначала установите или подтвердите поддерживаемую версию контроллера ЛМ."
-                    : "Создать или обновить выбранные управляемые службы.";
-            _serviceToolTip.SetToolTip(_executePlanButton, mutationReason);
+                : _installerSelection == null
+                    ? "Выберите установщик контроллера ЛМ ЧЗ."
+                    : !hasSelected
+                        ? "В таблице нет выбранных ККТ."
+                        : "Установить версию, создать службы и выполнить доступные привязки.";
+            _serviceToolTip.SetToolTip(_installControllerButton, setupReason);
             _serviceToolTip.SetToolTip(_removeServiceButton,
                 _helperAvailable ? "Удалить одну выбранную управляемую службу." : _helperUnavailableReason);
+            _serviceToolTip.SetToolTip(_removeAllServicesButton,
+                _helperAvailable
+                    ? "Удалить все службы контроллеров ЛМ, созданные этой программой, и их локальные данные."
+                    : _helperUnavailableReason);
         }
 
         private LmServiceInventoryItem GetSelectedInventoryItem()
@@ -687,10 +1201,34 @@ namespace EsmTspiot.WinForms.Shared
             LmGatewayDraft draft;
             if (!_serviceDrafts.TryGetValue(serial, out draft))
             {
-                draft = new LmGatewayDraft { KktSerial = serial };
+                LmGatewayBindingSessionRow row = FindSessionRow(serial);
+                int ordinal = FindSessionOrdinal(serial);
+                draft = LmGatewayDraftDefaults.Create(
+                    row == null ? null : row.Kkt,
+                    ordinal < 1 ? 1 : ordinal);
+                if (string.IsNullOrEmpty(draft.KktSerial))
+                {
+                    draft.KktSerial = (serial ?? string.Empty).Trim();
+                }
                 _serviceDrafts.Add(serial, draft);
             }
             return draft;
+        }
+
+        private int FindSessionOrdinal(string serial)
+        {
+            for (int index = 0; index < _session.Rows.Count; index++)
+            {
+                LmGatewayBindingSessionRow row = _session.Rows[index];
+                if (row != null && row.Kkt != null && string.Equals(
+                    row.Kkt.KktSerial,
+                    serial,
+                    StringComparison.Ordinal))
+                {
+                    return index + 1;
+                }
+            }
+            return 0;
         }
 
         private void ClearCredentialsForLifecyclePlan(LmGatewayPlan plan)
@@ -712,27 +1250,21 @@ namespace EsmTspiot.WinForms.Shared
             }
             _installerSelection = null;
             _installerPathTextBox.Clear();
+            _serviceToolTip.SetToolTip(_installerPathTextBox, string.Empty);
             if (!IsDisposed)
             {
                 _installerStatusLabel.Text = "Установщик не выбран.";
             }
+            RaiseInstallerSelectionChanged();
         }
 
-        private static bool HasServiceMutation(LmGatewayPlan plan)
+        private void RaiseInstallerSelectionChanged()
         {
-            for (int index = 0; index < plan.Items.Count; index++)
+            Action handler = InstallerSelectionChanged;
+            if (handler != null && !IsDisposed && !Disposing)
             {
-                LmGatewayPlanAction action = plan.Items[index] == null
-                    ? LmGatewayPlanAction.Blocked
-                    : plan.Items[index].Action;
-                if (action == LmGatewayPlanAction.CreateManagedService ||
-                    action == LmGatewayPlanAction.UpdateManagedService ||
-                    action == LmGatewayPlanAction.StartManagedService)
-                {
-                    return true;
-                }
+                handler();
             }
-            return false;
         }
 
         private static string ComputeEnsureHash(LmGatewayPlan plan, string operationId)
@@ -791,15 +1323,6 @@ namespace EsmTspiot.WinForms.Shared
             });
         }
 
-        private static string GetRoleText(LmServiceInventoryItem item)
-        {
-            if (item == null) return "Не создан";
-            if (item.Role == LmServiceRole.Managed) return "Управляемая";
-            if (item.Role == LmServiceRole.VerifiedOfficial) return "Штатная";
-            if (item.Role == LmServiceRole.Foreign) return "Чужая";
-            return "Неизвестная";
-        }
-
         private static string GetServiceStatusText(LmServiceInventoryItem item)
         {
             if (item == null) return "Отсутствует";
@@ -809,52 +1332,172 @@ namespace EsmTspiot.WinForms.Shared
             return item.IsRunning ? "Запущена" : "Остановлена";
         }
 
-        private static string GetPortText(string draft, int observed)
-        {
-            return !string.IsNullOrWhiteSpace(draft)
-                ? draft
-                : observed > 0 ? observed.ToString(CultureInfo.InvariantCulture) : "авто";
-        }
-
-        private static string GetTargetText(LmGatewayDraft draft, LmServiceInventoryItem inventory)
-        {
-            if (draft != null && !string.IsNullOrWhiteSpace(draft.TargetAddress))
-            {
-                return draft.TargetAddress + ":" + (draft.TargetPort ?? string.Empty);
-            }
-            return inventory == null || inventory.Target == null
-                ? string.Empty
-                : inventory.Target.Address + ":" + inventory.Target.Port;
-        }
-
-        private static string GetRowMessage(
+        private static string GetUserStatusText(
             LmGatewayBindingSessionRow session,
             LmServiceInventoryItem inventory)
         {
-            string service = inventory == null ? string.Empty : inventory.Message ?? string.Empty;
-            string binding = session == null ? string.Empty : session.LastMessage ?? string.Empty;
-            return service.Length == 0 ? binding : binding.Length == 0 ? service : service + " " + binding;
-        }
-
-        private static string ShortHash(string value)
-        {
-            return string.IsNullOrEmpty(value) || value.Length <= 16
-                ? value ?? string.Empty
-                : value.Substring(0, 8) + "…" + value.Substring(value.Length - 8);
-        }
-
-        private static string ShortSigner(string value)
-        {
-            if (string.IsNullOrWhiteSpace(value)) return "нет подписи";
-            string[] parts = value.Split(',');
-            for (int index = 0; index < parts.Length; index++)
+            if (session != null && session.LastBindingStatus.HasValue)
             {
-                if (parts[index].TrimStart().StartsWith("CN=", StringComparison.OrdinalIgnoreCase))
+                LmGatewayBindingStatus status = session.LastBindingStatus.Value;
+                if (status == LmGatewayBindingStatus.BindingVerified)
                 {
-                    return parts[index].Trim();
+                    return "Готово";
+                }
+                if (status == LmGatewayBindingStatus.BindingAccepted ||
+                    status == LmGatewayBindingStatus.BindingObserved)
+                {
+                    return "Настроено";
+                }
+                if (status == LmGatewayBindingStatus.Cancelled)
+                {
+                    return "Остановлено";
+                }
+                return "Требуется внимание";
+            }
+            if (inventory == null)
+            {
+                return "Не настроено";
+            }
+            if (inventory.Status == LmServiceProvisioningStatus.CleanupPending ||
+                inventory.Status == LmServiceProvisioningStatus.RequiresAttention ||
+                inventory.Status == LmServiceProvisioningStatus.VersionVerificationPending)
+            {
+                return "Требуется внимание";
+            }
+            return inventory.IsRunning ? "Контроллер запущен" : "Контроллер остановлен";
+        }
+
+        private static string GetUserResultText(
+            LmGatewayBindingSessionRow session,
+            LmServiceInventoryItem inventory)
+        {
+            if (session != null && !string.IsNullOrWhiteSpace(session.LastMessage))
+            {
+                return session.LastMessage;
+            }
+            if (session != null && session.LastBindingStatus.HasValue)
+            {
+                return GetBindingStatusText(session.LastBindingStatus.Value);
+            }
+            if (inventory == null)
+            {
+                return "Готово к настройке";
+            }
+            if (inventory.Status == LmServiceProvisioningStatus.CleanupPending)
+            {
+                return "Завершите очистку";
+            }
+            if (inventory.Status == LmServiceProvisioningStatus.VersionVerificationPending)
+            {
+                return "Проверьте версию контроллера";
+            }
+            if (inventory.Status == LmServiceProvisioningStatus.RequiresAttention &&
+                !string.IsNullOrWhiteSpace(inventory.Message))
+            {
+                return inventory.Message;
+            }
+            return inventory.IsRunning ? "Ожидает проверки ЕСМ" : "Готово к настройке";
+        }
+
+        private static string ComputeRemoveAllHash(
+            IList<LmRemovalConfirmation> confirmations,
+            string operationId)
+        {
+            LmServiceProvisioningBatchRequest request =
+                new LmServiceProvisioningBatchRequest
+                {
+                    SchemaVersion = 1,
+                    Operation = LmServiceOperation.RemoveAllManaged,
+                    OperationId = operationId
+                };
+            if (confirmations != null)
+            {
+                for (int index = 0; index < confirmations.Count; index++)
+                {
+                    request.RemovalConfirmations.Add(confirmations[index]);
                 }
             }
-            return value;
+            return CanonicalLmPlanHasher.Compute(request);
+        }
+
+        private static string GetTargetAddressText(
+            LmGatewayBindingSessionRow session,
+            LmGatewayDraft draft,
+            LmServiceInventoryItem inventory)
+        {
+            if (session != null && !string.IsNullOrWhiteSpace(session.ObservedLmAddress) &&
+                !string.IsNullOrWhiteSpace(session.ObservedLmPort))
+            {
+                return session.ObservedLmAddress;
+            }
+            if (draft != null && !string.IsNullOrWhiteSpace(draft.TargetAddress))
+            {
+                return draft.TargetAddress;
+            }
+            return inventory == null || inventory.Target == null
+                ? string.Empty
+                : inventory.Target.Address;
+        }
+
+        private static string GetTargetPortText(
+            LmGatewayBindingSessionRow session,
+            LmGatewayDraft draft,
+            LmServiceInventoryItem inventory)
+        {
+            if (session != null && !string.IsNullOrWhiteSpace(session.ObservedLmAddress) &&
+                !string.IsNullOrWhiteSpace(session.ObservedLmPort))
+            {
+                return session.ObservedLmPort;
+            }
+            if (draft != null && !string.IsNullOrWhiteSpace(draft.TargetPort))
+            {
+                return draft.TargetPort;
+            }
+            return inventory == null || inventory.Target == null
+                ? string.Empty
+                : inventory.Target.Port.ToString();
+        }
+
+        private LmGatewayTarget GetExpectedLmTarget(LmGatewayKkt kkt)
+        {
+            if (kkt == null)
+            {
+                return null;
+            }
+
+            LmGatewayDraft draft = GetOrCreateServiceDraft(kkt.KktSerial);
+            int port;
+            if (draft == null || string.IsNullOrWhiteSpace(draft.TargetAddress) ||
+                !int.TryParse(draft.TargetPort, out port) || port < 1 || port > 65535)
+            {
+                return null;
+            }
+
+            return new LmGatewayTarget(draft.TargetAddress, port);
+        }
+
+        private void ApplyExpectedLmTargets(LmGatewayBindingPlan plan)
+        {
+            if (plan == null)
+            {
+                return;
+            }
+
+            for (int index = 0; index < plan.Items.Count; index++)
+            {
+                LmGatewayBindingItem item = plan.Items[index];
+                if (item == null || item.Input == null)
+                {
+                    continue;
+                }
+
+                LmGatewayTarget target = GetExpectedLmTarget(item.Kkt);
+                if (target != null)
+                {
+                    item.Input.ExpectedLmAddress = target.Address;
+                    item.Input.ExpectedLmPort = target.Port.ToString(CultureInfo.InvariantCulture);
+                }
+            }
         }
 
         private sealed class LmGatewayGridRow

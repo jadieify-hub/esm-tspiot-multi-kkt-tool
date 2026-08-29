@@ -21,7 +21,11 @@ namespace EsmTspiot.ServiceProvisioner
         private SafeServiceHandle(IntPtr handle, Func<IntPtr, bool> release)
             : base(true)
         {
-            _release = release ?? throw new ArgumentNullException("release");
+            if (release == null)
+            {
+                throw new ArgumentNullException("release");
+            }
+            _release = release;
             SetHandle(handle);
         }
 

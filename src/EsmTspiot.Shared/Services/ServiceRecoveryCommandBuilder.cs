@@ -79,10 +79,10 @@ namespace EsmTspiot.Shared.Services
             builder.AppendLine();
             builder.AppendLine("Write-Host \"--- Службы Windows по серийнику и портам ---\"");
             builder.AppendLine("$servicePattern = [regex]::Escape($kkt)");
-            builder.AppendLine("Get-WmiObject Win32_Service | Where-Object { $_.Name -match $servicePattern -or $_.DisplayName -match $servicePattern -or $_.PathName -match $servicePattern -or $_.PathName -match \"50401|51401|50402|51402|4041\" } | Select-Object Name, DisplayName, State, PathName | Format-List | Out-Host");
+            builder.AppendLine("Get-WmiObject Win32_Service | Where-Object { $_.Name -match $servicePattern -or $_.DisplayName -match $servicePattern -or $_.PathName -match $servicePattern -or $_.PathName -match \"50401|51401|50402|51402|4041|4042|4043\" } | Select-Object Name, DisplayName, State, PathName | Format-List | Out-Host");
             builder.AppendLine();
             builder.AppendLine("Write-Host \"--- Порты Windows: ожидаемые и типовые конфликтующие ---\"");
-            builder.AppendLine("netstat -ano | findstr \":$port :$softPort :4041 :50401 :51401\" | Out-Host");
+            builder.AppendLine("netstat -ano | findstr \":$port :$softPort :4041 :4042 :4043 :50401 :51401\" | Out-Host");
             builder.AppendLine();
             builder.AppendLine("Write-Host \"--- Процессы controlModule / esm ---\"");
             builder.AppendLine("tasklist | findstr /I \"controlModule esm\" | Out-Host");
@@ -136,7 +136,7 @@ namespace EsmTspiot.Shared.Services
             builder.AppendLine("Write-Host \"--- Служба после восстановления ---\"");
             builder.AppendLine("Get-WmiObject Win32_Service -Filter \"Name='$serviceName'\" | Select-Object Name, DisplayName, State, PathName | Format-List | Out-Host");
             builder.AppendLine("Write-Host \"--- Порты после восстановления ---\"");
-            builder.AppendLine("netstat -ano | findstr \":$port :$softPort :4041 :50401 :51401\" | Out-Host");
+            builder.AppendLine("netstat -ano | findstr \":$port :$softPort :4041 :4042 :4043 :50401 :51401\" | Out-Host");
             builder.AppendLine("} finally {");
             builder.AppendLine("    Write-Host \"Лог сохранён: $logPath\"");
             builder.AppendLine("    if ($transcriptStarted) {");

@@ -18,6 +18,7 @@ namespace EsmTspiot.WinForms.Shared
         private readonly Action<string> _logger;
         private readonly LmGatewayDiscoveryWorkflow _discoveryWorkflow;
         private readonly LmGatewayBindingWorkflow _bindingWorkflow;
+        private readonly LmGatewayReadbackWorkflow _readbackWorkflow;
         private readonly LmGatewayBindingSession _session = new LmGatewayBindingSession();
         private readonly Dictionary<string, LmGatewayCredentials> _credentials =
             new Dictionary<string, LmGatewayCredentials>(StringComparer.Ordinal);
@@ -32,6 +33,8 @@ namespace EsmTspiot.WinForms.Shared
         private readonly TextBox _passwordTextBox = new TextBox();
         private readonly GroupBox _editorGroup = new GroupBox();
         private readonly Label _statusLabel = new Label();
+        private readonly Label _officialControllerStatusLabel = new Label();
+        private readonly Label _automaticPortsHintLabel = new Label();
         private CancellationTokenSource _cancellation;
         private bool _running;
         private bool _hostBusy;
@@ -56,15 +59,33 @@ namespace EsmTspiot.WinForms.Shared
             _logger = logger;
             _discoveryWorkflow = new LmGatewayDiscoveryWorkflow(apiClient);
             _bindingWorkflow = new LmGatewayBindingWorkflow(apiClient);
+            _readbackWorkflow = new LmGatewayReadbackWorkflow(apiClient);
             InitializeServiceFeatures();
 
             Dock = DockStyle.Fill;
             AutoScroll = false;
             BuildLayout();
+            FillRows(null);
             UpdateActionState();
         }
 
         public event Action<bool> OperationStateChanged;
+        public event Action InstallerSelectionChanged;
+
+        public bool HasInstallerSelection
+        {
+            get { return _installerSelection != null; }
+        }
+
+        public string SelectedInstallerPath
+        {
+            get { return _installerSelection == null ? string.Empty : _installerSelection.SourcePath; }
+        }
+
+        public string AutomaticSetupStatus
+        {
+            get { return _statusLabel.Text ?? string.Empty; }
+        }
 
         public void SetHostBusy(bool busy)
         {
@@ -103,15 +124,37 @@ namespace EsmTspiot.WinForms.Shared
             Func<CancellationToken, Task> operation,
             string startMessage)
         {
-            if (_running || _hostBusy || operation == null)
+            await RunOperationAsync(
+                operation,
+                startMessage,
+                false,
+                true,
+                true,
+                CancellationToken.None);
+        }
+
+        private async Task RunOperationAsync(
+            Func<CancellationToken, Task> operation,
+            string startMessage,
+            bool allowHostBusy,
+            bool raiseOperationState,
+            bool showErrors,
+            CancellationToken externalCancellation)
+        {
+            if (_running || (!allowHostBusy && _hostBusy) || operation == null)
             {
                 return;
             }
 
             _running = true;
-            _cancellation = new CancellationTokenSource();
+            _cancellation = externalCancellation.CanBeCanceled
+                ? CancellationTokenSource.CreateLinkedTokenSource(externalCancellation)
+                : new CancellationTokenSource();
             _statusLabel.Text = startMessage;
-            RaiseOperationStateChanged(true);
+            if (raiseOperationState)
+            {
+                RaiseOperationStateChanged(true);
+            }
             UpdateActionState();
             try
             {
@@ -132,7 +175,10 @@ namespace EsmTspiot.WinForms.Shared
                     string message = SensitiveDataMasker.Mask(ex.Message);
                     _statusLabel.Text = "Ошибка: " + message;
                     Log("Ошибка на вкладке контроллеров ЛМ: " + message + "\r\n\r\n");
-                    MessageBox.Show(this, message, "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    if (showErrors)
+                    {
+                        MessageBox.Show(this, message, "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
                 }
             }
             finally
@@ -143,7 +189,10 @@ namespace EsmTspiot.WinForms.Shared
                     _cancellation = null;
                 }
                 _running = false;
-                RaiseOperationStateChanged(false);
+                if (raiseOperationState)
+                {
+                    RaiseOperationStateChanged(false);
+                }
                 UpdateActionState();
             }
         }
@@ -170,14 +219,64 @@ namespace EsmTspiot.WinForms.Shared
             RefreshServiceInventory();
             await ProbeManagedServicesAsync(cancellationToken);
             MergeServiceDrafts();
+            IList<LmGatewayReadbackObservation> readback =
+                await _readbackWorkflow.ReadAllAsync(
+                    baseUrl,
+                    discovery.Items,
+                    GetExpectedLmTarget,
+                    delegate(int current, int total, string serial)
+                    {
+                        PostToUi(delegate
+                        {
+                            _statusLabel.Text = "Проверка привязки ЕСМ " +
+                                current.ToString() + "/" + total.ToString() +
+                                ": " + serial + "...";
+                        });
+                    },
+                    cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            _session.ApplyReadback(readback);
             ClearCredentialsForInvalidatedRows();
             RemoveCredentialsForMissingRows();
             FillRows(null);
             _hasLoaded = true;
+            int verifiedReadback = 0;
+            int unavailableReadback = 0;
+            int attentionReadback = 0;
+            int notConfiguredReadback = 0;
+            int observedReadback = 0;
+            for (int index = 0; index < readback.Count; index++)
+            {
+                LmGatewayReadbackObservation observation = readback[index];
+                if (observation != null && observation.IsVerified)
+                {
+                    verifiedReadback++;
+                }
+                else if (observation == null || !observation.IsAvailable)
+                {
+                    unavailableReadback++;
+                }
+                else if (!observation.HasLmConfiguration)
+                {
+                    notConfiguredReadback++;
+                }
+                else if (observation.IdentityMatches && !observation.EndpointMatches.HasValue)
+                {
+                    observedReadback++;
+                }
+                else
+                {
+                    attentionReadback++;
+                }
+            }
             _statusLabel.Text = discovery.Items.Count == 0
                 ? "Зарегистрированные ККТ для привязки не найдены."
                 : "Загружено ККТ: " + discovery.Items.Count.ToString() +
-                    ". Текущая привязка не проверена: документированный read-back отсутствует.";
+                    ". Подтверждено ЕСМ: " + verifiedReadback.ToString() +
+                    "; не настроено: " + notConfiguredReadback.ToString() +
+                    "; обнаружено без сверки: " + observedReadback.ToString() +
+                    "; требуется проверка: " + attentionReadback.ToString() +
+                    "; read-back недоступен: " + unavailableReadback.ToString() + ".";
             AppendServiceCapabilityStatus();
 
             StringBuilder log = new StringBuilder();
@@ -188,6 +287,15 @@ namespace EsmTspiot.WinForms.Shared
                 LmGatewayDiscoveryIssue issue = discovery.Issues[index];
                 log.AppendLine("Пропущен экземпляр " + (issue.InstanceId ?? string.Empty) + ": " +
                     (issue.Message ?? string.Empty));
+            }
+            for (int index = 0; index < readback.Count; index++)
+            {
+                LmGatewayReadbackObservation observation = readback[index];
+                if (observation != null)
+                {
+                    log.AppendLine((observation.KktSerial ?? string.Empty) + ": " +
+                        (observation.Details ?? string.Empty));
+                }
             }
             log.AppendLine();
             Log(log.ToString());
@@ -202,6 +310,7 @@ namespace EsmTspiot.WinForms.Shared
 
             SaveEditorWithoutChangingSelection();
             LmGatewayBindingPlan plan = _session.BuildSelectedPlan();
+            ApplyExpectedLmTargets(plan);
             if (plan.Items.Count == 0)
             {
                 MessageBox.Show(this, "Выберите хотя бы одну ККТ и сохраните её параметры.",
@@ -255,7 +364,8 @@ namespace EsmTspiot.WinForms.Shared
             }
 
             confirmation.AppendLine();
-            confirmation.AppendLine("Ответ 2xx означает только «запрос принят», а не проверенную фактическую настройку.");
+            confirmation.AppendLine("После ответа 2xx программа проверит результат через /api/v2/info.");
+            confirmation.AppendLine("Если read-back недоступен, результат останется «Запрос принят».");
             if (MessageBox.Show(this, confirmation.ToString(), "Подтвердите привязку к ЕСМ",
                 MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
             {
@@ -289,13 +399,23 @@ namespace EsmTspiot.WinForms.Shared
 
                 _session.ApplyOutcome(outcome);
                 FillRows(null);
+                int verified = 0;
+                int observed = 0;
                 int accepted = 0;
                 int attention = 0;
                 int failed = 0;
                 for (int index = 0; index < outcome.Results.Count; index++)
                 {
                     LmGatewayBindingResult result = outcome.Results[index];
-                    if (result.Status == LmGatewayBindingStatus.BindingAccepted)
+                    if (result.Status == LmGatewayBindingStatus.BindingVerified)
+                    {
+                        verified++;
+                    }
+                    else if (result.Status == LmGatewayBindingStatus.BindingObserved)
+                    {
+                        observed++;
+                    }
+                    else if (result.Status == LmGatewayBindingStatus.BindingAccepted)
                     {
                         accepted++;
                     }
@@ -311,7 +431,9 @@ namespace EsmTspiot.WinForms.Shared
                         ". " + (result.Details ?? string.Empty) + "\r\n");
                 }
 
-                _statusLabel.Text = "Запрос принят: " + accepted.ToString() +
+                _statusLabel.Text = "Подтверждено ЕСМ: " + verified.ToString() +
+                    "; обнаружено без сверки: " + observed.ToString() +
+                    "; только запрос принят: " + accepted.ToString() +
                     "; требуется проверка: " + attention.ToString() +
                     "; не выполнено/ошибка: " + failed.ToString() + ".";
                 Log(_statusLabel.Text + "\r\n\r\n");
@@ -359,11 +481,14 @@ namespace EsmTspiot.WinForms.Shared
 
             string serial = row.Kkt.KktSerial;
             _session.TryUpdateDraft(serial, _addressTextBox.Text, _portTextBox.Text, true);
-            SaveServiceDraft(serial);
+            bool persisted = SaveServiceDraft(serial);
             StoreCredentials(serial, _loginTextBox.Text, _passwordTextBox.Text);
             FillRows(serial);
-            _statusLabel.Text = "Параметры ККТ " + serial +
-                " сохранены только в памяти текущего сеанса. Фактическая привязка ещё не проверена.";
+            _statusLabel.Text = persisted
+                ? "Адреса и порты ККТ " + serial +
+                    " сохранены. Логин и пароль останутся только до закрытия программы."
+                : "Адреса и порты ККТ " + serial +
+                    " сохранены только в текущем сеансе: файл настроек недоступен.";
         }
 
         private void SaveEditorWithoutChangingSelection()
@@ -455,25 +580,26 @@ namespace EsmTspiot.WinForms.Shared
                     LmGatewayDraft draft = GetOrCreateServiceDraft(item.Kkt.KktSerial);
                     int rowIndex = _grid.Rows.Add(
                         item.IsSelected,
+                        (index + 1).ToString(),
                         item.Kkt.KktSerial,
                         item.Kkt.KktInn,
-                        string.IsNullOrWhiteSpace(item.Kkt.ServiceState) ? "Не указано" : item.Kkt.ServiceState,
-                        item.Kkt.Port ?? string.Empty,
                         item.Kkt.SoftPort ?? string.Empty,
-                        GetRoleText(inventory),
-                        inventory == null ? LmServiceIdentity.CreateName(item.Kkt.KktSerial) : inventory.ServiceName,
-                        GetPortText(draft.GrpcPort, inventory == null || inventory.Ports == null ? 0 : inventory.Ports.GrpcPort),
-                        GetPortText(draft.RestPort, inventory == null || inventory.Ports == null ? 0 : inventory.Ports.RestPort),
-                        GetTargetText(draft, inventory),
-                        GetServiceStatusText(inventory),
-                        item.LastBindingStatus.HasValue
-                            ? GetBindingStatusText(item.LastBindingStatus.Value)
-                            : "Не проверено (read-back нет)",
-                        GetRowMessage(item, inventory));
+                        GetTargetAddressText(item, draft, inventory),
+                        GetTargetPortText(item, draft, inventory),
+                        GetUserStatusText(item, inventory),
+                        GetUserResultText(item, inventory));
                     _grid.Rows[rowIndex].Tag = new LmGatewayGridRow(item, inventory);
-                    if (item.LastBindingStatus == LmGatewayBindingStatus.BindingAccepted)
+                    if (item.LastBindingStatus == LmGatewayBindingStatus.BindingVerified)
                     {
                         _grid.Rows[rowIndex].DefaultCellStyle.BackColor = Color.Honeydew;
+                    }
+                    else if (item.LastBindingStatus == LmGatewayBindingStatus.BindingAccepted)
+                    {
+                        _grid.Rows[rowIndex].DefaultCellStyle.BackColor = Color.LightCyan;
+                    }
+                    else if (item.LastBindingStatus == LmGatewayBindingStatus.BindingObserved)
+                    {
+                        _grid.Rows[rowIndex].DefaultCellStyle.BackColor = Color.LightCyan;
                     }
                     else if (item.LastBindingStatus == LmGatewayBindingStatus.RequiresAttention)
                     {
@@ -489,45 +615,15 @@ namespace EsmTspiot.WinForms.Shared
                     }
                 }
 
-                for (int index = 0; index < _serviceInventory.Count; index++)
-                {
-                    LmServiceInventoryItem inventory = _serviceInventory[index];
-                    if (inventory == null || FindSessionRow(inventory.KktSerial) != null)
-                    {
-                        continue;
-                    }
-                    int rowIndex = _grid.Rows.Add(
-                        false,
-                        string.IsNullOrEmpty(inventory.KktSerial) ? "—" : inventory.KktSerial,
-                        string.Empty,
-                        "—",
-                        string.Empty,
-                        string.Empty,
-                        GetRoleText(inventory),
-                        inventory.ServiceName,
-                        inventory.Ports == null ? string.Empty : inventory.Ports.GrpcPort.ToString(),
-                        inventory.Ports == null ? string.Empty : inventory.Ports.RestPort.ToString(),
-                        inventory.Target == null ? string.Empty : inventory.Target.Address + ":" + inventory.Target.Port,
-                        GetServiceStatusText(inventory),
-                        "—",
-                        inventory.Message ?? string.Empty);
-                    _grid.Rows[rowIndex].Tag = new LmGatewayGridRow(null, inventory);
-                    _grid.Rows[rowIndex].Cells[0].ReadOnly = true;
-                    if (inventory.Role != LmServiceRole.Managed)
-                    {
-                        _grid.Rows[rowIndex].DefaultCellStyle.BackColor = Color.Gainsboro;
-                    }
-                }
-
                 if (rowToSelect >= 0)
                 {
                     _grid.Rows[rowToSelect].Selected = true;
-                    _grid.CurrentCell = _grid.Rows[rowToSelect].Cells[1];
+                    _grid.CurrentCell = _grid.Rows[rowToSelect].Cells[2];
                 }
                 else if (_grid.Rows.Count > 0)
                 {
                     _grid.Rows[0].Selected = true;
-                    _grid.CurrentCell = _grid.Rows[0].Cells[1];
+                    _grid.CurrentCell = _grid.Rows[0].Cells[2];
                 }
             }
             finally
@@ -549,9 +645,10 @@ namespace EsmTspiot.WinForms.Shared
             LmGatewayBindingSessionRow row = GetSelectedSessionRow();
             bool hasRow = row != null && row.Kkt != null;
             _editorGroup.Text = hasRow
-                ? "Параметры ККТ " + row.Kkt.KktSerial + " / ИНН " + row.Kkt.KktInn +
-                    " — только до закрытия программы"
-                : "Параметры: ККТ не выбрана — хранятся только до закрытия программы";
+                ? "Параметры ККТ №" + FindSessionOrdinal(row.Kkt.KktSerial) + " — " +
+                    row.Kkt.KktSerial + " / ИНН " + row.Kkt.KktInn +
+                    " — адрес и порт ЛМ ЧЗ сохраняются"
+                : "Параметры: выберите ККТ в таблице";
             _addressTextBox.Text = hasRow ? row.ControllerAddress : string.Empty;
             _portTextBox.Text = hasRow ? row.ControllerGrpcPort : string.Empty;
             LoadServiceDraft(row);
@@ -789,9 +886,17 @@ namespace EsmTspiot.WinForms.Shared
 
         private static string GetBindingStatusText(LmGatewayBindingStatus status)
         {
+            if (status == LmGatewayBindingStatus.BindingVerified)
+            {
+                return "Подтверждено ЕСМ";
+            }
             if (status == LmGatewayBindingStatus.BindingAccepted)
             {
                 return "Запрос принят";
+            }
+            if (status == LmGatewayBindingStatus.BindingObserved)
+            {
+                return "Обнаружено ЕСМ";
             }
             if (status == LmGatewayBindingStatus.RequiresAttention)
             {

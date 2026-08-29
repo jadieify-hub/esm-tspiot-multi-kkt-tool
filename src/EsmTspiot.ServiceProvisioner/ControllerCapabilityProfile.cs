@@ -55,6 +55,7 @@ namespace EsmTspiot.ServiceProvisioner
         internal string ControllerRelativePath { get; set; }
         internal TrustedFileExpectation ControllerBinary { get; private set; }
         internal TrustedFileExpectation Installer { get; private set; }
+        internal string InstallerArguments { get; private set; }
         internal string ProfileEnvironmentKey { get; private set; }
         internal string VendorProfileRelativePath { get; private set; }
         internal string VendorConfigFileName { get; private set; }
@@ -93,6 +94,7 @@ namespace EsmTspiot.ServiceProvisioner
                     60,
                     new[] { 30000, 60000, 60000 }),
                 TerminalArguments = string.Empty,
+                InstallerArguments = "/S",
                 GracefulStopTimeoutMilliseconds = 30000,
                 GeneratedArtifactFileNames = new List<string>
                 {
@@ -161,6 +163,7 @@ namespace EsmTspiot.ServiceProvisioner
                     60,
                     new[] { 30000, 60000, 60000 }),
                 TerminalArguments = string.Empty,
+                InstallerArguments = string.Empty,
                 GracefulStopTimeoutMilliseconds = 30000,
                 GeneratedArtifactFileNames = new List<string>
                 {
@@ -182,6 +185,7 @@ namespace EsmTspiot.ServiceProvisioner
             Provenance["ControllerRelativePath"] = CapabilityFactProvenance.PrivateBlackBox;
             Provenance["ControllerBinary"] = CapabilityFactProvenance.PrivateBlackBox;
             Provenance["Installer"] = CapabilityFactProvenance.OfficialPackage;
+            Provenance["InstallerArguments"] = CapabilityFactProvenance.OfficialPackage;
             Provenance["ProfileEnvironmentKey"] = CapabilityFactProvenance.PrivateBlackBox;
             Provenance["VendorProfileRelativePath"] = CapabilityFactProvenance.PrivateBlackBox;
             Provenance["VendorConfigFileName"] = CapabilityFactProvenance.PrivateBlackBox;

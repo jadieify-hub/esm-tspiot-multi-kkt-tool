@@ -26,7 +26,11 @@ namespace EsmTspiot.WinForms.Shared
 
         internal LmServiceProvisionerClient(ProvisionerProcessLauncher launcher)
         {
-            _launcher = launcher ?? throw new ArgumentNullException("launcher");
+            if (launcher == null)
+            {
+                throw new ArgumentNullException("launcher");
+            }
+            _launcher = launcher;
         }
 
         public Task<LmControllerInstallResult> InstallControllerVersionAsync(
@@ -81,6 +85,26 @@ namespace EsmTspiot.WinForms.Shared
             return ReadSingleItem(result, confirmation == null ? null : confirmation.KktSerial);
         }
 
+        public Task<LmServiceProvisioningBatchResult> RemoveAllAsync(
+            IList<LmRemovalConfirmation> confirmations,
+            string operationId,
+            string planHash,
+            CancellationToken cancellation)
+        {
+            LmServiceProvisioningBatchRequest request = CreateRequest(
+                LmServiceOperation.RemoveAllManaged,
+                operationId,
+                planHash);
+            if (confirmations != null)
+            {
+                for (int index = 0; index < confirmations.Count; index++)
+                {
+                    request.RemovalConfirmations.Add(confirmations[index]);
+                }
+            }
+            return InvokeAsync<LmServiceProvisioningBatchResult>(request, cancellation);
+        }
+
         public async Task<LmServiceProvisioningItemResult> CleanupAsync(
             LmCleanupConfirmation confirmation,
             string operationId,
@@ -115,42 +139,86 @@ namespace EsmTspiot.WinForms.Shared
             using (NamedPipeServerStream pipe = CreateServer(pipeName))
             using (Process helper = _launcher.Launch(pipeName, request.OperationId))
             {
-                await WaitForConnectionAsync(pipe, cancellation).ConfigureAwait(false);
-                _launcher.AuthenticateConnectedHelper(pipe.SafePipeHandle, helper.Id);
-
-                object writeGate = new object();
-                WriteMessage(pipe, request, writeGate);
-                long sequence = 0;
-                using (CancellationTokenRegistration registration = cancellation.Register(
-                    delegate
-                    {
-                        try
-                        {
-                            WriteMessage(
-                                pipe,
-                                new LmProvisioningControlMessage
-                                {
-                                    SchemaVersion = SchemaVersion,
-                                    OperationId = request.OperationId,
-                                    Sequence = Interlocked.Increment(ref sequence),
-                                    Kind = LmProvisioningControlKind.CancelAfterCurrentItem
-                                },
-                                writeGate);
-                        }
-                        catch (IOException)
-                        {
-                        }
-                        catch (ObjectDisposedException)
-                        {
-                        }
-                    }))
+                try
                 {
-                    T result = await Task.Run(delegate { return ReadMessage<T>(pipe); })
-                        .ConfigureAwait(false);
-                    ValidateResult(request, result);
-                    return result;
+                    await WaitForConnectionAsync(pipe, cancellation).ConfigureAwait(false);
+                    _launcher.AuthenticateConnectedHelper(pipe.SafePipeHandle, helper.Id);
+
+                    object writeGate = new object();
+                    WriteMessage(pipe, request, writeGate);
+                    long sequence = 0;
+                    using (CancellationTokenRegistration registration = cancellation.Register(
+                        delegate
+                        {
+                            try
+                            {
+                                WriteMessage(
+                                    pipe,
+                                    new LmProvisioningControlMessage
+                                    {
+                                        SchemaVersion = SchemaVersion,
+                                        OperationId = request.OperationId,
+                                        Sequence = Interlocked.Increment(ref sequence),
+                                        Kind = LmProvisioningControlKind.CancelAfterCurrentItem
+                                    },
+                                    writeGate);
+                            }
+                            catch (IOException)
+                            {
+                            }
+                            catch (ObjectDisposedException)
+                            {
+                            }
+                        }))
+                    {
+                        T result = await Task.Run(delegate { return ReadMessage<T>(pipe); })
+                            .ConfigureAwait(false);
+                        ValidateResult(request, result);
+                        return result;
+                    }
+                }
+                catch (IOException ex)
+                {
+                    throw CreatePrematureExitException(helper, ex);
                 }
             }
+        }
+
+        private static IOException CreatePrematureExitException(
+            Process helper,
+            IOException inner)
+        {
+            try
+            {
+                if (helper != null &&
+                    (helper.HasExited || helper.WaitForExit(1500)))
+                {
+                    return new IOException(DescribePrematureExit(helper.ExitCode), inner);
+                }
+            }
+            catch (InvalidOperationException)
+            {
+            }
+            catch (SystemException)
+            {
+            }
+            return new IOException(
+                "Канал с helper был разорван до получения ответа.",
+                inner);
+        }
+
+        private static string DescribePrematureExit(int exitCode)
+        {
+            if (exitCode == 2)
+            {
+                return "Helper отклонил аутентификацию защищенного канала или запрос (code 2).";
+            }
+            if (exitCode == 3)
+            {
+                return "Helper завершил операцию до ответа (code 3).";
+            }
+            return "Helper завершился до ответа (code " +
+                exitCode.ToString() + ").";
         }
 
         private static LmServiceProvisioningBatchRequest CreateRequest(
@@ -193,7 +261,7 @@ namespace EsmTspiot.WinForms.Shared
             AddPipeRule(
                 security,
                 new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null));
-            PipeOptions options = PipeOptions.Asynchronous | (PipeOptions)0x00080000;
+            PipeOptions options = PipeOptions.Asynchronous;
 #if NETFRAMEWORK
             return new NamedPipeServerStream(
                 pipeName,

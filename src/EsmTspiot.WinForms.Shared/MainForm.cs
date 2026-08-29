@@ -18,6 +18,7 @@ namespace EsmTspiot.WinForms.Shared
         private const int MaximumVisibleLogLength = 1500000;
         private readonly TspiotApiClient _client = new TspiotApiClient();
         private readonly BulkRegistrationWorkflow _bulkWorkflow;
+        private readonly AutomaticConfigurationCoordinator _automaticConfigurationCoordinator;
         private readonly KktDeletionWorkflow _deletionWorkflow;
         private readonly LmGatewayPage _lmGatewayPage;
         private readonly FileLogSink _fileLogSink = FileLogSink.CreateDefault();
@@ -35,6 +36,10 @@ namespace EsmTspiot.WinForms.Shared
         private readonly Button _addButton = new Button();
         private readonly Button _registerButton = new Button();
         private readonly Button _bulkRegisterButton = new Button();
+        private readonly Button _automaticStopButton = new Button();
+        private readonly Button _automaticSelectInstallerButton = new Button();
+        private readonly TextBox _automaticInstallerTextBox = new TextBox();
+        private readonly ToolTip _automaticToolTip = new ToolTip();
         private readonly Button _refreshInstancesButton = new Button();
         private readonly Button _refreshManualInstancesButton = new Button();
         private readonly Button _deleteKktButton = new Button();
@@ -65,18 +70,21 @@ namespace EsmTspiot.WinForms.Shared
         private string _lastControlModulePath = string.Empty;
         private bool _fileLogErrorShown;
         private bool _busy;
+        private System.Threading.CancellationTokenSource _automaticCancellation;
 
         public MainForm()
         {
             _bulkWorkflow = new BulkRegistrationWorkflow(_client);
+            _automaticConfigurationCoordinator = new AutomaticConfigurationCoordinator();
             _deletionWorkflow = new KktDeletionWorkflow(_client);
             _lmGatewayPage = new LmGatewayPage(
                 delegate { return _baseUrlTextBox.Text; },
                 _client,
                 AppendLog);
             _lmGatewayPage.OperationStateChanged += OnLmGatewayOperationStateChanged;
+            _lmGatewayPage.InstallerSelectionChanged += UpdateAutomaticInstallerSelection;
             Text = "Управление ККТ в ЕСМ/ТС ПИоТ";
-            ClientSize = new Size(780, 580);
+            ClientSize = new Size(780, 650);
             MinimumSize = new Size(640, 420);
             StartPosition = FormStartPosition.CenterScreen;
             Font = new Font("Segoe UI", 8.25F);
@@ -91,6 +99,13 @@ namespace EsmTspiot.WinForms.Shared
             BuildLayout();
             FillDefaults();
             Shown += delegate { ConstrainToWorkingArea(); };
+            FormClosing += delegate
+            {
+                if (_automaticCancellation != null)
+                {
+                    _automaticCancellation.Cancel();
+                }
+            };
             AppendLog("Файл журнала: " + _fileLogSink.LogFilePath + "\r\n\r\n");
         }
 
@@ -213,7 +228,9 @@ namespace EsmTspiot.WinForms.Shared
 
             _dkktPortTextBox.Dock = DockStyle.Fill;
             _dkktPortTextBox.Margin = new Padding(0, 2, 0, 2);
-            connectionTip.SetToolTip(_dkktPortTextBox, "gRPC-порт драйвера АТОЛ, обычно 4041");
+            connectionTip.SetToolTip(
+                _dkktPortTextBox,
+                "Порт оркестра ДККТ для ЕСМ, обычно 4042. 4041 — порт службы АТОЛ для ККМ.");
 
             ConfigureButton(_checkButton, "Проверить", CheckCurrentInstancesAsync);
             _checkButton.Margin = new Padding(0);
@@ -495,25 +512,79 @@ namespace EsmTspiot.WinForms.Shared
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
 
-            GroupBox group = CreateGroup("Эксперимент: все подключенные ККТ");
+            GroupBox group = CreateGroup("Полная автоматическая настройка");
             TableLayoutPanel commands = new TableLayoutPanel();
             commands.Dock = DockStyle.Fill;
             commands.AutoSize = true;
-            commands.ColumnCount = 2;
-            commands.RowCount = 1;
+            commands.ColumnCount = 3;
+            commands.RowCount = 3;
             commands.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             commands.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            commands.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            commands.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            commands.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            commands.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
-            ConfigureButton(_bulkRegisterButton, "Запустить автоматический режим", RegisterAllKktsExperimentalAsync);
-            _bulkRegisterButton.MinimumSize = new Size(220, 34);
+            Label installerLabel = new Label();
+            installerLabel.Text = "Установщик контроллера ЛМ ЧЗ";
+            installerLabel.AutoSize = true;
+            installerLabel.Anchor = AnchorStyles.Left;
+            installerLabel.Margin = new Padding(0, 5, 8, 3);
+
+            _automaticInstallerTextBox.ReadOnly = true;
+            _automaticInstallerTextBox.Dock = DockStyle.Fill;
+            _automaticInstallerTextBox.Margin = new Padding(0, 2, 6, 4);
+            _automaticInstallerTextBox.Text = "Не выбран";
+            ConfigureButton(
+                _automaticSelectInstallerButton,
+                "Выбрать…",
+                SelectAutomaticInstallerAsync);
+            _automaticSelectInstallerButton.Tag = "ControllerInstallerPicker";
+
+            ConfigureButton(
+                _bulkRegisterButton,
+                "Настроить всё автоматически",
+                ConfigureAllKktsAutomaticallyAsync);
+            _bulkRegisterButton.Tag = "EndToEndAutomaticSetup";
+            _bulkRegisterButton.MinimumSize = new Size(235, 36);
+
+            _automaticStopButton.Text = "Остановить";
+            _automaticStopButton.AutoSize = true;
+            _automaticStopButton.Enabled = false;
+            _automaticStopButton.Margin = new Padding(0, 2, 0, 4);
+            _automaticStopButton.Tag = "CancelEndToEndAutomaticSetup";
+            _automaticStopButton.Click += delegate
+            {
+                if (_automaticCancellation != null)
+                {
+                    _automaticCancellation.Cancel();
+                    _automaticStopButton.Enabled = false;
+                    _automationStatusLabel.Text = "Статус: остановка после текущей безопасной операции...";
+                }
+            };
 
             _automationStatusLabel.AutoSize = true;
             _automationStatusLabel.Anchor = AnchorStyles.Left;
-            _automationStatusLabel.Text = "Статус: еще не запускался";
+            _automationStatusLabel.Text = "Статус: установщик не выбран";
             _automationStatusLabel.Margin = new Padding(8, 6, 0, 3);
 
-            commands.Controls.Add(_bulkRegisterButton, 0, 0);
-            commands.Controls.Add(_automationStatusLabel, 1, 0);
+            Label hint = new Label();
+            hint.AutoSize = false;
+            hint.Dock = DockStyle.Fill;
+            hint.MinimumSize = new Size(0, 34);
+            hint.Text =
+                "Программа последовательно зарегистрирует найденные ККТ, установит выбранную версию " +
+                "контроллера, создаст отдельные службы и выполнит доступные привязки к ЕСМ.";
+            hint.Margin = new Padding(0, 5, 0, 0);
+
+            commands.Controls.Add(installerLabel, 0, 0);
+            commands.Controls.Add(_automaticInstallerTextBox, 1, 0);
+            commands.Controls.Add(_automaticSelectInstallerButton, 2, 0);
+            commands.Controls.Add(_bulkRegisterButton, 0, 1);
+            commands.Controls.Add(_automationStatusLabel, 1, 1);
+            commands.Controls.Add(_automaticStopButton, 2, 1);
+            commands.Controls.Add(hint, 0, 2);
+            commands.SetColumnSpan(hint, 3);
             group.Controls.Add(commands);
             root.Controls.Add(group, 0, 0);
             return root;
@@ -1029,7 +1100,37 @@ namespace EsmTspiot.WinForms.Shared
             UpdateInstancesGrid(instancesResponse);
         }
 
-        private async Task RegisterAllKktsExperimentalAsync()
+        private Task SelectAutomaticInstallerAsync()
+        {
+            bool selected = _lmGatewayPage.SelectControllerInstaller(this);
+            UpdateAutomaticInstallerSelection();
+            _automationStatusLabel.Text = selected
+                ? "Статус: готово к автоматической настройке"
+                : "Статус: установщик не выбран";
+            return Task.FromResult(0);
+        }
+
+        private void UpdateAutomaticInstallerSelection()
+        {
+            if (IsDisposed || Disposing)
+            {
+                return;
+            }
+
+            string path = _lmGatewayPage.SelectedInstallerPath;
+            _automaticInstallerTextBox.Text = string.IsNullOrWhiteSpace(path)
+                ? "Не выбран"
+                : path;
+            _automaticToolTip.SetToolTip(_automaticInstallerTextBox, path);
+            if (!_busy)
+            {
+                _automationStatusLabel.Text = _lmGatewayPage.HasInstallerSelection
+                    ? "Статус: готово к автоматической настройке"
+                    : "Статус: установщик не выбран";
+            }
+        }
+
+        private async Task ConfigureAllKktsAutomaticallyAsync()
         {
             string baseUrl = (_baseUrlTextBox.Text ?? string.Empty).Trim();
             string dkktPort = (_dkktPortTextBox.Text ?? string.Empty).Trim();
@@ -1040,81 +1141,111 @@ namespace EsmTspiot.WinForms.Shared
                 return;
             }
 
-            _automationStatusLabel.Text = "Статус: поиск подключенных ККТ...";
-            AppendLog("=== Экспериментальная массовая регистрация ККТ ===\r\n");
-            BulkRegistrationDiscovery discovery;
+            if (!_lmGatewayPage.HasInstallerSelection)
+            {
+                bool selected = _lmGatewayPage.SelectControllerInstaller(this);
+                UpdateAutomaticInstallerSelection();
+                if (!selected)
+                {
+                    _automationStatusLabel.Text = "Статус: выбор установщика отменён";
+                    return;
+                }
+            }
+
+            _automaticCancellation = new System.Threading.CancellationTokenSource();
+            _automaticStopButton.Enabled = true;
             try
             {
-                discovery = await _bulkWorkflow.DiscoverAsync(
-                    baseUrl,
-                    dkktPort,
-                    HandleBulkProgress,
-                    System.Threading.CancellationToken.None);
+                AppendLog("=== Полная автоматическая настройка ККТ и контроллеров ЛМ ЧЗ ===\r\n");
+                BulkRegistrationOutcome registrationOutcome = null;
+                string registrationError = string.Empty;
+                bool controllersCompleted = false;
+                bool completed = await _automaticConfigurationCoordinator.ExecuteAsync(
+                async delegate(System.Threading.CancellationToken token)
+                {
+                    _automationStatusLabel.Text = "Статус: поиск подключенных ККТ...";
+                    BulkRegistrationDiscovery discovery = await _bulkWorkflow.DiscoverAsync(
+                        baseUrl,
+                        dkktPort,
+                        HandleBulkProgress,
+                        token);
+                    if (!discovery.IsValid)
+                    {
+                        registrationError = discovery.ErrorMessage;
+                        AppendLog(registrationError + "\r\n\r\n");
+                        return false;
+                    }
+
+                    AppendBulkDiscovery(discovery);
+                    _automationStatusLabel.Text = "Статус: регистрация ККТ...";
+                    registrationOutcome = await _bulkWorkflow.ExecuteAsync(
+                        discovery,
+                        HandleBulkProgress,
+                        token);
+                    AppendBulkResults(registrationOutcome.Results);
+                    return !registrationOutcome.Cancelled;
+                },
+                async delegate(System.Threading.CancellationToken token)
+                {
+                    token.ThrowIfCancellationRequested();
+                    _automationStatusLabel.Text =
+                        "Статус: установка версии и создание контроллеров ЛМ ЧЗ...";
+                    controllersCompleted = await _lmGatewayPage.RunAutomaticSetupFromHostAsync(token);
+                    return controllersCompleted;
+                },
+                _automaticCancellation.Token);
+                _automaticCancellation.Token.ThrowIfCancellationRequested();
+
+                _workspaceTabs.SelectedTab = _lmGatewayTab;
+                string registrationSummary = registrationOutcome == null
+                ? (string.IsNullOrWhiteSpace(registrationError)
+                    ? "Регистрация ККТ не выполнена."
+                    : registrationError)
+                : BulkKktRegistrationResult.FormatSummary(registrationOutcome.Results);
+                bool registrationHasFailures = registrationOutcome == null ||
+                registrationOutcome.Cancelled ||
+                HasBulkFailures(registrationOutcome.Results);
+                _automationStatusLabel.Text = completed && !registrationHasFailures
+                ? "Статус: автоматическая настройка завершена"
+                : "Статус: завершено, требуется внимание";
+
+                string controllerSummary = controllersCompleted
+                ? "Контроллеры ЛМ ЧЗ созданы, запущены и привязаны к ЕСМ."
+                : _lmGatewayPage.AutomaticSetupStatus;
+                MessageBox.Show(
+                this,
+                "Автоматический режим завершён.\r\n\r\n" + registrationSummary +
+                    "\r\n\r\n" + controllerSummary +
+                    "\r\n\r\nПодробности находятся в журнале и на вкладке контроллеров ЛМ ЧЗ.",
+                "Автоматическая настройка",
+                MessageBoxButtons.OK,
+                completed && !registrationHasFailures
+                    ? MessageBoxIcon.Information
+                    : MessageBoxIcon.Warning);
             }
             catch (OperationCanceledException)
             {
-                _automationStatusLabel.Text = "Статус: подготовка отменена";
-                AppendLog("Подготовка массовой операции отменена.\r\n\r\n");
-                return;
-            }
-
-            if (!discovery.IsValid)
-            {
-                _automationStatusLabel.Text = "Статус: ошибка подготовки";
-                AppendLog(discovery.ErrorMessage + "\r\n\r\n");
-                MessageBox.Show(this, discovery.ErrorMessage, "Массовая регистрация", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return;
-            }
-
-            AppendBulkDiscovery(discovery);
-            if (discovery.Items.Count == 0)
-            {
-                _automationStatusLabel.Text = "Статус: новых ККТ не найдено";
-                AppendBulkResults(discovery.InitialResults);
-                MessageBox.Show(
-                    this,
-                    "Новых или незавершенных ККТ для обработки не найдено.\r\n\r\n" +
-                        BulkKktRegistrationResult.FormatSummary(discovery.InitialResults),
-                    "Массовая регистрация",
-                    MessageBoxButtons.OK,
-                    HasBulkFailures(discovery.InitialResults) ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
-                return;
-            }
-
-            using (BulkRegistrationDialog dialog = new BulkRegistrationDialog(
-                discovery,
-                _bulkWorkflow,
-                HandleBulkProgress))
-            {
-                dialog.ShowDialog(this);
-                if (dialog.Outcome == null)
+                if (IsDisposed || Disposing)
                 {
-                    _automationStatusLabel.Text = "Статус: операция отменена";
-                    AppendLog("Массовая операция отменена до первого изменяющего запроса.\r\n\r\n");
                     return;
                 }
-
-                _automationStatusLabel.Text = dialog.Outcome.Cancelled
-                    ? "Статус: операция остановлена"
-                    : "Статус: операция завершена";
-                AppendBulkResults(dialog.Outcome.Results);
+                _automationStatusLabel.Text = "Статус: автоматическая настройка остановлена";
+                AppendLog("Автоматическая настройка остановлена. Уже выполненные действия сохранены.\r\n\r\n");
                 MessageBox.Show(
                     this,
-                    (dialog.Outcome.Cancelled ? "Массовая операция остановлена." : "Массовая операция завершена.") +
-                        "\r\n\r\n" + BulkKktRegistrationResult.FormatSummary(dialog.Outcome.Results) +
-                        "\r\n\r\nПодробности находятся в журнале.",
-                    "Массовая регистрация",
+                    "Автоматическая настройка остановлена после безопасной границы. " +
+                        "Уже выполненные действия не отменены; фактическое состояние показано в таблицах и журнале.",
+                    "Автоматическая настройка",
                     MessageBoxButtons.OK,
-                    dialog.Outcome.Cancelled || HasBulkFailures(dialog.Outcome.Results)
-                        ? MessageBoxIcon.Warning
-                        : MessageBoxIcon.Information);
-                if (dialog.GoToLmGatewaysRequested)
+                    MessageBoxIcon.Warning);
+            }
+            finally
+            {
+                _automaticStopButton.Enabled = false;
+                if (_automaticCancellation != null)
                 {
-                    BeginInvoke(new Action(async delegate
-                    {
-                        _workspaceTabs.SelectedTab = _lmGatewayTab;
-                        await _lmGatewayPage.RefreshAsync();
-                    }));
+                    _automaticCancellation.Dispose();
+                    _automaticCancellation = null;
                 }
             }
         }

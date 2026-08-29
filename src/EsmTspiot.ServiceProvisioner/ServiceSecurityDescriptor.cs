@@ -13,7 +13,11 @@ namespace EsmTspiot.ServiceProvisioner
 
         private ServiceSecurityDescriptor(string sddl)
         {
-            Sddl = sddl ?? throw new ArgumentNullException("sddl");
+            if (sddl == null)
+            {
+                throw new ArgumentNullException("sddl");
+            }
+            Sddl = sddl;
             string operatorSid;
             IsRestrictive = Validate(sddl, out operatorSid);
             OperatorSid = operatorSid;

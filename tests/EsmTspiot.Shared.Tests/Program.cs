@@ -1,15 +1,20 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Pipes;
 using System.Net;
 using System.Net.Http;
 using System.Reflection;
+using System.Security.Authentication;
 using System.Threading;
 using System.Threading.Tasks;
 using EsmTspiot.Shared.Logging;
 using EsmTspiot.Shared.Models;
 using EsmTspiot.Shared.Services;
 using EsmTspiot.Shared.Validation;
+#if !NETFRAMEWORK
+using EsmTspiot.WinForms.Shared;
+#endif
 
 namespace EsmTspiot.Shared.Tests
 {
@@ -51,6 +56,7 @@ namespace EsmTspiot.Shared.Tests
             Run("Port allocator reserves either side and consecutive selections", PortAllocatorReservesEitherSideAndConsecutiveSelections);
             Run("Port allocator reserves the primary KKT pair", PortAllocatorReservesPrimaryKktPair);
             Run("Bulk planner assigns first sequential port pairs", BulkPlannerAssignsFirstSequentialPortPairs);
+            Run("Bulk planner uses the orchestrator DKKT port by default", BulkPlannerUsesOrchestratorDkktPortByDefault);
             Run("Bulk planner reserves implicit first soft port", BulkPlannerReservesImplicitFirstSoftPort);
             Run("Bulk planner skips occupied pair indexes", BulkPlannerSkipsOccupiedPairIndexes);
             Run("Bulk planner rejects exhausted port pairs", BulkPlannerRejectsExhaustedPortPairs);
@@ -69,6 +75,10 @@ namespace EsmTspiot.Shared.Tests
             Run("LM gateway API uses documented PUT contract", LmGatewayApiUsesDocumentedPutContract);
             Run("LM gateway API escapes instance id", LmGatewayApiEscapesInstanceId);
             Run("LM gateway API response stores redacted request", LmGatewayApiResponseStoresRedactedRequest);
+            Run("LM info API uses the current documented endpoint", LmInfoApiUsesCurrentDocumentedEndpoint);
+            Run("LM info API classifies TLS certificate failure", LmInfoApiClassifiesTlsCertificateFailure);
+            Run("LM readback explains a rejected TLS certificate", LmReadbackExplainsRejectedTlsCertificate);
+            Run("LM info parser exposes only safe readback fields", LmInfoParserExposesOnlySafeReadbackFields);
             Run("LM discovery returns registered KKT with INN", LmDiscoveryReturnsRegisteredKktWithInn);
             Run("LM discovery aborts on malformed instance list", LmDiscoveryAbortsOnMalformedInstanceList);
             Run("LM discovery continues after one malformed detail", LmDiscoveryContinuesAfterOneMalformedDetail);
@@ -89,12 +99,26 @@ namespace EsmTspiot.Shared.Tests
             Run("LM gateway planner preserves matching managed assignment", LmGatewayPlannerPreservesMatchingManagedAssignment);
             Run("LM gateway planner rejects unsafe target and all port conflicts", LmGatewayPlannerRejectsUnsafeTargetAndAllPortConflicts);
             Run("Managed LM service spec contains no credentials", ManagedLmServiceSpecContainsNoCredentials);
+            Run("Managed LM planner groups KKT by INN", ManagedLmPlannerGroupsKktByInn);
+            Run("Managed LM planner assigns stable ordinals", ManagedLmPlannerAssignsStableOrdinals);
+            Run("Managed LM planner blocks occupied deterministic ports", ManagedLmPlannerBlocksOccupiedPorts);
+            Run("LM gateway defaults use the fixed 45000 gRPC pool", LmDefaultsUse45000GrpcPool);
+            Run("LM gateway draft defaults follow the KKT ordinal", LmGatewayDraftDefaultsFollowKktOrdinal);
+            Run("LM gateway draft defaults do not crash on excess KKT", LmGatewayDraftDefaultsDoNotCrashOnExcessKkt);
+            Run("LM gateway draft settings persist only the matching nonsecret endpoint", LmGatewayDraftSettingsPersistOnlyMatchingNonsecretEndpoint);
+            Run("LM inventory display separates the official controller from KKT services", LmInventoryDisplaySeparatesOfficialControllerFromKktServices);
             Run("LM binding session does not invent readback", LmBindingSessionDoesNotInventReadback);
+            Run("LM binding session applies verified readback", LmBindingSessionAppliesVerifiedReadback);
+            Run("LM binding session orders KKT for stable ordinals", LmBindingSessionOrdersKktForStableOrdinals);
             Run("LM binding session preserves current drafts on refresh", LmBindingSessionPreservesCurrentDraftsOnRefresh);
             Run("LM binding session discards a draft after INN changes", LmBindingSessionDiscardsDraftAfterInnChanges);
             Run("LM binding session builds a plan only for selected KKT", LmBindingSessionBuildsPlanOnlyForSelectedKkt);
+            Run("LM binding session can select all KKT for full automatic setup", LmBindingSessionCanSelectAllForAutomaticSetup);
             Run("LM binding session masks outcome details", LmBindingSessionMasksOutcomeDetails);
             Run("LM binding workflow sends items sequentially", LmBindingWorkflowSendsItemsSequentially);
+            Run("LM binding workflow verifies accepted settings through info", LmBindingWorkflowVerifiesAcceptedSettingsThroughInfo);
+            Run("LM binding workflow keeps accepted when info is unavailable", LmBindingWorkflowKeepsAcceptedWhenInfoIsUnavailable);
+            Run("LM binding workflow flags an info mismatch", LmBindingWorkflowFlagsInfoMismatch);
             Run("LM binding workflow skips invalid item and continues", LmBindingWorkflowSkipsInvalidItemAndContinues);
             Run("LM binding workflow marks lost response for attention", LmBindingWorkflowMarksLostResponseForAttention);
             Run("LM binding workflow does not retry permanent HTTP error", LmBindingWorkflowDoesNotRetryPermanentHttpError);
@@ -124,15 +148,29 @@ namespace EsmTspiot.Shared.Tests
             Run("Diagnostic masker hides local user paths", DiagnosticMaskerHidesLocalUserPaths);
             Run("Diagnostic masker hides common secrets", DiagnosticMaskerHidesCommonSecrets);
             Run("Sensitive masker redacts JSON credentials", SensitiveMaskerRedactsJsonCredentials);
+            Run("Sensitive masker redacts LM info pass", SensitiveMaskerRedactsLmInfoPass);
             Run("Sensitive masker redacts key value credentials", SensitiveMaskerRedactsKeyValueCredentials);
             Run("Log formatter never persists reflected password", LogFormatterNeverPersistsReflectedPassword);
             Run("Sensitive masker preserves ordinary fields", SensitiveMaskerPreservesOrdinaryFields);
             Run("Display log trimmer preserves the newest half", DisplayLogTrimmerPreservesNewestHalf);
             Run("File log sink persists text without blocking", FileLogSinkPersistsTextWithoutBlocking);
+#if !NETFRAMEWORK
+            Run("Provisioner ACL accepts standard Program Files", ProvisionerAclAcceptsStandardProgramFiles);
+            Run("Provisioner accepts full administrator without split UAC", ProvisionerAcceptsFullAdministratorWithoutSplitUac);
+            Run("Provisioner can inspect the current administrative token", ProvisionerCanInspectCurrentAdministrativeToken);
+            Run("Provisioner client creates a supported protected pipe", ProvisionerClientCreatesSupportedProtectedPipe);
+            Run("Provisioner client explains premature helper exit", ProvisionerClientExplainsPrematureHelperExit);
+#endif
             Run("LM provisioner contract exposes no arbitrary command", LmProvisionerContractExposesNoArbitraryCommand);
             Run("LM probe result separates service and listener state", LmProbeResultSeparatesServiceAndListenerState);
             Run("LM provisioning progress contains no credentials", LmProvisioningProgressContainsNoCredentials);
+            Run("Automatic mode registers KKT before LM setup", AutomaticModeRegistersKktBeforeLmSetup);
+            Run("Automatic mode skips LM setup after registration failure", AutomaticModeSkipsLmSetupAfterRegistrationFailure);
+            Run("LM automatic setup installs before configuring KKT", LmAutomaticSetupInstallsBeforeConfiguringKkt);
+            Run("LM automatic setup stops after failed installation", LmAutomaticSetupStopsAfterFailedInstallation);
+            Run("LM automatic setup reports incomplete controller configuration", LmAutomaticSetupReportsIncompleteControllerConfiguration);
             Run("LM lifecycle ensures probes then binds", LmLifecycleEnsuresProbesThenBinds);
+            Run("LM lifecycle completion requires verified readback", LmLifecycleCompletionRequiresVerifiedReadback);
             Run("LM lifecycle never binds failed service", LmLifecycleNeverBindsFailedService);
             Run("LM lifecycle continues after one KKT failure", LmLifecycleContinuesAfterOneKktFailure);
             Run("LM lifecycle retries binding without reprovisioning", LmLifecycleRetriesBindingWithoutReprovisioning);
@@ -419,6 +457,7 @@ namespace EsmTspiot.Shared.Tests
             AssertContains(command, "Get-WmiObject Win32_Service");
             AssertContains(command, "PathName -match");
             AssertContains(command, "netstat -ano");
+            AssertContains(command, ":4041 :4042 :4043");
             AssertContains(command, "tasklist");
             AssertContains(command, "Лог сохранён");
         }
@@ -551,6 +590,21 @@ namespace EsmTspiot.Shared.Tests
             AssertEqual("51402", plan.Items[0].Input.SoftPort, "Expected first additional KKT soft port.");
             AssertEqual("50403", plan.Items[1].Input.Port, "Expected second additional KKT port.");
             AssertEqual("51403", plan.Items[1].Input.SoftPort, "Expected second additional KKT soft port.");
+        }
+
+        private static void BulkPlannerUsesOrchestratorDkktPortByDefault()
+        {
+            BulkKktRegistrationPlan plan = BulkKktRegistrationPlanner.Build(
+                TspiotDefaults.BaseUrl,
+                TspiotDefaults.DkktPort,
+                new List<DkktDeviceInfo> { CreateDevice("00105700000001") },
+                new List<KktInstanceInfo>());
+
+            AssertEqual(1, plan.Items.Count, "Expected one planned device.");
+            AssertEqual(
+                "4042",
+                plan.Items[0].Input.DkktPort,
+                "The default request must target the ESM orchestrator, not the ATOL KKM service.");
         }
 
         private static void PortAllocatorSelectsPairAfterExistingInstances()
@@ -944,6 +998,125 @@ namespace EsmTspiot.Shared.Tests
             AssertContains(handler.Requests[0].Body, "\"password\":\"" + password + "\"");
             AssertContains(response.RequestBody, "\"password\":\"***\"");
             AssertFalse(response.RequestBody.Contains(password), "ApiResponse must not retain the raw password.");
+        }
+
+        private static void LmInfoApiUsesCurrentDocumentedEndpoint()
+        {
+            const string pass = "lm-info-secret";
+            const string token = "lm-info-token";
+            RecordingHttpHandler handler = new RecordingHttpHandler
+            {
+                ResponseBody = "{\"lm\":{\"pass\":\"" + pass + "\",\"token\":\"" + token + "\"}}"
+            };
+            TspiotApiClient client = new TspiotApiClient(new HttpClient(handler));
+
+            ApiResponse explicitPort = client.GetLmInfoAsync(
+                "http://192.0.2.44:51077",
+                "50402",
+                "51402",
+                CancellationToken.None).Result;
+            client.GetLmInfoAsync(
+                "http://192.0.2.44:51077",
+                "50401",
+                "0",
+                CancellationToken.None).Wait();
+            client.GetLmInfoAsync(
+                "http://127.0.0.1:51077",
+                "50401",
+                "51401",
+                CancellationToken.None).Wait();
+
+            AssertEqual(3, handler.Requests.Count, "Expected one readback request per KKT.");
+            AssertRequest(handler.Requests[0], "GET", "https://192.0.2.44:51402/api/v2/info");
+            AssertEqual("application/json", handler.Requests[0].Accept,
+                "The documented info request must ask for JSON.");
+            AssertRequest(handler.Requests[1], "GET", "https://192.0.2.44:51401/api/v2/info");
+            AssertRequest(handler.Requests[2], "GET", "https://localhost:51401/api/v2/info");
+            AssertFalse(explicitPort.ResponseBody.Contains(pass), "LM pass must not remain in the API response.");
+            AssertFalse(explicitPort.ResponseBody.Contains(token), "LM token must not remain in the API response.");
+            AssertContains(explicitPort.ResponseBody, "\"pass\":\"***\"");
+            AssertContains(explicitPort.ResponseBody, "\"token\":\"***\"");
+        }
+
+        private static void LmInfoApiClassifiesTlsCertificateFailure()
+        {
+            HttpRequestException transportFailure = new HttpRequestException(
+                "Secure connection failed.",
+                new AuthenticationException("The remote certificate is invalid."));
+            TspiotApiClient client = new TspiotApiClient(
+                new HttpClient(new ThrowingHttpHandler(transportFailure)));
+
+            ApiResponse response = client.GetLmInfoAsync(
+                "http://127.0.0.1:51077",
+                "50401",
+                "51401",
+                CancellationToken.None).Result;
+
+            AssertTrue(response.IsConnectionFailure,
+                "A TLS trust error must remain a transport failure.");
+            PropertyInfo tlsProperty = typeof(ApiResponse).GetProperty(
+                "IsTlsCertificateFailure",
+                BindingFlags.Instance | BindingFlags.Public);
+            AssertTrue(tlsProperty != null,
+                "ApiResponse must distinguish a rejected TLS certificate from an ordinary connection failure.");
+            AssertTrue(Convert.ToBoolean(tlsProperty.GetValue(response, null)),
+                "A nested AuthenticationException must be classified as a TLS certificate failure.");
+        }
+
+        private static void LmReadbackExplainsRejectedTlsCertificate()
+        {
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            api.LmInfoResponses.Enqueue(new ApiResponse
+            {
+                IsConnectionFailure = true,
+                IsTlsCertificateFailure = true
+            });
+            LmGatewayReadbackWorkflow workflow = new LmGatewayReadbackWorkflow(api);
+
+            LmGatewayReadbackObservation observation = workflow.ReadAsync(
+                "http://127.0.0.1:51077",
+                new LmGatewayKkt
+                {
+                    InstanceId = "00105700000001",
+                    KktSerial = "00105700000001",
+                    KktInn = "1234567894",
+                    Port = "50401",
+                    SoftPort = "51401"
+                },
+                "127.0.0.1",
+                "5995",
+                CancellationToken.None).Result;
+
+            AssertFalse(observation.IsAvailable,
+                "Rejected TLS must not be reported as a successful readback.");
+            AssertContains(observation.Details, "сертификат ЕСМ");
+            AssertContains(observation.Details, "доверенный корневой сертификат");
+            AssertContains(observation.Details, "не отключайте проверку TLS");
+        }
+
+        private static void LmInfoParserExposesOnlySafeReadbackFields()
+        {
+            LmGatewayInfo info;
+            bool parsed = LmGatewayInfoParser.TryParse(
+                "{\"kktSerial\":\"00105700000001\",\"kktInn\":\"1234567894\"," +
+                "\"lm\":{\"version\":\"2.0\",\"status\":\"ready\",\"ip\":\"127.0.0.1\"," +
+                "\"port\":5995,\"login\":\"operator\",\"pass\":\"raw-pass\",\"token\":\"raw-token\"}}",
+                out info);
+
+            AssertTrue(parsed, "Expected the documented /api/v2/info shape.");
+            AssertTrue(info.HasLmConfiguration, "Expected the LM block to be detected.");
+            AssertEqual("00105700000001", info.KktSerial, "Expected KKT identity.");
+            AssertEqual("1234567894", info.KktInn, "Expected KKT INN.");
+            AssertEqual("127.0.0.1", info.LmAddress, "Expected safe LM address.");
+            AssertEqual("5995", info.LmPort, "Expected safe LM port.");
+            AssertEqual("ready", info.LmStatus, "Expected safe LM state.");
+            AssertEqual("2.0", info.LmVersion, "Expected safe LM version.");
+            AssertTrue(typeof(LmGatewayInfo).GetProperty("Login") == null,
+                "Readback model must not expose the LM login.");
+            AssertTrue(typeof(LmGatewayInfo).GetProperty("Pass") == null,
+                "Readback model must not expose the LM pass.");
+            AssertTrue(typeof(LmGatewayInfo).GetProperty("Token") == null,
+                "Readback model must not expose the LM token.");
         }
 
         private static void LmDiscoveryReturnsRegisteredKktWithInn()
@@ -1593,6 +1766,254 @@ namespace EsmTspiot.Shared.Tests
                 new TcpPortRange(15000, 15009));
         }
 
+        private static void ManagedLmPlannerGroupsKktByInn()
+        {
+            ManagedLocalModulePlan plan = ManagedLocalModulePlanner.Build(
+                new List<LmGatewayKkt>
+                {
+                    CreateLmKkt("00105700000003", "7707083893"),
+                    CreateLmKkt("00105700000002", "1234567894"),
+                    CreateLmKkt("00105700000001", "1234567894")
+                },
+                new List<ManagedKktAssignment>(),
+                new List<ManagedLocalModuleAssignment>(),
+                new List<TcpListenerSnapshotItem>());
+
+            AssertTrue(plan.IsValid, "A conflict-free local plan must be valid.");
+            AssertEqual(2, plan.Items.Count, "Two unique INNs must create two local modules.");
+            AssertEqual("1234567894", plan.Items[0].Module.Inn,
+                "The first module must belong to the first stable KKT owner.");
+            AssertEqual(1, plan.Items[0].Module.ModuleOrdinal,
+                "The first INN must inherit the first KKT ordinal.");
+            AssertEqual(5995, plan.Items[0].Module.ApiPort,
+                "LM number 1 must use API port 5995.");
+            AssertEqual(5984, plan.Items[0].Module.DatabasePort,
+                "LM number 1 must use database port 5984.");
+            AssertEqual(43691, plan.Items[0].Module.EpmdPort,
+                "LM number 1 must use its own EPMD port.");
+            AssertEqual(2, plan.Items[0].KktAssignments.Count,
+                "Both KKT of one INN must point to the same LM.");
+            AssertEqual(1, plan.Items[0].KktAssignments[0].KktOrdinal,
+                "Serial ordering must define KKT number 1.");
+            AssertEqual(45001, plan.Items[0].KktAssignments[0].GrpcPort,
+                "KKT number 1 must use gRPC 45001.");
+            AssertEqual(2, plan.Items[0].KktAssignments[1].KktOrdinal,
+                "The second KKT of the same INN keeps its own number.");
+            AssertEqual(45002, plan.Items[0].KktAssignments[1].GrpcPort,
+                "KKT number 2 must use gRPC 45002.");
+            AssertEqual(3, plan.Items[1].Module.ModuleOrdinal,
+                "The next unique INN must inherit its first linked KKT number.");
+            AssertEqual(7995, plan.Items[1].Module.ApiPort,
+                "LM number 3 must use API port 7995.");
+        }
+
+        private static void ManagedLmPlannerAssignsStableOrdinals()
+        {
+            ManagedKktAssignment savedKkt = new ManagedKktAssignment
+            {
+                KktSerial = "00105700000002",
+                KktInn = "7707083893",
+                KktOrdinal = 7,
+                LocalModuleInstanceId = "lm-existing",
+                GrpcPort = 45007,
+                RestPort = 15007
+            };
+            ManagedLocalModuleAssignment savedModule = new ManagedLocalModuleAssignment
+            {
+                Inn = "7707083893",
+                ModuleOrdinal = 7,
+                InstanceId = "lm-existing",
+                ApiPort = 11995,
+                DatabasePort = 11984,
+                EpmdPort = 43697,
+                RuntimeVersion = "2.6.1"
+            };
+
+            ManagedLocalModulePlan plan = ManagedLocalModulePlanner.Build(
+                new List<LmGatewayKkt>
+                {
+                    CreateLmKkt("00105700000001", "1234567894"),
+                    CreateLmKkt("00105700000002", "7707083893")
+                },
+                new List<ManagedKktAssignment> { savedKkt },
+                new List<ManagedLocalModuleAssignment> { savedModule },
+                new List<TcpListenerSnapshotItem>());
+
+            ManagedLocalModulePlanItem existing = plan.FindByInn("7707083893");
+            AssertTrue(existing != null, "The saved INN group must remain present.");
+            AssertEqual(7, existing.Module.ModuleOrdinal,
+                "A refresh must not renumber an existing LM.");
+            AssertEqual("lm-existing", existing.Module.InstanceId,
+                "A refresh must retain the owned instance id.");
+            AssertEqual(45007, existing.KktAssignments[0].GrpcPort,
+                "A refresh must retain the KKT controller assignment.");
+            AssertEqual(1, plan.FindByInn("1234567894").Module.ModuleOrdinal,
+                "A new INN must take the lowest available preferred KKT number.");
+        }
+
+        private static void ManagedLmPlannerBlocksOccupiedPorts()
+        {
+            ManagedLocalModulePlan plan = ManagedLocalModulePlanner.Build(
+                new List<LmGatewayKkt>
+                {
+                    CreateLmKkt("00105700000001", "1234567894")
+                },
+                new List<ManagedKktAssignment>(),
+                new List<ManagedLocalModuleAssignment>(),
+                new List<TcpListenerSnapshotItem>
+                {
+                    new TcpListenerSnapshotItem(5995, "foreign-lm", false)
+                });
+
+            AssertFalse(plan.IsValid, "An occupied deterministic port must block the plan.");
+            AssertFalse(plan.Items[0].IsValid, "The affected INN group must be invalid.");
+            AssertContains(plan.Items[0].JoinValidationMessages(), "5995");
+            AssertEqual(5995, plan.Items[0].Module.ApiPort,
+                "The planner must report the deterministic port instead of shifting it.");
+        }
+
+        private static void LmDefaultsUse45000GrpcPool()
+        {
+            LmGatewayDraft first = LmGatewayDraftDefaults.Create(
+                CreateLmKkt("00105700000001", "1234567894"),
+                1);
+            LmGatewayDraft last = LmGatewayDraftDefaults.Create(
+                CreateLmKkt("00105700000032", "7707083893"),
+                32);
+
+            AssertEqual("45001", first.GrpcPort,
+                "The default must stay below the Windows dynamic port range.");
+            AssertEqual("45032", last.GrpcPort,
+                "The supported KKT range must end at gRPC 45032.");
+        }
+
+        private static void LmGatewayDraftDefaultsFollowKktOrdinal()
+        {
+            System.Reflection.MethodInfo create = typeof(LmGatewayDraftDefaults).GetMethod(
+                "Create",
+                new[] { typeof(LmGatewayKkt), typeof(int) });
+            AssertTrue(create != null,
+                "Ordinal-aware defaults are required to keep table numbers aligned with ports.");
+            if (create == null)
+            {
+                return;
+            }
+
+            LmGatewayKkt kkt = new LmGatewayKkt
+            {
+                KktSerial = "00105700000001",
+                KktInn = "1234567894"
+            };
+            LmGatewayDraft first = (LmGatewayDraft)create.Invoke(null, new object[] { kkt, 1 });
+            LmGatewayDraft second = (LmGatewayDraft)create.Invoke(null, new object[] { kkt, 2 });
+            LmGatewayDraft third = (LmGatewayDraft)create.Invoke(null, new object[] { kkt, 3 });
+
+            AssertEqual("00105700000001", first.KktSerial, "The draft must retain the KKT identity.");
+            AssertEqual("1234567894", first.KktInn, "The draft must be scoped to the current owner INN.");
+            AssertEqual("127.0.0.1", first.TargetAddress, "The normal same-PC scenario must be ready immediately.");
+            AssertEqual("5995", first.TargetPort, "KKT number 1 must use the first LM CHZ port.");
+            AssertEqual("45001", first.GrpcPort, "KKT number 1 must end its gRPC port in 01.");
+            AssertEqual("15001", first.RestPort, "KKT number 1 must end its REST port in 01.");
+            AssertEqual("6995", second.TargetPort, "KKT number 2 must use the second LM CHZ port.");
+            AssertEqual("45002", second.GrpcPort, "KKT number 2 must end its gRPC port in 02.");
+            AssertEqual("15002", second.RestPort, "KKT number 2 must end its REST port in 02.");
+            AssertEqual("7995", third.TargetPort, "KKT number 3 must use the third LM CHZ port.");
+            AssertEqual("45003", third.GrpcPort, "KKT number 3 must end its gRPC port in 03.");
+            AssertEqual("15003", third.RestPort, "KKT number 3 must end its REST port in 03.");
+        }
+
+        private static void LmGatewayDraftDefaultsDoNotCrashOnExcessKkt()
+        {
+            LmGatewayDraft draft = LmGatewayDraftDefaults.Create(
+                new LmGatewayKkt { KktSerial = "00105700000033", KktInn = "1234567894" },
+                33);
+
+            AssertEqual("45033", draft.GrpcPort,
+                "An excess row must remain visible for validation instead of crashing discovery.");
+            AssertEqual("15033", draft.RestPort,
+                "An excess row must keep its ordinal when reporting a range conflict.");
+        }
+
+        private static void LmGatewayDraftSettingsPersistOnlyMatchingNonsecretEndpoint()
+        {
+            string directory = Path.Combine(
+                Path.GetTempPath(),
+                "esm_lm_draft_tests_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            try
+            {
+                string path = Path.Combine(directory, "drafts.json");
+                LmGatewayDraftSettingsStore store = new LmGatewayDraftSettingsStore(path);
+                store.Save(new List<LmGatewayDraft>
+                {
+                    new LmGatewayDraft
+                    {
+                        KktSerial = "00105700000001",
+                        KktInn = "1234567894",
+                        TargetAddress = "10.20.30.41",
+                        TargetPort = "5995",
+                        GrpcPort = "55001",
+                        RestPort = "15000"
+                    },
+                    new LmGatewayDraft
+                    {
+                        KktSerial = "00105700000002",
+                        KktInn = "1111111111",
+                        TargetAddress = "10.20.30.42",
+                        TargetPort = "5995"
+                    }
+                });
+
+                IList<LmGatewayDraft> loaded = store.LoadFor(new List<LmGatewayKkt>
+                {
+                    new LmGatewayKkt { KktSerial = "00105700000001", KktInn = "1234567894" },
+                    new LmGatewayKkt { KktSerial = "00105700000002", KktInn = "2222222222" }
+                });
+                string raw = File.ReadAllText(path);
+
+                AssertEqual(1, loaded.Count, "A draft from a different INN must not be restored.");
+                AssertEqual("10.20.30.41", loaded[0].TargetAddress, "The matching nonsecret endpoint must survive restart.");
+                AssertEqual("55001", loaded[0].GrpcPort,
+                    "An explicit legacy gRPC choice must survive restart without silent migration.");
+                AssertFalse(raw.IndexOf("password", StringComparison.OrdinalIgnoreCase) >= 0,
+                    "The settings format must have no password field.");
+                AssertFalse(raw.IndexOf("login", StringComparison.OrdinalIgnoreCase) >= 0,
+                    "The settings format must have no login field.");
+            }
+            finally
+            {
+                Directory.Delete(directory, true);
+            }
+        }
+
+        private static void LmInventoryDisplaySeparatesOfficialControllerFromKktServices()
+        {
+            LmServiceInventoryItem official = new LmServiceInventoryItem
+            {
+                Role = LmServiceRole.VerifiedOfficial,
+                ServiceName = "esm-lm-controller",
+                IsRunning = true
+            };
+            LmServiceInventoryItem managed = new LmServiceInventoryItem
+            {
+                Role = LmServiceRole.Managed,
+                ServiceName = "krs-esm-lm-00105700000001",
+                KktSerial = "00105700000001"
+            };
+
+            LmServiceInventoryDisplay display = LmServiceInventoryDisplay.Create(
+                new List<LmServiceInventoryItem> { managed, official });
+
+            AssertEqual(1, display.OfficialControllers.Count,
+                "The official controller must have its own status presentation.");
+            AssertEqual("esm-lm-controller", display.OfficialControllers[0].ServiceName,
+                "The official status must identify the actual Windows service.");
+            AssertEqual(1, display.InstanceServices.Count,
+                "Only managed or foreign instance services may remain in the KKT grid projection.");
+            AssertEqual("00105700000001", display.InstanceServices[0].KktSerial,
+                "The managed KKT service must remain actionable in the grid.");
+        }
+
         private static void LmBindingSessionDoesNotInventReadback()
         {
             LmGatewayBindingSession session = new LmGatewayBindingSession();
@@ -1610,8 +2031,66 @@ namespace EsmTspiot.Shared.Tests
             AssertEqual("127.0.0.1", session.Rows[0].ControllerAddress, "Expected safe local controller default.");
             AssertEqual(string.Empty, session.Rows[0].ControllerGrpcPort, "A controller port must not be guessed.");
             AssertFalse(session.Rows[0].LastBindingStatus.HasValue,
-                "Discovery has no documented LM readback and must not claim a binding result.");
-            AssertFalse(session.Rows[0].IsSelected, "A newly discovered row must require explicit selection.");
+                "Discovery alone must not claim a binding result before LM info readback.");
+            AssertTrue(session.Rows[0].IsSelected,
+                "A newly discovered row must be selected for the automatic all-KKT setup.");
+        }
+
+        private static void LmBindingSessionAppliesVerifiedReadback()
+        {
+            LmGatewayBindingSession session = new LmGatewayBindingSession();
+            session.ReplaceDiscovery(CreateLmDiscovery(
+                new LmGatewayKkt
+                {
+                    InstanceId = "00105700000001",
+                    KktSerial = "00105700000001",
+                    KktInn = "1234567894",
+                    Port = "50401",
+                    SoftPort = "51401"
+                }));
+
+            session.ApplyReadback(new List<LmGatewayReadbackObservation>
+            {
+                new LmGatewayReadbackObservation
+                {
+                    InstanceId = "00105700000001",
+                    KktSerial = "00105700000001",
+                    KktInn = "1234567894",
+                    IsAvailable = true,
+                    IdentityMatches = true,
+                    HasLmConfiguration = true,
+                    EndpointMatches = true,
+                    LmAddress = "127.0.0.1",
+                    LmPort = "5995",
+                    LmStatus = "ready",
+                    LmVersion = "2.0",
+                    Details = "Подтверждено ЕСМ: ЛМ 127.0.0.1:5995."
+                }
+            });
+
+            AssertEqual(LmGatewayBindingStatus.BindingVerified, session.Rows[0].LastBindingStatus.Value,
+                "A documented matching readback must be visible as verified.");
+            AssertEqual(string.Empty, session.Rows[0].ControllerGrpcPort,
+                "The LM target port must never be mistaken for the controller gRPC port.");
+            AssertEqual("5995", session.Rows[0].ObservedLmPort,
+                "The observed LM target port must be kept separately.");
+            AssertContains(session.Rows[0].LastMessage, "127.0.0.1:5995");
+        }
+
+        private static void LmBindingSessionOrdersKktForStableOrdinals()
+        {
+            LmGatewayBindingSession session = new LmGatewayBindingSession();
+            session.ReplaceDiscovery(CreateLmDiscovery(
+                CreateLmKkt("00105700000003", "500100732259"),
+                CreateLmKkt("00105700000001", "1234567894"),
+                CreateLmKkt("00105700000002", "7707083893")));
+
+            AssertEqual("00105700000001", session.Rows[0].Kkt.KktSerial,
+                "Table number 1 must be stable regardless of ESM response order.");
+            AssertEqual("00105700000002", session.Rows[1].Kkt.KktSerial,
+                "Table number 2 must follow deterministic serial order.");
+            AssertEqual("00105700000003", session.Rows[2].Kkt.KktSerial,
+                "Table number 3 must follow deterministic serial order.");
         }
 
         private static void LmBindingSessionPreservesCurrentDraftsOnRefresh()
@@ -1678,6 +2157,22 @@ namespace EsmTspiot.Shared.Tests
             AssertTrue(plan.Items[0].IsValid, "Expected selected row to produce a valid plan item.");
         }
 
+        private static void LmBindingSessionCanSelectAllForAutomaticSetup()
+        {
+            LmGatewayBindingSession session = new LmGatewayBindingSession();
+            session.ReplaceDiscovery(CreateLmDiscovery(
+                CreateLmKkt("00105700000001", "1234567894"),
+                CreateLmKkt("00105700000002", "7707083893")));
+            session.TryUpdateDraft("00105700000001", "127.0.0.1", "55001", false);
+
+            session.SelectAll();
+            LmGatewayBindingPlan plan = session.BuildSelectedPlan();
+
+            AssertTrue(session.Rows[0].IsSelected, "Full automatic setup must reselect the first KKT.");
+            AssertTrue(session.Rows[1].IsSelected, "Full automatic setup must retain the second KKT.");
+            AssertEqual(2, plan.Items.Count, "Full automatic setup must include every registered KKT.");
+        }
+
         private static void LmBindingSessionDiscardsDraftAfterInnChanges()
         {
             const string serial = "00105700000001";
@@ -1713,8 +2208,8 @@ namespace EsmTspiot.Shared.Tests
                 "A new INN must receive a fresh local-address default.");
             AssertEqual(string.Empty, session.Rows[0].ControllerGrpcPort,
                 "A controller port from the previous INN must be discarded.");
-            AssertFalse(session.Rows[0].IsSelected,
-                "A KKT re-registered to another INN must require explicit selection again.");
+            AssertTrue(session.Rows[0].IsSelected,
+                "A KKT re-registered to another INN must join the automatic all-KKT setup.");
             AssertFalse(session.Rows[0].LastBindingStatus.HasValue,
                 "A binding result from the previous INN must not survive refresh.");
             AssertEqual(1, session.InvalidatedKktSerials.Count,
@@ -1809,6 +2304,74 @@ namespace EsmTspiot.Shared.Tests
             AssertEqual(50063, api.LmGatewayCalls[0].Request.Port, "Expected the first controller gRPC port.");
             AssertEqual(LmGatewayBindingStatus.BindingAccepted, outcome.Results[0].Status, "Expected accepted first binding.");
             AssertEqual(LmGatewayBindingStatus.BindingAccepted, outcome.Results[1].Status, "Expected accepted second binding.");
+        }
+
+        private static void LmBindingWorkflowVerifiesAcceptedSettingsThroughInfo()
+        {
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            api.LmInfoResponses.Enqueue(Success(CreateLmInfoJson(
+                "00105700000001", "1234567894", "127.0.0.1", 5995)));
+            LmGatewayBindingWorkflow workflow = new LmGatewayBindingWorkflow(api);
+
+            LmGatewayBindingOutcome outcome = workflow.ExecuteAsync(
+                "http://127.0.0.1:51077",
+                CreateValidLmBindingPlan(1),
+                delegate { return new LmGatewayCredentials { Login = "operator", Password = "test-password" }; },
+                null,
+                CancellationToken.None).Result;
+
+            AssertEqual(1, api.LmInfoCalls, "A successful PUT must be followed by one documented readback.");
+            AssertEqual(LmGatewayBindingStatus.BindingVerified, outcome.Results[0].Status,
+                "Matching KKT identity and target LM endpoint must be verified.");
+            AssertContains(outcome.Results[0].Details, "127.0.0.1:5995");
+        }
+
+        private static void LmBindingWorkflowKeepsAcceptedWhenInfoIsUnavailable()
+        {
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            api.LmInfoResponses.Enqueue(ConnectionFailure());
+            LmGatewayBindingWorkflow workflow = new LmGatewayBindingWorkflow(api);
+
+            LmGatewayBindingOutcome outcome = workflow.ExecuteAsync(
+                "http://127.0.0.1:51077",
+                CreateValidLmBindingPlan(1),
+                delegate { return new LmGatewayCredentials { Login = "operator", Password = "test-password" }; },
+                null,
+                CancellationToken.None).Result;
+
+            AssertEqual(LmGatewayBindingStatus.BindingAccepted, outcome.Results[0].Status,
+                "An unavailable optional readback must not turn a successful PUT into a failure.");
+            AssertContains(outcome.Results[0].Details, "не удалось проверить");
+        }
+
+        private static void LmBindingWorkflowFlagsInfoMismatch()
+        {
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            api.LmInfoResponses.Enqueue(Success(CreateLmInfoJson(
+                "00105700000001", "1234567894", "127.0.0.1", 6995)));
+            LmGatewayBindingWorkflow workflow = new LmGatewayBindingWorkflow(api);
+
+            LmGatewayBindingOutcome outcome = workflow.ExecuteAsync(
+                "http://127.0.0.1:51077",
+                CreateValidLmBindingPlan(1),
+                delegate { return new LmGatewayCredentials { Login = "operator", Password = "test-password" }; },
+                null,
+                CancellationToken.None).Result;
+
+            AssertEqual(LmGatewayBindingStatus.RequiresAttention, outcome.Results[0].Status,
+                "A reachable readback with another endpoint must require attention.");
+            AssertContains(outcome.Results[0].Details, "6995");
+        }
+
+        private static string CreateLmInfoJson(
+            string kktSerial,
+            string kktInn,
+            string address,
+            int port)
+        {
+            return "{\"kktSerial\":\"" + kktSerial + "\",\"kktInn\":\"" + kktInn + "\"," +
+                "\"lm\":{\"version\":\"2.0\",\"status\":\"ready\",\"ip\":\"" + address +
+                "\",\"port\":" + port.ToString() + ",\"login\":\"operator\",\"pass\":\"secret\"}}";
         }
 
         private static void LmBindingWorkflowSkipsInvalidItemAndContinues()
@@ -1964,13 +2527,18 @@ namespace EsmTspiot.Shared.Tests
                 {
                     InstanceId = serial,
                     KktSerial = serial,
-                    KktInn = inn
+                    KktInn = inn,
+                    Port = (50400 + index).ToString(),
+                    SoftPort = (51400 + index).ToString()
                 });
-                inputs.Add(CreateLmBindingInput(
+                LmGatewayBindingInput bindingInput = CreateLmBindingInput(
                     serial,
                     inn,
                     "127.0.0.1",
-                    (50062 + index).ToString()));
+                    (50062 + index).ToString());
+                bindingInput.ExpectedLmAddress = "127.0.0.1";
+                bindingInput.ExpectedLmPort = ((index + 4) * 1000 + 995).ToString();
+                inputs.Add(bindingInput);
             }
 
             return LmGatewayBindingPlanner.Build(discovery, inputs);
@@ -2474,6 +3042,16 @@ namespace EsmTspiot.Shared.Tests
             AssertFalse(masked.Contains("\\u041f"), "Unicode escape must be masked.");
         }
 
+        private static void SensitiveMaskerRedactsLmInfoPass()
+        {
+            const string pass = "lm-controller-pass";
+            string masked = SensitiveDataMasker.Mask(
+                "{\"lm\":{\"ip\":\"127.0.0.1\",\"port\":5995,\"pass\":\"" + pass + "\"}}");
+
+            AssertFalse(masked.Contains(pass), "The documented LM info pass field must be masked.");
+            AssertContains(masked, "\"pass\":\"***\"");
+        }
+
         private static void SensitiveMaskerRedactsKeyValueCredentials()
         {
             string masked = SensitiveDataMasker.Mask(
@@ -2552,7 +3130,7 @@ namespace EsmTspiot.Shared.Tests
                 "ServiceName", "SourcePath", "Password", "Credential", "Secret", "Token"
             };
             MethodInfo[] methods = contract.GetMethods();
-            AssertEqual(4, methods.Length, "The helper contract must expose only four typed operations.");
+            AssertEqual(5, methods.Length, "The helper contract must expose only five typed operations.");
             for (int methodIndex = 0; methodIndex < methods.Length; methodIndex++)
             {
                 ParameterInfo[] parameters = methods[methodIndex].GetParameters();
@@ -2608,6 +3186,131 @@ namespace EsmTspiot.Shared.Tests
             }
         }
 
+        private static void LmAutomaticSetupInstallsBeforeConfiguringKkt()
+        {
+            Type type = typeof(LmGatewayLifecycleWorkflow).Assembly.GetType(
+                "EsmTspiot.Shared.Services.LmAutomaticSetupCoordinator");
+            AssertTrue(type != null, "Expected an automatic setup coordinator.");
+            if (type == null)
+            {
+                return;
+            }
+
+            object coordinator = Activator.CreateInstance(type);
+            List<string> order = new List<string>();
+            Func<CancellationToken, Task<bool>> install = delegate
+            {
+                order.Add("install");
+                return Task.FromResult(true);
+            };
+            Func<CancellationToken, Task<bool>> configure = delegate
+            {
+                order.Add("configure");
+                return Task.FromResult(true);
+            };
+            MethodInfo execute = type.GetMethod("ExecuteAsync");
+            AssertTrue(execute != null, "Expected the automatic setup entry point.");
+            Task<bool> task = (Task<bool>)execute.Invoke(
+                coordinator,
+                new object[] { install, configure, CancellationToken.None });
+
+            bool completed = task.GetAwaiter().GetResult();
+
+            AssertTrue(completed, "A successful two-stage setup must report completion.");
+            AssertEqual(2, order.Count, "Both automatic setup stages must run exactly once.");
+            AssertEqual("install", order[0], "Controller installation must happen first.");
+            AssertEqual("configure", order[1], "KKT configuration must start only after installation.");
+        }
+
+        private static void AutomaticModeRegistersKktBeforeLmSetup()
+        {
+            Type type = typeof(LmGatewayLifecycleWorkflow).Assembly.GetType(
+                "EsmTspiot.Shared.Services.AutomaticConfigurationCoordinator");
+            AssertTrue(type != null, "Expected an end-to-end automatic configuration coordinator.");
+            if (type == null)
+            {
+                return;
+            }
+
+            object coordinator = Activator.CreateInstance(type);
+            List<string> order = new List<string>();
+            Func<CancellationToken, Task<bool>> register = delegate
+            {
+                order.Add("register");
+                return Task.FromResult(true);
+            };
+            Func<CancellationToken, Task<bool>> configureControllers = delegate
+            {
+                order.Add("controllers");
+                return Task.FromResult(true);
+            };
+            MethodInfo execute = type.GetMethod("ExecuteAsync");
+            AssertTrue(execute != null, "Expected the end-to-end automatic mode entry point.");
+            Task<bool> task = (Task<bool>)execute.Invoke(
+                coordinator,
+                new object[] { register, configureControllers, CancellationToken.None });
+
+            bool completed = task.GetAwaiter().GetResult();
+
+            AssertTrue(completed, "Successful registration and controller setup must complete.");
+            AssertEqual(2, order.Count, "Both end-to-end stages must run exactly once.");
+            AssertEqual("register", order[0], "KKT registration must happen first.");
+            AssertEqual("controllers", order[1],
+                "Controller setup must start automatically after KKT registration.");
+        }
+
+        private static void AutomaticModeSkipsLmSetupAfterRegistrationFailure()
+        {
+            AutomaticConfigurationCoordinator coordinator =
+                new AutomaticConfigurationCoordinator();
+            bool controllersCalled = false;
+
+            bool completed = coordinator.ExecuteAsync(
+                delegate { return Task.FromResult(false); },
+                delegate
+                {
+                    controllersCalled = true;
+                    return Task.FromResult(true);
+                },
+                CancellationToken.None).GetAwaiter().GetResult();
+
+            AssertFalse(completed, "A failed registration stage must stop the automatic run.");
+            AssertFalse(controllersCalled,
+                "Controller services must not be changed after registration preparation fails.");
+        }
+
+        private static void LmAutomaticSetupStopsAfterFailedInstallation()
+        {
+            LmAutomaticSetupCoordinator coordinator = new LmAutomaticSetupCoordinator();
+            bool configureCalled = false;
+
+            bool completed = coordinator.ExecuteAsync(
+                delegate { return Task.FromResult(false); },
+                delegate
+                {
+                    configureCalled = true;
+                    return Task.FromResult(true);
+                },
+                CancellationToken.None).GetAwaiter().GetResult();
+
+            AssertFalse(completed, "A rejected controller version must stop automatic setup.");
+            AssertFalse(configureCalled,
+                "KKT services must remain untouched when controller installation is not verified.");
+        }
+
+        private static void LmAutomaticSetupReportsIncompleteControllerConfiguration()
+        {
+            LmAutomaticSetupCoordinator coordinator = new LmAutomaticSetupCoordinator();
+
+            bool completed = coordinator.ExecuteAsync(
+                delegate { return Task.FromResult(true); },
+                delegate { return Task.FromResult(false); },
+                CancellationToken.None).GetAwaiter().GetResult();
+
+            AssertFalse(completed,
+                "Automatic setup must report a partial result when a KKT is not fully configured.");
+        }
+
         private static void LmLifecycleEnsuresProbesThenBinds()
         {
             List<string> order = new List<string>();
@@ -2638,6 +3341,31 @@ namespace EsmTspiot.Shared.Tests
             AssertEqual("probe", order[1], "Probe must happen before binding.");
             AssertEqual("bind", order[2], "Binding must follow a successful probe.");
             AssertEqual(LmGatewayLifecycleStatus.BindingAccepted, outcome.Results[0].Status, "Expected accepted binding.");
+        }
+
+        private static void LmLifecycleCompletionRequiresVerifiedReadback()
+        {
+            LmGatewayLifecycleOutcome outcome = new LmGatewayLifecycleOutcome();
+            outcome.Results.Add(new LmGatewayLifecycleResult
+            {
+                Status = LmGatewayLifecycleStatus.BindingAccepted,
+                BindingStatus = LmGatewayBindingStatus.BindingAccepted,
+                BindingAttempted = true
+            });
+
+            AssertFalse(
+                LmGatewayLifecycleWorkflow.IsFullyVerified(outcome, 1),
+                "A successful PUT without readback must remain a partial automatic result.");
+
+            outcome.Results[0].BindingStatus = LmGatewayBindingStatus.BindingObserved;
+            AssertFalse(
+                LmGatewayLifecycleWorkflow.IsFullyVerified(outcome, 1),
+                "Observed identity without endpoint verification must remain partial.");
+
+            outcome.Results[0].BindingStatus = LmGatewayBindingStatus.BindingVerified;
+            AssertTrue(
+                LmGatewayLifecycleWorkflow.IsFullyVerified(outcome, 1),
+                "Only verified readback may complete the automatic scenario.");
         }
 
         private static void LmLifecycleNeverBindsFailedService()
@@ -2800,6 +3528,77 @@ namespace EsmTspiot.Shared.Tests
             AssertContains(result.Details, "ЕСМ");
             AssertContains(result.Details, "не очищена");
         }
+
+#if !NETFRAMEWORK
+        private static void ProvisionerAclAcceptsStandardProgramFiles()
+        {
+            string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+            MethodInfo method = typeof(ProvisionerProcessLauncher).GetMethod(
+                "HasProtectedAcl",
+                BindingFlags.NonPublic | BindingFlags.Static);
+            AssertTrue(method != null, "Expected the production ACL check.");
+            bool result = (bool)method.Invoke(null, new object[] { programFiles });
+            AssertTrue(result,
+                "A standard Program Files ACL with an inherit-only CREATOR OWNER ACE must be accepted.");
+        }
+
+        private static void ProvisionerAcceptsFullAdministratorWithoutSplitUac()
+        {
+            MethodInfo method = typeof(ProvisionerProcessLauncher).GetMethod(
+                "HasAdministrativeToken",
+                BindingFlags.NonPublic | BindingFlags.Static,
+                null,
+                new[] { typeof(int), typeof(bool) },
+                null);
+            AssertTrue(method != null,
+                "Expected a testable administrative-token decision.");
+            bool result = (bool)method.Invoke(null, new object[] { 1, true });
+            AssertTrue(result,
+                "An already elevated administrator must be allowed when UAC has no split token.");
+        }
+
+        private static void ProvisionerCanInspectCurrentAdministrativeToken()
+        {
+            MethodInfo method = typeof(ProvisionerProcessLauncher).GetMethod(
+                "HasAdministrativeToken",
+                BindingFlags.NonPublic | BindingFlags.Static,
+                null,
+                Type.EmptyTypes,
+                null);
+            AssertTrue(method != null,
+                "Expected the production administrative-token probe.");
+            bool result = (bool)method.Invoke(null, new object[0]);
+            AssertTrue(result,
+                "The test process must expose its administrative token without a SecurityException.");
+        }
+
+        private static void ProvisionerClientCreatesSupportedProtectedPipe()
+        {
+            MethodInfo method = typeof(LmServiceProvisionerClient).GetMethod(
+                "CreateServer",
+                BindingFlags.NonPublic | BindingFlags.Static);
+            AssertTrue(method != null, "Expected the production pipe factory.");
+            using (NamedPipeServerStream pipe = (NamedPipeServerStream)method.Invoke(
+                null,
+                new object[] { "multikkt-test-" + Guid.NewGuid().ToString("N") }))
+            {
+                AssertTrue(pipe != null, "Expected a protected named-pipe server.");
+            }
+        }
+
+        private static void ProvisionerClientExplainsPrematureHelperExit()
+        {
+            MethodInfo method = typeof(LmServiceProvisionerClient).GetMethod(
+                "DescribePrematureExit",
+                BindingFlags.NonPublic | BindingFlags.Static);
+            AssertTrue(method != null, "Expected a helper-exit diagnostic mapper.");
+            string rejected = (string)method.Invoke(null, new object[] { 2 });
+            string failed = (string)method.Invoke(null, new object[] { 3 });
+            AssertContains(rejected, "аутентификац");
+            AssertContains(rejected, "2");
+            AssertContains(failed, "3");
+        }
+#endif
 
         private static LmGatewayLifecycleWorkflow CreateLifecycleWorkflow(
             FakeLmProvisioner provisioner,
@@ -3060,6 +3859,15 @@ namespace EsmTspiot.Shared.Tests
                 return Task.FromResult(RemoveResult);
             }
 
+            public Task<LmServiceProvisioningBatchResult> RemoveAllAsync(
+                IList<LmRemovalConfirmation> confirmations,
+                string operationId,
+                string planHash,
+                CancellationToken cancellation)
+            {
+                throw new NotSupportedException();
+            }
+
             public Task<LmServiceProvisioningItemResult> CleanupAsync(
                 LmCleanupConfirmation confirmation,
                 string operationId,
@@ -3109,6 +3917,7 @@ namespace EsmTspiot.Shared.Tests
             public string Url { get; set; }
             public string Body { get; set; }
             public string ContentType { get; set; }
+            public string Accept { get; set; }
         }
 
         private sealed class FakeTspiotApiClient : ITspiotApiClient
@@ -3121,6 +3930,7 @@ namespace EsmTspiot.Shared.Tests
                 InstanceResponses = new Queue<ApiResponse>();
                 InstancesResponses = new Queue<ApiResponse>();
                 LmGatewayResponses = new Queue<ApiResponse>();
+                LmInfoResponses = new Queue<ApiResponse>();
                 LmGatewayCalls = new List<LmGatewayCall>();
                 SettingsResponse = Success("[]");
             }
@@ -3134,12 +3944,14 @@ namespace EsmTspiot.Shared.Tests
             public Queue<ApiResponse> InstanceResponses { get; private set; }
             public Queue<ApiResponse> InstancesResponses { get; private set; }
             public Queue<ApiResponse> LmGatewayResponses { get; private set; }
+            public Queue<ApiResponse> LmInfoResponses { get; private set; }
             public IList<LmGatewayCall> LmGatewayCalls { get; private set; }
             public int AddCalls { get; private set; }
             public int RegisterCalls { get; private set; }
             public int DeleteCalls { get; private set; }
             public int InstanceCalls { get; private set; }
             public int InstancesCalls { get; private set; }
+            public int LmInfoCalls { get; private set; }
             public int CancelOnInstanceCall { get; set; }
             public Action<int> LmGatewayCallObserved { get; set; }
             public string LastDeletedId { get; private set; }
@@ -3211,6 +4023,18 @@ namespace EsmTspiot.Shared.Tests
                     ? Success("{}")
                     : LmGatewayResponses.Dequeue());
             }
+
+            public Task<ApiResponse> GetLmInfoAsync(
+                string baseUrl,
+                string instancePort,
+                string softPort,
+                CancellationToken cancellationToken)
+            {
+                LmInfoCalls++;
+                return Task.FromResult(LmInfoResponses.Count == 0
+                    ? ConnectionFailure()
+                    : LmInfoResponses.Dequeue());
+            }
         }
 
         private sealed class LmGatewayCall
@@ -3225,9 +4049,11 @@ namespace EsmTspiot.Shared.Tests
             public RecordingHttpHandler()
             {
                 Requests = new List<RecordedHttpRequest>();
+                ResponseBody = "{}";
             }
 
             public IList<RecordedHttpRequest> Requests { get; private set; }
+            public string ResponseBody { get; set; }
 
             protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
             {
@@ -3239,13 +4065,36 @@ namespace EsmTspiot.Shared.Tests
                     Body = body,
                     ContentType = request.Content == null || request.Content.Headers.ContentType == null
                         ? string.Empty
-                        : request.Content.Headers.ContentType.ToString()
+                        : request.Content.Headers.ContentType.ToString(),
+                    Accept = request.Headers.Accept == null
+                        ? string.Empty
+                        : string.Join(",", request.Headers.Accept)
                 });
 
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
-                    Content = new StringContent("{}")
+                    Content = new StringContent(ResponseBody ?? string.Empty)
                 });
+            }
+        }
+
+        private sealed class ThrowingHttpHandler : HttpMessageHandler
+        {
+            private readonly Exception _exception;
+
+            internal ThrowingHttpHandler(Exception exception)
+            {
+                _exception = exception;
+            }
+
+            protected override Task<HttpResponseMessage> SendAsync(
+                HttpRequestMessage request,
+                CancellationToken cancellationToken)
+            {
+                TaskCompletionSource<HttpResponseMessage> completion =
+                    new TaskCompletionSource<HttpResponseMessage>();
+                completion.SetException(_exception);
+                return completion.Task;
             }
         }
     }

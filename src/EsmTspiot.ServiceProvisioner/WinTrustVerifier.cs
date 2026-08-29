@@ -199,7 +199,7 @@ namespace EsmTspiot.ServiceProvisioner
         [DllImport("wintrust.dll", ExactSpelling = true, SetLastError = true, CharSet = CharSet.Unicode)]
         private static extern int WinVerifyTrust(
             IntPtr windowHandle,
-            [MarshalAs(UnmanagedType.LPStruct)] ref Guid actionId,
+            ref Guid actionId,
             ref WinTrustData data);
 
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]

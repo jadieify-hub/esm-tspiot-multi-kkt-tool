@@ -11,5 +11,6 @@ namespace EsmTspiot.Shared.Models
         public bool IsSuccess { get; set; }
         public string DecodedMessage { get; set; }
         public bool IsConnectionFailure { get; set; }
+        public bool IsTlsCertificateFailure { get; set; }
     }
 }
