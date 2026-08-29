@@ -20,6 +20,7 @@ namespace EsmTspiot.ServiceProvisioner
 
         private readonly NamedPipeClientStream _stream;
         private long _lastControlSequence;
+        private long _lastSessionSequence;
 
         private NamedPipeProvisioningChannel(NamedPipeClientStream stream, string authenticatedServerSid)
         {
@@ -118,6 +119,25 @@ namespace EsmTspiot.ServiceProvisioner
             }
 
             _lastControlSequence = message.Sequence;
+            return true;
+        }
+
+        internal bool ValidateSessionMessage(
+            ManagedProvisioningSessionMessage message,
+            string operationId,
+            int itemCount)
+        {
+            ValidationResult validation = ProvisioningRequestValidator.ValidateSessionMessage(
+                message,
+                operationId,
+                _lastSessionSequence,
+                itemCount);
+            if (!validation.IsValid)
+            {
+                return false;
+            }
+
+            _lastSessionSequence = message.Sequence;
             return true;
         }
 

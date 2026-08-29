@@ -59,6 +59,10 @@ namespace EsmTspiot.ServiceProvisioner
             {
                 ValidateRemoveAll(request, result);
             }
+            else if (request.Operation == LmServiceOperation.EnsureManagedLocalModules)
+            {
+                ValidateManagedLocalModules(request, result);
+            }
             else
             {
                 result.Add("Операция помощника не поддерживается.");
@@ -103,6 +107,101 @@ namespace EsmTspiot.ServiceProvisioner
             return result;
         }
 
+        internal static ValidationResult ValidateLocalModuleInstallerSelection(
+            LocalModuleInstallerSelection selection)
+        {
+            ValidationResult result = new ValidationResult();
+            ValidateLocalModuleInstallerShape(selection, result);
+            return result;
+        }
+
+        internal static ValidationResult ValidateLocalModuleInstallerSelection(
+            LocalModuleInstallerSelection selected,
+            LocalModuleInstallerSelection observed)
+        {
+            ValidationResult result = new ValidationResult();
+            ValidateLocalModuleInstallerShape(selected, result);
+            ValidateLocalModuleInstallerShape(observed, result);
+            if (!result.IsValid)
+            {
+                return result;
+            }
+
+            if (!string.Equals(selected.SourcePath, observed.SourcePath, StringComparison.Ordinal) ||
+                !string.Equals(selected.FileName, observed.FileName, StringComparison.Ordinal) ||
+                selected.ByteLength != observed.ByteLength ||
+                !CanonicalLmPlanHasher.FixedTimeEqualsHex(selected.Sha256, observed.Sha256) ||
+                !string.Equals(selected.ProductName, observed.ProductName, StringComparison.Ordinal) ||
+                !string.Equals(selected.ProductVersion, observed.ProductVersion, StringComparison.Ordinal) ||
+                !string.Equals(selected.ProductCode, observed.ProductCode, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(selected.UpgradeCode, observed.UpgradeCode, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(selected.SignerSubject, observed.SignerSubject, StringComparison.Ordinal) ||
+                !string.Equals(
+                    selected.SignerThumbprint,
+                    observed.SignerThumbprint,
+                    StringComparison.OrdinalIgnoreCase) ||
+                selected.LicenseNoticeAccepted != observed.LicenseNoticeAccepted)
+            {
+                result.Add("Выбранный MSI ЛМ изменился или не совпадает с поддерживаемым пакетом.");
+            }
+
+            return result;
+        }
+
+        internal static ValidationResult ValidateSessionMessage(
+            ManagedProvisioningSessionMessage message,
+            string expectedOperationId,
+            long lastSequence,
+            int itemCount)
+        {
+            ValidationResult result = new ValidationResult();
+            if (message == null)
+            {
+                result.Add("Сообщение сеанса не задано.");
+                return result;
+            }
+            if (message.SchemaVersion != CurrentSchemaVersion)
+            {
+                result.Add("Версия схемы сообщения сеанса не поддерживается.");
+            }
+            if (!ProvisionerCommandLine.IsGuidN(expectedOperationId) ||
+                !string.Equals(
+                    message.OperationId,
+                    expectedOperationId,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                result.Add("Сообщение относится к другому сеансу.");
+            }
+            if (message.Sequence <= 0 || message.Sequence <= lastSequence)
+            {
+                result.Add("Номер сообщения сеанса должен монотонно увеличиваться.");
+            }
+            if (!IsKnownSessionKind(message.Kind))
+            {
+                result.Add("Тип сообщения сеанса не поддерживается.");
+                return result;
+            }
+            bool itemMessage =
+                message.Kind == ManagedProvisioningSessionKind.ExecuteItem ||
+                message.Kind == ManagedProvisioningSessionKind.ItemResult;
+            if (itemMessage)
+            {
+                if (message.ItemIndex < 0 || message.ItemIndex >= itemCount)
+                {
+                    result.Add("Индекс строки сообщения сеанса находится вне плана.");
+                }
+            }
+            else if (message.ItemIndex != -1)
+            {
+                result.Add("Сообщение сеанса этого типа не должно ссылаться на строку.");
+            }
+            if (message.Message != null && message.Message.Length > 4096)
+            {
+                result.Add("Текст сообщения сеанса превышает допустимый размер.");
+            }
+            return result;
+        }
+
         private static void ValidateEnsure(
             LmServiceProvisioningBatchRequest request,
             ValidationResult result)
@@ -115,7 +214,8 @@ namespace EsmTspiot.ServiceProvisioner
             if (request.InstallerSelection != null ||
                 request.RemovalConfirmation != null ||
                 request.CleanupConfirmation != null ||
-                HasRemovalConfirmations(request))
+                HasRemovalConfirmations(request) ||
+                HasLocalModulePayload(request))
             {
                 result.Add("EnsureBatch не принимает payload другой операции.");
             }
@@ -171,11 +271,94 @@ namespace EsmTspiot.ServiceProvisioner
             ValidationResult result)
         {
             if (HasItems(request) || request.RemovalConfirmation != null ||
-                request.CleanupConfirmation != null || HasRemovalConfirmations(request))
+                request.CleanupConfirmation != null || HasRemovalConfirmations(request) ||
+                HasLocalModulePayload(request))
             {
                 result.Add("InstallControllerVersion принимает ровно один выбранный установщик.");
             }
             ValidateInstallerShape(request.InstallerSelection, result);
+        }
+
+        private static void ValidateManagedLocalModules(
+            LmServiceProvisioningBatchRequest request,
+            ValidationResult result)
+        {
+            if (HasItems(request) || request.InstallerSelection != null ||
+                request.RemovalConfirmation != null || request.CleanupConfirmation != null ||
+                HasRemovalConfirmations(request))
+            {
+                result.Add("EnsureManagedLocalModules принимает только MSI ЛМ и план уникальных ИНН.");
+            }
+            ValidateLocalModuleInstallerShape(request.LocalModuleInstallerSelection, result);
+
+            int count = request.ManagedLocalModules == null
+                ? 0
+                : request.ManagedLocalModules.Count;
+            if (count < 1 || count > MaximumBatchSize)
+            {
+                result.Add("EnsureManagedLocalModules должен содержать от 1 до 32 уникальных ИНН.");
+                return;
+            }
+
+            HashSet<string> serials = new HashSet<string>(StringComparer.Ordinal);
+            HashSet<string> inns = new HashSet<string>(StringComparer.Ordinal);
+            HashSet<int> kktOrdinals = new HashSet<int>();
+            HashSet<int> moduleOrdinals = new HashSet<int>();
+            HashSet<int> ports = new HashSet<int>();
+            int previousModuleOrdinal = 0;
+            for (int index = 0; index < count; index++)
+            {
+                ManagedLocalModuleProvisioningItemRequest item =
+                    request.ManagedLocalModules[index];
+                if (item == null)
+                {
+                    result.Add("Строка управляемого ЛМ не задана.");
+                    continue;
+                }
+
+                try
+                {
+                    LmServiceIdentity.CreateName(item.KktSerial);
+                }
+                catch (ArgumentException)
+                {
+                    result.Add("Серийный номер опорной ККТ должен содержать 14 ASCII-цифр.");
+                }
+                if (!serials.Add(item.KktSerial ?? string.Empty))
+                {
+                    result.Add("Опорная ККТ повторяется в плане управляемых ЛМ.");
+                }
+                if (!IsAsciiDigits(item.Inn, 10) && !IsAsciiDigits(item.Inn, 12))
+                {
+                    result.Add("ИНН управляемого ЛМ должен содержать 10 или 12 ASCII-цифр.");
+                }
+                if (!inns.Add(item.Inn ?? string.Empty))
+                {
+                    result.Add("В плане повторяется ИНН управляемого ЛМ.");
+                }
+                ValidateOrdinal(item.KktOrdinal, "K", kktOrdinals, result);
+                ValidateOrdinal(item.LocalModuleOrdinal, "N", moduleOrdinals, result);
+                if (item.LocalModuleOrdinal <= previousModuleOrdinal)
+                {
+                    result.Add("Управляемые ЛМ должны быть отсортированы по номеру N.");
+                }
+                previousModuleOrdinal = item.LocalModuleOrdinal;
+
+                ValidateLocalPort(item.ApiPort, "API ЛМ", ports, result);
+                ValidateLocalPort(item.DatabasePort, "база ЛМ", ports, result);
+                ValidateLocalPort(item.EpmdPort, "EPMD ЛМ", ports, result);
+                ValidateLocalPort(item.ControllerGrpcPort, "gRPC контроллера", ports, result);
+                ValidateLocalPort(item.ControllerRestPort, "REST контроллера", ports, result);
+                if (string.IsNullOrWhiteSpace(item.RuntimeVersion) ||
+                    request.LocalModuleInstallerSelection == null ||
+                    !string.Equals(
+                        item.RuntimeVersion,
+                        request.LocalModuleInstallerSelection.ProductVersion,
+                        StringComparison.Ordinal))
+                {
+                    result.Add("Версия runtime строки не совпадает с выбранным MSI ЛМ.");
+                }
+            }
         }
 
         private static void ValidateRemove(
@@ -183,7 +366,8 @@ namespace EsmTspiot.ServiceProvisioner
             ValidationResult result)
         {
             if (HasItems(request) || request.InstallerSelection != null ||
-                request.CleanupConfirmation != null || HasRemovalConfirmations(request))
+                request.CleanupConfirmation != null || HasRemovalConfirmations(request) ||
+                HasLocalModulePayload(request))
             {
                 result.Add("RemoveManaged принимает только одно подтверждение удаления.");
             }
@@ -201,7 +385,8 @@ namespace EsmTspiot.ServiceProvisioner
             ValidationResult result)
         {
             if (HasItems(request) || request.InstallerSelection != null ||
-                request.RemovalConfirmation != null || HasRemovalConfirmations(request))
+                request.RemovalConfirmation != null || HasRemovalConfirmations(request) ||
+                HasLocalModulePayload(request))
             {
                 result.Add("CleanupManaged принимает только одно подтверждение очистки.");
             }
@@ -223,7 +408,8 @@ namespace EsmTspiot.ServiceProvisioner
             ValidationResult result)
         {
             if (HasItems(request) || request.InstallerSelection != null ||
-                request.RemovalConfirmation != null || request.CleanupConfirmation != null)
+                request.RemovalConfirmation != null || request.CleanupConfirmation != null ||
+                HasLocalModulePayload(request))
             {
                 result.Add("RemoveAllManaged принимает только список подтверждений удаления.");
             }
@@ -319,6 +505,45 @@ namespace EsmTspiot.ServiceProvisioner
             }
         }
 
+        private static void ValidateLocalModuleInstallerShape(
+            LocalModuleInstallerSelection selection,
+            ValidationResult result)
+        {
+            if (selection == null)
+            {
+                result.Add("Не выбран MSI ЛМ ЧЗ.");
+                return;
+            }
+            if (string.IsNullOrEmpty(selection.SourcePath) ||
+                !Path.IsPathRooted(selection.SourcePath) ||
+                !string.Equals(
+                    Path.GetFileName(selection.SourcePath),
+                    selection.FileName,
+                    StringComparison.Ordinal) ||
+                string.IsNullOrEmpty(selection.FileName) ||
+                !selection.FileName.EndsWith(".msi", StringComparison.OrdinalIgnoreCase))
+            {
+                result.Add("Путь и имя выбранного MSI ЛМ не совпадают.");
+            }
+            if (selection.ByteLength <= 0 || !IsHex(selection.Sha256, 64))
+            {
+                result.Add("Размер и SHA-256 MSI ЛМ неверны.");
+            }
+            if (string.IsNullOrWhiteSpace(selection.ProductName) ||
+                string.IsNullOrWhiteSpace(selection.ProductVersion) ||
+                !IsGuid(selection.ProductCode) ||
+                !IsGuid(selection.UpgradeCode) ||
+                string.IsNullOrWhiteSpace(selection.SignerSubject) ||
+                !IsHex(selection.SignerThumbprint, 40))
+            {
+                result.Add("Метаданные продукта или подписанта MSI ЛМ неверны.");
+            }
+            if (!selection.LicenseNoticeAccepted)
+            {
+                result.Add("Не подтверждено использование официального ЛМ для перечисленных ИНН.");
+            }
+        }
+
         private static void ValidateSerialAndFingerprint(
             string serial,
             LmManifestFingerprint fingerprint,
@@ -355,6 +580,23 @@ namespace EsmTspiot.ServiceProvisioner
             }
         }
 
+        private static void ValidateOrdinal(
+            int ordinal,
+            string role,
+            HashSet<int> occupied,
+            ValidationResult result)
+        {
+            if (ordinal < 1 || ordinal > MaximumBatchSize)
+            {
+                result.Add("Номер " + role + " должен быть в диапазоне 1-32.");
+                return;
+            }
+            if (!occupied.Add(ordinal))
+            {
+                result.Add("Номер " + role + " повторяется в плане.");
+            }
+        }
+
         private static bool HasItems(LmServiceProvisioningBatchRequest request)
         {
             return request.Items != null && request.Items.Count > 0;
@@ -363,6 +605,43 @@ namespace EsmTspiot.ServiceProvisioner
         private static bool HasRemovalConfirmations(LmServiceProvisioningBatchRequest request)
         {
             return request.RemovalConfirmations != null && request.RemovalConfirmations.Count > 0;
+        }
+
+        private static bool HasLocalModulePayload(LmServiceProvisioningBatchRequest request)
+        {
+            return request.LocalModuleInstallerSelection != null ||
+                (request.ManagedLocalModules != null && request.ManagedLocalModules.Count > 0);
+        }
+
+        private static bool IsKnownSessionKind(ManagedProvisioningSessionKind kind)
+        {
+            return kind == ManagedProvisioningSessionKind.SessionReady ||
+                kind == ManagedProvisioningSessionKind.ExecuteItem ||
+                kind == ManagedProvisioningSessionKind.ItemResult ||
+                kind == ManagedProvisioningSessionKind.Finish ||
+                kind == ManagedProvisioningSessionKind.CancelAfterCurrentItem;
+        }
+
+        private static bool IsAsciiDigits(string value, int length)
+        {
+            if (value == null || value.Length != length)
+            {
+                return false;
+            }
+            for (int index = 0; index < value.Length; index++)
+            {
+                if (value[index] < '0' || value[index] > '9')
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private static bool IsGuid(string value)
+        {
+            Guid parsed;
+            return !string.IsNullOrWhiteSpace(value) && Guid.TryParse(value, out parsed);
         }
 
         private static bool IsVersionedInstallerFileName(string value)

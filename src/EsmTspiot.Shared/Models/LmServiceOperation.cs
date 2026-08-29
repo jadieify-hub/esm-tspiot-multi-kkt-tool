@@ -16,6 +16,8 @@ namespace EsmTspiot.Shared.Models
         [EnumMember]
         CleanupManaged = 4,
         [EnumMember]
-        RemoveAllManaged = 5
+        RemoveAllManaged = 5,
+        [EnumMember]
+        EnsureManagedLocalModules = 6
     }
 }
