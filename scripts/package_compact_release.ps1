@@ -124,9 +124,9 @@ Author: Ruslan Kerusov
 2. To manage Windows services, an administrator must extract the complete archive to:
    C:\Program Files\KRS\MultiKKT
    Inherited ACLs must not grant ordinary users write access.
-3. From Downloads, Desktop or another user-writable directory, the application deliberately permits only viewing and manual ESM binding.
-4. The official LM controller and its installer are not included. Obtain esm-lm-controller_*-windows-setup.exe from a licensed PIOT distribution, then select it on the LM Controllers tab.
-5. This archive contains no vendor binaries, credentials or controller profiles.
+3. From Downloads, Desktop or another user-writable directory, the application deliberately blocks Windows-service mutations.
+4. The official vendor packages are not included. Supply the supported esm-lm-controller_1.6.3.2-windows-setup.exe and regime-2.6.1-7.msi files yourself, then select both in the application.
+5. This archive contains no vendor binaries, extracted runtime, credentials or managed profiles.
 6. Before a real installation, follow FIELD_TEST_1.6.3.2.md.
 
 Run: MultiKKT-ESM-TSPioT.exe
@@ -134,8 +134,8 @@ Run: MultiKKT-ESM-TSPioT.exe
 [IO.File]::WriteAllText((Join-Path $stageRoot "README.txt"), $readme, [Text.UTF8Encoding]::new($true))
 
 $forbiddenStage = @(Get-ChildItem -LiteralPath $stageRoot -Recurse -File | Where-Object {
-    $_.Extension -in @(".pdb", ".pfx", ".p12", ".pem", ".key", ".cer", ".crt", ".der") -or
-    $_.Name -match '(?i)(esm-lm-controller|lmcontroller|RollingPin|official-lm-profile|fixture)' -or
+    $_.Extension -in @(".msi", ".pdb", ".pfx", ".p12", ".pem", ".key", ".cer", ".crt", ".der") -or
+    $_.Name -match '(?i)(esm-lm-controller|lmcontroller|regime|yenisei|erts-|epmd|nssm|InstallAutoUpdateLM|RollingPin|official-lm-profile|fixture)' -or
     $_.Length -gt 10MB
 })
 if ($forbiddenStage.Count -gt 0) {
@@ -222,7 +222,7 @@ finally {
 if (($expectedEntries -join "`n") -ne ($actualEntries -join "`n")) {
     throw "ZIP content differs from the verified compact staging directory."
 }
-if ($actualEntries -match '(?i)(modern|win-x64|win-x86|esm-lm-controller|lmcontroller|\.pdb$)') {
+if ($actualEntries -match '(?i)(modern|win-x64|win-x86|esm-lm-controller|lmcontroller|regime|yenisei|erts-|epmd|nssm|InstallAutoUpdateLM|\.msi$|\.pdb$)') {
     throw "ZIP contains a Modern, vendor or debug artifact."
 }
 

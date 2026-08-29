@@ -79,7 +79,10 @@ namespace EsmTspiot.Shared.Services
             if (confirmation == null ||
                 confirmation.DisplayedState != LmServiceProvisioningStatus.CleanupPending ||
                 !string.Equals(confirmation.KktSerial, item.KktSerial, StringComparison.Ordinal) ||
-                !SameFingerprint(confirmation.ManifestFingerprint, item.ManifestFingerprint))
+                !MatchesDisplayedFingerprint(
+                    confirmation.ManifestFingerprint,
+                    confirmation.ManagedStateFingerprint,
+                    item))
             {
                 return Blocked(item, "Состояние очистки изменилось; обновите список.");
             }
@@ -114,7 +117,11 @@ namespace EsmTspiot.Shared.Services
             IList<LmServiceInventoryItem> inventory = _inventoryProvider() ??
                 new List<LmServiceInventoryItem>();
             LmServiceInventoryItem remaining = Find(inventory, item.KktSerial);
-            if (helper.Status == LmServiceProvisioningStatus.RemovedLocalArtifactsBindingRetained &&
+            if ((helper.Status ==
+                    LmServiceProvisioningStatus.RemovedLocalArtifactsBindingRetained ||
+                 helper.Status == LmServiceProvisioningStatus.Succeeded ||
+                 helper.Status ==
+                    LmServiceProvisioningStatus.SharedLocalModuleRetained) &&
                 remaining == null)
             {
                 return Result(
@@ -148,7 +155,7 @@ namespace EsmTspiot.Shared.Services
             LmServiceInventoryItem observed = Find(current, selected.KktSerial);
             return observed != null && observed.Role == LmServiceRole.Managed &&
                 string.Equals(observed.ServiceName, selected.ServiceName, StringComparison.Ordinal) &&
-                SameFingerprint(observed.ManifestFingerprint, selected.ManifestFingerprint);
+                SameDisplayedFingerprint(observed, selected);
         }
 
         private static bool TryValidateSelection(
@@ -163,7 +170,9 @@ namespace EsmTspiot.Shared.Services
                 return false;
             }
             if (item == null || item.Role != LmServiceRole.Managed ||
-                item.ManifestFingerprint == null || item.Ports == null)
+                (item.ManifestFingerprint == null &&
+                 item.ManagedStateFingerprint == null) ||
+                item.Ports == null)
             {
                 message = "Официальную, неизвестную или неподтвержденную службу удалять нельзя.";
                 return false;
@@ -178,9 +187,15 @@ namespace EsmTspiot.Shared.Services
         {
             return confirmation != null && confirmation.RetainedEsmWarningAccepted &&
                 string.Equals(confirmation.KktSerial, item.KktSerial, StringComparison.Ordinal) &&
-                confirmation.GrpcPort == item.Ports.GrpcPort &&
-                confirmation.RestPort == item.Ports.RestPort &&
-                SameFingerprint(confirmation.ManifestFingerprint, item.ManifestFingerprint);
+                SameOptionalFingerprint(
+                    confirmation.ManifestFingerprint,
+                    item.ManifestFingerprint) &&
+                SameOptionalFingerprint(
+                    confirmation.ManagedStateFingerprint,
+                    item.ManagedStateFingerprint) &&
+                (confirmation.ManifestFingerprint == null ||
+                 (confirmation.GrpcPort == item.Ports.GrpcPort &&
+                  confirmation.RestPort == item.Ports.RestPort));
         }
 
         private static void ValidateRemovalHash(
@@ -254,6 +269,42 @@ namespace EsmTspiot.Shared.Services
         {
             return left != null && right != null &&
                 CanonicalLmPlanHasher.FixedTimeEqualsHex(left.Sha256, right.Sha256);
+        }
+
+        private static bool MatchesDisplayedFingerprint(
+            LmManifestFingerprint legacyConfirmation,
+            LmManifestFingerprint managedConfirmation,
+            LmServiceInventoryItem item)
+        {
+            return item != null &&
+                SameOptionalFingerprint(
+                    legacyConfirmation,
+                    item.ManifestFingerprint) &&
+                SameOptionalFingerprint(
+                    managedConfirmation,
+                    item.ManagedStateFingerprint);
+        }
+
+        private static bool SameDisplayedFingerprint(
+            LmServiceInventoryItem left,
+            LmServiceInventoryItem right)
+        {
+            return left != null && right != null &&
+                SameOptionalFingerprint(
+                    left.ManifestFingerprint,
+                    right.ManifestFingerprint) &&
+                SameOptionalFingerprint(
+                    left.ManagedStateFingerprint,
+                    right.ManagedStateFingerprint);
+        }
+
+        private static bool SameOptionalFingerprint(
+            LmManifestFingerprint left,
+            LmManifestFingerprint right)
+        {
+            return left == null
+                ? right == null
+                : SameFingerprint(left, right);
         }
 
         private static LmGatewayLifecycleResult Blocked(

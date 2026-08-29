@@ -13,5 +13,8 @@ namespace EsmTspiot.Shared.Models
 
         [DataMember(Order = 3)]
         public LmServiceProvisioningStatus DisplayedState { get; set; }
+
+        [DataMember(Order = 4)]
+        public LmManifestFingerprint ManagedStateFingerprint { get; set; }
     }
 }

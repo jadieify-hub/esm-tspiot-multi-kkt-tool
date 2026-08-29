@@ -101,6 +101,8 @@ namespace EsmTspiot.ServiceProvisioner
     {
         private const string MachineMutexName =
             "Global\\KRS.MultiKKT.ManagedLocalModule.Machine.v1";
+        private const string ControllerMachineMutexName =
+            "Global\\KRS.MultiKKT.LmGateway.Machine.v1";
         private const int ScmAbsentAttempts = 120;
 
         private readonly LocalModuleManifestStore _manifests;
@@ -113,6 +115,7 @@ namespace EsmTspiot.ServiceProvisioner
         private readonly IEpmdCommandRunner _epmdRunner;
         private readonly IManagedKktControllerRemoval _controllerRemoval;
         private readonly Action _delay;
+        private readonly string _expectedManagedStateSha256;
 
         internal WindowsManagedLocalModuleRemovalPlatform(
             LocalModuleManifestStore manifests,
@@ -134,6 +137,7 @@ namespace EsmTspiot.ServiceProvisioner
                 readiness,
                 epmdRunner,
                 controllerRemoval,
+                string.Empty,
                 delegate { Thread.Sleep(250); })
         {
         }
@@ -148,6 +152,33 @@ namespace EsmTspiot.ServiceProvisioner
             ILocalModuleServiceReadinessProbe readiness,
             IEpmdCommandRunner epmdRunner,
             IManagedKktControllerRemoval controllerRemoval,
+            Action delay)
+            : this(
+                manifests,
+                removalJournals,
+                profiles,
+                runtimeInstaller,
+                services,
+                supervisor,
+                readiness,
+                epmdRunner,
+                controllerRemoval,
+                string.Empty,
+                delay)
+        {
+        }
+
+        internal WindowsManagedLocalModuleRemovalPlatform(
+            LocalModuleManifestStore manifests,
+            ManagedLocalModuleRemovalJournalStore removalJournals,
+            ManagedLocalModuleProfileStore profiles,
+            LocalModuleRuntimeInstaller runtimeInstaller,
+            IWindowsServiceApi services,
+            VerifiedProvisionerBinary supervisor,
+            ILocalModuleServiceReadinessProbe readiness,
+            IEpmdCommandRunner epmdRunner,
+            IManagedKktControllerRemoval controllerRemoval,
+            string expectedManagedStateSha256,
             Action delay)
         {
             if (manifests == null) throw new ArgumentNullException("manifests");
@@ -178,6 +209,8 @@ namespace EsmTspiot.ServiceProvisioner
             _readiness = readiness;
             _epmdRunner = epmdRunner;
             _controllerRemoval = controllerRemoval;
+            _expectedManagedStateSha256 =
+                expectedManagedStateSha256 ?? string.Empty;
             _delay = delay;
         }
 
@@ -258,18 +291,47 @@ namespace EsmTspiot.ServiceProvisioner
                 new WindowsManagedKktControllerRemoval(
                     request,
                     controllerManifests,
-                    services));
+                    services),
+                GetExpectedManagedStateFingerprint(request),
+                delegate { Thread.Sleep(250); });
+        }
+
+        internal static string GetExpectedManagedStateFingerprint(
+            LmServiceProvisioningBatchRequest request)
+        {
+            LmManifestFingerprint fingerprint = request.Operation ==
+                LmServiceOperation.CleanupManaged
+                ? request.CleanupConfirmation == null
+                    ? null
+                    : request.CleanupConfirmation.ManagedStateFingerprint
+                : request.RemovalConfirmation == null
+                    ? null
+                    : request.RemovalConfirmation.ManagedStateFingerprint;
+            return fingerprint == null ? string.Empty : fingerprint.Sha256;
         }
 
         public IDisposable AcquireMachineLock()
         {
-            return GlobalOperationMutex.Acquire(MachineMutexName);
+            IDisposable controller = GlobalOperationMutex.Acquire(
+                ControllerMachineMutexName);
+            try
+            {
+                IDisposable localModule = GlobalOperationMutex.Acquire(
+                    MachineMutexName);
+                return new OrderedMachineLocks(controller, localModule);
+            }
+            catch
+            {
+                controller.Dispose();
+                throw;
+            }
         }
 
         public ManagedLocalModuleRemovalSnapshot Inspect(
             string kktSerial,
             string operationId)
         {
+            VerifyDisplayedManagedState(kktSerial);
             ManagedLocalModuleRemovalSnapshot pending;
             if (_removalJournals.TryRead(kktSerial, out pending))
             {
@@ -288,6 +350,31 @@ namespace EsmTspiot.ServiceProvisioner
                     runtime);
             _removalJournals.Write(snapshot, operationId, string.Empty);
             return snapshot;
+        }
+
+        private void VerifyDisplayedManagedState(string kktSerial)
+        {
+            if (string.IsNullOrEmpty(_expectedManagedStateSha256))
+            {
+                return;
+            }
+            string actual;
+            bool found = _removalJournals.TryComputeFingerprint(
+                kktSerial,
+                out actual);
+            if (!found)
+            {
+                found = _manifests.TryComputeStackFingerprint(
+                    kktSerial,
+                    out actual);
+            }
+            if (!found || !CanonicalLmPlanHasher.FixedTimeEqualsHex(
+                    _expectedManagedStateSha256,
+                    actual))
+            {
+                throw new InvalidDataException(
+                    "Показанное состояние комплекта изменилось до удаления.");
+            }
         }
 
         public void RemoveController(
@@ -552,6 +639,36 @@ namespace EsmTspiot.ServiceProvisioner
             {
                 throw new InvalidDataException(
                     "SCM services remain without an owned instance manifest.");
+            }
+        }
+
+        private sealed class OrderedMachineLocks : IDisposable
+        {
+            private IDisposable _controller;
+            private IDisposable _localModule;
+
+            internal OrderedMachineLocks(
+                IDisposable controller,
+                IDisposable localModule)
+            {
+                _controller = controller;
+                _localModule = localModule;
+            }
+
+            public void Dispose()
+            {
+                IDisposable localModule = _localModule;
+                IDisposable controller = _controller;
+                _localModule = null;
+                _controller = null;
+                if (localModule != null)
+                {
+                    localModule.Dispose();
+                }
+                if (controller != null)
+                {
+                    controller.Dispose();
+                }
             }
         }
 

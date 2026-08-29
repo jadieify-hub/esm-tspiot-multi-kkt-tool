@@ -102,22 +102,10 @@ function Test-AllowedSecretHit {
         return $text -match '(peer|service) token'
     }
     if ($relative -eq "src/EsmTspiot.WinForms.Shared/LmGatewayPage.cs") {
-        return $text -match 'CancellationToken token|_cancellation\.Token|\bpassword\b|\.Password\b|_passwordTextBox'
+        return $text -match 'CancellationToken token|_cancellation\.Token'
     }
     if ($relative -eq "src/EsmTspiot.WinForms.Shared/LmGatewayPage.Services.cs") {
-        return $text -match 'CancellationToken token|\btoken\b' -or
-            $text -match '^\s*Password = credentials == null \? string\.Empty : credentials\.Password' -or
-            $text -match '^\s*StoreCredentials\(item\.KktSerial, item\.Login, item\.Password\);'
-    }
-    if ($relative -eq "src/EsmTspiot.WinForms.Shared/LmAutomaticSetupDialog.cs") {
-        return $text -match '^\s*public string Password \{ get; set; \}' -or
-            $text -match '^\s*DataGridViewTextBoxColumn password = EditColumn' -or
-            $text -match '^\s*password\.Tag = "Secret";' -or
-            $text -match '^\s*_grid\.Columns\.Add\(password\);' -or
-            $text -match '^\s*row\.Password \?\? string\.Empty,' -or
-            $text -match '^\s*Password = CellText\(gridRow, "LmPassword"\)' -or
-            $text -match '^\s*rows\[index\]\.Password = string\.Empty;' -or
-            $text -match '^\s*Password = source\.Password \?\? string\.Empty'
+        return $text -match 'CancellationToken token|\btoken\b'
     }
     return $false
 }
@@ -126,25 +114,31 @@ Test-SearchWrapper
 
 $gatewayPageServicesPath = Join-Path $repositoryRoot "src\EsmTspiot.WinForms.Shared\LmGatewayPage.Services.cs"
 $gatewayPageServices = [IO.File]::ReadAllText($gatewayPageServicesPath)
-if ($gatewayPageServices -notmatch '(?s)finally\s*\{\s*ClearAllCredentials\(\);\s*ClearInstallerSelection\(\);\s*\}') {
-    throw "Automatic setup must clear all transient LM credentials in its finally block."
+$gatewayPagePath = Join-Path $repositoryRoot "src\EsmTspiot.WinForms.Shared\LmGatewayPage.cs"
+$gatewayPage = [IO.File]::ReadAllText($gatewayPagePath)
+if ($gatewayPage -match '_loginTextBox|_passwordTextBox|LmGatewayCredentials|StoreCredentials') {
+    throw "The operator LM page must not retain hidden credential controls or credential state."
 }
-if ($gatewayPageServices -notmatch '(?s)private async Task StartAutomaticSetupAsync\(\).*?finally\s*\{\s*ClearAllCredentials\(\);\s*\}\s*\}\s*public async Task<bool> RunAutomaticSetupFromHostAsync') {
-    throw "The LM-tab automatic entry point must clear credentials after cancel, validation failure or execution."
+if ($gatewayPageServices -notmatch '(?s)private async Task StartAutomaticSetupAsync\(\).*?ExecuteCompleteAutomaticSetupAsync') {
+    throw "The LM-tab automatic entry point must use the complete KKT/controller/local-module workflow."
 }
-if ($gatewayPageServices -notmatch '(?s)public async Task<bool> RunAutomaticSetupFromHostAsync.*?finally\s*\{\s*ClearAllCredentials\(\);\s*\}\s*\}\s*private bool CollectAutomaticSetupParameters') {
-    throw "The host end-to-end automatic entry point must clear credentials on every exit path."
+if ($gatewayPageServices -notmatch '(?s)public async Task<bool> RunCompleteAutomaticSetupFromHostAsync.*?ExecuteCompleteAutomaticSetupAsync') {
+    throw "The host end-to-end automatic entry point must use the same complete-stack workflow."
 }
-if ($gatewayPageServices -notmatch '(?s)LmGatewayLifecycleOutcome\s+outcome;\s*try\s*\{.*?_lifecycleWorkflow\.ExecuteAsync.*?\}\s*finally\s*\{\s*ClearCredentialsForLifecyclePlan\(plan\);\s*\}') {
-    throw "LM lifecycle execution must clear transient credentials even when binding throws or is cancelled."
+if ($gatewayPageServices -notmatch '(?s)CreateCompleteSetupRequest.*?ManagedLocalModuleRequestBuilder\.Build.*?CanonicalLmPlanHasher\.Compute') {
+    throw "The complete automatic request must be built from the immutable managed-LM plan and hashed before elevation."
 }
-
 $productionFiles = New-Object System.Collections.Generic.List[string]
 $productionFiles.AddRange([string[]]@(Get-ChildItem (Join-Path $repositoryRoot "src\EsmTspiot.ServiceProvisioner") -Recurse -Filter *.cs | ForEach-Object FullName))
 $productionFiles.AddRange([string[]]@(Get-ChildItem (Join-Path $repositoryRoot "src\EsmTspiot.WinForms.Shared") -Filter "Lm*.cs" | ForEach-Object FullName))
+$productionFiles.Add((Join-Path $repositoryRoot "src\EsmTspiot.WinForms.Shared\CompleteStackProvisionerClient.cs"))
+$productionFiles.Add((Join-Path $repositoryRoot "src\EsmTspiot.WinForms.Shared\LocalModuleInstallerPicker.cs"))
+$productionFiles.Add((Join-Path $repositoryRoot "src\EsmTspiot.WinForms.Shared\ManagedLocalModuleInventoryReader.cs"))
 $productionFiles.Add((Join-Path $repositoryRoot "src\EsmTspiot.WinForms.Shared\ProvisionerProcessLauncher.cs"))
 $productionFiles.AddRange([string[]]@(Get-ChildItem (Join-Path $repositoryRoot "src\EsmTspiot.Shared\Models") -Filter "Lm*.cs" | ForEach-Object FullName))
 $productionFiles.AddRange([string[]]@(Get-ChildItem (Join-Path $repositoryRoot "src\EsmTspiot.Shared\Services") -Filter "Lm*.cs" | ForEach-Object FullName))
+$productionFiles.AddRange([string[]]@(Get-ChildItem (Join-Path $repositoryRoot "src\EsmTspiot.Shared\Services") -Filter "ManagedLocalModule*.cs" | ForEach-Object FullName))
+$productionFiles.Add((Join-Path $repositoryRoot "src\EsmTspiot.Shared\Services\SupportedLocalModulePackageIdentity.cs"))
 $productionFiles.AddRange([string[]]@(Get-ChildItem (Join-Path $repositoryRoot "src\EsmTspiot.Shared\Validation") -Filter "Lm*.cs" | ForEach-Object FullName))
 $productionFiles.AddRange([string[]]@(Get-ChildItem (Join-Path $repositoryRoot "src\EsmTspiot.Shared\Logging") -Filter *.cs | ForEach-Object FullName))
 $productionFiles.Add((Join-Path $repositoryRoot "src\EsmTspiot.Shared\Services\TspiotApiClient.cs"))
@@ -171,8 +165,9 @@ if ($LASTEXITCODE -ne 0) {
     throw "git ls-files failed."
 }
 $forbiddenTracked = @($tracked | Where-Object {
-    $_ -match '(?i)\.(exe|dll|pdb|pfx|p12|pem|key|cer|crt|der)$' -or
-    $_ -match '(?i)(esm-lm-controller|lmcontroller\.exe|RollingPin)'
+    $_ -match '(?i)\.(exe|dll|msi|beam|boot|ez|pdb|pfx|p12|pem|key|cer|crt|der)$' -or
+    $_ -match '(?i)(esm-lm-controller|RollingPin|regime|yenisei|erts-|epmd|nssm|InstallAutoUpdateLM).*\.(zip|7z|rar)$' -or
+    $_ -match '(?i)(^|/)(regime|yenisei|erts-[^/]+)(/|$)'
 })
 if ($forbiddenTracked.Count -gt 0) {
     throw "Tracked binary, credential or vendor artifact found:`n$($forbiddenTracked -join [Environment]::NewLine)"

@@ -102,8 +102,10 @@ namespace EsmTspiot.ServiceProvisioner
                     "A valid managed local-module request is required.");
             }
 
-            IDisposable machineLock = GlobalOperationMutex.Acquire(MachineMutexName);
-            VerifiedLocalModulePackage packageLock = null;
+            IDisposable controllerMachineLock = null;
+            IDisposable localModuleMachineLock = null;
+            ILockedControllerInstaller controllerInstaller = null;
+            VerifiedLocalModulePackage localModulePackage = null;
             try
             {
                 PathSafety pathSafety = new PathSafety();
@@ -111,97 +113,49 @@ namespace EsmTspiot.ServiceProvisioner
                     request.LocalModuleInstallerSelection;
                 LocalModuleCapabilityProfile capability =
                     LocalModuleCapabilityProfile.Resolve(selection.ProductVersion);
-                packageLock = LocalModulePackageVerifier
+                WindowsLmProvisioningPlatform controllerPlatform =
+                    WindowsLmProvisioningPlatform.Create(
+                        request.InitiatingSid,
+                        request.OperationId);
+                controllerMachineLock = controllerPlatform.AcquireMachineLock();
+                localModuleMachineLock =
+                    GlobalOperationMutex.Acquire(MachineMutexName);
+                controllerInstaller = controllerPlatform.PrepareInstaller(
+                    request.InstallerSelection,
+                    request.OperationId);
+                localModulePackage = LocalModulePackageVerifier
                     .SupportedVersion2617()
                     .VerifyAndLock(selection);
                 LocalModuleManifestStore manifests =
                     LocalModuleManifestStore.CreateMachineStore(
                         pathSafety,
                         request.InitiatingSid);
-                LocalModuleRuntimeInstaller runtimeInstaller =
-                    new LocalModuleRuntimeInstaller(
-                        manifests,
+                PreparedCompleteStackResources prepared =
+                    new PreparedCompleteStackResources(
+                        request,
                         pathSafety,
-                        NoopLocalModuleMutationBoundary.Instance);
-                string runtimeId = LocalModuleManagedIdentity.CreateRuntimeId(
-                    capability.CapabilityId,
-                    selection.Sha256);
-                LocalModuleRuntimeManifest runtime;
-                if (manifests.TryReadRuntime(runtimeId, out runtime))
-                {
-                    runtime = runtimeInstaller.VerifyExistingRuntime(
-                        runtimeId,
-                        selection,
-                        capability);
-                }
-                else
-                {
-                    runtime = runtimeInstaller.Install(
-                        packageLock,
-                        selection,
-                        capability,
-                        request.OperationId,
-                        OwnershipNonceGenerator.Create());
-                }
-
-                WindowsServiceApi services = new WindowsServiceApi();
-                VerifiedProvisionerBinary supervisor =
-                    VerifiedProvisionerBinary.ResolveCurrent(pathSafety);
-                LocalModuleWindowsServicePair pair =
-                    new LocalModuleWindowsServicePair(services, supervisor);
-                ManagedLocalModuleServiceReadinessProbe readiness =
-                    new ManagedLocalModuleServiceReadinessProbe(
-                        services,
-                        new TcpListenerOwnerReader(),
-                        new NativeProcessParentReader());
-                IEpmdCommandRunner epmdRunner = new NativeEpmdCommandRunner();
-                LocalModuleServicePairLifecycle lifecycle =
-                    new LocalModuleServicePairLifecycle(
-                        services,
-                        readiness);
-                ManagedLocalModuleLifecycleJournalStore journals =
-                    new ManagedLocalModuleLifecycleJournalStore(
-                        manifests.MachineRoot,
-                        pathSafety);
-                ManagedLocalModuleProfileStore profiles =
-                    new ManagedLocalModuleProfileStore(
-                        manifests,
-                        pathSafety,
-                        new AtomicFileWriter());
-                WindowsManagedLocalModulePlatform platform =
-                    new WindowsManagedLocalModulePlatform(
-                        request.InitiatingSid,
-                        runtime,
                         capability,
                         manifests,
-                        journals,
-                        profiles,
-                        services,
-                        pair,
-                        lifecycle,
-                        readiness,
-                        epmdRunner,
-                        new LocalModulePortReservationFactory());
-                IDisposable retained = new CompositeDisposable(
-                    packageLock,
-                    machineLock);
-                packageLock = null;
-                machineLock = null;
-                ManagedLocalModuleProvisioningContext context =
-                    new ManagedLocalModuleProvisioningContext(
-                        runtime.RuntimeId,
-                        capability.CapabilityId,
-                        capability.ProductVersion,
-                        retained);
+                        controllerPlatform,
+                        controllerInstaller,
+                        localModulePackage,
+                        controllerMachineLock,
+                        localModuleMachineLock);
+                controllerInstaller = null;
+                localModulePackage = null;
+                controllerMachineLock = null;
+                localModuleMachineLock = null;
                 return new CompleteStackProvisioningSession(
                     request,
-                    new ManagedLocalModuleProvisioner(platform),
-                    context);
+                    prepared.Initialize,
+                    prepared);
             }
             catch
             {
-                if (packageLock != null) packageLock.Dispose();
-                if (machineLock != null) machineLock.Dispose();
+                if (controllerInstaller != null) controllerInstaller.Dispose();
+                if (localModulePackage != null) localModulePackage.Dispose();
+                if (localModuleMachineLock != null) localModuleMachineLock.Dispose();
+                if (controllerMachineLock != null) controllerMachineLock.Dispose();
                 throw;
             }
         }
@@ -766,6 +720,209 @@ namespace EsmTspiot.ServiceProvisioner
             {
                 state.PortReservation.Dispose();
                 state.PortReservation = null;
+            }
+        }
+
+        private sealed class PreparedCompleteStackResources : IDisposable
+        {
+            private readonly LmServiceProvisioningBatchRequest _request;
+            private readonly PathSafety _pathSafety;
+            private readonly LocalModuleCapabilityProfile _capability;
+            private readonly LocalModuleManifestStore _manifests;
+            private readonly WindowsLmProvisioningPlatform _controllerPlatform;
+            private ILockedControllerInstaller _controllerInstaller;
+            private VerifiedLocalModulePackage _localModulePackage;
+            private IDisposable _controllerMachineLock;
+            private IDisposable _localModuleMachineLock;
+            private CompleteStackProvisioningComponents _components;
+            private bool _disposed;
+
+            internal PreparedCompleteStackResources(
+                LmServiceProvisioningBatchRequest request,
+                PathSafety pathSafety,
+                LocalModuleCapabilityProfile capability,
+                LocalModuleManifestStore manifests,
+                WindowsLmProvisioningPlatform controllerPlatform,
+                ILockedControllerInstaller controllerInstaller,
+                VerifiedLocalModulePackage localModulePackage,
+                IDisposable controllerMachineLock,
+                IDisposable localModuleMachineLock)
+            {
+                if (request == null) throw new ArgumentNullException("request");
+                if (pathSafety == null) throw new ArgumentNullException("pathSafety");
+                if (capability == null) throw new ArgumentNullException("capability");
+                if (manifests == null) throw new ArgumentNullException("manifests");
+                if (controllerPlatform == null)
+                {
+                    throw new ArgumentNullException("controllerPlatform");
+                }
+                if (controllerInstaller == null)
+                {
+                    throw new ArgumentNullException("controllerInstaller");
+                }
+                if (localModulePackage == null)
+                {
+                    throw new ArgumentNullException("localModulePackage");
+                }
+                if (controllerMachineLock == null)
+                {
+                    throw new ArgumentNullException("controllerMachineLock");
+                }
+                if (localModuleMachineLock == null)
+                {
+                    throw new ArgumentNullException("localModuleMachineLock");
+                }
+                _request = request;
+                _pathSafety = pathSafety;
+                _capability = capability;
+                _manifests = manifests;
+                _controllerPlatform = controllerPlatform;
+                _controllerInstaller = controllerInstaller;
+                _localModulePackage = localModulePackage;
+                _controllerMachineLock = controllerMachineLock;
+                _localModuleMachineLock = localModuleMachineLock;
+            }
+
+            internal CompleteStackProvisioningComponents Initialize()
+            {
+                ThrowIfDisposed();
+                if (_components != null)
+                {
+                    return _components;
+                }
+
+                LmServiceProvisioner controllerProvisioner =
+                    new LmServiceProvisioner(_controllerPlatform);
+                LmControllerInstallResult controllerInstall =
+                    controllerProvisioner.InstallPreparedControllerVersion(
+                        _request,
+                        _controllerInstaller);
+                if (controllerInstall == null ||
+                    controllerInstall.Status !=
+                        LmServiceProvisioningStatus.Succeeded)
+                {
+                    string message = controllerInstall == null ||
+                        string.IsNullOrWhiteSpace(controllerInstall.Message)
+                            ? "Не удалось установить проверенную версию контроллера."
+                            : controllerInstall.Message;
+                    if (controllerInstall != null &&
+                        controllerInstall.Status ==
+                            LmServiceProvisioningStatus.UnsupportedController)
+                    {
+                        throw new NotSupportedException(message);
+                    }
+                    throw new InvalidDataException(message);
+                }
+
+                LocalModuleRuntimeInstaller runtimeInstaller =
+                    new LocalModuleRuntimeInstaller(
+                        _manifests,
+                        _pathSafety,
+                        NoopLocalModuleMutationBoundary.Instance);
+                LocalModuleInstallerSelection selection =
+                    _request.LocalModuleInstallerSelection;
+                string runtimeId = LocalModuleManagedIdentity.CreateRuntimeId(
+                    _capability.CapabilityId,
+                    selection.Sha256);
+                LocalModuleRuntimeManifest runtime;
+                if (_manifests.TryReadRuntime(runtimeId, out runtime))
+                {
+                    runtime = runtimeInstaller.VerifyExistingRuntime(
+                        runtimeId,
+                        selection,
+                        _capability);
+                }
+                else
+                {
+                    runtime = runtimeInstaller.Install(
+                        _localModulePackage,
+                        selection,
+                        _capability,
+                        _request.OperationId,
+                        OwnershipNonceGenerator.Create());
+                }
+
+                WindowsServiceApi services = new WindowsServiceApi();
+                VerifiedProvisionerBinary supervisor =
+                    VerifiedProvisionerBinary.ResolveCurrent(_pathSafety);
+                LocalModuleWindowsServicePair pair =
+                    new LocalModuleWindowsServicePair(services, supervisor);
+                ManagedLocalModuleServiceReadinessProbe readiness =
+                    new ManagedLocalModuleServiceReadinessProbe(
+                        services,
+                        new TcpListenerOwnerReader(),
+                        new NativeProcessParentReader());
+                LocalModuleServicePairLifecycle lifecycle =
+                    new LocalModuleServicePairLifecycle(services, readiness);
+                ManagedLocalModuleLifecycleJournalStore journals =
+                    new ManagedLocalModuleLifecycleJournalStore(
+                        _manifests.MachineRoot,
+                        _pathSafety);
+                ManagedLocalModuleProfileStore profiles =
+                    new ManagedLocalModuleProfileStore(
+                        _manifests,
+                        _pathSafety,
+                        new AtomicFileWriter());
+                WindowsManagedLocalModulePlatform platform =
+                    new WindowsManagedLocalModulePlatform(
+                        _request.InitiatingSid,
+                        runtime,
+                        _capability,
+                        _manifests,
+                        journals,
+                        profiles,
+                        services,
+                        pair,
+                        lifecycle,
+                        readiness,
+                        new NativeEpmdCommandRunner(),
+                        new LocalModulePortReservationFactory());
+                ManagedLocalModuleProvisioningContext context =
+                    new ManagedLocalModuleProvisioningContext(
+                        runtime.RuntimeId,
+                        _capability.CapabilityId,
+                        _capability.ProductVersion);
+                _components = new CompleteStackProvisioningComponents(
+                    new ManagedLocalModuleProvisioner(platform),
+                    context,
+                    delegate(ManagedLocalModuleProvisioningItemRequest item)
+                    {
+                        return controllerProvisioner.EnsureSessionItem(
+                            _request,
+                            item);
+                    });
+                return _components;
+            }
+
+            public void Dispose()
+            {
+                if (_disposed) return;
+                _disposed = true;
+                DisposeOne(ref _controllerInstaller);
+                DisposeOne(ref _localModulePackage);
+                DisposeOne(ref _localModuleMachineLock);
+                DisposeOne(ref _controllerMachineLock);
+                _components = null;
+            }
+
+            private void ThrowIfDisposed()
+            {
+                if (_disposed)
+                {
+                    throw new ObjectDisposedException(
+                        "PreparedCompleteStackResources");
+                }
+            }
+
+            private static void DisposeOne<T>(ref T value)
+                where T : class, IDisposable
+            {
+                T disposable = value;
+                value = null;
+                if (disposable != null)
+                {
+                    disposable.Dispose();
+                }
             }
         }
 

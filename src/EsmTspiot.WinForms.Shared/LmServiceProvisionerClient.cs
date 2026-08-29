@@ -184,7 +184,7 @@ namespace EsmTspiot.WinForms.Shared
             }
         }
 
-        private static IOException CreatePrematureExitException(
+        internal static IOException CreatePrematureExitException(
             Process helper,
             IOException inner)
         {
@@ -250,7 +250,7 @@ namespace EsmTspiot.WinForms.Shared
             }
         }
 
-        private static NamedPipeServerStream CreateServer(string pipeName)
+        internal static NamedPipeServerStream CreateServer(string pipeName)
         {
             PipeSecurity security = new PipeSecurity();
             security.SetAccessRuleProtection(true, false);
@@ -293,7 +293,7 @@ namespace EsmTspiot.WinForms.Shared
                 AccessControlType.Allow));
         }
 
-        private static Task WaitForConnectionAsync(
+        internal static Task WaitForConnectionAsync(
             NamedPipeServerStream pipe,
             CancellationToken cancellation)
         {
@@ -344,7 +344,7 @@ namespace EsmTspiot.WinForms.Shared
             return completion.Task;
         }
 
-        private static void WriteMessage<T>(Stream stream, T message, object writeGate)
+        internal static void WriteMessage<T>(Stream stream, T message, object writeGate)
         {
             byte[] payload;
             using (MemoryStream memory = new MemoryStream())
@@ -366,7 +366,7 @@ namespace EsmTspiot.WinForms.Shared
             }
         }
 
-        private static T ReadMessage<T>(Stream stream)
+        internal static T ReadMessage<T>(Stream stream)
         {
             int length = BitConverter.ToInt32(ReadExact(stream, sizeof(int)), 0);
             if (length < 1 || length > MaximumMessageBytes)
@@ -400,7 +400,7 @@ namespace EsmTspiot.WinForms.Shared
             return buffer;
         }
 
-        private static void ValidateResult<T>(
+        internal static void ValidateResult<T>(
             LmServiceProvisioningBatchRequest request,
             T result)
         {

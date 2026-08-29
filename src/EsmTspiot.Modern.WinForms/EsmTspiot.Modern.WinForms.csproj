@@ -27,8 +27,11 @@
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmAutomaticSetupDialog.cs" Link="LmAutomaticSetupDialog.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayRemovalDialog.cs" Link="LmGatewayRemovalDialog.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmControllerInstallerPicker.cs" Link="LmControllerInstallerPicker.cs" />
+    <Compile Include="..\EsmTspiot.WinForms.Shared\LocalModuleInstallerPicker.cs" Link="LocalModuleInstallerPicker.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmServiceProvisionerClient.cs" Link="LmServiceProvisionerClient.cs" />
+    <Compile Include="..\EsmTspiot.WinForms.Shared\CompleteStackProvisionerClient.cs" Link="CompleteStackProvisionerClient.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmServiceInventoryReader.cs" Link="LmServiceInventoryReader.cs" />
+    <Compile Include="..\EsmTspiot.WinForms.Shared\ManagedLocalModuleInventoryReader.cs" Link="ManagedLocalModuleInventoryReader.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayProbe.cs" Link="LmGatewayProbe.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\ProvisionerProcessLauncher.cs" Link="ProvisionerProcessLauncher.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\KktDeletionConfirmationDialog.cs" Link="KktDeletionConfirmationDialog.cs" />
