@@ -70,18 +70,65 @@ namespace EsmTspiot.ServiceProvisioner
             result.DatabaseStartPlan = BuildStartPlan(
                 capability,
                 fullRuntimeRoot,
-                item,
+                item.EpmdPort,
                 LocalModuleProcessRole.Database,
                 result.YeniseiVmArgsPath,
                 result.YeniseiSysConfigPath);
             result.ApiStartPlan = BuildStartPlan(
                 capability,
                 fullRuntimeRoot,
-                item,
+                item.EpmdPort,
                 LocalModuleProcessRole.Api,
                 result.RegimeVmArgsPath,
                 result.RegimeSysConfigPath);
             return result;
+        }
+
+        internal static ErlangChildStartPlan RebuildStartPlan(
+            LocalModuleCapabilityProfile capability,
+            LocalModuleInstanceManifest manifest,
+            LocalModuleProcessRole role)
+        {
+            if (capability == null) throw new ArgumentNullException("capability");
+            if (manifest == null) throw new ArgumentNullException("manifest");
+            if (role != LocalModuleProcessRole.Database &&
+                role != LocalModuleProcessRole.Api)
+            {
+                throw new ArgumentOutOfRangeException("role");
+            }
+            if (!LocalModuleManagedIdentity.IsInstanceId(manifest.InstanceId) ||
+                !Path.IsPathRooted(manifest.RuntimeRoot) ||
+                !Path.IsPathRooted(manifest.ProfileRoot) ||
+                !string.Equals(
+                    manifest.ConfigRoot,
+                    Path.Combine(manifest.ProfileRoot, "config"),
+                    StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(
+                    manifest.DatabaseServiceName,
+                    LocalModuleManagedIdentity.CreateDatabaseServiceName(
+                        manifest.InstanceId),
+                    StringComparison.Ordinal) ||
+                !string.Equals(
+                    manifest.ApiServiceName,
+                    LocalModuleManagedIdentity.CreateApiServiceName(
+                        manifest.InstanceId),
+                    StringComparison.Ordinal) ||
+                !IsPort(manifest.EpmdPort))
+            {
+                throw new InvalidDataException(
+                    "Local-module manifest cannot produce a child start plan.");
+            }
+
+            string prefix = role == LocalModuleProcessRole.Api
+                ? "regime"
+                : "yenisei";
+            return BuildStartPlan(
+                capability,
+                Path.GetFullPath(manifest.RuntimeRoot),
+                manifest.EpmdPort,
+                role,
+                Path.Combine(manifest.ConfigRoot, prefix + "-vm.args"),
+                Path.Combine(manifest.ConfigRoot, prefix + "-sys.config"));
         }
 
         private static void ValidateItem(
@@ -312,7 +359,7 @@ namespace EsmTspiot.ServiceProvisioner
         private static ErlangChildStartPlan BuildStartPlan(
             LocalModuleCapabilityProfile capability,
             string runtimeRoot,
-            ManagedLocalModuleProvisioningItemRequest item,
+            int epmdPort,
             LocalModuleProcessRole role,
             string vmArgsPath,
             string sysConfigPath)
@@ -335,10 +382,10 @@ namespace EsmTspiot.ServiceProvisioner
                 "-config",
                 sysConfigPath
             };
-            Dictionary<string, string> environment = BuildEnvironment(
+            Dictionary<string, string> environment = BuildProcessEnvironment(
                 runtimeRoot,
                 capability,
-                item.EpmdPort);
+                epmdPort);
             if (role == LocalModuleProcessRole.Database)
             {
                 environment["YENISEI_QUERY_SERVER_JAVASCRIPT"] =
@@ -356,7 +403,7 @@ namespace EsmTspiot.ServiceProvisioner
                 environment);
         }
 
-        private static Dictionary<string, string> BuildEnvironment(
+        internal static Dictionary<string, string> BuildProcessEnvironment(
             string runtimeRoot,
             LocalModuleCapabilityProfile capability,
             int epmdPort)

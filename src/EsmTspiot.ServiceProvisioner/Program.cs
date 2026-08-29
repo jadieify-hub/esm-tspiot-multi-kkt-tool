@@ -22,6 +22,10 @@ namespace EsmTspiot.ServiceProvisioner
             {
                 return LmGatewaySupervisorService.RunServiceMode(commandLine.ServiceName);
             }
+            if (commandLine.Mode == ProvisionerMode.LocalModuleSupervisor)
+            {
+                return ManagedChildServiceHost.Run(commandLine.ServiceName);
+            }
 
             try
             {

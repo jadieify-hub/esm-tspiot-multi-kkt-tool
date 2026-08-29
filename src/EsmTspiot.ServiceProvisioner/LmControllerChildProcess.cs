@@ -1,11 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.ComponentModel;
-using System.Diagnostics;
 using System.IO;
-using System.Runtime.InteropServices;
-using System.Text;
 using System.Threading;
 
 namespace EsmTspiot.ServiceProvisioner
@@ -161,106 +157,37 @@ namespace EsmTspiot.ServiceProvisioner
 
     internal sealed class NativeControllerChildRuntime : IControllerChildRuntime
     {
-        private const uint CreateNewConsole = 0x00000010;
-        private const uint CreateUnicodeEnvironment = 0x00000400;
-        private const uint CtrlBreakEvent = 1;
+        private readonly IManagedChildRuntime _runtime;
+
+        internal NativeControllerChildRuntime()
+            : this(new NativeManagedChildRuntime())
+        {
+        }
+
+        internal NativeControllerChildRuntime(IManagedChildRuntime runtime)
+        {
+            if (runtime == null) throw new ArgumentNullException("runtime");
+            _runtime = runtime;
+        }
 
         public int Start(ControllerChildStartPlan plan)
         {
             ValidatePlan(plan);
-            IntPtr environment = BuildEnvironmentBlock(plan.Environment);
-            ProcessInformation processInformation = new ProcessInformation();
-            StartupInfo startupInfo = new StartupInfo();
-            startupInfo.Size = Marshal.SizeOf(typeof(StartupInfo));
-            StringBuilder commandLine = new StringBuilder(
-                WindowsCommandLine.QuoteArgument(plan.FileName));
-            try
-            {
-                bool created = CreateProcessW(
-                    plan.FileName,
-                    commandLine,
-                    IntPtr.Zero,
-                    IntPtr.Zero,
-                    false,
-                    CreateNewConsole | CreateUnicodeEnvironment,
-                    environment,
-                    plan.WorkingDirectory,
-                    ref startupInfo,
-                    out processInformation);
-                if (!created)
-                {
-                    throw new Win32Exception(Marshal.GetLastWin32Error());
-                }
-                return unchecked((int)processInformation.ProcessId);
-            }
-            finally
-            {
-                if (processInformation.ThreadHandle != IntPtr.Zero)
-                {
-                    CloseHandle(processInformation.ThreadHandle);
-                }
-                if (processInformation.ProcessHandle != IntPtr.Zero)
-                {
-                    CloseHandle(processInformation.ProcessHandle);
-                }
-                Marshal.FreeHGlobal(environment);
-            }
+            return _runtime.Start(new ManagedChildStartPlan(
+                plan.FileName,
+                plan.WorkingDirectory,
+                new string[0],
+                plan.Environment));
         }
 
         public bool SendGracefulStop(int processId)
         {
-            if (processId <= 0)
-            {
-                return false;
-            }
-            FreeConsole();
-            if (!AttachConsole(unchecked((uint)processId)))
-            {
-                return HasExited(processId);
-            }
-            try
-            {
-                if (!SetConsoleCtrlHandler(null, true))
-                {
-                    return false;
-                }
-                return GenerateConsoleCtrlEvent(CtrlBreakEvent, 0);
-            }
-            finally
-            {
-                FreeConsole();
-                SetConsoleCtrlHandler(null, false);
-            }
+            return _runtime.SendGracefulStop(processId);
         }
 
         public bool WaitForExit(int processId, int milliseconds)
         {
-            try
-            {
-                using (Process process = Process.GetProcessById(processId))
-                {
-                    return process.WaitForExit(milliseconds);
-                }
-            }
-            catch (ArgumentException)
-            {
-                return true;
-            }
-        }
-
-        private static bool HasExited(int processId)
-        {
-            try
-            {
-                using (Process process = Process.GetProcessById(processId))
-                {
-                    return process.HasExited;
-                }
-            }
-            catch (ArgumentException)
-            {
-                return true;
-            }
+            return _runtime.WaitForExit(processId, milliseconds);
         }
 
         private static void ValidatePlan(ControllerChildStartPlan plan)
@@ -275,83 +202,5 @@ namespace EsmTspiot.ServiceProvisioner
             }
         }
 
-        private static IntPtr BuildEnvironmentBlock(IDictionary<string, string> environment)
-        {
-            List<string> entries = new List<string>();
-            foreach (KeyValuePair<string, string> item in environment)
-            {
-                if (string.IsNullOrEmpty(item.Key) || item.Key.IndexOf('=') >= 0 ||
-                    item.Value == null || item.Value.IndexOf('\0') >= 0)
-                {
-                    throw new InvalidDataException("Process environment contains an invalid entry.");
-                }
-                entries.Add(item.Key + "=" + item.Value);
-            }
-            entries.Sort(StringComparer.OrdinalIgnoreCase);
-            string block = string.Join("\0", entries.ToArray()) + "\0\0";
-            return Marshal.StringToHGlobalUni(block);
-        }
-
-        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-        private struct StartupInfo
-        {
-            internal int Size;
-            private string Reserved;
-            private string Desktop;
-            private string Title;
-            private int X;
-            private int Y;
-            private int XSize;
-            private int YSize;
-            private int XCountChars;
-            private int YCountChars;
-            private int FillAttribute;
-            private int Flags;
-            private short ShowWindow;
-            private short Reserved2;
-            private IntPtr Reserved2Pointer;
-            private IntPtr StandardInput;
-            private IntPtr StandardOutput;
-            private IntPtr StandardError;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct ProcessInformation
-        {
-            internal IntPtr ProcessHandle;
-            internal IntPtr ThreadHandle;
-            internal uint ProcessId;
-            private uint ThreadId;
-        }
-
-        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-        private static extern bool CreateProcessW(
-            string applicationName,
-            StringBuilder commandLine,
-            IntPtr processAttributes,
-            IntPtr threadAttributes,
-            bool inheritHandles,
-            uint creationFlags,
-            IntPtr environment,
-            string currentDirectory,
-            ref StartupInfo startupInfo,
-            out ProcessInformation processInformation);
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        private static extern bool CloseHandle(IntPtr handle);
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        private static extern bool AttachConsole(uint processId);
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        private static extern bool FreeConsole();
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        private static extern bool GenerateConsoleCtrlEvent(uint controlEvent, uint processGroupId);
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        private static extern bool SetConsoleCtrlHandler(ConsoleCtrlHandler handler, bool add);
-
-        private delegate bool ConsoleCtrlHandler(uint controlType);
     }
 }

@@ -152,11 +152,13 @@ Environment is derived `ERL_LIBS`, `ERL_EPMD_PORT`, `ERL_EPMD_ADDRESS=127.0.0.1`
 
 **Interfaces:** `ManagedChildServiceHost.Run(serviceName)` loads only owned manifest. Controller retains empty vendor args; LM mode is only `--supervise-local-module <validated-service-name>`, with role/start plan re-derived from manifest. Ownership combines SCM/SID, supervisor/parent/child PID, exact executable/hash/config tokens/EPMD env/nonce/listener PID.
 
-- [ ] **Step 1: Write failing tests** for controller invariant, manifest-only LM args, distinguishing shared `erl.exe` children, explicit EPMD port and blocked `epmd -kill` with live nodes.
-- [ ] **Step 2: Run helper tests and verify RED.**
-- [ ] **Step 3: Extract only process handles, environment block, graceful stop and parent/child observation into common machinery; keep separate typed factories.**
-- [ ] **Step 4: Create DB/API SCM services with restricted SID/DACL and API dependency on DB. Start DB/listener → API/listener; stop API → DB → `epmd -names -port N` → conditional `epmd -kill -port N`.**
-- [ ] **Step 5: Run helper tests/C# 5 and commit:** `git commit -m "Добавить службы управляемых ЛМ ЧЗ"`.
+- [x] **Step 1: Write failing tests** for controller invariant, manifest-only LM args, distinguishing shared `erl.exe` children, explicit EPMD port and blocked `epmd -kill` with live nodes.
+- [x] **Step 2: Run helper tests and verify RED.**
+- [x] **Step 3: Extract only process handles, environment block, graceful stop and parent/child observation into common machinery; keep separate typed factories.**
+- [x] **Step 4: Create DB/API SCM services with restricted SID/DACL and API dependency on DB. Start DB/listener → API/listener; stop API → DB → `epmd -names -port N` → conditional `epmd -kill -port N`.**
+- [x] **Step 5: Run helper tests/C# 5 and commit:** `git commit -m "Добавить службы управляемых ЛМ ЧЗ"`.
+
+Implementation evidence: 84/84 helper tests pass under `LangVersion=5`; the LM safety gate passes. The service host accepts only a canonical manifest-owned service name, rebuilds fixed Erlang arguments/environment from owned manifests, retains the native child handle, and preserves the controller's empty-argument contract through the common runtime adapter.
 
 ---
 
