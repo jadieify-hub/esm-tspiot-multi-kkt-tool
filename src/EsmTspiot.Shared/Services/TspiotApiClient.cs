@@ -1,5 +1,8 @@
 using System;
+using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Security.Authentication;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -115,10 +118,70 @@ namespace EsmTspiot.Shared.Services
                 cancellationToken);
         }
 
+        public async Task<ApiResponse> GetLmInfoAsync(
+            string baseUrl,
+            string instancePort,
+            string softPort,
+            CancellationToken cancellationToken)
+        {
+            ApiResponse response = await SendAsync(
+                "GET",
+                BuildLmInfoUrl(baseUrl, instancePort, softPort),
+                null,
+                null,
+                cancellationToken,
+                true).ConfigureAwait(false);
+
+            response.ReasonPhrase = SensitiveDataMasker.Mask(response.ReasonPhrase);
+            response.ResponseBody = SensitiveDataMasker.Mask(response.ResponseBody);
+            response.DecodedMessage = SensitiveDataMasker.Mask(response.DecodedMessage);
+            return response;
+        }
+
         public static string BuildUrl(string baseUrl, string path)
         {
             string normalizedBase = (baseUrl ?? string.Empty).Trim().TrimEnd('/');
             return normalizedBase + path;
+        }
+
+        public static string BuildLmInfoUrl(
+            string baseUrl,
+            string instancePort,
+            string softPort)
+        {
+            Uri baseAddress;
+            if (!Uri.TryCreate((baseUrl ?? string.Empty).Trim(), UriKind.Absolute, out baseAddress) ||
+                string.IsNullOrWhiteSpace(baseAddress.Host))
+            {
+                throw new ArgumentException("Адрес ЕСМ некорректен.", "baseUrl");
+            }
+
+            int infoPort;
+            if (!int.TryParse((softPort ?? string.Empty).Trim(), out infoPort) || infoPort <= 0)
+            {
+                int servicePort;
+                if (!int.TryParse((instancePort ?? string.Empty).Trim(), out servicePort) ||
+                    servicePort < 1 || servicePort > 64535)
+                {
+                    throw new ArgumentException(
+                        "Не удалось определить softPort экземпляра ККТ.",
+                        "softPort");
+                }
+
+                infoPort = servicePort + 1000;
+            }
+
+            if (infoPort < 1 || infoPort > 65535)
+            {
+                throw new ArgumentException("softPort экземпляра ККТ некорректен.", "softPort");
+            }
+
+            UriBuilder builder = new UriBuilder(
+                Uri.UriSchemeHttps,
+                baseAddress.IsLoopback ? "localhost" : baseAddress.Host,
+                infoPort,
+                TspiotDefaults.LmInfoPath);
+            return builder.Uri.AbsoluteUri;
         }
 
         private async Task<ApiResponse> SendAsync(
@@ -126,7 +189,8 @@ namespace EsmTspiot.Shared.Services
             string url,
             string requestBody,
             string requestBodyForLog,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            bool acceptJson = false)
         {
             ApiResponse result = new ApiResponse
             {
@@ -139,6 +203,10 @@ namespace EsmTspiot.Shared.Services
             {
                 using (HttpRequestMessage request = new HttpRequestMessage(new HttpMethod(method), url))
                 {
+                    if (acceptJson)
+                    {
+                        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+                    }
                     if (!string.IsNullOrEmpty(requestBody))
                     {
                         request.Content = new StringContent(requestBody, Encoding.UTF8, "application/json");
@@ -174,11 +242,35 @@ namespace EsmTspiot.Shared.Services
                 result.StatusCode = 0;
                 result.IsSuccess = false;
                 result.IsConnectionFailure = true;
+                result.IsTlsCertificateFailure = IsTlsCertificateFailure(ex);
                 result.ResponseBody = ex.Message;
                 result.DecodedMessage = TspiotErrorDecoder.DecodeConnectionFailure();
             }
 
             return result;
+        }
+
+        private static bool IsTlsCertificateFailure(Exception exception)
+        {
+            Exception current = exception;
+            while (current != null)
+            {
+                if (current is AuthenticationException)
+                {
+                    return true;
+                }
+
+                WebException webException = current as WebException;
+                if (webException != null &&
+                    webException.Status == WebExceptionStatus.TrustFailure)
+                {
+                    return true;
+                }
+
+                current = current.InnerException;
+            }
+
+            return false;
         }
     }
 }

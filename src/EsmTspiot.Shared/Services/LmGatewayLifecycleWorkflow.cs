@@ -37,6 +37,31 @@ namespace EsmTspiot.Shared.Services
             _binding = binding;
         }
 
+        public static bool IsFullyVerified(
+            LmGatewayLifecycleOutcome outcome,
+            int expectedCount)
+        {
+            if (outcome == null || expectedCount <= 0 || outcome.Cancelled ||
+                outcome.ReconciliationRequired || outcome.Results == null ||
+                outcome.Results.Count != expectedCount)
+            {
+                return false;
+            }
+
+            for (int index = 0; index < outcome.Results.Count; index++)
+            {
+                LmGatewayLifecycleResult result = outcome.Results[index];
+                if (result == null ||
+                    result.Status != LmGatewayLifecycleStatus.BindingAccepted ||
+                    !result.BindingAttempted ||
+                    result.BindingStatus != LmGatewayBindingStatus.BindingVerified)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         public async Task<LmGatewayLifecycleOutcome> ExecuteAsync(
             string baseUrl,
             LmGatewayPlan plan,
@@ -262,7 +287,9 @@ namespace EsmTspiot.Shared.Services
                     KktSerial = item.Spec.KktSerial,
                     KktInn = item.Kkt == null ? string.Empty : item.Kkt.KktInn,
                     ControllerAddress = "127.0.0.1",
-                    ControllerGrpcPort = item.Spec.Ports.GrpcPort.ToString(CultureInfo.InvariantCulture)
+                    ControllerGrpcPort = item.Spec.Ports.GrpcPort.ToString(CultureInfo.InvariantCulture),
+                    ExpectedLmAddress = item.Spec.Target.Address,
+                    ExpectedLmPort = item.Spec.Target.Port.ToString(CultureInfo.InvariantCulture)
                 },
                 Validation = new ValidationResult()
             });
@@ -425,7 +452,9 @@ namespace EsmTspiot.Shared.Services
             {
                 return LmGatewayLifecycleStatus.RequiresAttention;
             }
-            if (result.Status == LmGatewayBindingStatus.BindingAccepted)
+            if (result.Status == LmGatewayBindingStatus.BindingAccepted ||
+                result.Status == LmGatewayBindingStatus.BindingObserved ||
+                result.Status == LmGatewayBindingStatus.BindingVerified)
             {
                 return LmGatewayLifecycleStatus.BindingAccepted;
             }

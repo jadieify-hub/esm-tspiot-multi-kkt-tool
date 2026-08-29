@@ -59,7 +59,11 @@ namespace EsmTspiot.ServiceProvisioner
 
         internal LmServiceRemovalWorkflow(ILmServiceRemovalPlatform platform)
         {
-            _platform = platform ?? throw new ArgumentNullException("platform");
+            if (platform == null)
+            {
+                throw new ArgumentNullException("platform");
+            }
+            _platform = platform;
         }
 
         internal LmServiceProvisioningItemResult RemoveManaged(

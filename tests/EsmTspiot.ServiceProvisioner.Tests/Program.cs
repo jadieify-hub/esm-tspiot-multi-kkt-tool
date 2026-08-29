@@ -4,6 +4,7 @@ using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Runtime.Serialization.Json;
 using System.Security.AccessControl;
 using System.Security.Cryptography;
@@ -26,7 +27,9 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Provisioning protocol rejects unknown schema or operation", ProvisioningProtocolRejectsUnknownSchemaOrOperation);
             Run("Provisioning protocol rejects unsafe item", ProvisioningProtocolRejectsUnsafeItem);
             Run("Provisioning pipe authenticates exact protected peer images", ProvisioningPipeAuthenticatesExactProtectedPeerImages);
+            Run("Provisioning pipe accepts protected main images independently of filename", ProvisioningPipeAcceptsProtectedMainImageIndependentlyOfFilename);
             Run("Provisioning protocol rejects plan hash mismatch", ProvisioningProtocolRejectsPlanHashMismatch);
+            Run("Remove-all protocol accepts only a confirmed managed batch", RemoveAllProtocolAcceptsOnlyConfirmedManagedBatch);
             Run("Provisioning protocol exposes no credentials paths or commands", ProvisioningProtocolExposesNoCredentialsPathsOrCommands);
             Run("Installer operation accepts only one verified setup selection", InstallerOperationAcceptsOnlyOneVerifiedSetupSelection);
             Run("Installer operation rejects stale or substituted source file", InstallerOperationRejectsStaleOrSubstitutedSourceFile);
@@ -34,6 +37,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Official controller locator enforces full product trust", OfficialControllerLocatorEnforcesFullProductTrust);
             Run("Official installer verifier locks verifies and stages atomically", OfficialInstallerVerifierLocksVerifiesAndStagesAtomically);
             Run("Official installer verifier rejects filename signer version or hash mismatch", OfficialInstallerVerifierRejectsFilenameSignerVersionOrHashMismatch);
+            Run("Supported installer uses the fixed NSIS silent switch", SupportedInstallerUsesFixedNsisSilentSwitch);
+            Run("WinTrust marshals the action GUID as one native pointer", WinTrustMarshalsActionGuidAsOneNativePointer);
             Run("Manifest path is derived only from KKT serial", ManifestPathIsDerivedOnlyFromKktSerial);
             Run("Manifest and profile stores reject reparse points", ManifestAndProfileStoresRejectReparsePoints);
             Run("Manifest is atomic credential free and projects cleanup state", ManifestIsAtomicCredentialFreeAndProjectsCleanupState);
@@ -72,6 +77,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Install version leaves services stopped when verification fails", InstallVersionLeavesServicesStoppedWhenVerificationFails);
             Run("Ensure clears version pending only after recreated artifacts are ready", EnsureClearsVersionPendingOnlyAfterRecreatedArtifactsAreReady);
             Run("Remove deletes only fully owned freshly confirmed service", RemoveDeletesOnlyFullyOwnedFreshlyConfirmedService);
+            Run("Remove all managed processes every confirmed service in one batch", RemoveAllManagedProcessesEveryConfirmedServiceInOneBatch);
             Run("Remove blocks official base service", RemoveBlocksOfficialBaseService);
             Run("Remove blocks service on marker mismatch", RemoveBlocksServiceOnMarkerMismatch);
             Run("Remove blocks service on image mismatch", RemoveBlocksServiceOnImageMismatch);
@@ -84,7 +90,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
             if (_failures == 0)
             {
-                Console.WriteLine("All 60 provisioner tests passed.");
+                Console.WriteLine("All 65 provisioner tests passed.");
                 return 0;
             }
 
@@ -236,6 +242,34 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 "Over-the-shoulder elevation under another account must fail.");
         }
 
+        private static void ProvisioningPipeAcceptsProtectedMainImageIndependentlyOfFilename()
+        {
+            MethodInfo method = typeof(NativePeerEvidenceReader).GetMethod(
+                "IsAllowedMainImage",
+                BindingFlags.NonPublic | BindingFlags.Static);
+            AssertTrue(method != null, "Expected the production image-name check.");
+            string appDirectory = @"C:\Program Files\KRS\MultiKKT";
+            bool compact = (bool)method.Invoke(null, new object[]
+            {
+                Path.Combine(appDirectory, "MultiKKT-ESM-TSPioT.exe"),
+                appDirectory
+            });
+            bool renamed = (bool)method.Invoke(null, new object[]
+            {
+                Path.Combine(appDirectory, "operator-renamed-tool.exe"),
+                appDirectory
+            });
+            bool outside = (bool)method.Invoke(null, new object[]
+            {
+                @"C:\Temp\MultiKKT-ESM-TSPioT.exe",
+                appDirectory
+            });
+            AssertTrue(compact, "The exact compact release image name must be accepted.");
+            AssertTrue(renamed,
+                "A renamed image in the exact protected application directory must be accepted.");
+            AssertFalse(outside, "An image outside the application directory must remain rejected.");
+        }
+
         private static void ProvisioningProtocolRejectsPlanHashMismatch()
         {
             LmServiceProvisioningBatchRequest request = CreateEnsureRequest(1);
@@ -245,6 +279,20 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
             AssertFalse(validation.IsValid, "A changed displayed plan must invalidate its confirmation hash.");
             AssertContains(validation.JoinMessages(), "SHA-256");
+        }
+
+        private static void RemoveAllProtocolAcceptsOnlyConfirmedManagedBatch()
+        {
+            LmServiceProvisioningBatchRequest request = CreateRemoveAllRequest(2);
+            AssertTrue(ProvisioningRequestValidator.Validate(request).IsValid,
+                "A bounded list of exact removal confirmations must be accepted.");
+
+            LmServiceProvisioningBatchRequest duplicate = CreateRemoveAllRequest(2);
+            duplicate.RemovalConfirmations[1].KktSerial =
+                duplicate.RemovalConfirmations[0].KktSerial;
+            duplicate.PlanHash = CanonicalLmPlanHasher.Compute(duplicate);
+            AssertFalse(ProvisioningRequestValidator.Validate(duplicate).IsValid,
+                "The same managed KKT must not appear twice in a remove-all request.");
         }
 
         private static void ProvisioningProtocolExposesNoCredentialsPathsOrCommands()
@@ -499,6 +547,32 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             }
         }
 
+        private static void SupportedInstallerUsesFixedNsisSilentSwitch()
+        {
+            ControllerCapabilityProfile profile =
+                ControllerCapabilityProfile.SupportedVersion1632();
+
+            AssertEqual("/S", profile.InstallerArguments,
+                "The verified NSIS package must use its case-sensitive silent switch.");
+            AssertEqual(CapabilityFactProvenance.OfficialPackage,
+                profile.Provenance["InstallerArguments"],
+                "Installer arguments must come from the fixed capability profile, never from UI input.");
+        }
+
+        private static void WinTrustMarshalsActionGuidAsOneNativePointer()
+        {
+            MethodInfo nativeMethod = typeof(WinTrustVerifier).GetMethod(
+                "WinVerifyTrust",
+                BindingFlags.NonPublic | BindingFlags.Static);
+
+            AssertTrue(nativeMethod != null, "The WinTrust native boundary must be present.");
+            ParameterInfo actionId = nativeMethod.GetParameters()[1];
+            AssertEqual(typeof(Guid).MakeByRefType(), actionId.ParameterType,
+                "The action GUID must be passed as exactly one native GUID pointer.");
+            AssertEqual(0, actionId.GetCustomAttributes(typeof(MarshalAsAttribute), false).Length,
+                "LPStruct on a ref GUID adds incompatible marshalling and yields TRUST_E_PROVIDER_UNKNOWN.");
+        }
+
         private static void ManifestPathIsDerivedOnlyFromKktSerial()
         {
             string root = CreateTemporaryDirectory();
@@ -556,6 +630,13 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     AccessControlType.Allow));
                 AssertTrue(PathSafety.IsSecurityProtected(protectedAcl, null),
                     "SYSTEM/Administrators-only DACL must be accepted.");
+
+                protectedAcl.AddAccessRule(new FileSystemAccessRule(
+                    new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null),
+                    FileSystemRights.ReadAndExecute,
+                    AccessControlType.Allow));
+                AssertTrue(PathSafety.IsSecurityProtected(protectedAcl, null),
+                    "An unprivileged read-and-execute ACE must be accepted.");
 
                 protectedAcl.AddAccessRule(new FileSystemAccessRule(
                     new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null),
@@ -1790,6 +1871,54 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             return request;
         }
 
+        private static void RemoveAllManagedProcessesEveryConfirmedServiceInOneBatch()
+        {
+            FakeLmRemovalPlatform removal = new FakeLmRemovalPlatform();
+            removal.PreserveOwnershipAcrossSerials = true;
+            LmServiceProvisioningBatchResult result = new LmServiceProvisioner(
+                new FakeLmProvisioningPlatform(),
+                removal).RemoveAllManaged(
+                    CreateRemoveAllRequest(2),
+                    NeverCancelLmProvisioning.Instance);
+
+            AssertEqual(2, result.Items.Count,
+                "Every confirmed managed service must receive its own result.");
+            AssertEqual(
+                LmServiceProvisioningStatus.RemovedLocalArtifactsBindingRetained,
+                result.Items[0].Status,
+                "The first managed service must be removed completely.");
+            AssertEqual(
+                LmServiceProvisioningStatus.RemovedLocalArtifactsBindingRetained,
+                result.Items[1].Status,
+                "The second managed service must be removed completely.");
+            AssertTrue(removal.Events.Contains("Stop:00105700000001"),
+                "The first service must be stopped.");
+            AssertTrue(removal.Events.Contains("Stop:00105700000002"),
+                "The second service must be stopped in the same helper operation.");
+        }
+
+        private static LmServiceProvisioningBatchRequest CreateRemoveAllRequest(int count)
+        {
+            LmServiceProvisioningBatchRequest request =
+                CreateRequest(LmServiceOperation.RemoveAllManaged);
+            for (int index = 0; index < count; index++)
+            {
+                request.RemovalConfirmations.Add(new LmRemovalConfirmation
+                {
+                    KktSerial = "001057000000" + (index + 1).ToString("00"),
+                    GrpcPort = 55001 + index,
+                    RestPort = 15001 + index,
+                    ManifestFingerprint = new LmManifestFingerprint
+                    {
+                        Sha256 = new string((char)('a' + index), 64)
+                    },
+                    RetainedEsmWarningAccepted = true
+                });
+            }
+            request.PlanHash = CanonicalLmPlanHasher.Compute(request);
+            return request;
+        }
+
         private static LmServiceProvisioningBatchRequest CreateCleanupRequest()
         {
             LmServiceProvisioningBatchRequest request = CreateRequest(LmServiceOperation.CleanupManaged);
@@ -2132,6 +2261,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             internal bool CleanupFails { get; set; }
             internal bool ManifestProjectedCleanupPending { get; private set; }
             internal bool CurrentVendorBinaryMatchesManifest { get; set; }
+            internal bool PreserveOwnershipAcrossSerials { get; set; }
 
             internal bool ContainsEventPrefix(string prefix)
             {
@@ -2232,7 +2362,10 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             public void CompleteRemoval(string kktSerial)
             {
                 Events.Add("CompleteRemoval:" + kktSerial);
-                Ownership = LmRemovalOwnershipState.Missing;
+                if (!PreserveOwnershipAcrossSerials)
+                {
+                    Ownership = LmRemovalOwnershipState.Missing;
+                }
                 ManifestProjectedCleanupPending = false;
             }
         }

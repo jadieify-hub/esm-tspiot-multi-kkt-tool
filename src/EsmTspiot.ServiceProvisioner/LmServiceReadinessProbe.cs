@@ -31,11 +31,16 @@ namespace EsmTspiot.ServiceProvisioner
             ManagedServiceManifestStore manifestStore,
             ControllerCapabilityProfile profile)
         {
-            _serviceApi = serviceApi ?? throw new ArgumentNullException("serviceApi");
-            _listeners = listeners ?? throw new ArgumentNullException("listeners");
-            _controllerLocator = controllerLocator ?? throw new ArgumentNullException("controllerLocator");
-            _manifestStore = manifestStore ?? throw new ArgumentNullException("manifestStore");
-            _profile = profile ?? throw new ArgumentNullException("profile");
+            if (serviceApi == null) throw new ArgumentNullException("serviceApi");
+            if (listeners == null) throw new ArgumentNullException("listeners");
+            if (controllerLocator == null) throw new ArgumentNullException("controllerLocator");
+            if (manifestStore == null) throw new ArgumentNullException("manifestStore");
+            if (profile == null) throw new ArgumentNullException("profile");
+            _serviceApi = serviceApi;
+            _listeners = listeners;
+            _controllerLocator = controllerLocator;
+            _manifestStore = manifestStore;
+            _profile = profile;
         }
 
         internal LmReadinessResult WaitUntilReady(

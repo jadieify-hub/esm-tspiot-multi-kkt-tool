@@ -9,6 +9,7 @@ namespace EsmTspiot.Shared.Services
     public sealed class LmGatewayBindingWorkflow
     {
         private readonly ITspiotApiClient _apiClient;
+        private readonly LmGatewayReadbackWorkflow _readbackWorkflow;
 
         public LmGatewayBindingWorkflow(ITspiotApiClient apiClient)
         {
@@ -18,6 +19,7 @@ namespace EsmTspiot.Shared.Services
             }
 
             _apiClient = apiClient;
+            _readbackWorkflow = new LmGatewayReadbackWorkflow(apiClient);
         }
 
         public async Task<LmGatewayBindingOutcome> ExecuteAsync(
@@ -133,7 +135,18 @@ namespace EsmTspiot.Shared.Services
                         continue;
                     }
 
-                    LmGatewayBindingResult bindingResult = BuildTransportResult(item, response);
+                    LmGatewayBindingResult bindingResult;
+                    if (response != null && response.IsSuccess)
+                    {
+                        bindingResult = await VerifyAcceptedBindingAsync(
+                            baseUrl,
+                            item,
+                            cancellationToken).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        bindingResult = BuildTransportResult(item, response);
+                    }
                     outcome.Results.Add(bindingResult);
                     Report(
                         progress,
@@ -151,6 +164,73 @@ namespace EsmTspiot.Shared.Services
             }
 
             return outcome;
+        }
+
+        private async Task<LmGatewayBindingResult> VerifyAcceptedBindingAsync(
+            string baseUrl,
+            LmGatewayBindingItem item,
+            CancellationToken cancellationToken)
+        {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return CreateResult(
+                    item,
+                    LmGatewayBindingStatus.BindingAccepted,
+                    "ЕСМ принял запрос настройки; проверка результата отменена.");
+            }
+
+            using (CancellationTokenSource timeout =
+                CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+            {
+                timeout.CancelAfter(TimeSpan.FromSeconds(4));
+                try
+                {
+                    LmGatewayReadbackObservation observation =
+                        await _readbackWorkflow.ReadAsync(
+                            baseUrl,
+                            item.Kkt,
+                            item.Input.ExpectedLmAddress,
+                            item.Input.ExpectedLmPort,
+                            timeout.Token).ConfigureAwait(false);
+                    if (observation.IsVerified)
+                    {
+                        return CreateResult(
+                            item,
+                            LmGatewayBindingStatus.BindingVerified,
+                            observation.Details);
+                    }
+                    if (!observation.IsAvailable)
+                    {
+                        return CreateResult(
+                            item,
+                            LmGatewayBindingStatus.BindingAccepted,
+                            "ЕСМ принял запрос, но результат не удалось проверить: " +
+                                observation.Details);
+                    }
+                    if (observation.IdentityMatches && observation.HasLmConfiguration &&
+                        !observation.EndpointMatches.HasValue)
+                    {
+                        return CreateResult(
+                            item,
+                            LmGatewayBindingStatus.BindingObserved,
+                            observation.Details);
+                    }
+
+                    return CreateResult(
+                        item,
+                        LmGatewayBindingStatus.RequiresAttention,
+                        observation.Details);
+                }
+                catch (OperationCanceledException)
+                {
+                    return CreateResult(
+                        item,
+                        LmGatewayBindingStatus.BindingAccepted,
+                        cancellationToken.IsCancellationRequested
+                            ? "ЕСМ принял запрос настройки; проверка результата отменена."
+                            : "ЕСМ принял запрос, но проверка результата превысила 4 секунды.");
+                }
+            }
         }
 
         private static LmGatewayBindingResult BuildTransportResult(
@@ -278,12 +358,21 @@ namespace EsmTspiot.Shared.Services
                 ResponseBody = SensitiveDataMasker.Mask(response.ResponseBody),
                 IsSuccess = response.IsSuccess,
                 DecodedMessage = SensitiveDataMasker.Mask(response.DecodedMessage),
-                IsConnectionFailure = response.IsConnectionFailure
+                IsConnectionFailure = response.IsConnectionFailure,
+                IsTlsCertificateFailure = response.IsTlsCertificateFailure
             };
         }
 
         private static string GetStage(LmGatewayBindingStatus status)
         {
+            if (status == LmGatewayBindingStatus.BindingVerified)
+            {
+                return "Подтверждено ЕСМ";
+            }
+            if (status == LmGatewayBindingStatus.BindingObserved)
+            {
+                return "Обнаружено ЕСМ";
+            }
             if (status == LmGatewayBindingStatus.BindingAccepted)
             {
                 return "Запрос принят";

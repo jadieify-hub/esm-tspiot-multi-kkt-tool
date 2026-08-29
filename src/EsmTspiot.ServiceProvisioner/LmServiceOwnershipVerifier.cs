@@ -21,11 +21,16 @@ namespace EsmTspiot.ServiceProvisioner
             OfficialLmProfileAdapter profileAdapter,
             LmGatewaySupervisorService supervisor)
         {
-            _serviceApi = serviceApi ?? throw new ArgumentNullException("serviceApi");
-            _manifestStore = manifestStore ?? throw new ArgumentNullException("manifestStore");
-            _journalStore = journalStore ?? throw new ArgumentNullException("journalStore");
-            _profileAdapter = profileAdapter ?? throw new ArgumentNullException("profileAdapter");
-            _supervisor = supervisor ?? throw new ArgumentNullException("supervisor");
+            if (serviceApi == null) throw new ArgumentNullException("serviceApi");
+            if (manifestStore == null) throw new ArgumentNullException("manifestStore");
+            if (journalStore == null) throw new ArgumentNullException("journalStore");
+            if (profileAdapter == null) throw new ArgumentNullException("profileAdapter");
+            if (supervisor == null) throw new ArgumentNullException("supervisor");
+            _serviceApi = serviceApi;
+            _manifestStore = manifestStore;
+            _journalStore = journalStore;
+            _profileAdapter = profileAdapter;
+            _supervisor = supervisor;
         }
 
         internal LmProvisioningObservedState Inspect(

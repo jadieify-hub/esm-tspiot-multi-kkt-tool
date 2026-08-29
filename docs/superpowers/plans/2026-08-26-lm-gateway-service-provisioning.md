@@ -1,5 +1,7 @@
 # LM Gateway Windows Service Provisioning Implementation Plan
 
+> **As-built UX update (2026-08-29):** отдельные `Подготовить план` и `Создать / обновить выбранные` объединены в `Установить и настроить ККТ`; полный автоматический режим сам запрашивает установщик, если он ещё не выбран, и вызывает тот же жизненный цикл сразу после регистрации ККТ. До первого UAC единый операторский диалог показывает все ККТ, предзаполненные `softPort`/адреса/порты ЛМ ЧЗ и требует краткоживущие логин/пароль для каждой строки. Для проверенного NSIS-пакета `1.6.3.2` используется фиксированный тихий ключ `/S`. Добавлена аварийная команда `Удалить все созданные`, которая одним helper/UAC удаляет только подтверждённые управляемые службы и их локальные данные. Актуальные значения по номеру ККТ и критерии описаны в связанной спецификации и README.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** После обязательной проверки совместимости официального контроллера добавить компактный привилегированный помощник, который безопасно создает, обновляет и удаляет отдельные Windows-службы контроллера ЛМ ЧЗ, а также завершить единый WinForms-интерфейс «ККТ → контроллер → целевой ЛМ».
@@ -54,10 +56,10 @@ if (-not $msbuild -or -not (Test-Path -LiteralPath $msbuild)) { throw 'Visual St
 - Идентичность — серийный номер ККТ/ESM id. ИНН отображается и валидируется, но не является ключом службы.
 - Каждая ККТ получает отдельную app-managed службу. Последовательные порты выбираются из конечных capability-approved пулов; `50063` штатной службы не переиспользуется. Helper подтверждает оба порта реальной эксклюзивной bind-проверкой непосредственно перед запуском. Целевой LM endpoint пользователь подтверждает отдельно.
 - Пароль не передается helper, не записывается в manifest и не логируется.
-- Удаление одной службы автоматически очищает ее профиль, manifest и все app-owned метаданные после подтвержденного исчезновения SCM/process/listeners. Если файл занят, UI предлагает `Повторить очистку`.
+- Удаление одной или подтверждённого пакета управляемых служб автоматически очищает их профили, manifest и все app-owned метаданные после подтвержденного исчезновения SCM/process/listeners. Если файл занят, UI предлагает `Повторить очистку`.
 - Поскольку документированного API отвязки нет, удаление не меняет LM-настройку ЕСМ и всегда показывает это ограничение.
 - При неизвестном состоянии не выполнять разрушительный rollback; повторно прочитать состояние и поставить `RequiresAttention`.
-- Один запуск создания/обновления использует `EnsureBatch` не более чем для 32 ККТ и один UAC. Удаление остается отдельной одноэлементной операцией и отдельным UAC.
+- Один запуск создания/обновления использует `EnsureBatch` не более чем для 32 ККТ и один UAC. Обычное удаление остаётся одноэлементным; аварийное `RemoveAllManaged` принимает до 32 заново подтверждённых управляемых строк и выполняется одним UAC.
 - До любой SCM-мутации создавать crash journal и брать machine-wide плюс per-KKT mutex; при старте helper сначала reconciles незавершенные операции.
 - Для `1.6.3.2` разрешён только доказанный capability mode: supervisor заменяет `ProgramData` в environment block своего дочернего процесса. Machine-wide/SCM environment, произвольные environment/arguments из UI/IPC и любой fallback запрещены.
 - Elevation разрешена только из не доступного обычному пользователю каталога установки и только при split-token повышении того же локального администратора. Portable/user-writable режим поддерживает только просмотр и binding-only.
@@ -380,7 +382,7 @@ git commit -m "Добавить планирование экземпляров 
 **Interfaces:**
 
 - Helper command line: `--pipe <32 hex chars> --operation <32 hex chars>` only; no paths or JSON appear in command line.
-- Operations: `InstallControllerVersion`, `EnsureBatch`, `RemoveManaged` and `CleanupManaged` only. Install contains exactly one selected installer; ensure contains 1–32 items; remove/cleanup contain exactly one.
+- Operations: `InstallControllerVersion`, `EnsureBatch`, `RemoveManaged`, `RemoveAllManaged` and `CleanupManaged` only. Install contains exactly one selected installer; ensure and remove-all contain 1–32 items; remove/cleanup contain exactly one.
 - Exit codes: `0` typed result sent, `2` invalid/authentication request, `3` operation failed, `4` unsupported controller/version.
 - Request schema version: integer `1`.
 
@@ -445,9 +447,9 @@ Every request contains only:
 - SHA-256 of the canonical redacted plan/confirmation shown in UI;
 - the operation-specific payload described below.
 
-`EnsureBatch` contains 1–32 items with KKT serial, local gRPC/REST ports and target LM address/port. `RemoveManaged` and `CleanupManaged` contain one immutable confirmation projection. `InstallControllerVersion` contains exactly one user-selected source path plus the filename, byte length, SHA-256, file/product version and signer identity already shown in UI. The source path is allowed only for this operation; it is never accepted as an ImagePath/profile path, command-line argument or service field.
+`EnsureBatch` contains 1–32 items with KKT serial, local gRPC/REST ports and target LM address/port. `RemoveManaged` and `CleanupManaged` contain one immutable confirmation projection; `RemoveAllManaged` contains 1–32 sorted immutable removal projections. `InstallControllerVersion` contains exactly one user-selected source path plus the filename, byte length, SHA-256, file/product version and signer identity already shown in UI. The source path is allowed only for this operation; it is never accepted as an ImagePath/profile path, command-line argument or service field.
 
-For `InstallControllerVersion`, the hash covers exact displayed file metadata and the warning that all managed instances will be stopped and moved to `VersionVerificationPending`. For `EnsureBatch`, the hash covers the exact selected rows shown in the plan dialog. For `RemoveManaged`, one canonical confirmation includes KKT serial, derived service name, local ports, manifest fingerprint and the retained-ESM warning. For `CleanupManaged`, it includes KKT serial, observed manifest fingerprint and displayed `CleanupPending` state. The helper reloads local state and rejects a stale/mismatched confirmation before install/stop/delete/cleanup.
+For `InstallControllerVersion`, the hash covers exact displayed file metadata and the warning that all managed instances will be stopped and moved to `VersionVerificationPending`. For `EnsureBatch`, the hash covers the exact selected rows shown in the plan dialog. For `RemoveManaged`, one canonical confirmation includes KKT serial, derived service name, local ports, manifest fingerprint and the retained-ESM warning; `RemoveAllManaged` hashes the count, order and every such confirmation. For `CleanupManaged`, it includes KKT serial, observed manifest fingerprint and displayed `CleanupPending` state. The helper reloads local state and rejects a stale/mismatched confirmation before install/stop/delete/cleanup.
 
 Except for the strictly scoped installer source path above, the request does not contain service name, binary path, config path, username, password, environment, shell text or arbitrary arguments. Both sides derive service name from KKT serial when constructing the canonical confirmation; only its hash is transmitted. The helper recalculates all derived values, canonicalizes the request, checks the confirmation hash, limits count, and rejects duplicate KKT or ports before SCM work. Results are per item so one failure does not hide the other outcomes.
 
@@ -772,7 +774,7 @@ Exact order for new service:
 11. atomically write ready manifest, set journal terminal, then remove the completed journal;
 12. release per-KKT mutex and continue the next batch item even after an item-level failure.
 
-For an owned existing service reconcile current state first. A matching ready service verifies that its current listeners have the expected owner and returns `Unchanged` without trying to bind over itself. A stopped service or config update writes `Updating`, stops normally if needed, waits for service/child/listener PIDs to exit, takes the same exclusive probe sockets, updates atomically, releases them immediately before start, then starts and probes. A race after socket release is a normal item-level readiness failure: never kill the new owner and never perform ESM PUT. Unknown state returns `RequiresAttention` without delete/recreate. Concurrent `EnsureBatch`/`RemoveManaged`/`CleanupManaged` cannot pass the mutex boundary.
+For an owned existing service reconcile current state first. A matching ready service verifies that its current listeners have the expected owner and returns `Unchanged` without trying to bind over itself. A stopped service or config update writes `Updating`, stops normally if needed, waits for service/child/listener PIDs to exit, takes the same exclusive probe sockets, updates atomically, releases them immediately before start, then starts and probes. A race after socket release is a normal item-level readiness failure: never kill the new owner and never perform ESM PUT. Unknown state returns `RequiresAttention` without delete/recreate. Concurrent `EnsureBatch`/`RemoveManaged`/`RemoveAllManaged`/`CleanupManaged` cannot pass the mutex boundary.
 
 The two renamed tests above contain subcases for occupied IPv4, IPv6, dual-stack, OS-excluded candidate and a race immediately after probe release. Cancellation before the first item changes nothing; cancellation received during an item completes/reconciles that item only, marks every untouched item `Cancelled`, and returns a partial typed result. Pipe loss follows the same boundary.
 
@@ -1057,12 +1059,12 @@ git commit -m "Добавить управление жизненным цикл
 
 ### Task 11: Вкладка «Контроллеры ЛМ ЧЗ» и удаление из интерфейса
 
-**Состояние на 2026-08-27:** безопасный binding-only срез реализован до service gate на базе `LmGatewayBindingSession`, `LmGatewayPage`, Phase 1 discovery/planner/workflow и документированного PUT ЕСМ. Он показывает только зарегистрированные ККТ, хранит drafts/credentials в памяти текущего сеанса и не заявляет read-back. При выполнении Task 11 существующую страницу нужно расширить inventory/helper-функциями, а не заменять; создание, обновление, удаление служб и vendor-specific профиль добавляются только после `TechnicalCompatibilityReady`, а до `PublicSourceReady` остаются private.
+**Состояние на 2026-08-28:** страница расширена inventory/helper-функциями и документированным read-back `GET /api/v2/info` из руководства ЕСМ v1.9. Она показывает уже настроенный endpoint, но выставляет `BindingVerified` только после совпадения ККТ, ИНН, адреса и порта; при недоступном read-back сохраняет `BindingAccepted`. Credentials остаются краткоживущими, а credential-поля ответа не входят в безопасную модель. Создание, обновление, удаление служб и vendor-specific профиль до `PublicSourceReady` остаются private.
 
 **Files:**
 
 - Create: `src/EsmTspiot.WinForms.Shared/LmGatewayPage.cs`
-- Create: `src/EsmTspiot.WinForms.Shared/LmGatewayPlanDialog.cs`
+- Create: `src/EsmTspiot.WinForms.Shared/LmAutomaticSetupDialog.cs`
 - Create: `src/EsmTspiot.WinForms.Shared/LmGatewayRemovalDialog.cs`
 - Create: `src/EsmTspiot.WinForms.Shared/LmControllerInstallerPicker.cs`
 - Modify: `src/EsmTspiot.WinForms.Shared/MainForm.cs`
@@ -1082,7 +1084,7 @@ git commit -m "Добавить управление жизненным цикл
 Use a resizable `TableLayoutPanel`:
 
 1. installer row with read-only path field, `Выбрать…`, `Установить / проверить версию` and a compact status showing filename, version, signer and shortened SHA-256;
-2. toolbar with `Обновить`, `Подготовить план`, `Создать / обновить выбранные`, `Повторить привязку к ЕСМ`, `Удалить службу` and contextual `Повторить очистку`;
+2. toolbar with `Обновить`, `Установить и настроить ККТ`, `Повторить привязку к ЕСМ`, `Удалить службу`, `Удалить все созданные` and contextual `Повторить очистку`;
 3. read-only status grid occupying remaining height;
 4. selected-row editor with target LM address/port, login/password, local gRPC/REST ports;
 5. status/help line.
@@ -1099,9 +1101,9 @@ The picker filter is `esm-lm-controller_*-windows-setup.exe`. Selection performs
 
 Do not persist credentials to settings, registry, manifest or logs.
 
-- [x] **Step 3: Implement plan confirmation dialog**
+- [x] **Step 3: Implement operator parameter confirmation dialog**
 
-Show each KKT/INN, action, service role/name, local ports, target LM and validation. The dialog shows only `Credentials: заданы/не заданы`, never a password placeholder/value. Rows with blocking errors are automatically unchecked and remain visible as `Blocked`; the user may run the remaining valid selected rows. Start is enabled when at least one selected row is valid. UAC is requested only after the final start button.
+Show only the fields needed by the operator for every selected KKT: ordinal, serial, INN, cash-software `softPort`, editable target LM address/port, editable login/password and validation. Defaults follow the stable KKT ordinal (`5995`, `6995`, `7995`, ...); internal gRPC/REST ports and service names stay hidden. Password cells are masked. Start remains disabled until every displayed row has a valid endpoint and nonempty credentials. Credentials never enter a plan, persisted draft, manifest or log. UAC is requested only after the final start button.
 
 - [x] **Step 4: Implement sequential execution and cancellation UI**
 
@@ -1122,7 +1124,7 @@ Dialog displays KKT, INN, service, ports and the warnings from spec, including i
 Служба и локальные данные удалены. Настройка связи в ЕСМ не очищена и может по-прежнему ссылаться на этот порт.
 ```
 
-For `CleanupPending`, replace delete with `Повторить очистку`; the app performs cleanup itself and never tells the user to find a folder manually. For official/unknown rows keep both mutation buttons disabled and show the reason. Do not offer «удалить все».
+For `CleanupPending`, replace per-row delete with `Повторить очистку`; the app performs cleanup itself and never tells the user to find a folder manually. For official/unknown rows keep both mutation buttons disabled and show the reason. `Удалить все созданные` uses a separate sorted confirmation list, exact phrase `УДАЛИТЬ ВСЕ`, a fresh inventory/fingerprint/ports recheck and one bounded `RemoveAllManaged` helper call; it never includes official or unknown rows and remains discoverable after restart from protected manifests/journals.
 
 - [x] **Step 6: Connect the two product parts without automatic elevation**
 
@@ -1324,8 +1326,10 @@ From a clean supported VM snapshot:
 
 1. extract the verified compact package as administrator under `C:\Program Files\KRS\MultiKKT`, verify inherited protected ACL, then start the app unelevated;
 2. choose the exact supported `esm-lm-controller_*-windows-setup.exe` in the page and confirm displayed version/signer/hash;
-3. run `Установить / проверить версию`, confirm one UAC, protected staging cleanup and the verified official base controller;
+3. run `Установить / проверить версию`, confirm one UAC, capture the exact installer process command line with uppercase `/S`, and prove the installer completes with exit code 0 without showing a wizard or requesting interactive input; then confirm protected staging cleanup and the verified official base controller;
 4. use a fake/test ESM and three synthetic KKT records with different INNs;
+4a. start the full automatic scenario, verify that before the first UAC one dialog shows all three KKT with `softPort` `51401`/`51402`/`51403`, target LM ports `5995`/`6995`/`7995`, masked password cells and disabled start until every row is complete;
+4b. cancel that dialog once and prove no installer, service, profile or manifest was changed; reopen it, enter three independent credential pairs and continue;
 5. confirm the verified base controller is displayed read-only and cannot be assigned;
 6. create three managed services with distinct gRPC/REST pairs from the approved pools and distinct dummy target LM endpoints; prove the helper rejects a deliberately occupied or OS-excluded candidate during its bind check;
 7. confirm one UAC sequence and per-item results;
@@ -1342,7 +1346,10 @@ From a clean supported VM snapshot:
 18. confirm delete disabled for official base and unknown service;
 19. inject crashes after installer staging, version-pending publication, profile/create/start and prove the next launch reconciles journals without orphan/duplicate services;
 20. start concurrent install/ensure/remove attempts and prove mutex serialization;
-21. reboot VM and confirm remaining service autostart behavior matches capability profile.
+21. reboot VM and confirm all remaining managed services autostart, their supervisor processes and listeners become ready, and no manual login or app launch is required;
+22. after that reboot use the batch `Удалить всё созданное` action, reconfirm the displayed ownership set, type the destructive confirmation phrase and prove a single helper/UAC operation removes every managed service, profile, manifest and app-owned journal while preserving the official service and all ESM bindings;
+23. reboot once more and prove no removed service, listener, profile or pending cleanup reappears; then repeat automatic setup from the same verified package to confirm the machine is recoverable without manual folder or SCM cleanup.
+24. against the real supported ЕСМ `1.6.3.x`, reject an untrusted `/api/v2/info` certificate with the dedicated TLS message, install the authorized ЕСМ root CA into the Windows trust store, then repeat and confirm read-back succeeds without any certificate-validation bypass.
 
 Use no production credentials or real organization data.
 

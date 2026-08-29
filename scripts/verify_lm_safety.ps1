@@ -5,34 +5,27 @@ $ErrorActionPreference = "Stop"
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $scriptRoot ".."))
 
-function Invoke-CheckedRg {
+function Invoke-CheckedSearch {
     param(
         [Parameter(Mandatory = $true)][string]$Pattern,
         [Parameter(Mandatory = $true)][string[]]$Paths
     )
 
-    $output = @(& rg --json -n -i -e $Pattern -- $Paths 2>&1)
-    $exitCode = $LASTEXITCODE
-    if ($exitCode -gt 1) {
-        throw "rg failed with exit code $exitCode`: $($output -join [Environment]::NewLine)"
-    }
-    if ($exitCode -eq 1) {
-        return @()
-    }
-
-    foreach ($line in $output) {
-        $event = $line.ToString() | ConvertFrom-Json
-        if ($event.type -eq "match") {
+    try {
+        foreach ($match in @(Select-String -Pattern $Pattern -LiteralPath $Paths -AllMatches -ErrorAction Stop)) {
             [pscustomobject]@{
-                Path = $event.data.path.text
-                Line = [int]$event.data.line_number
-                Text = $event.data.lines.text.TrimEnd("`r", "`n")
+                Path = $match.Path
+                Line = [int]$match.LineNumber
+                Text = $match.Line.TrimEnd("`r", "`n")
             }
         }
     }
+    catch {
+        throw "Select-String failed: $($_.Exception.Message)"
+    }
 }
 
-function Test-RgWrapper {
+function Test-SearchWrapper {
     $testRoot = Join-Path ([IO.Path]::GetTempPath()) ("KrsLmSafety-" + [Guid]::NewGuid().ToString("N"))
     [IO.Directory]::CreateDirectory($testRoot) | Out-Null
     try {
@@ -40,21 +33,21 @@ function Test-RgWrapper {
         $hit = Join-Path $testRoot "hit.txt"
         [IO.File]::WriteAllText($clean, "ordinary text", [Text.UTF8Encoding]::new($false))
         [IO.File]::WriteAllText($hit, "forbidden-marker", [Text.UTF8Encoding]::new($false))
-        if (@(Invoke-CheckedRg -Pattern "forbidden-marker" -Paths @($hit)).Count -ne 1) {
-            throw "rg wrapper self-test did not report a hit."
+        if (@(Invoke-CheckedSearch -Pattern "forbidden-marker" -Paths @($hit)).Count -ne 1) {
+            throw "Search wrapper self-test did not report a hit."
         }
-        if (@(Invoke-CheckedRg -Pattern "forbidden-marker" -Paths @($clean)).Count -ne 0) {
-            throw "rg wrapper self-test inverted a clean result."
+        if (@(Invoke-CheckedSearch -Pattern "forbidden-marker" -Paths @($clean)).Count -ne 0) {
+            throw "Search wrapper self-test inverted a clean result."
         }
         $toolErrorObserved = $false
         try {
-            Invoke-CheckedRg -Pattern "[" -Paths @($clean) | Out-Null
+            Invoke-CheckedSearch -Pattern "[" -Paths @($clean) | Out-Null
         }
         catch {
             $toolErrorObserved = $true
         }
         if (-not $toolErrorObserved) {
-            throw "rg wrapper self-test swallowed a tool error."
+            throw "Search wrapper self-test swallowed a tool error."
         }
     }
     finally {
@@ -82,14 +75,17 @@ function Test-AllowedSecretHit {
     $text = $Hit.Text
 
     if ($relative -eq "src/EsmTspiot.Shared/Logging/SensitiveDataMasker.cs") {
-        return $text -match '"(password|newPassword|token|secret|authorization|apiKey)"'
+        return $text -match '"(password|newPassword|pass|token|secret|authorization|apiKey)"'
     }
     if ($relative -eq "src/EsmTspiot.Shared/Models/LmGatewayCredentials.cs" -or
         $relative -eq "src/EsmTspiot.Shared/Models/LmConnectionRequest.cs") {
         return $text -match 'Password|DataMember\(Name = "password"\)'
     }
     if ($relative -eq "src/EsmTspiot.Shared/Services/LmGatewayBindingWorkflow.cs") {
-        return $text -match 'credentials\.Password|Password = credentials\.Password'
+        return $text -match 'credentials\.Password|Password = credentials\.Password|timeout\.Token'
+    }
+    if ($relative -eq "src/EsmTspiot.Shared/Services/LmGatewayReadbackWorkflow.cs") {
+        return $text -match 'timeout\.Token'
     }
     if ($relative -eq "src/EsmTspiot.ServiceProvisioner/OfficialLmProfileAdapter.cs") {
         return $text -match 'forbidden secret field|lower\.IndexOf\("(password|secret|token|apikey)"'
@@ -109,12 +105,39 @@ function Test-AllowedSecretHit {
         return $text -match 'CancellationToken token|_cancellation\.Token|\bpassword\b|\.Password\b|_passwordTextBox'
     }
     if ($relative -eq "src/EsmTspiot.WinForms.Shared/LmGatewayPage.Services.cs") {
-        return $text -match 'CancellationToken token|\btoken\b'
+        return $text -match 'CancellationToken token|\btoken\b' -or
+            $text -match '^\s*Password = credentials == null \? string\.Empty : credentials\.Password' -or
+            $text -match '^\s*StoreCredentials\(item\.KktSerial, item\.Login, item\.Password\);'
+    }
+    if ($relative -eq "src/EsmTspiot.WinForms.Shared/LmAutomaticSetupDialog.cs") {
+        return $text -match '^\s*public string Password \{ get; set; \}' -or
+            $text -match '^\s*DataGridViewTextBoxColumn password = EditColumn' -or
+            $text -match '^\s*password\.Tag = "Secret";' -or
+            $text -match '^\s*_grid\.Columns\.Add\(password\);' -or
+            $text -match '^\s*row\.Password \?\? string\.Empty,' -or
+            $text -match '^\s*Password = CellText\(gridRow, "LmPassword"\)' -or
+            $text -match '^\s*rows\[index\]\.Password = string\.Empty;' -or
+            $text -match '^\s*Password = source\.Password \?\? string\.Empty'
     }
     return $false
 }
 
-Test-RgWrapper
+Test-SearchWrapper
+
+$gatewayPageServicesPath = Join-Path $repositoryRoot "src\EsmTspiot.WinForms.Shared\LmGatewayPage.Services.cs"
+$gatewayPageServices = [IO.File]::ReadAllText($gatewayPageServicesPath)
+if ($gatewayPageServices -notmatch '(?s)finally\s*\{\s*ClearAllCredentials\(\);\s*ClearInstallerSelection\(\);\s*\}') {
+    throw "Automatic setup must clear all transient LM credentials in its finally block."
+}
+if ($gatewayPageServices -notmatch '(?s)private async Task StartAutomaticSetupAsync\(\).*?finally\s*\{\s*ClearAllCredentials\(\);\s*\}\s*\}\s*public async Task<bool> RunAutomaticSetupFromHostAsync') {
+    throw "The LM-tab automatic entry point must clear credentials after cancel, validation failure or execution."
+}
+if ($gatewayPageServices -notmatch '(?s)public async Task<bool> RunAutomaticSetupFromHostAsync.*?finally\s*\{\s*ClearAllCredentials\(\);\s*\}\s*\}\s*private bool CollectAutomaticSetupParameters') {
+    throw "The host end-to-end automatic entry point must clear credentials on every exit path."
+}
+if ($gatewayPageServices -notmatch '(?s)LmGatewayLifecycleOutcome\s+outcome;\s*try\s*\{.*?_lifecycleWorkflow\.ExecuteAsync.*?\}\s*finally\s*\{\s*ClearCredentialsForLifecyclePlan\(plan\);\s*\}') {
+    throw "LM lifecycle execution must clear transient credentials even when binding throws or is cancelled."
+}
 
 $productionFiles = New-Object System.Collections.Generic.List[string]
 $productionFiles.AddRange([string[]]@(Get-ChildItem (Join-Path $repositoryRoot "src\EsmTspiot.ServiceProvisioner") -Recurse -Filter *.cs | ForEach-Object FullName))
@@ -129,14 +152,14 @@ $productionFiles.Add((Join-Path $repositoryRoot "build\EsmTspiot.Provisioner.tar
 $production = @($productionFiles | Sort-Object -Unique)
 
 $forbiddenPattern = 'RollingPin|taskkill(?:\.exe)?|sc\.exe|powershell\.exe|cmd\.exe|\bjunction\b|\bUPX\b|TerminateProcess|Process\.Kill|\.Kill\('
-$forbidden = @(Invoke-CheckedRg -Pattern $forbiddenPattern -Paths $production)
+$forbidden = @(Invoke-CheckedSearch -Pattern $forbiddenPattern -Paths $production)
 if ($forbidden.Count -gt 0) {
     $details = $forbidden | ForEach-Object { "$(Get-RelativeRepositoryPath $_.Path):$($_.Line):$($_.Text)" }
     throw "Forbidden LM implementation pattern found:`n$($details -join [Environment]::NewLine)"
 }
 
-$secretPattern = '\b(newPassword|password|token|secret|apiKey|authorization)\b'
-$secretHits = @(Invoke-CheckedRg -Pattern $secretPattern -Paths $production)
+$secretPattern = '\b(newPassword|password|pass|token|secret|apiKey|authorization)\b'
+$secretHits = @(Invoke-CheckedSearch -Pattern $secretPattern -Paths $production)
 $unexpectedSecrets = @($secretHits | Where-Object { -not (Test-AllowedSecretHit $_) })
 if ($unexpectedSecrets.Count -gt 0) {
     $details = $unexpectedSecrets | ForEach-Object { "$(Get-RelativeRepositoryPath $_.Path):$($_.Line):$($_.Text)" }

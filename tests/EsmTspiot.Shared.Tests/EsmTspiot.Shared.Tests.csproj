@@ -1,12 +1,15 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net8.0-windows</TargetFramework>
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\EsmTspiot.Shared\EsmTspiot.Shared.csproj" />
+    <Compile Include="..\..\src\EsmTspiot.WindowsSecurity.Shared\ProtectedAclPolicy.cs" Link="ProtectedAclPolicy.cs" />
+    <Compile Include="..\..\src\EsmTspiot.WinForms.Shared\ProvisionerProcessLauncher.cs" Link="ProvisionerProcessLauncher.cs" />
+    <Compile Include="..\..\src\EsmTspiot.WinForms.Shared\LmServiceProvisionerClient.cs" Link="LmServiceProvisionerClient.cs" />
   </ItemGroup>
 </Project>

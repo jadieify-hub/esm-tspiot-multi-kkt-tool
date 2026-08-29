@@ -92,6 +92,17 @@ namespace EsmTspiot.ServiceProvisioner
                             channel.WriteMessage(result);
                             return ToExitCode(item.Status);
                         }
+                        if (request.Operation == LmServiceOperation.RemoveAllManaged)
+                        {
+                            using (PipeProvisioningCancellation cancellation =
+                                new PipeProvisioningCancellation(channel, request.OperationId))
+                            {
+                                LmServiceProvisioningBatchResult result =
+                                    provisioner.RemoveAllManaged(request, cancellation);
+                                channel.WriteMessage(result);
+                                return ToExitCode(result.Status);
+                            }
+                        }
                     }
                     catch (NotSupportedException ex)
                     {
@@ -193,6 +204,19 @@ namespace EsmTspiot.ServiceProvisioner
                     Status = status,
                     Message = message
                 });
+            }
+            else if (request.RemovalConfirmations != null)
+            {
+                for (int index = 0; index < request.RemovalConfirmations.Count; index++)
+                {
+                    LmRemovalConfirmation confirmation = request.RemovalConfirmations[index];
+                    result.Items.Add(new LmServiceProvisioningItemResult
+                    {
+                        KktSerial = confirmation == null ? string.Empty : confirmation.KktSerial,
+                        Status = status,
+                        Message = message
+                    });
+                }
             }
             channel.WriteMessage(result);
         }

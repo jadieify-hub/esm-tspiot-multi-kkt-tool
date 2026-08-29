@@ -48,8 +48,11 @@ namespace EsmTspiot.ServiceProvisioner
                 throw new ArgumentOutOfRangeException("resetPeriodSeconds");
             }
             ResetPeriodSeconds = resetPeriodSeconds;
-            List<int> delays = new List<int>(
-                restartDelaysMilliseconds ?? throw new ArgumentNullException("restartDelaysMilliseconds"));
+            if (restartDelaysMilliseconds == null)
+            {
+                throw new ArgumentNullException("restartDelaysMilliseconds");
+            }
+            List<int> delays = new List<int>(restartDelaysMilliseconds);
             RestartDelaysMilliseconds = delays.AsReadOnly();
             for (int index = 0; index < RestartDelaysMilliseconds.Count; index++)
             {

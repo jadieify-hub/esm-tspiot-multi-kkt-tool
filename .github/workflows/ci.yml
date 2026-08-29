@@ -46,15 +46,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & "tests\EsmTspiot.ServiceProvisioner.Tests\bin\Release\net48\EsmTspiot.ServiceProvisioner.Tests.exe"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          msbuild src\EsmTspiot.ServiceProvisioner\EsmTspiot.ServiceProvisioner.csproj /restore /p:Configuration=Release
+          msbuild src\EsmTspiot.ServiceProvisioner\EsmTspiot.ServiceProvisioner.csproj /restore /p:Configuration=Release /p:LangVersion=5
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Проверить безопасность LM-реализации
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify_lm_safety.ps1
 
-      - name: Собрать Legacy
-        run: msbuild src\EsmTspiot.Legacy.WinForms\EsmTspiot.Legacy.WinForms.csproj /restore /p:Configuration=Release
+      - name: Собрать Legacy и helper строго с C# 5
+        run: msbuild src\EsmTspiot.Legacy.WinForms\EsmTspiot.Legacy.WinForms.csproj /restore /p:Configuration=Release /p:LangVersion=5
 
       - name: Собрать Modern
         run: dotnet build src\EsmTspiot.Modern.WinForms\EsmTspiot.Modern.WinForms.csproj -c Release

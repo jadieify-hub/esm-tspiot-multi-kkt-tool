@@ -9,6 +9,7 @@ namespace EsmTspiot.Shared.Models
         public LmServiceProvisioningBatchRequest()
         {
             Items = new List<LmServiceProvisioningItemRequest>();
+            RemovalConfirmations = new List<LmRemovalConfirmation>();
         }
 
         [DataMember(Order = 1)]
@@ -37,5 +38,8 @@ namespace EsmTspiot.Shared.Models
 
         [DataMember(Order = 9, EmitDefaultValue = false)]
         public LmControllerInstallerSelection InstallerSelection { get; set; }
+
+        [DataMember(Order = 10, EmitDefaultValue = false)]
+        public IList<LmRemovalConfirmation> RemovalConfirmations { get; private set; }
     }
 }

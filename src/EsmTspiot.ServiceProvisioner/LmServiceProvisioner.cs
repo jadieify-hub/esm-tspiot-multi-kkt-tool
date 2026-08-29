@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using EsmTspiot.Shared.Models;
+using EsmTspiot.Shared.Services;
 
 namespace EsmTspiot.ServiceProvisioner
 {
@@ -125,8 +126,28 @@ namespace EsmTspiot.ServiceProvisioner
 
         internal LmServiceProvisioner(ILmProvisioningPlatform platform)
         {
-            _platform = platform ?? throw new ArgumentNullException("platform");
+            if (platform == null)
+            {
+                throw new ArgumentNullException("platform");
+            }
+            _platform = platform;
             _removalPlatform = platform as ILmServiceRemovalPlatform;
+        }
+
+        internal LmServiceProvisioner(
+            ILmProvisioningPlatform platform,
+            ILmServiceRemovalPlatform removalPlatform)
+        {
+            if (platform == null)
+            {
+                throw new ArgumentNullException("platform");
+            }
+            if (removalPlatform == null)
+            {
+                throw new ArgumentNullException("removalPlatform");
+            }
+            _platform = platform;
+            _removalPlatform = removalPlatform;
         }
 
         internal LmServiceProvisioningItemResult RemoveManaged(
@@ -147,6 +168,64 @@ namespace EsmTspiot.ServiceProvisioner
                 throw new NotSupportedException("Cleanup platform is unavailable.");
             }
             return new LmServiceRemovalWorkflow(_removalPlatform).CleanupManaged(request);
+        }
+
+        internal LmServiceProvisioningBatchResult RemoveAllManaged(
+            LmServiceProvisioningBatchRequest request,
+            ILmProvisioningCancellation cancellation)
+        {
+            if (_removalPlatform == null)
+            {
+                throw new NotSupportedException("Removal platform is unavailable.");
+            }
+
+            LmServiceProvisioningBatchResult result = CreateBatchResult(request);
+            ValidationResult validation = ProvisioningRequestValidator.Validate(request);
+            if (!validation.IsValid || request.Operation != LmServiceOperation.RemoveAllManaged)
+            {
+                result.Status = LmServiceProvisioningStatus.Failed;
+                AddRemovalValidationFailures(result, request, validation);
+                return result;
+            }
+
+            ILmProvisioningCancellation effectiveCancellation =
+                cancellation ?? NeverCancelLmProvisioning.Instance;
+            using (_removalPlatform.AcquireMachineLock())
+            {
+                for (int index = 0; index < request.RemovalConfirmations.Count; index++)
+                {
+                    LmRemovalConfirmation confirmation = request.RemovalConfirmations[index];
+                    if (effectiveCancellation.IsCancellationRequested)
+                    {
+                        for (int remaining = index;
+                            remaining < request.RemovalConfirmations.Count;
+                            remaining++)
+                        {
+                            result.Items.Add(CreateRemovalResult(
+                                request.RemovalConfirmations[remaining],
+                                LmServiceProvisioningStatus.Cancelled,
+                                "Операция отменена до начала удаления этой службы."));
+                        }
+                        break;
+                    }
+
+                    LmServiceProvisioningBatchRequest single =
+                        new LmServiceProvisioningBatchRequest
+                        {
+                            SchemaVersion = ProvisioningRequestValidator.CurrentSchemaVersion,
+                            Operation = LmServiceOperation.RemoveManaged,
+                            OperationId = request.OperationId,
+                            InitiatingSid = request.InitiatingSid,
+                            RemovalConfirmation = confirmation
+                        };
+                    single.PlanHash = CanonicalLmPlanHasher.Compute(single);
+                    result.Items.Add(
+                        new LmServiceRemovalWorkflow(_removalPlatform).RemoveManaged(single));
+                }
+            }
+
+            result.Status = AggregateRemovalStatus(result.Items);
+            return result;
         }
 
         internal LmServiceProvisioningBatchResult EnsureBatch(
@@ -457,6 +536,27 @@ namespace EsmTspiot.ServiceProvisioner
             }
         }
 
+        private static void AddRemovalValidationFailures(
+            LmServiceProvisioningBatchResult result,
+            LmServiceProvisioningBatchRequest request,
+            ValidationResult validation)
+        {
+            string message = validation.IsValid
+                ? "Запрошена неверная операция помощника."
+                : validation.JoinMessages();
+            if (request == null || request.RemovalConfirmations == null)
+            {
+                return;
+            }
+            for (int index = 0; index < request.RemovalConfirmations.Count; index++)
+            {
+                result.Items.Add(CreateRemovalResult(
+                    request.RemovalConfirmations[index],
+                    LmServiceProvisioningStatus.Failed,
+                    message));
+            }
+        }
+
         private static LmServiceProvisioningItemResult CreateItemResult(
             LmServiceProvisioningItemRequest item,
             LmServiceProvisioningStatus status,
@@ -468,6 +568,52 @@ namespace EsmTspiot.ServiceProvisioner
                 Status = status,
                 Message = message ?? string.Empty
             };
+        }
+
+        private static LmServiceProvisioningItemResult CreateRemovalResult(
+            LmRemovalConfirmation confirmation,
+            LmServiceProvisioningStatus status,
+            string message)
+        {
+            return new LmServiceProvisioningItemResult
+            {
+                KktSerial = confirmation == null ? string.Empty : confirmation.KktSerial,
+                Status = status,
+                Message = message ?? string.Empty
+            };
+        }
+
+        private static LmServiceProvisioningStatus AggregateRemovalStatus(
+            IList<LmServiceProvisioningItemResult> items)
+        {
+            if (items == null || items.Count == 0)
+            {
+                return LmServiceProvisioningStatus.Failed;
+            }
+
+            LmServiceProvisioningStatus status =
+                LmServiceProvisioningStatus.RemovedLocalArtifactsBindingRetained;
+            for (int index = 0; index < items.Count; index++)
+            {
+                LmServiceProvisioningStatus itemStatus = items[index].Status;
+                if (itemStatus == LmServiceProvisioningStatus.Failed ||
+                    itemStatus == LmServiceProvisioningStatus.RemovalBlocked)
+                {
+                    return itemStatus;
+                }
+                if (itemStatus == LmServiceProvisioningStatus.CleanupPending ||
+                    itemStatus == LmServiceProvisioningStatus.MarkedForDelete ||
+                    itemStatus == LmServiceProvisioningStatus.RequiresAttention)
+                {
+                    status = itemStatus;
+                }
+                else if (itemStatus == LmServiceProvisioningStatus.Cancelled &&
+                    status == LmServiceProvisioningStatus.RemovedLocalArtifactsBindingRetained)
+                {
+                    status = LmServiceProvisioningStatus.Cancelled;
+                }
+            }
+            return status;
         }
 
         private static LmServiceProvisioningStatus AggregateStatus(

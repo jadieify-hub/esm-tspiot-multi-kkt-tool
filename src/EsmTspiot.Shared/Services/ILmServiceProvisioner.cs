@@ -25,6 +25,12 @@ namespace EsmTspiot.Shared.Services
             string planHash,
             CancellationToken cancellation);
 
+        Task<LmServiceProvisioningBatchResult> RemoveAllAsync(
+            IList<LmRemovalConfirmation> confirmations,
+            string operationId,
+            string planHash,
+            CancellationToken cancellation);
+
         Task<LmServiceProvisioningItemResult> CleanupAsync(
             LmCleanupConfirmation confirmation,
             string operationId,

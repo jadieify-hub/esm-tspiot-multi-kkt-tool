@@ -22,10 +22,14 @@ namespace EsmTspiot.ServiceProvisioner
             AtomicFileWriter writer,
             IWindowsServiceApi serviceApi)
         {
-            _profile = profile ?? throw new ArgumentNullException("profile");
-            _manifestStore = manifestStore ?? throw new ArgumentNullException("manifestStore");
-            _writer = writer ?? throw new ArgumentNullException("writer");
-            _serviceApi = serviceApi ?? throw new ArgumentNullException("serviceApi");
+            if (profile == null) throw new ArgumentNullException("profile");
+            if (manifestStore == null) throw new ArgumentNullException("manifestStore");
+            if (writer == null) throw new ArgumentNullException("writer");
+            if (serviceApi == null) throw new ArgumentNullException("serviceApi");
+            _profile = profile;
+            _manifestStore = manifestStore;
+            _writer = writer;
+            _serviceApi = serviceApi;
             if (!string.Equals(_profile.Version, "1.6.3.2", StringComparison.Ordinal) ||
                 !string.Equals(_profile.ProfileEnvironmentKey, "ProgramData", StringComparison.Ordinal) ||
                 !string.Equals(

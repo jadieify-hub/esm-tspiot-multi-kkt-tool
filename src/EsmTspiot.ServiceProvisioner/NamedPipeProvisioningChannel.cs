@@ -216,12 +216,7 @@ namespace EsmTspiot.ServiceProvisioner
             {
                 return false;
             }
-
-            string fileName = Path.GetFileName(fullPath);
-            return string.Equals(fileName, "EsmTspiot.Legacy.WinForms.exe", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(fileName, "EsmTspiot.Modern.WinForms.exe", StringComparison.OrdinalIgnoreCase) ||
-                (fileName.StartsWith("MultiKKT-ESM-TSPioT-v", StringComparison.OrdinalIgnoreCase) &&
-                 fileName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase));
+            return true;
         }
 
         private static string GetProcessImagePath(int processId)
@@ -335,7 +330,11 @@ namespace EsmTspiot.ServiceProvisioner
             NamedPipeProvisioningChannel channel,
             string operationId)
         {
-            _channel = channel ?? throw new ArgumentNullException("channel");
+            if (channel == null)
+            {
+                throw new ArgumentNullException("channel");
+            }
+            _channel = channel;
             _operationId = operationId;
             Thread reader = new Thread(ReadControl);
             reader.IsBackground = true;

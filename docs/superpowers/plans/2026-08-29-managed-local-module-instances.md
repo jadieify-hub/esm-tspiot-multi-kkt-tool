@@ -43,9 +43,9 @@
 
 **Interfaces:** Produces `ManagedLocalModulePlanner.Build(IList<LmGatewayKkt>, IList<ManagedKktAssignment>, IList<ManagedLocalModuleAssignment>, IList<TcpListenerSnapshotItem>)`. Saved KKT owns `K`; saved unique-INN module owns `N`, instance-id and API/DB/EPMD ports.
 
-- [ ] **Step 1: Write failing tests** registering `ManagedLmPlannerGroupsKktByInn`, `ManagedLmPlannerAssignsStableOrdinals`, `ManagedLmPlannerBlocksOccupiedPorts`, `LmDefaultsUse45000GrpcPool`, `LmDraftStorePreservesLegacyGrpc`.
-- [ ] **Step 2: Run RED:** `dotnet run --project tests\EsmTspiot.Shared.Tests\EsmTspiot.Shared.Tests.csproj -c Release`; new symbols/default expectations must fail.
-- [ ] **Step 3: Implement the exact entry point:**
+- [x] **Step 1: Write failing tests** registering `ManagedLmPlannerGroupsKktByInn`, `ManagedLmPlannerAssignsStableOrdinals`, `ManagedLmPlannerBlocksOccupiedPorts`, `LmDefaultsUse45000GrpcPool`, `LmDraftStorePreservesLegacyGrpc`.
+- [x] **Step 2: Run RED:** `dotnet run --project tests\EsmTspiot.Shared.Tests\EsmTspiot.Shared.Tests.csproj -c Release`; new symbols/default expectations must fail.
+- [x] **Step 3: Implement the exact entry point:**
 
 ```csharp
 public static ManagedLocalModulePlan Build(
@@ -56,9 +56,9 @@ public static ManagedLocalModulePlan Build(
 ```
 
 Preserve valid assignments, allocate `K/N` from `1..32`, group exact normalized INN, reject identity drift and all port collisions without shifting.
-- [ ] **Step 4: Set `GrpcPortFirst=45001`, `GrpcPortLast=45032`; treat only persisted explicit `550xx` as legacy override.**
-- [ ] **Step 5: Run net8 and the exact net48 system-compiler block from `.github/workflows/ci.yml`; all tests pass.**
-- [ ] **Step 6: Commit:** `git commit -m "Добавить планирование ЛМ по уникальным ИНН"` with only Task 1 files staged.
+- [x] **Step 4: Set `GrpcPortFirst=45001`, `GrpcPortLast=45032`; treat only persisted explicit `550xx` as legacy override.**
+- [x] **Step 5: Run net8 and the exact net48 system-compiler block from `.github/workflows/ci.yml`; all tests pass.**
+- [x] **Step 6: Commit:** record the completed controller baseline and Task 1 planning together as the verified implementation checkpoint that existed in this working tree.
 
 ---
 

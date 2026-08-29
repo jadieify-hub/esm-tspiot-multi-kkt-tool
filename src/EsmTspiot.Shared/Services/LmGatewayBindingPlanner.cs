@@ -121,7 +121,9 @@ namespace EsmTspiot.Shared.Services
                 KktSerial = source == null || source.KktSerial == null ? string.Empty : source.KktSerial.Trim(),
                 KktInn = source == null || source.KktInn == null ? string.Empty : source.KktInn.Trim(),
                 ControllerAddress = normalizedAddress,
-                ControllerGrpcPort = portText
+                ControllerGrpcPort = portText,
+                ExpectedLmAddress = source == null ? string.Empty : Trim(source.ExpectedLmAddress),
+                ExpectedLmPort = source == null ? string.Empty : Trim(source.ExpectedLmPort)
             };
         }
 

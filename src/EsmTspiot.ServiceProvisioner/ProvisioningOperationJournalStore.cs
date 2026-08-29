@@ -20,7 +20,11 @@ namespace EsmTspiot.ServiceProvisioner
         {
             _appDataRoot = Path.GetFullPath(appDataRoot);
             _root = Path.Combine(_appDataRoot, "Operations");
-            _pathSafety = pathSafety ?? throw new ArgumentNullException("pathSafety");
+            if (pathSafety == null)
+            {
+                throw new ArgumentNullException("pathSafety");
+            }
+            _pathSafety = pathSafety;
         }
 
         internal void Write(ProvisioningOperationJournal journal)

@@ -10,6 +10,7 @@ namespace EsmTspiot.Shared.Logging
         {
             "password",
             "newPassword",
+            "pass",
             "token",
             "secret",
             "authorization",

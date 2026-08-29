@@ -353,7 +353,8 @@ namespace EsmTspiot.ServiceProvisioner
             return new WindowsLockedControllerInstaller(
                 artifact,
                 _controllerLocator,
-                _profile.Version);
+                _profile.Version,
+                _profile.InstallerArguments);
         }
 
         public void ReconcileRemoval(string kktSerial, string operationId)
@@ -779,15 +780,18 @@ namespace EsmTspiot.ServiceProvisioner
             private LockedInstallerArtifact _artifact;
             private readonly OfficialControllerLocator _locator;
             private readonly string _version;
+            private readonly string _arguments;
 
             internal WindowsLockedControllerInstaller(
                 LockedInstallerArtifact artifact,
                 OfficialControllerLocator locator,
-                string version)
+                string version,
+                string arguments)
             {
                 _artifact = artifact;
                 _locator = locator;
                 _version = version;
+                _arguments = arguments ?? string.Empty;
             }
 
             public LmControllerInstallResult Run()
@@ -799,6 +803,7 @@ namespace EsmTspiot.ServiceProvisioner
                 ProcessStartInfo startInfo = new ProcessStartInfo
                 {
                     FileName = _artifact.FullPath,
+                    Arguments = _arguments,
                     UseShellExecute = true,
                     WorkingDirectory = Path.GetDirectoryName(_artifact.FullPath)
                 };

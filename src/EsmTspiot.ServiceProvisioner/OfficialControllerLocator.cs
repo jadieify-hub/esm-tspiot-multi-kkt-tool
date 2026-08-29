@@ -31,9 +31,12 @@ namespace EsmTspiot.ServiceProvisioner
             IFileTrustVerifier trustVerifier,
             IPathSafety pathSafety)
         {
-            _profile = profile ?? throw new ArgumentNullException("profile");
-            _trustVerifier = trustVerifier ?? throw new ArgumentNullException("trustVerifier");
-            _pathSafety = pathSafety ?? throw new ArgumentNullException("pathSafety");
+            if (profile == null) throw new ArgumentNullException("profile");
+            if (trustVerifier == null) throw new ArgumentNullException("trustVerifier");
+            if (pathSafety == null) throw new ArgumentNullException("pathSafety");
+            _profile = profile;
+            _trustVerifier = trustVerifier;
+            _pathSafety = pathSafety;
         }
 
         internal VerifiedControllerBinaryResult ResolveVerifiedBinary()

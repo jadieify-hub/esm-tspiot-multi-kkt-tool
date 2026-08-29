@@ -29,7 +29,8 @@ namespace EsmTspiot.ServiceProvisioner
 
         private static void ReadIpv4(int expectedPort, HashSet<int> owners)
         {
-            IntPtr buffer = ReadTable(AddressFamilyInet, out int size);
+            int size;
+            IntPtr buffer = ReadTable(AddressFamilyInet, out size);
             try
             {
                 int count = Marshal.ReadInt32(buffer);
@@ -54,7 +55,8 @@ namespace EsmTspiot.ServiceProvisioner
 
         private static void ReadIpv6(int expectedPort, HashSet<int> owners)
         {
-            IntPtr buffer = ReadTable(AddressFamilyInet6, out int size);
+            int size;
+            IntPtr buffer = ReadTable(AddressFamilyInet6, out size);
             try
             {
                 int count = Marshal.ReadInt32(buffer);

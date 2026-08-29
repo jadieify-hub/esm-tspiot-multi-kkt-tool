@@ -49,6 +49,19 @@ namespace EsmTspiot.Shared.Services
             {
                 AppendCleanup(canonical, request.CleanupConfirmation);
             }
+            else if (request.Operation == LmServiceOperation.RemoveAllManaged)
+            {
+                int count = request.RemovalConfirmations == null
+                    ? 0
+                    : request.RemovalConfirmations.Count;
+                Append(canonical, "removal-count", count.ToString(CultureInfo.InvariantCulture));
+                for (int index = 0; index < count; index++)
+                {
+                    Append(canonical, "removal-index", index.ToString(CultureInfo.InvariantCulture));
+                    AppendRemoval(canonical, request.RemovalConfirmations[index]);
+                }
+                Append(canonical, "warning", RemovalWarning);
+            }
 
             using (SHA256 algorithm = SHA256.Create())
             {

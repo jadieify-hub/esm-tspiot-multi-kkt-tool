@@ -132,9 +132,12 @@ namespace EsmTspiot.ServiceProvisioner
             ControllerCapabilityProfile profile,
             VerifiedProvisionerBinary supervisorBinary)
         {
-            _serviceApi = serviceApi ?? throw new ArgumentNullException("serviceApi");
-            _profile = profile ?? throw new ArgumentNullException("profile");
-            _supervisorBinary = supervisorBinary ?? throw new ArgumentNullException("supervisorBinary");
+            if (serviceApi == null) throw new ArgumentNullException("serviceApi");
+            if (profile == null) throw new ArgumentNullException("profile");
+            if (supervisorBinary == null) throw new ArgumentNullException("supervisorBinary");
+            _serviceApi = serviceApi;
+            _profile = profile;
+            _supervisorBinary = supervisorBinary;
         }
 
         internal WindowsServiceRecord EnsureConfigured(string kktSerial)

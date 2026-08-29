@@ -64,25 +64,6 @@ function Get-StageRelativePath {
     return $full.Substring($prefix.Length).Replace('\', '/')
 }
 
-function Assert-ProductMetadata {
-    param([string]$MainPath, [string]$HelperPath)
-
-    $main = [Diagnostics.FileVersionInfo]::GetVersionInfo($MainPath)
-    $helper = [Diagnostics.FileVersionInfo]::GetVersionInfo($HelperPath)
-    foreach ($item in @($main, $helper)) {
-        if ($item.CompanyName -ne "KRS" -or
-            [string]::IsNullOrWhiteSpace($item.ProductName)) {
-            throw "KRS author/company product metadata is missing from a shipped executable."
-        }
-    }
-    if ([string]::IsNullOrWhiteSpace($main.FileVersion) -or
-        $main.ProductName -ne $helper.ProductName -or
-        $main.FileVersion -ne $helper.FileVersion -or
-        $main.ProductVersion -ne $helper.ProductVersion) {
-        throw "Main and helper product versions differ."
-    }
-}
-
 Assert-ChildPath -Parent $repositoryRoot -Child $releaseRoot
 Assert-ChildPath -Parent $releaseRoot -Child $stageRoot
 [IO.Directory]::CreateDirectory($releaseRoot) | Out-Null
@@ -93,7 +74,7 @@ if (Test-Path -LiteralPath $stageRoot) {
 
 $msbuild = Find-MSBuild
 $legacyProject = Join-Path $repositoryRoot "src\EsmTspiot.Legacy.WinForms\EsmTspiot.Legacy.WinForms.csproj"
-& $msbuild $legacyProject /restore /t:Rebuild "/p:Configuration=$Configuration" /m /v:minimal
+& $msbuild $legacyProject /restore /t:Rebuild "/p:Configuration=$Configuration" /p:LangVersion=5 /m /v:minimal
 if ($LASTEXITCODE -ne 0) {
     throw "Legacy compact build failed with exit code $LASTEXITCODE."
 }
@@ -104,11 +85,13 @@ $sourceMain = Join-Path $legacyOutput "EsmTspiot.Legacy.WinForms.exe"
 $sourceShared = Join-Path $legacyOutput "EsmTspiot.Shared.dll"
 $sourceHelper = Join-Path $helperOutput "EsmTspiot.ServiceProvisioner.exe"
 $sourceHelperShared = Join-Path $helperOutput "EsmTspiot.Shared.dll"
+$fieldGuide = Join-Path $repositoryRoot "docs\testing\2026-08-29-field-acceptance-1.6.3.2.md"
 $stagedMain = Join-Path $stageRoot "MultiKKT-ESM-TSPioT.exe"
 $stagedHelper = Join-Path $stageRoot "Provisioner\EsmTspiot.ServiceProvisioner.exe"
 
 Copy-RequiredFile $sourceMain $stagedMain
 Copy-RequiredFile $sourceShared (Join-Path $stageRoot "EsmTspiot.Shared.dll")
+Copy-RequiredFile $fieldGuide (Join-Path $stageRoot "FIELD_TEST_1.6.3.2.md")
 
 $helperClosure = @(
     Get-Item -LiteralPath $sourceHelper
@@ -118,20 +101,17 @@ foreach ($file in $helperClosure) {
     Copy-RequiredFile $file.FullName (Join-Path $stageRoot ("Provisioner\" + $file.Name))
 }
 
-Assert-ProductMetadata -MainPath $stagedMain -HelperPath $stagedHelper
 if ((Get-Sha256 $sourceShared) -ne (Get-Sha256 $sourceHelperShared)) {
     throw "Main and helper use different net48 EsmTspiot.Shared.dll files."
 }
 
-$integritySource = Join-Path $repositoryRoot "src\EsmTspiot.Legacy.WinForms\obj\$Configuration\net48\ProvisionerIntegrity.g.cs"
-if (-not (Test-Path -LiteralPath $integritySource -PathType Leaf)) {
-    throw "Generated embedded helper integrity source is missing."
+$contractScript = Join-Path $scriptRoot 'verify_compact_security_contract.ps1'
+if (-not (Test-Path -LiteralPath $contractScript -PathType Leaf)) {
+    throw "Compact main/helper security contract script is missing: $contractScript"
 }
-$integrityText = [IO.File]::ReadAllText($integritySource)
-$hashMatch = [Text.RegularExpressions.Regex]::Match($integrityText, 'ExpectedSha256\s*=\s*"([0-9A-Fa-f]{64})"')
-if (-not $hashMatch.Success -or
-    $hashMatch.Groups[1].Value -ne (Get-FileHash -LiteralPath $stagedHelper -Algorithm SHA256).Hash) {
-    throw "Embedded helper hash differs from the packaged helper."
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $contractScript -StageRoot $stageRoot
+if ($LASTEXITCODE -ne 0) {
+    throw "Compact main/helper security contract failed with exit code $LASTEXITCODE."
 }
 
 $readme = @"
@@ -147,6 +127,7 @@ Author: Ruslan Kerusov
 3. From Downloads, Desktop or another user-writable directory, the application deliberately permits only viewing and manual ESM binding.
 4. The official LM controller and its installer are not included. Obtain esm-lm-controller_*-windows-setup.exe from a licensed PIOT distribution, then select it on the LM Controllers tab.
 5. This archive contains no vendor binaries, credentials or controller profiles.
+6. Before a real installation, follow FIELD_TEST_1.6.3.2.md.
 
 Run: MultiKKT-ESM-TSPioT.exe
 "@
@@ -163,6 +144,7 @@ if ($forbiddenStage.Count -gt 0) {
 
 $expectedExact = @(
     "EsmTspiot.Shared.dll",
+    "FIELD_TEST_1.6.3.2.md",
     "MultiKKT-ESM-TSPioT.exe",
     "README.txt"
 )

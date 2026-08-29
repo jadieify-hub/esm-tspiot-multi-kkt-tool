@@ -26,7 +26,11 @@ namespace EsmTspiot.ServiceProvisioner
             _root = Path.GetFullPath(root);
             _inventoryRoot = Path.Combine(_root, "Inventory");
             _profilesRoot = Path.Combine(_root, "Profiles");
-            _pathSafety = pathSafety ?? throw new ArgumentNullException("pathSafety");
+            if (pathSafety == null)
+            {
+                throw new ArgumentNullException("pathSafety");
+            }
+            _pathSafety = pathSafety;
             _initiatingSid = initiatingSid;
         }
 

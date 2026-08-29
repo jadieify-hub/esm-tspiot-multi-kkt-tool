@@ -8,6 +8,7 @@ using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
+using EsmTspiot.WindowsSecurity;
 
 namespace EsmTspiot.WinForms.Shared
 {
@@ -58,9 +59,9 @@ namespace EsmTspiot.WinForms.Shared
                         @"C:\Program Files\KRS\MultiKKT от имени администратора.";
                     return false;
                 }
-                if (!IsSplitAdministratorToken())
+                if (!HasAdministrativeToken())
                 {
-                    reason = "Текущая учетная запись не имеет административного UAC-токена.";
+                    reason = "Текущая учетная запись не имеет административных прав.";
                     return false;
                 }
                 VerifyHelperIdentity();
@@ -212,56 +213,29 @@ namespace EsmTspiot.WinForms.Shared
             FileSystemSecurity security = File.Exists(path)
                 ? (FileSystemSecurity)new FileInfo(path).GetAccessControl()
                 : new DirectoryInfo(path).GetAccessControl();
-            SecurityIdentifier owner = security.GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier;
-            if (owner == null ||
-                (!owner.IsWellKnown(WellKnownSidType.BuiltinAdministratorsSid) &&
-                 !owner.IsWellKnown(WellKnownSidType.LocalSystemSid) &&
-                 !string.Equals(
-                    owner.Value,
-                    "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464",
-                    StringComparison.Ordinal)))
-            {
-                return false;
-            }
-            AuthorizationRuleCollection rules = security.GetAccessRules(
-                true,
-                true,
-                typeof(SecurityIdentifier));
-            FileSystemRights unsafeRights = FileSystemRights.Write |
-                FileSystemRights.Modify |
-                FileSystemRights.FullControl |
-                FileSystemRights.ChangePermissions |
-                FileSystemRights.TakeOwnership;
-            for (int index = 0; index < rules.Count; index++)
-            {
-                FileSystemAccessRule rule = rules[index] as FileSystemAccessRule;
-                SecurityIdentifier sid = rule == null
-                    ? null
-                    : rule.IdentityReference as SecurityIdentifier;
-                if (rule != null && sid != null &&
-                    rule.AccessControlType == AccessControlType.Allow &&
-                    (rule.FileSystemRights & unsafeRights) != 0 &&
-                    !sid.IsWellKnown(WellKnownSidType.BuiltinAdministratorsSid) &&
-                    !sid.IsWellKnown(WellKnownSidType.LocalSystemSid) &&
-                    !string.Equals(
-                        sid.Value,
-                        "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464",
-                        StringComparison.Ordinal))
-                {
-                    return false;
-                }
-            }
-            return true;
+            return ProtectedAclPolicy.IsProtected(security, null);
         }
 
-        private static bool IsSplitAdministratorToken()
+        private static bool HasAdministrativeToken()
         {
-            using (WindowsIdentity identity = WindowsIdentity.GetCurrent(TokenAccessLevels.Query))
+            using (WindowsIdentity identity = WindowsIdentity.GetCurrent(
+                TokenAccessLevels.Query | TokenAccessLevels.Duplicate))
             {
                 int elevationType = ReadTokenInt32(identity.Token, TokenElevationType);
-                return elevationType == TokenElevationTypeLimited ||
-                    elevationType == TokenElevationTypeFull;
+                WindowsPrincipal principal = new WindowsPrincipal(identity);
+                bool isAdministrator = principal.IsInRole(
+                    WindowsBuiltInRole.Administrator);
+                return HasAdministrativeToken(elevationType, isAdministrator);
             }
+        }
+
+        private static bool HasAdministrativeToken(
+            int elevationType,
+            bool isAdministrator)
+        {
+            return elevationType == TokenElevationTypeLimited ||
+                elevationType == TokenElevationTypeFull ||
+                isAdministrator;
         }
 
         private static bool IsHighIntegrity(int processId)

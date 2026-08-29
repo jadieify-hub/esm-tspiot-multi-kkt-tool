@@ -66,11 +66,27 @@ namespace EsmTspiot.ServiceProvisioner
             IProcessEnvironmentReader environmentReader,
             IControllerChildRuntime runtime)
         {
-            _profile = profile ?? throw new ArgumentNullException("profile");
-            _binary = binary ?? throw new ArgumentNullException("binary");
+            if (profile == null)
+            {
+                throw new ArgumentNullException("profile");
+            }
+            if (binary == null)
+            {
+                throw new ArgumentNullException("binary");
+            }
+            if (environmentReader == null)
+            {
+                throw new ArgumentNullException("environmentReader");
+            }
+            if (runtime == null)
+            {
+                throw new ArgumentNullException("runtime");
+            }
+            _profile = profile;
+            _binary = binary;
             _profileRoot = Path.GetFullPath(profileRoot);
-            _environmentReader = environmentReader ?? throw new ArgumentNullException("environmentReader");
-            _runtime = runtime ?? throw new ArgumentNullException("runtime");
+            _environmentReader = environmentReader;
+            _runtime = runtime;
             if (!string.Equals(_binary.Version, _profile.Version, StringComparison.Ordinal) ||
                 !string.Equals(_profile.TerminalArguments, string.Empty, StringComparison.Ordinal))
             {

@@ -14,6 +14,8 @@ namespace EsmTspiot.Shared.Models
         [EnumMember]
         RemoveManaged = 3,
         [EnumMember]
-        CleanupManaged = 4
+        CleanupManaged = 4,
+        [EnumMember]
+        RemoveAllManaged = 5
     }
 }
