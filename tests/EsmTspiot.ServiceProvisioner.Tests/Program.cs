@@ -44,6 +44,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Local module runtime excludes wrappers and fixes extraction", LocalModuleRuntimeExcludesWrappersAndFixesExtraction);
             Run("Local module manifests enforce three ownership levels", LocalModuleManifestsEnforceThreeOwnershipLevels);
             Run("Local module runtime deletion requires zero references", LocalModuleRuntimeDeletionRequiresZeroReferences);
+            Run("Existing local module runtime verifies without MSI extraction", ExistingLocalModuleRuntimeVerifiesWithoutMsiExtraction);
             Run("Local module runtime recovers every mutation boundary", LocalModuleRuntimeRecoversEveryMutationBoundary);
             Run("Local module runtime deletion recovers every mutation boundary", LocalModuleRuntimeDeletionRecoversEveryMutationBoundary);
             Run("Official controller locator enforces protected allowed root", OfficialControllerLocatorEnforcesProtectedAllowedRoot);
@@ -72,6 +73,21 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Local module ownership distinguishes shared Erlang children", LocalModuleOwnershipDistinguishesSharedErlangChildren);
             Run("EPMD controller uses explicit port and blocks live-node kill", EpmdControllerUsesExplicitPortAndBlocksLiveNodeKill);
             Run("Local module lifecycle orders database API and EPMD", LocalModuleLifecycleOrdersDatabaseApiAndEpmd);
+            Run("Restricted service SID supports local module pair", RestrictedServiceSidSupportsLocalModulePair);
+            Run("Protected ACL accepts exactly two local module writers", ProtectedAclAcceptsExactlyTwoLocalModuleWriters);
+            Run("Local module inventory resolves one instance per INN", LocalModuleInventoryResolvesOneInstancePerInn);
+            Run("Managed local module profile writes protected six-file contract", ManagedLocalModuleProfileWritesProtectedSixFileContract);
+            Run("Managed local module lifecycle journal resumes pre-profile identity", ManagedLocalModuleLifecycleJournalResumesPreProfileIdentity);
+            Run("Local module readiness requires owned descendant listener", LocalModuleReadinessRequiresOwnedDescendantListener);
+            Run("Windows managed platform persists profile and exact service pair", WindowsManagedPlatformPersistsProfileAndExactServicePair);
+            Run("Complete stack canary failure stops remaining groups", CompleteStackCanaryFailureStopsRemainingGroups);
+            Run("Managed local module same INN ensure is idempotent", ManagedLocalModuleSameInnEnsureIsIdempotent);
+            Run("Managed removal retains shared same-INN module", ManagedRemovalRetainsSharedSameInnModule);
+            Run("Managed removal cleans complete stack in reverse", ManagedRemovalCleansCompleteStackInReverse);
+            Run("Managed removal projects cleanup pending and retries", ManagedRemovalProjectsCleanupPendingAndRetries);
+            Run("Managed removal journal survives deleted KKT stack", ManagedRemovalJournalSurvivesDeletedKktStack);
+            Run("Windows managed removal deletes owned stack and retry journal", WindowsManagedRemovalDeletesOwnedStackAndRetryJournal);
+            Run("Managed update guard never stops unknown version", ManagedUpdateGuardNeverStopsUnknownVersion);
             Run("LM profile adapter changes only supported fields", LmProfileAdapterChangesOnlySupportedFields);
             Run("LM profile adapter rejects ambiguous schema", LmProfileAdapterRejectsAmbiguousSchema);
             Run("LM profile adapter preserves unknown nonsecret fields", LmProfileAdapterPreservesUnknownNonsecretFields);
@@ -109,7 +125,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
             if (_failures == 0)
             {
-                Console.WriteLine("All 84 provisioner tests passed.");
+                Console.WriteLine("All 100 provisioner tests passed.");
                 return 0;
             }
 
@@ -955,6 +971,50 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 LocalModuleRuntimeManifest ignored;
                 AssertFalse(store.TryReadRuntime(runtime.RuntimeId, out ignored),
                     "Runtime inventory must be removed only after filesystem deletion succeeds.");
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        }
+
+        private static void ExistingLocalModuleRuntimeVerifiesWithoutMsiExtraction()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                LocalModuleManifestStore store;
+                LocalModuleRuntimeManifest runtime;
+                LocalModuleInstanceManifest instance;
+                CreateTestManagedLocalModuleOwnership(
+                    root,
+                    out store,
+                    out runtime,
+                    out instance);
+                LocalModuleRuntimeInstaller installer =
+                    new LocalModuleRuntimeInstaller(
+                        store,
+                        new FakePathSafety(true),
+                        NoopLocalModuleMutationBoundary.Instance);
+
+                LocalModuleRuntimeManifest verified =
+                    installer.VerifyExistingRuntime(
+                        runtime.RuntimeId,
+                        LocalModulePackageVerifier.CreateSupportedIdentity(),
+                        LocalModuleCapabilityProfile.Resolve("2.6.1"));
+
+                AssertEqual(runtime.RuntimeId, verified.RuntimeId,
+                    "A matching runtime must be reused without another administrative extraction.");
+                string runtimeFile = Path.Combine(
+                    runtime.RuntimeRoot,
+                    runtime.Files[0].RelativePath);
+                File.WriteAllText(runtimeFile, "tampered", Encoding.ASCII);
+                AssertThrows<InvalidDataException>(delegate {
+                    installer.VerifyExistingRuntime(
+                        runtime.RuntimeId,
+                        LocalModulePackageVerifier.CreateSupportedIdentity(),
+                        LocalModuleCapabilityProfile.Resolve("2.6.1"));
+                }, "A reused runtime must be rehashed before any service is started.");
             }
             finally
             {
@@ -1994,6 +2054,757 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             {
                 Directory.Delete(root, true);
             }
+        }
+
+        private static void RestrictedServiceSidSupportsLocalModulePair()
+        {
+            string instanceId = "lmi-0123456789abcdef01234567";
+            string database = LocalModuleManagedIdentity.CreateDatabaseServiceName(
+                instanceId);
+            string api = LocalModuleManagedIdentity.CreateApiServiceName(instanceId);
+
+            string databaseSid = RestrictedServiceSid.Derive(database);
+            string apiSid = RestrictedServiceSid.Derive(api);
+
+            AssertTrue(databaseSid.StartsWith("S-1-5-80-", StringComparison.Ordinal),
+                "The database service must receive a deterministic service SID.");
+            AssertTrue(apiSid.StartsWith("S-1-5-80-", StringComparison.Ordinal),
+                "The API service must receive a deterministic service SID.");
+            AssertFalse(string.Equals(databaseSid, apiSid, StringComparison.Ordinal),
+                "The two restricted services must never share one service SID.");
+        }
+
+        private static void ProtectedAclAcceptsExactlyTwoLocalModuleWriters()
+        {
+            string databaseSid = RestrictedServiceSid.Derive(
+                "krs-lm-db-0123456789abcdef01234567");
+            string apiSid = RestrictedServiceSid.Derive(
+                "krs-lm-api-0123456789abcdef01234567");
+            DirectorySecurity security = new DirectorySecurity();
+            SecurityIdentifier administrators = new SecurityIdentifier(
+                WellKnownSidType.BuiltinAdministratorsSid,
+                null);
+            SecurityIdentifier system = new SecurityIdentifier(
+                WellKnownSidType.LocalSystemSid,
+                null);
+            security.SetOwner(administrators);
+            security.SetAccessRuleProtection(true, false);
+            security.AddAccessRule(new FileSystemAccessRule(
+                administrators,
+                FileSystemRights.FullControl,
+                AccessControlType.Allow));
+            security.AddAccessRule(new FileSystemAccessRule(
+                system,
+                FileSystemRights.FullControl,
+                AccessControlType.Allow));
+            security.AddAccessRule(new FileSystemAccessRule(
+                new SecurityIdentifier(databaseSid),
+                FileSystemRights.Modify,
+                AccessControlType.Allow));
+            security.AddAccessRule(new FileSystemAccessRule(
+                new SecurityIdentifier(apiSid),
+                FileSystemRights.Modify,
+                AccessControlType.Allow));
+
+            AssertTrue(PathSafety.IsSecurityProtectedForServices(
+                    security,
+                    new[] { databaseSid, apiSid }),
+                "Only the exact DB/API service pair may write its mutable profile.");
+            AssertFalse(PathSafety.IsSecurityProtectedForServices(
+                    security,
+                    new[] { databaseSid }),
+                "Omitting either actual writer from the allow-list must fail closed.");
+        }
+
+        private static void LocalModuleInventoryResolvesOneInstancePerInn()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                LocalModuleManifestStore store;
+                LocalModuleRuntimeManifest runtime;
+                LocalModuleInstanceManifest instance;
+                CreateTestManagedLocalModuleOwnership(
+                    root,
+                    out store,
+                    out runtime,
+                    out instance);
+                LocalModuleInstanceManifest found;
+
+                AssertTrue(store.TryFindInstanceByInn(instance.Inn, out found),
+                    "The exact owned INN instance must be discoverable after restart.");
+                AssertEqual(instance.InstanceId, found.InstanceId,
+                    "INN lookup must return the manifest-owned instance identity.");
+
+                ManagedLocalModuleProvisioningItemRequest item =
+                    CreateManagedLocalModuleRequest(1).ManagedLocalModules[0];
+                string secondNonce = "99999999999999999999999999999999";
+                string secondId = LocalModuleManagedIdentity.CreateInstanceId(
+                    item.Inn,
+                    secondNonce);
+                LocalModuleConfiguration configuration =
+                    LocalModuleConfigurationWriter.Build(
+                        LocalModuleCapabilityProfile.Resolve("2.6.1"),
+                        runtime.RuntimeRoot,
+                        store.GetInstanceRoot(secondId),
+                        item,
+                        secondNonce,
+                        CreateLocalModuleTemplateObservation());
+                store.WriteInstance(LocalModuleInstanceManifest.Create(
+                    item,
+                    secondId,
+                    runtime.RuntimeId,
+                    runtime.RuntimeRoot,
+                    configuration,
+                    secondNonce,
+                    "cccccccccccccccccccccccccccccccc"));
+
+                AssertThrows<InvalidDataException>(delegate {
+                    store.TryFindInstanceByInn(item.Inn, out found);
+                }, "Two owned instance manifests for one INN must fail closed.");
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        }
+
+        private static void ManagedLocalModuleProfileWritesProtectedSixFileContract()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                LocalModuleManifestStore store;
+                LocalModuleRuntimeManifest runtime;
+                LocalModuleInstanceManifest instance;
+                CreateTestManagedLocalModuleOwnership(
+                    root,
+                    out store,
+                    out runtime,
+                    out instance);
+                LocalModuleTemplateObservation templates =
+                    CreateLocalModuleTemplateObservation();
+                string regimeTemplate = Path.Combine(
+                    runtime.RuntimeRoot,
+                    @"regime\etc\local.ini.dist");
+                string databaseTemplate = Path.Combine(
+                    runtime.RuntimeRoot,
+                    @"yenisei\etc\local.ini.dist");
+                Directory.CreateDirectory(Path.GetDirectoryName(regimeTemplate));
+                Directory.CreateDirectory(Path.GetDirectoryName(databaseTemplate));
+                File.WriteAllText(
+                    regimeTemplate,
+                    templates.RegimeLocalIni,
+                    new UTF8Encoding(false));
+                File.WriteAllText(
+                    databaseTemplate,
+                    templates.YeniseiLocalIni,
+                    new UTF8Encoding(false));
+                ManagedLocalModuleProfileStore profiles =
+                    new ManagedLocalModuleProfileStore(
+                        store,
+                        new FakePathSafety(true),
+                        new AtomicFileWriter());
+                ManagedLocalModuleProvisioningItemRequest item =
+                    CreateManagedLocalModuleRequest(1).ManagedLocalModules[0];
+
+                LocalModuleConfiguration configuration = profiles.WriteConfiguration(
+                    runtime,
+                    LocalModuleCapabilityProfile.Resolve("2.6.1"),
+                    item,
+                    instance.InstanceId,
+                    instance.OwnershipNonce);
+                LocalModuleInstanceManifest replacement =
+                    LocalModuleInstanceManifest.Create(
+                        item,
+                        instance.InstanceId,
+                        runtime.RuntimeId,
+                        runtime.RuntimeRoot,
+                        configuration,
+                        instance.OwnershipNonce,
+                        "dddddddddddddddddddddddddddddddd");
+                store.WriteInstance(replacement);
+                profiles.ProtectOwnedManifests(runtime, replacement);
+
+                AssertTrue(profiles.ValidateConfiguration(
+                        runtime,
+                        LocalModuleCapabilityProfile.Resolve("2.6.1"),
+                        replacement).IsValid,
+                    "The exact six generated files and protected roots must validate.");
+                AssertEqual(6, Directory.GetFiles(replacement.ConfigRoot).Length,
+                    "One INN profile must contain exactly the six generated configuration files.");
+                AssertTrue(Directory.Exists(Path.Combine(replacement.DataRoot, "database")) &&
+                           Directory.Exists(Path.Combine(replacement.DataRoot, "index")) &&
+                           Directory.Exists(Path.Combine(replacement.DataRoot, "key-store")),
+                    "Every mutable LM path must be created under its owned profile.");
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        }
+
+        private static void ManagedLocalModuleLifecycleJournalResumesPreProfileIdentity()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                ManagedLocalModuleProvisioningItemRequest item =
+                    CreateManagedLocalModuleRequest(1).ManagedLocalModules[0];
+                string nonce = "abababababababababababababababab";
+                string instanceId = LocalModuleManagedIdentity.CreateInstanceId(
+                    item.Inn,
+                    nonce);
+                ManagedLocalModuleLifecycleJournalStore store =
+                    new ManagedLocalModuleLifecycleJournalStore(
+                        root,
+                        new FakePathSafety(true));
+                ManagedLocalModuleLifecycleJournal journal =
+                    ManagedLocalModuleLifecycleJournal.Create(
+                        item.Inn,
+                        instanceId,
+                        nonce,
+                        "lmrt-0123456789abcdef01234567",
+                        "local-module-2.6.1-7",
+                        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        ManagedLocalModuleProvisioningStage.Created);
+                store.Write(journal);
+                journal.Stage = ManagedLocalModuleProvisioningStage.RuntimeReady;
+                store.Write(journal);
+
+                ManagedLocalModuleLifecycleJournal loaded;
+                AssertTrue(store.TryRead(item.Inn, out loaded),
+                    "A pre-profile operation identity must survive helper restart.");
+                AssertEqual(instanceId, loaded.InstanceId,
+                    "Retry must reuse the same instance id and ownership nonce.");
+                AssertEqual(ManagedLocalModuleProvisioningStage.RuntimeReady, loaded.Stage,
+                    "The durable lifecycle stage must advance monotonically inside one operation.");
+
+                ManagedLocalModuleLifecycleJournal replacement =
+                    ManagedLocalModuleLifecycleJournal.Create(
+                        item.Inn,
+                        LocalModuleManagedIdentity.CreateInstanceId(
+                            item.Inn,
+                            "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"),
+                        "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+                        journal.RuntimeId,
+                        journal.CapabilityId,
+                        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                        ManagedLocalModuleProvisioningStage.Created);
+                AssertThrows<InvalidDataException>(delegate {
+                    store.Write(replacement);
+                }, "A retry must not replace the durable INN ownership identity.");
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        }
+
+        private static void LocalModuleReadinessRequiresOwnedDescendantListener()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                LocalModuleManifestStore store;
+                LocalModuleRuntimeManifest runtime;
+                LocalModuleInstanceManifest instance;
+                CreateTestManagedLocalModuleOwnership(
+                    root,
+                    out store,
+                    out runtime,
+                    out instance);
+                FakeWindowsServiceCollectionApi services =
+                    new FakeWindowsServiceCollectionApi();
+                LocalModuleWindowsServicePair pair =
+                    new LocalModuleWindowsServicePair(
+                        services,
+                        VerifiedProvisionerBinary.CreateForTesting(
+                            @"C:\Program Files\KRS\MultiKKT\Provisioner\EsmTspiot.ServiceProvisioner.exe"));
+                pair.EnsureConfigured(instance, null);
+                WindowsServiceRecord api = services.Query(instance.ApiServiceName);
+                api.State = WindowsServiceState.Running;
+                api.ProcessId = 5001;
+                FakeTcpListenerOwnerReader listeners =
+                    new FakeTcpListenerOwnerReader(instance.ApiPort, 6001);
+                FakeProcessParentReader parents =
+                    new FakeProcessParentReader(6001, 5001);
+                ManagedLocalModuleServiceReadinessProbe readiness =
+                    new ManagedLocalModuleServiceReadinessProbe(
+                        services,
+                        listeners,
+                        parents,
+                        1,
+                        delegate { });
+
+                AssertTrue(readiness.ProbeOwnedListener(
+                        instance,
+                        LocalModuleProcessRole.Api).IsValid,
+                    "A unique listener descended from the exact service supervisor must pass.");
+
+                parents.ParentProcessId = 7001;
+                AssertFalse(readiness.ProbeOwnedListener(
+                        instance,
+                        LocalModuleProcessRole.Api).IsValid,
+                    "The same port owned outside the exact service process tree must fail.");
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        }
+
+        private static void WindowsManagedPlatformPersistsProfileAndExactServicePair()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                LocalModuleManifestStore store;
+                LocalModuleRuntimeManifest runtime;
+                LocalModuleInstanceManifest instance;
+                CreateTestManagedLocalModuleOwnership(
+                    root,
+                    out store,
+                    out runtime,
+                    out instance);
+                LocalModuleTemplateObservation templates =
+                    CreateLocalModuleTemplateObservation();
+                string regimeTemplate = Path.Combine(
+                    runtime.RuntimeRoot,
+                    @"regime\etc\local.ini.dist");
+                string databaseTemplate = Path.Combine(
+                    runtime.RuntimeRoot,
+                    @"yenisei\etc\local.ini.dist");
+                Directory.CreateDirectory(Path.GetDirectoryName(regimeTemplate));
+                Directory.CreateDirectory(Path.GetDirectoryName(databaseTemplate));
+                File.WriteAllText(regimeTemplate, templates.RegimeLocalIni, new UTF8Encoding(false));
+                File.WriteAllText(databaseTemplate, templates.YeniseiLocalIni, new UTF8Encoding(false));
+
+                string initiatingSid = "S-1-5-21-111-222-333-1001";
+                FakePathSafety pathSafety = new FakePathSafety(true);
+                FakeWindowsServiceCollectionApi services =
+                    new FakeWindowsServiceCollectionApi();
+                VerifiedProvisionerBinary supervisor =
+                    VerifiedProvisionerBinary.CreateForTesting(
+                        @"C:\Program Files\KRS\MultiKKT\Provisioner\EsmTspiot.ServiceProvisioner.exe");
+                LocalModuleWindowsServicePair pair =
+                    new LocalModuleWindowsServicePair(services, supervisor);
+                ManagedLocalModuleServiceReadinessProbe readiness =
+                    new ManagedLocalModuleServiceReadinessProbe(
+                        services,
+                        new FakeTcpListenerOwnerReader(instance.ApiPort, 6001),
+                        new FakeProcessParentReader(6001, 5001),
+                        1,
+                        delegate { });
+                FakeEpmdCommandRunner epmd = new FakeEpmdCommandRunner();
+                LocalModuleServicePairLifecycle lifecycle =
+                    new LocalModuleServicePairLifecycle(
+                        services,
+                        new FakeLocalModuleServiceReadinessProbe(new List<string>()),
+                        new EpmdInstanceController(
+                            LocalModuleCapabilityProfile.Resolve("2.6.1"),
+                            runtime.RuntimeRoot,
+                            instance.EpmdPort,
+                            epmd));
+                ManagedLocalModuleLifecycleJournalStore journals =
+                    new ManagedLocalModuleLifecycleJournalStore(
+                        store.MachineRoot,
+                        pathSafety);
+                WindowsManagedLocalModulePlatform platform =
+                    new WindowsManagedLocalModulePlatform(
+                        initiatingSid,
+                        runtime,
+                        LocalModuleCapabilityProfile.Resolve("2.6.1"),
+                        store,
+                        journals,
+                        new ManagedLocalModuleProfileStore(
+                            store,
+                            pathSafety,
+                            new AtomicFileWriter()),
+                        services,
+                        pair,
+                        lifecycle,
+                        readiness,
+                        epmd,
+                        new FakeLocalModulePortReservationFactory());
+                ManagedLocalModuleProvisioningItemRequest item =
+                    CreateManagedLocalModuleRequest(1).ManagedLocalModules[0];
+                ManagedLocalModuleProvisioningContext context =
+                    new ManagedLocalModuleProvisioningContext(
+                        runtime.RuntimeId,
+                        runtime.CapabilityId,
+                        runtime.ProductVersion);
+                string operationId = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+
+                platform.Reconcile(item, operationId);
+                AssertEqual(ManagedLocalModuleObservedState.OwnedMismatch,
+                    platform.Inspect(item, context),
+                    "An owned instance without generated profile/services must be repairable.");
+                platform.RecordStage(
+                    item,
+                    context,
+                    operationId,
+                    ManagedLocalModuleProvisioningStage.Created);
+                platform.RecordStage(
+                    item,
+                    context,
+                    operationId,
+                    ManagedLocalModuleProvisioningStage.RuntimeReady);
+                platform.PrepareProfile(item, context, operationId);
+                platform.RecordStage(
+                    item,
+                    context,
+                    operationId,
+                    ManagedLocalModuleProvisioningStage.ProfileReady);
+                platform.ConfigureServicePair(item, context, initiatingSid);
+
+                AssertEqual(ManagedLocalModuleObservedState.MatchingStopped,
+                    platform.Inspect(item, context),
+                    "The persisted exact profile and DB/API definitions must be restartable.");
+                AssertTrue(File.Exists(Path.Combine(instance.ConfigRoot, "regime-local.ini")),
+                    "The production platform must persist generated configuration before SCM start.");
+                AssertEqual(2, services.CreatedDefinitions.Count,
+                    "The production platform must create exactly one restricted DB/API pair.");
+                ManagedLocalModuleLifecycleJournal durable;
+                AssertTrue(journals.TryRead(item.Inn, out durable) &&
+                           durable.Stage == ManagedLocalModuleProvisioningStage.ProfileReady,
+                    "The last completed mutation boundary must be durable before service start.");
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        }
+
+        private static void CompleteStackCanaryFailureStopsRemainingGroups()
+        {
+            LmServiceProvisioningBatchRequest request =
+                CreateManagedLocalModuleRequest(3);
+            FakeManagedLocalModuleProvisioningPlatform platform =
+                new FakeManagedLocalModuleProvisioningPlatform();
+            platform.FailureStage = ManagedLocalModuleProvisioningStage.ProfileReady;
+            ManagedLocalModuleProvisioner provisioner =
+                new ManagedLocalModuleProvisioner(platform);
+            CompleteStackProvisioningSession session =
+                new CompleteStackProvisioningSession(
+                    request,
+                    provisioner,
+                    new ManagedLocalModuleProvisioningContext(
+                        "lmrt-0123456789abcdef01234567",
+                        "local-module-2.6.1-7",
+                        "2.6.1"));
+
+            LmServiceProvisioningBatchResult result = session.ExecuteAll();
+
+            AssertEqual(3, result.Items.Count,
+                "Every prehashed group must receive an explicit session result.");
+            AssertEqual(LmServiceProvisioningStatus.Failed, result.Items[0].Status,
+                "The first planned group is the canary and must expose its failure.");
+            AssertEqual(LmServiceProvisioningStatus.Cancelled, result.Items[1].Status,
+                "The second group must remain untouched after canary failure.");
+            AssertEqual(LmServiceProvisioningStatus.Cancelled, result.Items[2].Status,
+                "The third group must remain untouched after canary failure.");
+            AssertEqual(1, platform.ReconciledInns.Count,
+                "Only the canary may enter the mutation workflow.");
+            AssertEqual(request.ManagedLocalModules[0].Inn, platform.ReconciledInns[0],
+                "The deterministic first group must be used as canary.");
+            AssertFalse(platform.Events.Contains("profile:" + request.ManagedLocalModules[1].Inn),
+                "No later profile may be created after canary failure.");
+        }
+
+        private static void ManagedLocalModuleSameInnEnsureIsIdempotent()
+        {
+            ManagedLocalModuleProvisioningItemRequest item =
+                CreateManagedLocalModuleRequest(1).ManagedLocalModules[0];
+            FakeManagedLocalModuleProvisioningPlatform platform =
+                new FakeManagedLocalModuleProvisioningPlatform();
+            ManagedLocalModuleProvisioner provisioner =
+                new ManagedLocalModuleProvisioner(platform);
+            ManagedLocalModuleProvisioningContext context =
+                new ManagedLocalModuleProvisioningContext(
+                    "lmrt-0123456789abcdef01234567",
+                    "local-module-2.6.1-7",
+                    "2.6.1");
+
+            LmServiceProvisioningItemResult first = provisioner.Ensure(
+                item,
+                context,
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "S-1-5-21-111-222-333-1001");
+            int mutationsAfterFirst = platform.MutationCount;
+            LmServiceProvisioningItemResult second = provisioner.Ensure(
+                item,
+                context,
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "S-1-5-21-111-222-333-1001");
+
+            AssertEqual(LmServiceProvisioningStatus.ReadyToInitialize, first.Status,
+                "The first ensure must reach a ready but not falsely initialized state.");
+            AssertEqual(LmServiceProvisioningStatus.ReadyToInitialize, second.Status,
+                "A matching second ensure must return the same factual state.");
+            AssertEqual(mutationsAfterFirst, platform.MutationCount,
+                "A matching same-INN ensure must not rewrite profile, SCM or listeners.");
+            AssertEqual(1, platform.ProfilePreparationCount,
+                "One INN must own only one prepared profile.");
+            AssertEqual(1, platform.ServicePairConfigurationCount,
+                "One INN must own only one DB/API service pair.");
+            AssertEqual(1, platform.StackReferenceEnsureCount,
+                "A ready shared LM must still restore the KKT ownership reference idempotently.");
+        }
+
+        private static void ManagedRemovalRetainsSharedSameInnModule()
+        {
+            FakeManagedLocalModuleRemovalPlatform platform =
+                new FakeManagedLocalModuleRemovalPlatform();
+            platform.InstanceReferencesAfterStackDeletion = 1;
+            ManagedLocalModuleRemovalWorkflow workflow =
+                new ManagedLocalModuleRemovalWorkflow(platform);
+
+            LmServiceProvisioningItemResult result = workflow.RemoveKkt(
+                "00105700000001",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+
+            AssertEqual(LmServiceProvisioningStatus.SharedLocalModuleRetained, result.Status,
+                "Removing one KKT must retain the same-INN LM referenced by another KKT.");
+            AssertSequence(
+                new[] { "controller", "stack" },
+                platform.Events,
+                "Shared-INN removal must stop after deleting only KKT-owned components.");
+            AssertEqual(0, platform.InstanceDeletionCount,
+                "The shared INN profile must remain owned and intact.");
+            AssertEqual(0, platform.RuntimeDeletionCount,
+                "A referenced runtime must never enter deletion.");
+        }
+
+        private static void ManagedRemovalCleansCompleteStackInReverse()
+        {
+            FakeManagedLocalModuleRemovalPlatform platform =
+                new FakeManagedLocalModuleRemovalPlatform();
+            platform.InstanceReferencesAfterStackDeletion = 0;
+            platform.RuntimeReferencesAfterInstanceDeletion = 0;
+            ManagedLocalModuleRemovalWorkflow workflow =
+                new ManagedLocalModuleRemovalWorkflow(platform);
+
+            LmServiceProvisioningItemResult result = workflow.RemoveKkt(
+                "00105700000001",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+
+            AssertEqual(LmServiceProvisioningStatus.Succeeded, result.Status,
+                "An unreferenced full stack must be removed completely.");
+            AssertSequence(
+                new[]
+                {
+                    "controller",
+                    "stack",
+                    "stop-pair",
+                    "services",
+                    "profile",
+                    "instance",
+                    "runtime"
+                },
+                platform.Events,
+                "Cleanup must follow reverse ownership and dependency order.");
+        }
+
+        private static void ManagedRemovalProjectsCleanupPendingAndRetries()
+        {
+            FakeManagedLocalModuleRemovalPlatform platform =
+                new FakeManagedLocalModuleRemovalPlatform();
+            platform.InstanceReferencesAfterStackDeletion = 0;
+            platform.RuntimeReferencesAfterInstanceDeletion = 0;
+            platform.FailProfileDeletionOnce = true;
+            ManagedLocalModuleRemovalWorkflow workflow =
+                new ManagedLocalModuleRemovalWorkflow(platform);
+
+            LmServiceProvisioningItemResult first = workflow.RemoveKkt(
+                "00105700000001",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+            LmServiceProvisioningItemResult retry = workflow.RemoveKkt(
+                "00105700000001",
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+
+            AssertEqual(LmServiceProvisioningStatus.CleanupPending, first.Status,
+                "A transient occupied profile must be projected as CleanupPending.");
+            AssertEqual(LmServiceProvisioningStatus.Succeeded, retry.Status,
+                "A retry after the transient failure must complete idempotently.");
+            AssertEqual(1, platform.CleanupPendingCount,
+                "The pending state must be persisted exactly once.");
+            AssertEqual(1, platform.InstanceDeletionCount,
+                "Retry must delete the instance manifest only after profile deletion succeeds.");
+            AssertEqual(1, platform.RuntimeDeletionCount,
+                "Retry must finish zero-reference runtime cleanup.");
+        }
+
+        private static void ManagedRemovalJournalSurvivesDeletedKktStack()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                LocalModuleManifestStore manifests;
+                LocalModuleRuntimeManifest runtime;
+                LocalModuleInstanceManifest instance;
+                CreateTestManagedLocalModuleOwnership(
+                    root,
+                    out manifests,
+                    out runtime,
+                    out instance);
+                ManagedKktStackManifest stack = ManagedKktStackManifest.Create(
+                    CreateManagedLocalModuleRequest(1).ManagedLocalModules[0],
+                    instance.InstanceId,
+                    string.Empty,
+                    "78787878787878787878787878787878",
+                    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+                manifests.WriteStack(stack);
+                ManagedLocalModuleRemovalSnapshot snapshot =
+                    ManagedLocalModuleRemovalSnapshot.CreateOwned(
+                        stack,
+                        instance,
+                        runtime);
+                ManagedLocalModuleRemovalJournalStore journal =
+                    new ManagedLocalModuleRemovalJournalStore(
+                        manifests.MachineRoot,
+                        new FakePathSafety(true));
+                journal.Write(
+                    snapshot,
+                    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    string.Empty);
+                manifests.DeleteStack(stack.KktSerial, stack.OwnershipNonce);
+
+                ManagedLocalModuleRemovalSnapshot recovered;
+                AssertTrue(journal.TryRead(stack.KktSerial, out recovered),
+                    "Cleanup retry must retain ownership after the KKT stack file is gone.");
+                AssertEqual(snapshot.InstanceId, recovered.InstanceId,
+                    "The retry journal must retain the exact INN profile identity.");
+                AssertEqual(snapshot.RuntimeId, recovered.RuntimeId,
+                    "The retry journal must retain the exact shared runtime identity.");
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        }
+
+        private static void WindowsManagedRemovalDeletesOwnedStackAndRetryJournal()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                LocalModuleManifestStore manifests;
+                LocalModuleRuntimeManifest runtime;
+                LocalModuleInstanceManifest instance;
+                CreateTestManagedLocalModuleOwnership(
+                    root,
+                    out manifests,
+                    out runtime,
+                    out instance);
+                LocalModuleTemplateObservation templates =
+                    CreateLocalModuleTemplateObservation();
+                string regimeTemplate = Path.Combine(
+                    runtime.RuntimeRoot,
+                    @"regime\etc\local.ini.dist");
+                string databaseTemplate = Path.Combine(
+                    runtime.RuntimeRoot,
+                    @"yenisei\etc\local.ini.dist");
+                Directory.CreateDirectory(Path.GetDirectoryName(regimeTemplate));
+                Directory.CreateDirectory(Path.GetDirectoryName(databaseTemplate));
+                File.WriteAllText(regimeTemplate, templates.RegimeLocalIni, new UTF8Encoding(false));
+                File.WriteAllText(databaseTemplate, templates.YeniseiLocalIni, new UTF8Encoding(false));
+                FakePathSafety pathSafety = new FakePathSafety(true);
+                ManagedLocalModuleProfileStore profiles =
+                    new ManagedLocalModuleProfileStore(
+                        manifests,
+                        pathSafety,
+                        new AtomicFileWriter());
+                ManagedLocalModuleProvisioningItemRequest item =
+                    CreateManagedLocalModuleRequest(1).ManagedLocalModules[0];
+                LocalModuleConfiguration configuration = profiles.WriteConfiguration(
+                    runtime,
+                    LocalModuleCapabilityProfile.Resolve("2.6.1"),
+                    item,
+                    instance.InstanceId,
+                    instance.OwnershipNonce);
+                LocalModuleInstanceManifest replacement =
+                    LocalModuleInstanceManifest.Create(
+                        item,
+                        instance.InstanceId,
+                        runtime.RuntimeId,
+                        runtime.RuntimeRoot,
+                        configuration,
+                        instance.OwnershipNonce,
+                        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+                manifests.WriteInstance(replacement);
+                profiles.ProtectOwnedManifests(runtime, replacement);
+                ManagedKktStackManifest stack = ManagedKktStackManifest.Create(
+                    item,
+                    replacement.InstanceId,
+                    string.Empty,
+                    "89898989898989898989898989898989",
+                    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+                manifests.WriteStack(stack);
+                Directory.Delete(Path.Combine(runtime.RuntimeRoot, "regime"), true);
+                Directory.Delete(Path.Combine(runtime.RuntimeRoot, "yenisei"), true);
+
+                FakeWindowsServiceCollectionApi services =
+                    new FakeWindowsServiceCollectionApi();
+                ManagedLocalModuleRemovalJournalStore removalJournal =
+                    new ManagedLocalModuleRemovalJournalStore(
+                        manifests.MachineRoot,
+                        pathSafety);
+                WindowsManagedLocalModuleRemovalPlatform platform =
+                    new WindowsManagedLocalModuleRemovalPlatform(
+                        manifests,
+                        removalJournal,
+                        profiles,
+                        new LocalModuleRuntimeInstaller(
+                            manifests,
+                            pathSafety,
+                            NoopLocalModuleMutationBoundary.Instance),
+                        services,
+                        VerifiedProvisionerBinary.CreateForTesting(
+                            @"C:\Program Files\KRS\MultiKKT\Provisioner\EsmTspiot.ServiceProvisioner.exe"),
+                        new FakeLocalModuleServiceReadinessProbe(new List<string>()),
+                        new FakeEpmdCommandRunner(
+                            new EpmdCommandResult(0, "epmd: up and running\n", string.Empty),
+                            new EpmdCommandResult(0, "Killed\n", string.Empty)),
+                        NoopManagedKktControllerRemoval.Instance,
+                        delegate { });
+
+                LmServiceProvisioningItemResult result =
+                    new ManagedLocalModuleRemovalWorkflow(platform).RemoveKkt(
+                        item.KktSerial,
+                        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+
+                AssertEqual(LmServiceProvisioningStatus.Succeeded, result.Status,
+                    "The concrete cleanup must remove every zero-reference owned layer.");
+                AssertFalse(Directory.Exists(replacement.ProfileRoot),
+                    "The owned INN profile must leave no data, log or config debris.");
+                AssertFalse(Directory.Exists(runtime.RuntimeRoot),
+                    "The zero-reference verified runtime must be removed last.");
+                ManagedLocalModuleRemovalSnapshot pending;
+                AssertFalse(removalJournal.TryRead(item.KktSerial, out pending),
+                    "A completed cleanup must remove its retry journal.");
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        }
+
+        private static void ManagedUpdateGuardNeverStopsUnknownVersion()
+        {
+            FakeManagedLocalModuleUpdatePlatform platform =
+                new FakeManagedLocalModuleUpdatePlatform();
+            ManagedLocalModuleUpdateWorkflow workflow =
+                new ManagedLocalModuleUpdateWorkflow(platform);
+
+            LmServiceProvisioningStatus result = workflow.Evaluate(
+                "2.6.1",
+                "2.6.2");
+
+            AssertEqual(LmServiceProvisioningStatus.VersionVerificationPending, result,
+                "A package without an exact capability and migration pair must be blocked.");
+            AssertEqual(0, platform.BeginMigrationCount,
+                "Unknown-version evaluation must not stop or mutate running instances.");
         }
 
         private static void LmProfileAdapterChangesOnlySupportedFields()
@@ -3979,6 +4790,14 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 return Validate(path, requiredRoot);
             }
 
+            public ValidationResult ValidateProtectedForServices(
+                string path,
+                string requiredRoot,
+                IList<string> allowedWriterSids)
+            {
+                return Validate(path, requiredRoot);
+            }
+
             public void EnsureProtectedDirectory(
                 string path,
                 ProtectedDirectoryKind kind,
@@ -3992,11 +4811,52 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 Directory.CreateDirectory(path);
             }
 
+            public void EnsureProtectedDirectoryForServices(
+                string path,
+                ProtectedDirectoryKind kind,
+                string readOnlySid,
+                IList<string> serviceSids)
+            {
+                EnsureProtectedDirectory(path, kind, readOnlySid, null);
+            }
+
             public void EnsureProtectedRuntimeFile(string path)
             {
                 if (!_isSafe)
                 {
                     throw new InvalidDataException("reparse path rejected");
+                }
+            }
+
+            public void EnsureProtectedReadOnlyFile(
+                string path,
+                IList<string> readOnlySids)
+            {
+                EnsureProtectedRuntimeFile(path);
+            }
+        }
+
+        private static void AssertSequence(
+            IList<string> expected,
+            IList<string> actual,
+            string message)
+        {
+            if (expected == null || actual == null || expected.Count != actual.Count)
+            {
+                throw new InvalidOperationException(
+                    message + " Expected " +
+                    (expected == null ? "<null>" : expected.Count.ToString()) +
+                    " event(s), actual " +
+                    (actual == null ? "<null>" : actual.Count.ToString()) + ".");
+            }
+            for (int index = 0; index < expected.Count; index++)
+            {
+                if (!string.Equals(expected[index], actual[index], StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        message + " Difference at index " + index.ToString() +
+                        ": expected '" + expected[index] + "', actual '" +
+                        actual[index] + "'.");
                 }
             }
         }
@@ -4221,6 +5081,53 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             }
         }
 
+        private sealed class FakeTcpListenerOwnerReader : ITcpListenerOwnerReader
+        {
+            private readonly int _port;
+            private readonly int _processId;
+
+            internal FakeTcpListenerOwnerReader(int port, int processId)
+            {
+                _port = port;
+                _processId = processId;
+            }
+
+            public IList<int> FindListenerProcessIds(int port)
+            {
+                return port == _port
+                    ? new List<int> { _processId }
+                    : new List<int>();
+            }
+        }
+
+        private sealed class FakeProcessParentReader : IProcessParentReader
+        {
+            private readonly int _processId;
+
+            internal FakeProcessParentReader(int processId, int parentProcessId)
+            {
+                _processId = processId;
+                ParentProcessId = parentProcessId;
+            }
+
+            internal int ParentProcessId { get; set; }
+
+            public int GetParentProcessId(int processId)
+            {
+                return processId == _processId ? ParentProcessId : 0;
+            }
+        }
+
+        private sealed class FakeLocalModulePortReservationFactory :
+            ILocalModulePortReservationFactory
+        {
+            public IDisposable Acquire(
+                ManagedLocalModuleProvisioningItemRequest item)
+            {
+                return new CallbackDisposable(delegate { });
+            }
+        }
+
         private sealed class FakeLocalModuleServiceReadinessProbe :
             ILocalModuleServiceReadinessProbe
         {
@@ -4263,6 +5170,246 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             {
                 _events.Add("epmd:" + plan.ArgumentTokens[0]);
                 return _results.Dequeue();
+            }
+        }
+
+        private sealed class FakeManagedLocalModuleProvisioningPlatform :
+            IManagedLocalModuleProvisioningPlatform
+        {
+            private bool _ready;
+
+            internal FakeManagedLocalModuleProvisioningPlatform()
+            {
+                Events = new List<string>();
+                ReconciledInns = new List<string>();
+            }
+
+            internal ManagedLocalModuleProvisioningStage? FailureStage { get; set; }
+            internal IList<string> Events { get; private set; }
+            internal IList<string> ReconciledInns { get; private set; }
+            internal int MutationCount { get; private set; }
+            internal int ProfilePreparationCount { get; private set; }
+            internal int ServicePairConfigurationCount { get; private set; }
+            internal int StackReferenceEnsureCount { get; private set; }
+
+            public IDisposable AcquireItemLock(string inn)
+            {
+                return new CallbackDisposable(delegate { });
+            }
+
+            public void Reconcile(
+                ManagedLocalModuleProvisioningItemRequest item,
+                string operationId)
+            {
+                ReconciledInns.Add(item.Inn);
+            }
+
+            public ManagedLocalModuleObservedState Inspect(
+                ManagedLocalModuleProvisioningItemRequest item,
+                ManagedLocalModuleProvisioningContext context)
+            {
+                return _ready
+                    ? ManagedLocalModuleObservedState.MatchingReady
+                    : ManagedLocalModuleObservedState.Absent;
+            }
+
+            public void RecordStage(
+                ManagedLocalModuleProvisioningItemRequest item,
+                ManagedLocalModuleProvisioningContext context,
+                string operationId,
+                ManagedLocalModuleProvisioningStage stage)
+            {
+                Events.Add("stage:" + stage.ToString() + ":" + item.Inn);
+                MutationCount++;
+                if (FailureStage.HasValue && FailureStage.Value == stage)
+                {
+                    throw new IOException("simulated stage failure");
+                }
+            }
+
+            public void PrepareProfile(
+                ManagedLocalModuleProvisioningItemRequest item,
+                ManagedLocalModuleProvisioningContext context,
+                string operationId)
+            {
+                Events.Add("profile:" + item.Inn);
+                ProfilePreparationCount++;
+                MutationCount++;
+            }
+
+            public void ConfigureServicePair(
+                ManagedLocalModuleProvisioningItemRequest item,
+                ManagedLocalModuleProvisioningContext context,
+                string initiatingSid)
+            {
+                Events.Add("services:" + item.Inn);
+                ServicePairConfigurationCount++;
+                MutationCount++;
+            }
+
+            public void StartDatabaseAndWait(
+                ManagedLocalModuleProvisioningItemRequest item,
+                ManagedLocalModuleProvisioningContext context)
+            {
+                Events.Add("database:" + item.Inn);
+                MutationCount++;
+            }
+
+            public void StartApiAndWait(
+                ManagedLocalModuleProvisioningItemRequest item,
+                ManagedLocalModuleProvisioningContext context)
+            {
+                Events.Add("api:" + item.Inn);
+                MutationCount++;
+            }
+
+            public void Complete(
+                ManagedLocalModuleProvisioningItemRequest item,
+                ManagedLocalModuleProvisioningContext context,
+                string operationId)
+            {
+                Events.Add("complete:" + item.Inn);
+                MutationCount++;
+                _ready = true;
+            }
+
+            public void EnsureStackReference(
+                ManagedLocalModuleProvisioningItemRequest item,
+                ManagedLocalModuleProvisioningContext context,
+                string operationId)
+            {
+                StackReferenceEnsureCount++;
+            }
+
+            public void MarkRequiresAttention(
+                ManagedLocalModuleProvisioningItemRequest item,
+                string operationId,
+                string errorClass)
+            {
+                Events.Add("attention:" + item.Inn);
+            }
+        }
+
+        private sealed class FakeManagedLocalModuleRemovalPlatform :
+            IManagedLocalModuleRemovalPlatform
+        {
+            private bool _profileFailureThrown;
+
+            internal FakeManagedLocalModuleRemovalPlatform()
+            {
+                Events = new List<string>();
+            }
+
+            internal IList<string> Events { get; private set; }
+            internal int InstanceReferencesAfterStackDeletion { get; set; }
+            internal int RuntimeReferencesAfterInstanceDeletion { get; set; }
+            internal bool FailProfileDeletionOnce { get; set; }
+            internal int CleanupPendingCount { get; private set; }
+            internal int InstanceDeletionCount { get; private set; }
+            internal int RuntimeDeletionCount { get; private set; }
+
+            public IDisposable AcquireMachineLock()
+            {
+                return new CallbackDisposable(delegate { });
+            }
+
+            public ManagedLocalModuleRemovalSnapshot Inspect(
+                string kktSerial,
+                string operationId)
+            {
+                return ManagedLocalModuleRemovalSnapshot.CreateForTesting(
+                    kktSerial,
+                    "kkt-" + kktSerial,
+                    "11111111111111111111111111111111",
+                    "lmi-0123456789abcdef01234567",
+                    "22222222222222222222222222222222",
+                    "lmrt-0123456789abcdef01234567",
+                    "33333333333333333333333333333333");
+            }
+
+            public void RemoveController(ManagedLocalModuleRemovalSnapshot snapshot)
+            {
+                AddOnce("controller");
+            }
+
+            public void DeleteStack(ManagedLocalModuleRemovalSnapshot snapshot)
+            {
+                AddOnce("stack");
+            }
+
+            public int CountInstanceReferences(ManagedLocalModuleRemovalSnapshot snapshot)
+            {
+                return InstanceReferencesAfterStackDeletion;
+            }
+
+            public LocalModuleServicePairStopOutcome StopServicePair(
+                ManagedLocalModuleRemovalSnapshot snapshot)
+            {
+                AddOnce("stop-pair");
+                return LocalModuleServicePairStopOutcome.Stopped;
+            }
+
+            public void DeleteServicePair(ManagedLocalModuleRemovalSnapshot snapshot)
+            {
+                AddOnce("services");
+            }
+
+            public void DeleteProfile(ManagedLocalModuleRemovalSnapshot snapshot)
+            {
+                if (FailProfileDeletionOnce && !_profileFailureThrown)
+                {
+                    _profileFailureThrown = true;
+                    throw new IOException("profile is busy");
+                }
+                AddOnce("profile");
+            }
+
+            public void DeleteInstance(ManagedLocalModuleRemovalSnapshot snapshot)
+            {
+                AddOnce("instance");
+                InstanceDeletionCount++;
+            }
+
+            public int CountRuntimeReferences(ManagedLocalModuleRemovalSnapshot snapshot)
+            {
+                return RuntimeReferencesAfterInstanceDeletion;
+            }
+
+            public void DeleteRuntime(ManagedLocalModuleRemovalSnapshot snapshot)
+            {
+                AddOnce("runtime");
+                RuntimeDeletionCount++;
+            }
+
+            public void MarkCleanupPending(
+                ManagedLocalModuleRemovalSnapshot snapshot,
+                string operationId,
+                string errorClass)
+            {
+                CleanupPendingCount++;
+            }
+
+            public void CompleteRemoval(
+                ManagedLocalModuleRemovalSnapshot snapshot)
+            {
+            }
+
+            private void AddOnce(string value)
+            {
+                if (!Events.Contains(value)) Events.Add(value);
+            }
+        }
+
+        private sealed class FakeManagedLocalModuleUpdatePlatform :
+            IManagedLocalModuleUpdatePlatform
+        {
+            internal int BeginMigrationCount { get; private set; }
+
+            public void BeginExactMigration(
+                string currentVersion,
+                string selectedVersion)
+            {
+                BeginMigrationCount++;
             }
         }
 

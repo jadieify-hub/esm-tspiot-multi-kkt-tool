@@ -210,6 +210,17 @@ namespace EsmTspiot.ServiceProvisioner
                     "Owned Erlang executable does not match runtime inventory.");
             }
 
+            ValidateConfigurationArtifacts(manifest);
+        }
+
+        internal static void ValidateConfigurationArtifacts(
+            LocalModuleInstanceManifest manifest)
+        {
+            if (manifest == null)
+            {
+                throw new InvalidDataException(
+                    "Owned local-module manifest is missing.");
+            }
             ValidateConfigHash(
                 Path.Combine(manifest.ConfigRoot, "regime-local.ini"),
                 manifest.RegimeLocalIniSha256);

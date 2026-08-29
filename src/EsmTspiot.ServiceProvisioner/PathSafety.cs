@@ -15,19 +15,33 @@ namespace EsmTspiot.ServiceProvisioner
         Operations = 3,
         InstallerStaging = 4,
         ProfileContainer = 5,
-        Runtime = 6
+        Runtime = 6,
+        ProfileConfiguration = 7,
+        RuntimeContainer = 8
     }
 
     internal interface IPathSafety
     {
         ValidationResult Validate(string path, string requiredRoot);
         ValidationResult ValidateProtected(string path, string requiredRoot, string allowedWriterSid);
+        ValidationResult ValidateProtectedForServices(
+            string path,
+            string requiredRoot,
+            IList<string> allowedWriterSids);
         void EnsureProtectedDirectory(
             string path,
             ProtectedDirectoryKind kind,
             string readOnlySid,
             string serviceSid);
+        void EnsureProtectedDirectoryForServices(
+            string path,
+            ProtectedDirectoryKind kind,
+            string readOnlySid,
+            IList<string> serviceSids);
         void EnsureProtectedRuntimeFile(string path);
+        void EnsureProtectedReadOnlyFile(
+            string path,
+            IList<string> readOnlySids);
     }
 
     internal sealed class PathSafety : IPathSafety
@@ -100,6 +114,17 @@ namespace EsmTspiot.ServiceProvisioner
             string requiredRoot,
             string allowedWriterSid)
         {
+            IList<string> allowed = string.IsNullOrEmpty(allowedWriterSid)
+                ? null
+                : new[] { allowedWriterSid };
+            return ValidateProtectedForServices(path, requiredRoot, allowed);
+        }
+
+        public ValidationResult ValidateProtectedForServices(
+            string path,
+            string requiredRoot,
+            IList<string> allowedWriterSids)
+        {
             ValidationResult result = Validate(path, requiredRoot);
             if (!result.IsValid)
             {
@@ -117,7 +142,10 @@ namespace EsmTspiot.ServiceProvisioner
                         : Directory.Exists(current)
                             ? new DirectoryInfo(current).GetAccessControl()
                             : null;
-                    if (security != null && !IsSecurityProtected(security, allowedWriterSid))
+                    if (security != null &&
+                        !IsSecurityProtectedForServices(
+                            security,
+                            allowedWriterSids))
                     {
                         result.Add("Защищенный путь допускает изменение непривилегированной учетной записью.");
                         return result;
@@ -153,6 +181,22 @@ namespace EsmTspiot.ServiceProvisioner
             string readOnlySid,
             string serviceSid)
         {
+            IList<string> serviceSids = string.IsNullOrEmpty(serviceSid)
+                ? null
+                : new[] { serviceSid };
+            EnsureProtectedDirectoryForServices(
+                path,
+                kind,
+                readOnlySid,
+                serviceSids);
+        }
+
+        public void EnsureProtectedDirectoryForServices(
+            string path,
+            ProtectedDirectoryKind kind,
+            string readOnlySid,
+            IList<string> serviceSids)
+        {
             Directory.CreateDirectory(path);
             IList<SecurityIdentifier> preservedTraverseSids = ReadSafeTraverseSids(path);
             DirectorySecurity security = new DirectorySecurity();
@@ -170,25 +214,43 @@ namespace EsmTspiot.ServiceProvisioner
             }
             if (kind == ProtectedDirectoryKind.Profile)
             {
-                if (string.IsNullOrEmpty(serviceSid))
+                if (serviceSids == null || serviceSids.Count == 0)
                 {
-                    throw new InvalidDataException("Profile directory requires an exact service SID.");
+                    throw new InvalidDataException(
+                        "Profile directory requires exact service SIDs.");
                 }
-                AddDirectoryRule(
-                    security,
-                    new SecurityIdentifier(serviceSid),
-                    FileSystemRights.Modify | FileSystemRights.Synchronize);
+                for (int index = 0; index < serviceSids.Count; index++)
+                {
+                    AddDirectoryRule(
+                        security,
+                        ParseExactServiceSid(serviceSids[index]),
+                        FileSystemRights.Modify | FileSystemRights.Synchronize);
+                }
+            }
+            if (kind == ProtectedDirectoryKind.ProfileConfiguration)
+            {
+                if (serviceSids == null || serviceSids.Count == 0)
+                {
+                    throw new InvalidDataException(
+                        "Profile configuration requires exact service SIDs.");
+                }
+                for (int index = 0; index < serviceSids.Count; index++)
+                {
+                    AddDirectoryRule(
+                        security,
+                        ParseExactServiceSid(serviceSids[index]),
+                        FileSystemRights.ReadAndExecute |
+                            FileSystemRights.ListDirectory |
+                            FileSystemRights.Read |
+                            FileSystemRights.Synchronize);
+                }
             }
             if (kind == ProtectedDirectoryKind.ProfileContainer)
             {
-                if (string.IsNullOrEmpty(serviceSid))
+                if (serviceSids == null || serviceSids.Count == 0)
                 {
-                    throw new InvalidDataException("Profile container requires an exact service SID.");
-                }
-                SecurityIdentifier sid = new SecurityIdentifier(serviceSid);
-                if (!ContainsSid(preservedTraverseSids, sid.Value))
-                {
-                    preservedTraverseSids.Add(sid);
+                    throw new InvalidDataException(
+                        "Profile container requires exact service SIDs.");
                 }
             }
             if (kind == ProtectedDirectoryKind.Runtime)
@@ -197,6 +259,26 @@ namespace EsmTspiot.ServiceProvisioner
                     security,
                     AllServicesSid,
                     FileSystemRights.ReadAndExecute | FileSystemRights.Synchronize);
+            }
+            if (kind == ProtectedDirectoryKind.RuntimeContainer)
+            {
+                security.AddAccessRule(new FileSystemAccessRule(
+                    AllServicesSid,
+                    FileSystemRights.Traverse | FileSystemRights.Synchronize,
+                    InheritanceFlags.None,
+                    PropagationFlags.None,
+                    AccessControlType.Allow));
+            }
+            if (serviceSids != null)
+            {
+                for (int index = 0; index < serviceSids.Count; index++)
+                {
+                    SecurityIdentifier sid = ParseExactServiceSid(serviceSids[index]);
+                    if (!ContainsSid(preservedTraverseSids, sid.Value))
+                    {
+                        preservedTraverseSids.Add(sid);
+                    }
+                }
             }
             for (int index = 0; index < preservedTraverseSids.Count; index++)
             {
@@ -227,6 +309,37 @@ namespace EsmTspiot.ServiceProvisioner
                 security,
                 AllServicesSid,
                 FileSystemRights.ReadAndExecute | FileSystemRights.Synchronize);
+            new FileInfo(fullPath).SetAccessControl(security);
+        }
+
+        public void EnsureProtectedReadOnlyFile(
+            string path,
+            IList<string> readOnlySids)
+        {
+            string fullPath = Path.GetFullPath(path);
+            if (!File.Exists(fullPath))
+            {
+                throw new FileNotFoundException(
+                    "Protected read-only file was not found.",
+                    fullPath);
+            }
+            FileSecurity security = new FileSecurity();
+            security.SetAccessRuleProtection(true, false);
+            security.SetOwner(AdministratorsSid);
+            AddFileRule(security, SystemSid, FileSystemRights.FullControl);
+            AddFileRule(security, AdministratorsSid, FileSystemRights.FullControl);
+            if (readOnlySids != null)
+            {
+                for (int index = 0; index < readOnlySids.Count; index++)
+                {
+                    AddFileRule(
+                        security,
+                        ParseExactServiceSid(readOnlySids[index]),
+                        FileSystemRights.ReadAndExecute |
+                            FileSystemRights.Read |
+                            FileSystemRights.Synchronize);
+                }
+            }
             new FileInfo(fullPath).SetAccessControl(security);
         }
 
@@ -341,6 +454,25 @@ namespace EsmTspiot.ServiceProvisioner
             string allowedWriterSid)
         {
             return ProtectedAclPolicy.IsProtected(security, allowedWriterSid);
+        }
+
+        internal static bool IsSecurityProtectedForServices(
+            FileSystemSecurity security,
+            IList<string> allowedWriterSids)
+        {
+            return ProtectedAclPolicy.IsProtectedForWriters(
+                security,
+                allowedWriterSids);
+        }
+
+        private static SecurityIdentifier ParseExactServiceSid(string value)
+        {
+            if (string.IsNullOrEmpty(value) ||
+                !value.StartsWith("S-1-5-80-", StringComparison.Ordinal))
+            {
+                throw new InvalidDataException("An exact Windows service SID is required.");
+            }
+            return new SecurityIdentifier(value);
         }
 
         private static void AddFileRule(

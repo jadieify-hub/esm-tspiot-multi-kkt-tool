@@ -176,11 +176,13 @@ Implementation evidence: 84/84 helper tests pass under `LangVersion=5`; the LM s
 
 **Interfaces:** `Ensure(item, session)` returns after owned DB/API listeners. Session locks both packages once and accepts only prehashed item indexes. Remove KKT retains referenced same-INN LM; remove-all then deletes zero-reference runtimes. Different version is `VersionVerificationPending` until exact migration profile exists.
 
-- [ ] **Step 1: Write failing tests** for canary ordering/failure stop, same-INN idempotency, retaining shared LM, full cleanup, `CleanupPending`, and unknown-version guard.
-- [ ] **Step 2: Run helper tests and verify RED.**
-- [ ] **Step 3: Implement journaled states** `Created`, `RuntimeReady`, `ProfileReady`, `DbReady`, `ApiReady`, `ControllerReady`, `BindingPending`, `Completed`, `CleanupPending`, `RequiresAttention`.
-- [ ] **Step 4: Implement factual cleanup by re-reading manifests/SCM/PIDs/listeners. Same-version repair preserves data; new version never stops existing processes without exact capability/migration.**
-- [ ] **Step 5: Run helper/C# 5/safety and commit:** `git commit -m "Добавить жизненный цикл полного комплекта ККТ"`.
+- [x] **Step 1: Write failing tests** for canary ordering/failure stop, same-INN idempotency, retaining shared LM, full cleanup, `CleanupPending`, and unknown-version guard.
+- [x] **Step 2: Run helper tests and verify RED.**
+- [x] **Step 3: Implement journaled states** `Created`, `RuntimeReady`, `ProfileReady`, `DbReady`, `ApiReady`, `ControllerReady`, `BindingPending`, `Completed`, `CleanupPending`, `RequiresAttention`.
+- [x] **Step 4: Implement factual cleanup by re-reading manifests/SCM/PIDs/listeners. Same-version repair preserves data; new version never stops existing processes without exact capability/migration.**
+- [x] **Step 5: Run helper/C# 5/safety and commit:** `git commit -m "Добавить жизненный цикл полного комплекта ККТ"`.
+
+Implementation evidence: the elevated helper now owns the exact-MSI runtime session, rehashes an existing runtime before reuse, persists per-INN lifecycle and per-KKT removal journals, verifies listener ancestry, and performs reverse zero-reference cleanup. The concrete Windows path and recovery boundaries are covered by 100/100 helper tests under `LangVersion=5`; the LM safety gate passes.
 
 ---
 

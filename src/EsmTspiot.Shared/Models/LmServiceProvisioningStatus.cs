@@ -26,6 +26,10 @@ namespace EsmTspiot.Shared.Models
         [EnumMember]
         RemovedLocalArtifactsBindingRetained = 9,
         [EnumMember]
-        RequiresAttention = 10
+        RequiresAttention = 10,
+        [EnumMember]
+        ReadyToInitialize = 11,
+        [EnumMember]
+        SharedLocalModuleRetained = 12
     }
 }

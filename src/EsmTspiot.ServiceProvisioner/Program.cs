@@ -54,6 +54,44 @@ namespace EsmTspiot.ServiceProvisioner
 
                     try
                     {
+                        if (request.Operation ==
+                            LmServiceOperation.EnsureManagedLocalModules)
+                        {
+                            using (CompleteStackProvisioningSession session =
+                                WindowsManagedLocalModulePlatform.CreateSession(
+                                    request))
+                            {
+                                LmServiceProvisioningBatchResult result =
+                                    session.ExecuteAll();
+                                channel.WriteMessage(result);
+                                return ToExitCode(result.Status);
+                            }
+                        }
+                        if (request.Operation == LmServiceOperation.RemoveManaged ||
+                            request.Operation == LmServiceOperation.CleanupManaged)
+                        {
+                            string kktSerial = request.Operation ==
+                                LmServiceOperation.RemoveManaged
+                                ? request.RemovalConfirmation.KktSerial
+                                : request.CleanupConfirmation.KktSerial;
+                            if (WindowsManagedLocalModuleRemovalPlatform.HasManagedState(
+                                    request.InitiatingSid,
+                                    kktSerial))
+                            {
+                                ManagedLocalModuleRemovalWorkflow workflow =
+                                    new ManagedLocalModuleRemovalWorkflow(
+                                        WindowsManagedLocalModuleRemovalPlatform.Create(
+                                            request));
+                                LmServiceProvisioningItemResult item =
+                                    workflow.RemoveKkt(
+                                        kktSerial,
+                                        request.OperationId);
+                                LmServiceProvisioningBatchResult fullResult =
+                                    CreateSingleItemResult(request, item);
+                                channel.WriteMessage(fullResult);
+                                return ToExitCode(item.Status);
+                            }
+                        }
                         WindowsLmProvisioningPlatform platform =
                             WindowsLmProvisioningPlatform.Create(
                                 request.InitiatingSid,
@@ -191,6 +229,25 @@ namespace EsmTspiot.ServiceProvisioner
                     });
                 }
             }
+            else if (request.ManagedLocalModules != null &&
+                request.ManagedLocalModules.Count > 0)
+            {
+                for (int index = 0;
+                    index < request.ManagedLocalModules.Count;
+                    index++)
+                {
+                    ManagedLocalModuleProvisioningItemRequest item =
+                        request.ManagedLocalModules[index];
+                    result.Items.Add(new LmServiceProvisioningItemResult
+                    {
+                        KktSerial = item == null
+                            ? string.Empty
+                            : item.KktSerial,
+                        Status = status,
+                        Message = message
+                    });
+                }
+            }
             else if (request.RemovalConfirmation != null)
             {
                 result.Items.Add(new LmServiceProvisioningItemResult
@@ -233,7 +290,9 @@ namespace EsmTspiot.ServiceProvisioner
                 status == LmServiceProvisioningStatus.CleanupPending ||
                 status == LmServiceProvisioningStatus.RemovalBlocked ||
                 status == LmServiceProvisioningStatus.MarkedForDelete ||
-                status == LmServiceProvisioningStatus.RemovedLocalArtifactsBindingRetained)
+                status == LmServiceProvisioningStatus.RemovedLocalArtifactsBindingRetained ||
+                status == LmServiceProvisioningStatus.ReadyToInitialize ||
+                status == LmServiceProvisioningStatus.SharedLocalModuleRetained)
             {
                 return ExitResultSent;
             }
@@ -271,7 +330,7 @@ namespace EsmTspiot.ServiceProvisioner
                 Status = LmServiceProvisioningStatus.UnsupportedController
             };
 
-            if (request.Items != null)
+            if (request.Items != null && request.Items.Count > 0)
             {
                 for (int index = 0; index < request.Items.Count; index++)
                 {
@@ -280,6 +339,23 @@ namespace EsmTspiot.ServiceProvisioner
                         KktSerial = request.Items[index] == null ? string.Empty : request.Items[index].KktSerial,
                         Status = LmServiceProvisioningStatus.UnsupportedController,
                         Message = "Операция еще не подключена к проверенному capability profile."
+                    });
+                }
+            }
+            else if (request.ManagedLocalModules != null)
+            {
+                for (int index = 0;
+                    index < request.ManagedLocalModules.Count;
+                    index++)
+                {
+                    result.Items.Add(new LmServiceProvisioningItemResult
+                    {
+                        KktSerial = request.ManagedLocalModules[index] == null
+                            ? string.Empty
+                            : request.ManagedLocalModules[index].KktSerial,
+                        Status = LmServiceProvisioningStatus.UnsupportedController,
+                        Message =
+                            "Операция не имеет точного capability-профиля ЛМ ЧЗ."
                     });
                 }
             }

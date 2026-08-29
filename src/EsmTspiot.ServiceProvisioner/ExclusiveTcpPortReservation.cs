@@ -24,11 +24,32 @@ namespace EsmTspiot.ServiceProvisioner
             {
                 throw new ArgumentOutOfRangeException("grpcPort");
             }
+            return AcquireDualStackWildcard(new[] { grpcPort, restPort });
+        }
+
+        internal static ExclusiveTcpPortReservation AcquireDualStackWildcard(
+            IList<int> ports)
+        {
+            if (ports == null || ports.Count == 0)
+            {
+                throw new ArgumentNullException("ports");
+            }
+            HashSet<int> unique = new HashSet<int>();
+            for (int index = 0; index < ports.Count; index++)
+            {
+                if (ports[index] < 1 || ports[index] > 65535 ||
+                    !unique.Add(ports[index]))
+                {
+                    throw new ArgumentOutOfRangeException("ports");
+                }
+            }
             List<Socket> sockets = new List<Socket>();
             try
             {
-                sockets.Add(BindDualStack(grpcPort));
-                sockets.Add(BindDualStack(restPort));
+                for (int index = 0; index < ports.Count; index++)
+                {
+                    sockets.Add(BindDualStack(ports[index]));
+                }
                 return new ExclusiveTcpPortReservation(sockets);
             }
             catch

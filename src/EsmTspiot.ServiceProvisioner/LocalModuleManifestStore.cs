@@ -81,6 +81,10 @@ namespace EsmTspiot.ServiceProvisioner
 
         internal string RuntimeSecurityRoot { get { return _runtimeSecurityRoot; } }
 
+        internal string InstancesRoot { get { return _instancesRoot; } }
+
+        internal string RuntimeInventoryRoot { get { return _runtimeInventoryRoot; } }
+
         internal string GetAdministrativeImageRoot(string operationId)
         {
             ValidateOperationId(operationId);
@@ -150,6 +154,7 @@ namespace EsmTspiot.ServiceProvisioner
                 ValidateRuntimeTransition(existing, manifest);
             }
             AtomicJsonFile.Write(path, AtomicJsonFile.Serialize(manifest));
+            _pathSafety.EnsureProtectedRuntimeFile(path);
             EnsureMachineSafe(path);
         }
 
@@ -203,6 +208,14 @@ namespace EsmTspiot.ServiceProvisioner
                 previousRuntimeId = existing.RuntimeId;
             }
             AtomicJsonFile.Write(path, AtomicJsonFile.Serialize(manifest));
+            _pathSafety.EnsureProtectedReadOnlyFile(
+                path,
+                new[]
+                {
+                    RestrictedServiceSid.Derive(
+                        manifest.DatabaseServiceName),
+                    RestrictedServiceSid.Derive(manifest.ApiServiceName)
+                });
             EnsureMachineSafe(path);
             RefreshRuntimeReferenceCount(manifest.RuntimeId);
             if (!string.IsNullOrEmpty(previousRuntimeId) &&
@@ -251,6 +264,41 @@ namespace EsmTspiot.ServiceProvisioner
             }
             manifest = ReadInstance(instanceId);
             return true;
+        }
+
+        internal bool TryFindInstanceByInn(
+            string inn,
+            out LocalModuleInstanceManifest manifest)
+        {
+            if (!LocalModuleManagedIdentity.IsAsciiDigits(inn, 10) &&
+                !LocalModuleManagedIdentity.IsAsciiDigits(inn, 12))
+            {
+                throw new ArgumentException("INN is invalid.", "inn");
+            }
+            manifest = null;
+            if (!Directory.Exists(_instancesRoot))
+            {
+                return false;
+            }
+            EnsureMachineSafe(_instancesRoot);
+            string[] directories = Directory.GetDirectories(_instancesRoot);
+            for (int index = 0; index < directories.Length; index++)
+            {
+                string instanceId = Path.GetFileName(directories[index]);
+                ValidateInstanceId(instanceId);
+                LocalModuleInstanceManifest candidate = ReadInstance(instanceId);
+                if (!string.Equals(candidate.Inn, inn, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+                if (manifest != null)
+                {
+                    throw new InvalidDataException(
+                        "Managed local-module inventory contains more than one instance for the INN.");
+                }
+                manifest = candidate;
+            }
+            return manifest != null;
         }
 
         internal void DeleteInstance(string instanceId, string ownershipNonce)

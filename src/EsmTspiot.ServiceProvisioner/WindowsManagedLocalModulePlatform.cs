@@ -1,0 +1,902 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Security.Cryptography;
+using System.Threading;
+using EsmTspiot.Shared.Models;
+
+namespace EsmTspiot.ServiceProvisioner
+{
+    internal interface ILocalModulePortReservationFactory
+    {
+        IDisposable Acquire(ManagedLocalModuleProvisioningItemRequest item);
+    }
+
+    internal sealed class LocalModulePortReservationFactory :
+        ILocalModulePortReservationFactory
+    {
+        public IDisposable Acquire(ManagedLocalModuleProvisioningItemRequest item)
+        {
+            if (item == null) throw new ArgumentNullException("item");
+            return ExclusiveTcpPortReservation.AcquireDualStackWildcard(
+                new[] { item.DatabasePort, item.ApiPort, item.EpmdPort });
+        }
+    }
+
+    internal sealed class WindowsManagedLocalModulePlatform :
+        IManagedLocalModuleProvisioningPlatform
+    {
+        private const string MachineMutexName =
+            "Global\\KRS.MultiKKT.ManagedLocalModule.Machine.v1";
+
+        private readonly string _initiatingSid;
+        private readonly LocalModuleRuntimeManifest _runtime;
+        private readonly LocalModuleCapabilityProfile _capability;
+        private readonly LocalModuleManifestStore _manifests;
+        private readonly ManagedLocalModuleLifecycleJournalStore _journals;
+        private readonly ManagedLocalModuleProfileStore _profiles;
+        private readonly IWindowsServiceApi _services;
+        private readonly LocalModuleWindowsServicePair _servicePair;
+        private readonly LocalModuleServicePairLifecycle _lifecycle;
+        private readonly ManagedLocalModuleServiceReadinessProbe _readiness;
+        private readonly IEpmdCommandRunner _epmdRunner;
+        private readonly ILocalModulePortReservationFactory _ports;
+        private readonly Dictionary<string, WorkState> _states;
+
+        internal WindowsManagedLocalModulePlatform(
+            string initiatingSid,
+            LocalModuleRuntimeManifest runtime,
+            LocalModuleCapabilityProfile capability,
+            LocalModuleManifestStore manifests,
+            ManagedLocalModuleLifecycleJournalStore journals,
+            ManagedLocalModuleProfileStore profiles,
+            IWindowsServiceApi services,
+            LocalModuleWindowsServicePair servicePair,
+            LocalModuleServicePairLifecycle lifecycle,
+            ManagedLocalModuleServiceReadinessProbe readiness,
+            IEpmdCommandRunner epmdRunner,
+            ILocalModulePortReservationFactory ports)
+        {
+            if (string.IsNullOrWhiteSpace(initiatingSid))
+            {
+                throw new ArgumentException(
+                    "The initiating SID is required.",
+                    "initiatingSid");
+            }
+            if (runtime == null) throw new ArgumentNullException("runtime");
+            if (capability == null) throw new ArgumentNullException("capability");
+            if (manifests == null) throw new ArgumentNullException("manifests");
+            if (journals == null) throw new ArgumentNullException("journals");
+            if (profiles == null) throw new ArgumentNullException("profiles");
+            if (services == null) throw new ArgumentNullException("services");
+            if (servicePair == null) throw new ArgumentNullException("servicePair");
+            if (lifecycle == null) throw new ArgumentNullException("lifecycle");
+            if (readiness == null) throw new ArgumentNullException("readiness");
+            if (epmdRunner == null) throw new ArgumentNullException("epmdRunner");
+            if (ports == null) throw new ArgumentNullException("ports");
+            _initiatingSid = initiatingSid;
+            _runtime = runtime;
+            _capability = capability;
+            _manifests = manifests;
+            _journals = journals;
+            _profiles = profiles;
+            _services = services;
+            _servicePair = servicePair;
+            _lifecycle = lifecycle;
+            _readiness = readiness;
+            _epmdRunner = epmdRunner;
+            _ports = ports;
+            _states = new Dictionary<string, WorkState>(StringComparer.Ordinal);
+        }
+
+        internal static CompleteStackProvisioningSession CreateSession(
+            LmServiceProvisioningBatchRequest request)
+        {
+            if (request == null) throw new ArgumentNullException("request");
+            ValidationResult validation = ProvisioningRequestValidator.Validate(request);
+            if (!validation.IsValid ||
+                request.Operation != LmServiceOperation.EnsureManagedLocalModules)
+            {
+                throw new InvalidDataException(
+                    "A valid managed local-module request is required.");
+            }
+
+            IDisposable machineLock = GlobalOperationMutex.Acquire(MachineMutexName);
+            VerifiedLocalModulePackage packageLock = null;
+            try
+            {
+                PathSafety pathSafety = new PathSafety();
+                LocalModuleInstallerSelection selection =
+                    request.LocalModuleInstallerSelection;
+                LocalModuleCapabilityProfile capability =
+                    LocalModuleCapabilityProfile.Resolve(selection.ProductVersion);
+                packageLock = LocalModulePackageVerifier
+                    .SupportedVersion2617()
+                    .VerifyAndLock(selection);
+                LocalModuleManifestStore manifests =
+                    LocalModuleManifestStore.CreateMachineStore(
+                        pathSafety,
+                        request.InitiatingSid);
+                LocalModuleRuntimeInstaller runtimeInstaller =
+                    new LocalModuleRuntimeInstaller(
+                        manifests,
+                        pathSafety,
+                        NoopLocalModuleMutationBoundary.Instance);
+                string runtimeId = LocalModuleManagedIdentity.CreateRuntimeId(
+                    capability.CapabilityId,
+                    selection.Sha256);
+                LocalModuleRuntimeManifest runtime;
+                if (manifests.TryReadRuntime(runtimeId, out runtime))
+                {
+                    runtime = runtimeInstaller.VerifyExistingRuntime(
+                        runtimeId,
+                        selection,
+                        capability);
+                }
+                else
+                {
+                    runtime = runtimeInstaller.Install(
+                        packageLock,
+                        selection,
+                        capability,
+                        request.OperationId,
+                        OwnershipNonceGenerator.Create());
+                }
+
+                WindowsServiceApi services = new WindowsServiceApi();
+                VerifiedProvisionerBinary supervisor =
+                    VerifiedProvisionerBinary.ResolveCurrent(pathSafety);
+                LocalModuleWindowsServicePair pair =
+                    new LocalModuleWindowsServicePair(services, supervisor);
+                ManagedLocalModuleServiceReadinessProbe readiness =
+                    new ManagedLocalModuleServiceReadinessProbe(
+                        services,
+                        new TcpListenerOwnerReader(),
+                        new NativeProcessParentReader());
+                IEpmdCommandRunner epmdRunner = new NativeEpmdCommandRunner();
+                LocalModuleServicePairLifecycle lifecycle =
+                    new LocalModuleServicePairLifecycle(
+                        services,
+                        readiness);
+                ManagedLocalModuleLifecycleJournalStore journals =
+                    new ManagedLocalModuleLifecycleJournalStore(
+                        manifests.MachineRoot,
+                        pathSafety);
+                ManagedLocalModuleProfileStore profiles =
+                    new ManagedLocalModuleProfileStore(
+                        manifests,
+                        pathSafety,
+                        new AtomicFileWriter());
+                WindowsManagedLocalModulePlatform platform =
+                    new WindowsManagedLocalModulePlatform(
+                        request.InitiatingSid,
+                        runtime,
+                        capability,
+                        manifests,
+                        journals,
+                        profiles,
+                        services,
+                        pair,
+                        lifecycle,
+                        readiness,
+                        epmdRunner,
+                        new LocalModulePortReservationFactory());
+                IDisposable retained = new CompositeDisposable(
+                    packageLock,
+                    machineLock);
+                packageLock = null;
+                machineLock = null;
+                ManagedLocalModuleProvisioningContext context =
+                    new ManagedLocalModuleProvisioningContext(
+                        runtime.RuntimeId,
+                        capability.CapabilityId,
+                        capability.ProductVersion,
+                        retained);
+                return new CompleteStackProvisioningSession(
+                    request,
+                    new ManagedLocalModuleProvisioner(platform),
+                    context);
+            }
+            catch
+            {
+                if (packageLock != null) packageLock.Dispose();
+                if (machineLock != null) machineLock.Dispose();
+                throw;
+            }
+        }
+
+        public IDisposable AcquireItemLock(string inn)
+        {
+            if (!LocalModuleManagedIdentity.IsAsciiDigits(inn, 10) &&
+                !LocalModuleManagedIdentity.IsAsciiDigits(inn, 12))
+            {
+                throw new ArgumentException("INN is invalid.", "inn");
+            }
+            return GlobalOperationMutex.Acquire(
+                "Global\\KRS.MultiKKT.ManagedLocalModule.Inn." + inn);
+        }
+
+        public void Reconcile(
+            ManagedLocalModuleProvisioningItemRequest item,
+            string operationId)
+        {
+            ValidateItemContext(item, operationId);
+            LocalModuleInstanceManifest instance;
+            _manifests.TryFindInstanceByInn(item.Inn, out instance);
+            ManagedLocalModuleLifecycleJournal journal;
+            _journals.TryRead(item.Inn, out journal);
+            if (instance != null && journal != null &&
+                (!string.Equals(
+                    instance.InstanceId,
+                    journal.InstanceId,
+                    StringComparison.Ordinal) ||
+                 !string.Equals(
+                    instance.OwnershipNonce,
+                    journal.OwnershipNonce,
+                    StringComparison.Ordinal)))
+            {
+                throw new InvalidDataException(
+                    "Instance and lifecycle journal ownership do not match.");
+            }
+            _states[item.Inn] = new WorkState(instance, journal);
+        }
+
+        public ManagedLocalModuleObservedState Inspect(
+            ManagedLocalModuleProvisioningItemRequest item,
+            ManagedLocalModuleProvisioningContext context)
+        {
+            ValidateContext(context);
+            WorkState state = RequireReconciled(item.Inn);
+            if (state.Journal != null &&
+                state.Journal.Stage ==
+                    ManagedLocalModuleProvisioningStage.CleanupPending)
+            {
+                return ManagedLocalModuleObservedState.CleanupPending;
+            }
+            LocalModuleInstanceManifest instance = state.Instance;
+            if (instance == null)
+            {
+                if (state.Journal != null &&
+                    (!string.Equals(
+                        state.Journal.RuntimeId,
+                        context.RuntimeId,
+                        StringComparison.Ordinal) ||
+                     !string.Equals(
+                        state.Journal.CapabilityId,
+                        context.CapabilityId,
+                        StringComparison.Ordinal)))
+                {
+                    return ManagedLocalModuleObservedState.VersionVerificationPending;
+                }
+                return ManagedLocalModuleObservedState.Absent;
+            }
+            LocalModuleRuntimeManifest instanceRuntime =
+                _manifests.ReadRuntime(instance.RuntimeId);
+            if (!string.Equals(
+                    instance.RuntimeId,
+                    context.RuntimeId,
+                    StringComparison.Ordinal) ||
+                !string.Equals(
+                    instanceRuntime.CapabilityId,
+                    context.CapabilityId,
+                    StringComparison.Ordinal) ||
+                !string.Equals(
+                    instanceRuntime.ProductVersion,
+                    context.RuntimeVersion,
+                    StringComparison.Ordinal))
+            {
+                return ManagedLocalModuleObservedState.VersionVerificationPending;
+            }
+            if (instance.State == LocalModuleInstanceLifecycleState.CleanupPending)
+            {
+                return ManagedLocalModuleObservedState.CleanupPending;
+            }
+
+            WindowsServiceRecord database = _services.Query(
+                instance.DatabaseServiceName);
+            WindowsServiceRecord api = _services.Query(instance.ApiServiceName);
+            bool exactDefinitions = DefinitionsMatch(instance, database, api);
+            bool stoppedOrAbsent = IsStoppedOrAbsent(database) &&
+                IsStoppedOrAbsent(api);
+            bool planMatches = InstanceMatchesItem(instance, item);
+            ValidationResult profile = _profiles.ValidateConfiguration(
+                instanceRuntime,
+                _capability,
+                instance);
+            if (!planMatches || !profile.IsValid)
+            {
+                return stoppedOrAbsent && exactDefinitions
+                    ? ManagedLocalModuleObservedState.OwnedMismatch
+                    : ManagedLocalModuleObservedState.Foreign;
+            }
+            if (!exactDefinitions)
+            {
+                return database == null && api == null
+                    ? ManagedLocalModuleObservedState.OwnedMismatch
+                    : ManagedLocalModuleObservedState.Foreign;
+            }
+            if (database == null && api == null)
+            {
+                return ManagedLocalModuleObservedState.OwnedMismatch;
+            }
+            if (database == null || api == null)
+            {
+                return stoppedOrAbsent
+                    ? ManagedLocalModuleObservedState.OwnedMismatch
+                    : ManagedLocalModuleObservedState.Foreign;
+            }
+            if (database.State == WindowsServiceState.Stopped &&
+                api.State == WindowsServiceState.Stopped)
+            {
+                return ManagedLocalModuleObservedState.MatchingStopped;
+            }
+            if (database.State == WindowsServiceState.Running &&
+                api.State == WindowsServiceState.Running &&
+                _readiness.ProbeOwnedListener(
+                    instance,
+                    LocalModuleProcessRole.Database).IsValid &&
+                _readiness.ProbeOwnedListener(
+                    instance,
+                    LocalModuleProcessRole.Api).IsValid)
+            {
+                return ManagedLocalModuleObservedState.MatchingReady;
+            }
+            return ManagedLocalModuleObservedState.Foreign;
+        }
+
+        public void RecordStage(
+            ManagedLocalModuleProvisioningItemRequest item,
+            ManagedLocalModuleProvisioningContext context,
+            string operationId,
+            ManagedLocalModuleProvisioningStage stage)
+        {
+            ValidateContext(context);
+            WorkState state = GetOrCreateState(item, context, operationId);
+            ManagedLocalModuleLifecycleJournal journal = state.Journal;
+            if (journal == null)
+            {
+                journal = ManagedLocalModuleLifecycleJournal.Create(
+                    item.Inn,
+                    state.InstanceId,
+                    state.OwnershipNonce,
+                    context.RuntimeId,
+                    context.CapabilityId,
+                    operationId,
+                    stage);
+            }
+            else
+            {
+                journal.OperationId = operationId;
+                journal.Stage = stage;
+                journal.LastErrorClass = string.Empty;
+            }
+            _journals.Write(journal);
+            state.Journal = journal;
+        }
+
+        public void PrepareProfile(
+            ManagedLocalModuleProvisioningItemRequest item,
+            ManagedLocalModuleProvisioningContext context,
+            string operationId)
+        {
+            ValidateContext(context);
+            WorkState state = GetOrCreateState(item, context, operationId);
+            EnsureServicesStopped(state.Instance);
+            DisposeReservation(state);
+            state.PortReservation = _ports.Acquire(item);
+            LocalModuleConfiguration configuration =
+                _profiles.WriteConfiguration(
+                    _runtime,
+                    _capability,
+                    item,
+                    state.InstanceId,
+                    state.OwnershipNonce);
+            LocalModuleInstanceManifest replacement =
+                LocalModuleInstanceManifest.Create(
+                    item,
+                    state.InstanceId,
+                    _runtime.RuntimeId,
+                    _runtime.RuntimeRoot,
+                    configuration,
+                    state.OwnershipNonce,
+                    operationId);
+            if (state.Instance != null)
+            {
+                replacement.LastCompletedOperationId =
+                    state.Instance.LastCompletedOperationId;
+            }
+            _manifests.WriteInstance(replacement);
+            _profiles.ProtectOwnedManifests(_runtime, replacement);
+            state.Instance = replacement;
+        }
+
+        public void ConfigureServicePair(
+            ManagedLocalModuleProvisioningItemRequest item,
+            ManagedLocalModuleProvisioningContext context,
+            string initiatingSid)
+        {
+            ValidateContext(context);
+            WorkState state = RequireInstance(item.Inn);
+            if (!string.Equals(
+                    initiatingSid,
+                    _initiatingSid,
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidDataException(
+                    "Initiating SID changed inside the immutable session.");
+            }
+            _servicePair.EnsureConfigured(state.Instance, null);
+            if (!DefinitionsMatch(
+                    state.Instance,
+                    _services.Query(state.Instance.DatabaseServiceName),
+                    _services.Query(state.Instance.ApiServiceName)))
+            {
+                throw new InvalidDataException(
+                    "SCM did not retain the exact managed local-module service pair.");
+            }
+        }
+
+        public void StartDatabaseAndWait(
+            ManagedLocalModuleProvisioningItemRequest item,
+            ManagedLocalModuleProvisioningContext context)
+        {
+            ValidateContext(context);
+            WorkState state = RequireInstance(item.Inn);
+            if (state.PortReservation == null)
+            {
+                state.PortReservation = _ports.Acquire(item);
+            }
+            DisposeReservation(state);
+            try
+            {
+                _lifecycle.StartDatabase(state.Instance);
+            }
+            catch
+            {
+                TryStopOwnedPair(state.Instance);
+                throw;
+            }
+        }
+
+        public void StartApiAndWait(
+            ManagedLocalModuleProvisioningItemRequest item,
+            ManagedLocalModuleProvisioningContext context)
+        {
+            ValidateContext(context);
+            WorkState state = RequireInstance(item.Inn);
+            try
+            {
+                _lifecycle.StartApi(state.Instance);
+            }
+            catch
+            {
+                TryStopOwnedPair(state.Instance);
+                throw;
+            }
+        }
+
+        public void Complete(
+            ManagedLocalModuleProvisioningItemRequest item,
+            ManagedLocalModuleProvisioningContext context,
+            string operationId)
+        {
+            ValidateContext(context);
+            WorkState state = RequireInstance(item.Inn);
+            LocalModuleInstanceManifest instance = state.Instance;
+            instance.State = LocalModuleInstanceLifecycleState.ReadyToInitialize;
+            instance.CurrentOperationId = operationId;
+            instance.LastCompletedOperationId = operationId;
+            instance.UpdatedUtc = DateTime.UtcNow.ToString(
+                "o",
+                CultureInfo.InvariantCulture);
+            _manifests.WriteInstance(instance);
+            _profiles.ProtectOwnedManifests(_runtime, instance);
+
+            EnsureStackReference(item, context, operationId);
+        }
+
+        public void EnsureStackReference(
+            ManagedLocalModuleProvisioningItemRequest item,
+            ManagedLocalModuleProvisioningContext context,
+            string operationId)
+        {
+            ValidateContext(context);
+            WorkState state = RequireInstance(item.Inn);
+            LocalModuleInstanceManifest instance = state.Instance;
+
+            ManagedKktStackManifest existing;
+            ManagedKktStackManifest stack;
+            if (_manifests.TryReadStack(item.KktSerial, out existing))
+            {
+                if (!string.Equals(
+                        existing.LocalModuleInstanceId,
+                        instance.InstanceId,
+                        StringComparison.Ordinal) ||
+                    !string.Equals(existing.Inn, item.Inn, StringComparison.Ordinal) ||
+                    existing.KktOrdinal != item.KktOrdinal ||
+                    existing.ControllerGrpcPort != item.ControllerGrpcPort ||
+                    existing.ControllerRestPort != item.ControllerRestPort)
+                {
+                    throw new InvalidDataException(
+                        "KKT stack already contains a different immutable plan.");
+                }
+                if (existing.State == ManagedKktStackLifecycleState.Ready)
+                {
+                    return;
+                }
+                stack = ManagedKktStackManifest.Create(
+                    item,
+                    instance.InstanceId,
+                    existing.EsmRecordId,
+                    existing.OwnershipNonce,
+                    operationId);
+            }
+            else
+            {
+                stack = ManagedKktStackManifest.Create(
+                    item,
+                    instance.InstanceId,
+                    string.Empty,
+                    OwnershipNonceGenerator.Create(),
+                    operationId);
+            }
+            stack.State = ManagedKktStackLifecycleState.Ready;
+            stack.LastCompletedOperationId = operationId;
+            stack.UpdatedUtc = DateTime.UtcNow.ToString(
+                "o",
+                CultureInfo.InvariantCulture);
+            _manifests.WriteStack(stack);
+        }
+
+        public void MarkRequiresAttention(
+            ManagedLocalModuleProvisioningItemRequest item,
+            string operationId,
+            string errorClass)
+        {
+            WorkState state;
+            if (!_states.TryGetValue(item.Inn, out state))
+            {
+                return;
+            }
+            DisposeReservation(state);
+            if (state.Journal != null)
+            {
+                state.Journal.OperationId = operationId;
+                state.Journal.Stage =
+                    ManagedLocalModuleProvisioningStage.RequiresAttention;
+                state.Journal.LastErrorClass = errorClass ?? "Unknown";
+                _journals.Write(state.Journal);
+            }
+            if (state.Instance != null)
+            {
+                state.Instance.State = LocalModuleInstanceLifecycleState.Failed;
+                state.Instance.CurrentOperationId = operationId;
+                state.Instance.UpdatedUtc = DateTime.UtcNow.ToString(
+                    "o",
+                    CultureInfo.InvariantCulture);
+                _manifests.WriteInstance(state.Instance);
+                _profiles.ProtectOwnedManifests(_runtime, state.Instance);
+            }
+        }
+
+        private WorkState GetOrCreateState(
+            ManagedLocalModuleProvisioningItemRequest item,
+            ManagedLocalModuleProvisioningContext context,
+            string operationId)
+        {
+            WorkState state = RequireReconciled(item.Inn);
+            if (!string.IsNullOrEmpty(state.InstanceId))
+            {
+                return state;
+            }
+            string nonce = OwnershipNonceGenerator.Create();
+            state.InstanceId = LocalModuleManagedIdentity.CreateInstanceId(
+                item.Inn,
+                nonce);
+            state.OwnershipNonce = nonce;
+            state.Journal = ManagedLocalModuleLifecycleJournal.Create(
+                item.Inn,
+                state.InstanceId,
+                state.OwnershipNonce,
+                context.RuntimeId,
+                context.CapabilityId,
+                operationId,
+                ManagedLocalModuleProvisioningStage.Created);
+            return state;
+        }
+
+        private WorkState RequireReconciled(string inn)
+        {
+            WorkState state;
+            if (!_states.TryGetValue(inn, out state))
+            {
+                throw new InvalidOperationException(
+                    "Managed local-module item was not reconciled.");
+            }
+            return state;
+        }
+
+        private WorkState RequireInstance(string inn)
+        {
+            WorkState state = RequireReconciled(inn);
+            if (state.Instance == null)
+            {
+                throw new InvalidOperationException(
+                    "Managed local-module instance manifest is absent.");
+            }
+            return state;
+        }
+
+        private bool DefinitionsMatch(
+            LocalModuleInstanceManifest instance,
+            WindowsServiceRecord database,
+            WindowsServiceRecord api)
+        {
+            if (database == null && api == null)
+            {
+                return true;
+            }
+            if (database == null || api == null)
+            {
+                WindowsServiceRecord existing = database ?? api;
+                LocalModuleProcessRole role = database == null
+                    ? LocalModuleProcessRole.Api
+                    : LocalModuleProcessRole.Database;
+                return WindowsServiceDefinitionMatcher.Matches(
+                    _servicePair.BuildDefinition(
+                        instance,
+                        role,
+                        null),
+                    existing);
+            }
+            return WindowsServiceDefinitionMatcher.Matches(
+                    _servicePair.BuildDefinition(
+                        instance,
+                        LocalModuleProcessRole.Database,
+                        null),
+                    database) &&
+                WindowsServiceDefinitionMatcher.Matches(
+                    _servicePair.BuildDefinition(
+                        instance,
+                        LocalModuleProcessRole.Api,
+                        null),
+                    api);
+        }
+
+        private static bool InstanceMatchesItem(
+            LocalModuleInstanceManifest instance,
+            ManagedLocalModuleProvisioningItemRequest item)
+        {
+            return string.Equals(instance.Inn, item.Inn, StringComparison.Ordinal) &&
+                instance.LocalModuleOrdinal == item.LocalModuleOrdinal &&
+                instance.ApiPort == item.ApiPort &&
+                instance.DatabasePort == item.DatabasePort &&
+                instance.EpmdPort == item.EpmdPort;
+        }
+
+        private static bool IsStoppedOrAbsent(WindowsServiceRecord service)
+        {
+            return service == null || service.State == WindowsServiceState.Stopped;
+        }
+
+        private void EnsureServicesStopped(LocalModuleInstanceManifest instance)
+        {
+            if (instance == null)
+            {
+                return;
+            }
+            WindowsServiceRecord database = _services.Query(
+                instance.DatabaseServiceName);
+            WindowsServiceRecord api = _services.Query(instance.ApiServiceName);
+            if (!IsStoppedOrAbsent(database) || !IsStoppedOrAbsent(api))
+            {
+                throw new InvalidOperationException(
+                    "Owned services must be stopped before rewriting their profile.");
+            }
+        }
+
+        private void TryStopOwnedPair(LocalModuleInstanceManifest instance)
+        {
+            try
+            {
+                WindowsServiceRecord database = _services.Query(
+                    instance.DatabaseServiceName);
+                WindowsServiceRecord api = _services.Query(instance.ApiServiceName);
+                if (database != null && api != null &&
+                    DefinitionsMatch(instance, database, api))
+                {
+                    new LocalModuleServicePairLifecycle(
+                        _services,
+                        _readiness,
+                        new EpmdInstanceController(
+                            _capability,
+                            _runtime.RuntimeRoot,
+                            instance.EpmdPort,
+                            _epmdRunner)).Stop(instance);
+                }
+            }
+            catch (Exception ex)
+            {
+                if (!(ex is IOException) &&
+                    !(ex is InvalidOperationException) &&
+                    !(ex is SystemException))
+                {
+                    throw;
+                }
+            }
+        }
+
+        private void ValidateContext(
+            ManagedLocalModuleProvisioningContext context)
+        {
+            if (context == null ||
+                !string.Equals(
+                    context.RuntimeId,
+                    _runtime.RuntimeId,
+                    StringComparison.Ordinal) ||
+                !string.Equals(
+                    context.CapabilityId,
+                    _capability.CapabilityId,
+                    StringComparison.Ordinal) ||
+                !string.Equals(
+                    context.RuntimeVersion,
+                    _capability.ProductVersion,
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidDataException(
+                    "Managed local-module session context changed.");
+            }
+        }
+
+        private static void ValidateItemContext(
+            ManagedLocalModuleProvisioningItemRequest item,
+            string operationId)
+        {
+            if (item == null || !ProvisionerCommandLine.IsGuidN(operationId))
+            {
+                throw new InvalidDataException(
+                    "Managed local-module item context is invalid.");
+            }
+        }
+
+        private static void DisposeReservation(WorkState state)
+        {
+            if (state.PortReservation != null)
+            {
+                state.PortReservation.Dispose();
+                state.PortReservation = null;
+            }
+        }
+
+        private sealed class WorkState
+        {
+            internal WorkState(
+                LocalModuleInstanceManifest instance,
+                ManagedLocalModuleLifecycleJournal journal)
+            {
+                Instance = instance;
+                Journal = journal;
+                if (instance != null)
+                {
+                    InstanceId = instance.InstanceId;
+                    OwnershipNonce = instance.OwnershipNonce;
+                }
+                else if (journal != null)
+                {
+                    InstanceId = journal.InstanceId;
+                    OwnershipNonce = journal.OwnershipNonce;
+                }
+            }
+
+            internal string InstanceId { get; set; }
+            internal string OwnershipNonce { get; set; }
+            internal LocalModuleInstanceManifest Instance { get; set; }
+            internal ManagedLocalModuleLifecycleJournal Journal { get; set; }
+            internal IDisposable PortReservation { get; set; }
+        }
+    }
+
+    internal static class OwnershipNonceGenerator
+    {
+        internal static string Create()
+        {
+            byte[] value = new byte[16];
+            using (RandomNumberGenerator generator = RandomNumberGenerator.Create())
+            {
+                generator.GetBytes(value);
+            }
+            System.Text.StringBuilder text =
+                new System.Text.StringBuilder(value.Length * 2);
+            for (int index = 0; index < value.Length; index++)
+            {
+                text.Append(value[index].ToString(
+                    "x2",
+                    CultureInfo.InvariantCulture));
+            }
+            return text.ToString();
+        }
+    }
+
+    internal static class GlobalOperationMutex
+    {
+        internal static IDisposable Acquire(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name) ||
+                !name.StartsWith("Global\\KRS.MultiKKT.", StringComparison.Ordinal))
+            {
+                throw new ArgumentException(
+                    "A canonical global operation mutex is required.",
+                    "name");
+            }
+            Mutex mutex = new Mutex(false, name);
+            try
+            {
+                try
+                {
+                    mutex.WaitOne();
+                }
+                catch (AbandonedMutexException)
+                {
+                }
+                return new MutexLease(mutex);
+            }
+            catch
+            {
+                mutex.Dispose();
+                throw;
+            }
+        }
+
+        private sealed class MutexLease : IDisposable
+        {
+            private Mutex _mutex;
+
+            internal MutexLease(Mutex mutex)
+            {
+                _mutex = mutex;
+            }
+
+            public void Dispose()
+            {
+                Mutex mutex = _mutex;
+                _mutex = null;
+                if (mutex != null)
+                {
+                    mutex.ReleaseMutex();
+                    mutex.Dispose();
+                }
+            }
+        }
+    }
+
+    internal sealed class CompositeDisposable : IDisposable
+    {
+        private IDisposable _first;
+        private IDisposable _second;
+
+        internal CompositeDisposable(IDisposable first, IDisposable second)
+        {
+            if (first == null) throw new ArgumentNullException("first");
+            if (second == null) throw new ArgumentNullException("second");
+            _first = first;
+            _second = second;
+        }
+
+        public void Dispose()
+        {
+            IDisposable first = _first;
+            IDisposable second = _second;
+            _first = null;
+            _second = null;
+            try
+            {
+                if (first != null) first.Dispose();
+            }
+            finally
+            {
+                if (second != null) second.Dispose();
+            }
+        }
+    }
+}
