@@ -45,6 +45,7 @@ namespace EsmTspiot.ServiceProvisioner
         internal string DatabaseBootRelativePath { get; private set; }
         internal string DatabaseDefaultIniRelativePath { get; private set; }
         internal string RuntimeContractSha256 { get; private set; }
+        internal bool UsesRelativeLayoutLauncherFallback { get; private set; }
         internal IList<LocalModuleRequiredFile> RequiredFiles { get; private set; }
         internal IList<string> RequiredDirectories { get; private set; }
         internal IList<string> ExcludedRuntimeRelativePaths { get; private set; }
@@ -72,7 +73,8 @@ namespace EsmTspiot.ServiceProvisioner
                 DatabaseBootRelativePath = @"yenisei\releases\2.2.5-2110\yenisei",
                 DatabaseDefaultIniRelativePath = @"yenisei\etc\default.ini",
                 RuntimeContractSha256 =
-                    "a6d537344f70f4396614bba6095b1d21bd061f717bf609175f4584c24510f272"
+                    "a6d537344f70f4396614bba6095b1d21bd061f717bf609175f4584c24510f272",
+                UsesRelativeLayoutLauncherFallback = true
             };
             AddRequiredFiles(profile);
             profile.RequiredDirectories.Add(@"yenisei\etc\default.d");

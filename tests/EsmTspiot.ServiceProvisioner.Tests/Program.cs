@@ -41,6 +41,11 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Local module start plans share only read-only runtime", LocalModuleStartPlansShareOnlyReadOnlyRuntime);
             Run("Local module config rejects ambiguous template", LocalModuleConfigRejectsAmbiguousTemplate);
             Run("Local module configs contain no customer credential", LocalModuleConfigsContainNoCredential);
+            Run("Local module runtime excludes wrappers and fixes extraction", LocalModuleRuntimeExcludesWrappersAndFixesExtraction);
+            Run("Local module manifests enforce three ownership levels", LocalModuleManifestsEnforceThreeOwnershipLevels);
+            Run("Local module runtime deletion requires zero references", LocalModuleRuntimeDeletionRequiresZeroReferences);
+            Run("Local module runtime recovers every mutation boundary", LocalModuleRuntimeRecoversEveryMutationBoundary);
+            Run("Local module runtime deletion recovers every mutation boundary", LocalModuleRuntimeDeletionRecoversEveryMutationBoundary);
             Run("Official controller locator enforces protected allowed root", OfficialControllerLocatorEnforcesProtectedAllowedRoot);
             Run("Official controller locator enforces full product trust", OfficialControllerLocatorEnforcesFullProductTrust);
             Run("Official installer verifier locks verifies and stages atomically", OfficialInstallerVerifierLocksVerifiesAndStagesAtomically);
@@ -98,7 +103,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
             if (_failures == 0)
             {
-                Console.WriteLine("All 73 provisioner tests passed.");
+                Console.WriteLine("All 78 provisioner tests passed.");
                 return 0;
             }
 
@@ -748,6 +753,344 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 ReadLineStarting(configuration.RegimeVmArgs, "-setcookie "),
                 ReadLineStarting(configuration.YeniseiVmArgs, "-setcookie "),
                 "The two processes of one LM must share only their generated Erlang cookie.");
+        }
+
+        private static void LocalModuleRuntimeExcludesWrappersAndFixesExtraction()
+        {
+            LocalModuleCapabilityProfile capability =
+                LocalModuleCapabilityProfile.Resolve("2.6.1");
+            for (int index = 0; index < capability.ExcludedRuntimeRelativePaths.Count; index++)
+            {
+                AssertFalse(LocalModuleRuntimeInstaller.ShouldCopyRelativePath(
+                        capability,
+                        capability.ExcludedRuntimeRelativePaths[index]),
+                    "A fixed installer wrapper, updater or erl.ini must never enter runtime.");
+            }
+            AssertTrue(LocalModuleRuntimeInstaller.ShouldCopyRelativePath(
+                    capability,
+                    @"erts-13.0.4\bin\erl.exe"),
+                "The verified Erlang launcher must remain in runtime.");
+
+            LocalModuleAdministrativeExtractionPlan plan =
+                LocalModuleRuntimeInstaller.BuildAdministrativeExtractionPlan(
+                    @"C:\locked\regime-2.6.1-7.msi",
+                    @"C:\protected\stage",
+                    @"C:\protected\logs\extract.log");
+            AssertEqual(
+                Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+                    "System32",
+                    "msiexec.exe"),
+                plan.ExecutablePath,
+                "Administrative extraction must use the system msiexec image.");
+            AssertEqual(6, plan.ArgumentTokens.Count,
+                "The extraction command must expose only the reviewed fixed token set.");
+            AssertEqual("/a", plan.ArgumentTokens[0], "Expected administrative extraction.");
+            AssertEqual(@"C:\locked\regime-2.6.1-7.msi", plan.ArgumentTokens[1],
+                "The locked MSI must be passed as one token.");
+            AssertEqual("/qn", plan.ArgumentTokens[2], "Extraction must be silent.");
+            AssertEqual(@"TARGETDIR=C:\protected\stage", plan.ArgumentTokens[3],
+                "TARGETDIR must be derived by the helper.");
+            AssertEqual("/l*v", plan.ArgumentTokens[4], "A verbose protected log is required.");
+            AssertEqual(@"C:\protected\logs\extract.log", plan.ArgumentTokens[5],
+                "The log path must be passed as one token.");
+            AssertThrows<InvalidDataException>(delegate {
+                new LocalModuleVerifiedRuntimeImage(
+                    @"C:\protected\image",
+                    capability.CapabilityId,
+                    capability.RuntimeContractSha256,
+                    new[] { new LocalModuleRuntimeFile(
+                        @"..\outside.bin",
+                        1,
+                        new string('0', 64)) });
+            }, "A verified image inventory must reject lexical path escape before copying.");
+        }
+
+        private static void LocalModuleManifestsEnforceThreeOwnershipLevels()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                string appRoot = Path.Combine(root, "app");
+                string runtimeContainer = Path.Combine(root, "program", "LocalModuleRuntime");
+                LocalModuleManifestStore store = new LocalModuleManifestStore(
+                    appRoot,
+                    runtimeContainer,
+                    new FakePathSafety(true),
+                    "S-1-5-21-111-222-333-1001");
+                LocalModuleInstallerSelection package =
+                    LocalModulePackageVerifier.CreateSupportedIdentity();
+                LocalModuleCapabilityProfile capability =
+                    LocalModuleCapabilityProfile.Resolve("2.6.1");
+                string runtimeNonce = "11111111111111111111111111111111";
+                string runtimeId = LocalModuleManagedIdentity.CreateRuntimeId(
+                    capability.CapabilityId,
+                    package.Sha256);
+                string runtimeRoot = store.GetRuntimeRoot(runtimeId);
+                Directory.CreateDirectory(runtimeRoot);
+                byte[] runtimeBytes = Encoding.ASCII.GetBytes("verified-runtime");
+                string runtimeFile = Path.Combine(runtimeRoot, "lib", "sample.beam");
+                Directory.CreateDirectory(Path.GetDirectoryName(runtimeFile));
+                File.WriteAllBytes(runtimeFile, runtimeBytes);
+                LocalModuleRuntimeManifest runtime = LocalModuleRuntimeManifest.Create(
+                    package,
+                    capability,
+                    runtimeRoot,
+                    runtimeNonce,
+                    new[] { new LocalModuleRuntimeFile(
+                        @"lib\sample.beam",
+                        runtimeBytes.Length,
+                        ComputeSha256(runtimeBytes)) });
+                store.WriteRuntime(runtime);
+
+                ManagedLocalModuleProvisioningItemRequest item =
+                    CreateManagedLocalModuleRequest(1).ManagedLocalModules[0];
+                string instanceNonce = "22222222222222222222222222222222";
+                string instanceId = LocalModuleManagedIdentity.CreateInstanceId(
+                    item.Inn,
+                    instanceNonce);
+                string profileRoot = store.GetInstanceRoot(instanceId);
+                LocalModuleConfiguration configuration = LocalModuleConfigurationWriter.Build(
+                    capability,
+                    runtimeRoot,
+                    profileRoot,
+                    item,
+                    instanceNonce,
+                    CreateLocalModuleTemplateObservation());
+                LocalModuleInstanceManifest instance = LocalModuleInstanceManifest.Create(
+                    item,
+                    instanceId,
+                    runtime.RuntimeId,
+                    runtimeRoot,
+                    configuration,
+                    instanceNonce,
+                    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+                store.WriteInstance(instance);
+
+                ManagedKktStackManifest stack = ManagedKktStackManifest.Create(
+                    item,
+                    instance.InstanceId,
+                    "esm-record-1",
+                    "33333333333333333333333333333333",
+                    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+                store.WriteStack(stack);
+
+                AssertFalse(string.Equals(
+                        runtime.OwnershipMarker,
+                        instance.OwnershipMarker,
+                        StringComparison.Ordinal) ||
+                    string.Equals(
+                        instance.OwnershipMarker,
+                        stack.OwnershipMarker,
+                        StringComparison.Ordinal),
+                    "Runtime, INN profile and KKT stack must have distinct ownership domains.");
+                AssertEqual(runtime.RuntimeId, store.ReadRuntime(runtime.RuntimeId).RuntimeId,
+                    "Runtime ownership must round-trip independently.");
+                AssertEqual(instance.InstanceId, store.ReadInstance(instance.InstanceId).InstanceId,
+                    "INN ownership must round-trip independently.");
+                AssertEqual(stack.KktSerial, store.ReadStack(stack.KktSerial).KktSerial,
+                    "KKT ownership must round-trip independently.");
+                AssertTrue(instance.CurrentOperationId.Length == 32 &&
+                           instance.LastCompletedOperationId.Length == 0,
+                    "A preparing INN manifest must not claim that its operation already completed.");
+                AssertEqual(1, store.CountRuntimeReferences(runtime.RuntimeId),
+                    "Runtime reference count must be reconstructed from verified INN manifests.");
+                AssertEqual(1, store.ReadRuntime(runtime.RuntimeId).ConfirmedReferenceCount,
+                    "The stored reference count must mirror the independently reconstructed count.");
+                AssertEqual(1, store.CountInstanceReferences(instance.InstanceId),
+                    "INN references must be reconstructed from verified KKT stack manifests.");
+                AssertThrows<InvalidOperationException>(delegate {
+                    store.DeleteInstance(instance.InstanceId, instance.OwnershipNonce);
+                }, "A KKT stack must prevent deletion of its shared INN instance.");
+
+                runtime.OwnershipMarker = ManagedKktStackManifest.ExpectedOwnershipMarker;
+                AssertThrows<InvalidDataException>(delegate { store.WriteRuntime(runtime); },
+                    "A marker from another ownership level must never authorize mutation.");
+                runtime = store.ReadRuntime(runtime.RuntimeId);
+                runtime.Files[0].Sha256 = new string('0', 64);
+                AssertThrows<InvalidDataException>(delegate { store.WriteRuntime(runtime); },
+                    "A matching nonce must not authorize replacement of runtime inventory.");
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        }
+
+        private static void LocalModuleRuntimeDeletionRequiresZeroReferences()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                LocalModuleManifestStore store;
+                LocalModuleRuntimeManifest runtime;
+                LocalModuleInstanceManifest instance;
+                CreateTestManagedLocalModuleOwnership(root, out store, out runtime, out instance);
+                LocalModuleRuntimeInstaller installer = new LocalModuleRuntimeInstaller(
+                    store,
+                    new FakePathSafety(true),
+                    NoopLocalModuleMutationBoundary.Instance);
+
+                AssertThrows<InvalidOperationException>(delegate {
+                    installer.DeleteUnreferencedRuntime(
+                        runtime.RuntimeId,
+                        runtime.OwnershipNonce);
+                }, "A runtime referenced by an INN manifest must not be removed.");
+                store.DeleteInstance(instance.InstanceId, instance.OwnershipNonce);
+                AssertEqual(0, store.ReadRuntime(runtime.RuntimeId).ConfirmedReferenceCount,
+                    "Removing an INN manifest must refresh the advisory runtime count.");
+                installer.DeleteUnreferencedRuntime(
+                    runtime.RuntimeId,
+                    runtime.OwnershipNonce);
+
+                AssertFalse(Directory.Exists(runtime.RuntimeRoot),
+                    "An exactly owned zero-reference runtime must be deleted.");
+                LocalModuleRuntimeManifest ignored;
+                AssertFalse(store.TryReadRuntime(runtime.RuntimeId, out ignored),
+                    "Runtime inventory must be removed only after filesystem deletion succeeds.");
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        }
+
+        private static void LocalModuleRuntimeRecoversEveryMutationBoundary()
+        {
+            LocalModuleRuntimeMutationBoundary[] boundaries =
+            {
+                LocalModuleRuntimeMutationBoundary.StageCreated,
+                LocalModuleRuntimeMutationBoundary.FilesCopied,
+                LocalModuleRuntimeMutationBoundary.RuntimePromoted,
+                LocalModuleRuntimeMutationBoundary.RuntimeManifestWritten
+            };
+            for (int boundaryIndex = 0; boundaryIndex < boundaries.Length; boundaryIndex++)
+            {
+                string root = CreateTemporaryDirectory();
+                try
+                {
+                    string sourceRoot = Path.Combine(root, "administrative-image", "Program Files", "Regime");
+                    Directory.CreateDirectory(Path.Combine(sourceRoot, "lib"));
+                    Directory.CreateDirectory(Path.Combine(sourceRoot, "bin"));
+                    Directory.CreateDirectory(Path.Combine(sourceRoot, "erts-13.0.4", "bin"));
+                    byte[] runtimeBytes = Encoding.ASCII.GetBytes("runtime-copy");
+                    File.WriteAllBytes(Path.Combine(sourceRoot, "lib", "sample.beam"), runtimeBytes);
+                    File.WriteAllText(Path.Combine(sourceRoot, "bin", "nssm.exe"), "excluded");
+                    File.WriteAllText(
+                        Path.Combine(sourceRoot, "erts-13.0.4", "bin", "erl.ini"),
+                        "[erlang]\nBindir=\nProgname=erl\nRootdir=\n");
+
+                    string appRoot = Path.Combine(root, "app");
+                    string runtimeContainer = Path.Combine(root, "program", "LocalModuleRuntime");
+                    LocalModuleManifestStore store = new LocalModuleManifestStore(
+                        appRoot,
+                        runtimeContainer,
+                        new FakePathSafety(true),
+                        null);
+                    LocalModuleCapabilityProfile capability =
+                        LocalModuleCapabilityProfile.Resolve("2.6.1");
+                    LocalModuleInstallerSelection package =
+                        LocalModulePackageVerifier.CreateSupportedIdentity();
+                    LocalModuleVerifiedRuntimeImage image = new LocalModuleVerifiedRuntimeImage(
+                        sourceRoot,
+                        capability.CapabilityId,
+                        capability.RuntimeContractSha256,
+                        new[] { new LocalModuleRuntimeFile(
+                            @"lib\sample.beam",
+                            runtimeBytes.Length,
+                            ComputeSha256(runtimeBytes)) });
+                    string operationId = Guid.NewGuid().ToString("N");
+                    string nonce = "44444444444444444444444444444444";
+                    ThrowOnceLocalModuleMutationBoundary fault =
+                        new ThrowOnceLocalModuleMutationBoundary(boundaries[boundaryIndex]);
+
+                    AssertThrows<IOException>(delegate {
+                        new LocalModuleRuntimeInstaller(store, new FakePathSafety(true), fault)
+                            .InstallVerifiedImage(image, package, capability, operationId, nonce);
+                    }, "The selected mutation boundary must simulate interruption.");
+
+                    LocalModuleRuntimeManifest recovered = new LocalModuleRuntimeInstaller(
+                        store,
+                        new FakePathSafety(true),
+                        NoopLocalModuleMutationBoundary.Instance).InstallVerifiedImage(
+                            image,
+                            package,
+                            capability,
+                            operationId,
+                            nonce);
+                    AssertTrue(File.Exists(Path.Combine(recovered.RuntimeRoot, "lib", "sample.beam")),
+                        "Recovery must complete the exact verified runtime.");
+                    AssertFalse(File.Exists(Path.Combine(recovered.RuntimeRoot, "bin", "nssm.exe")) ||
+                                File.Exists(Path.Combine(
+                                    recovered.RuntimeRoot,
+                                    "erts-13.0.4",
+                                    "bin",
+                                    "erl.ini")),
+                        "Recovery must not reintroduce excluded wrappers or blank erl.ini.");
+                    AssertEqual(0, store.OperationJournals.ReadForSubject(
+                        LocalModuleOperationSubject.Runtime,
+                        recovered.RuntimeId).Count,
+                        "A completed recovery must remove its operation journal.");
+                }
+                finally
+                {
+                    DeleteTestTreeWithReadOnlyFiles(root);
+                }
+            }
+        }
+
+        private static void LocalModuleRuntimeDeletionRecoversEveryMutationBoundary()
+        {
+            LocalModuleRuntimeMutationBoundary[] boundaries =
+            {
+                LocalModuleRuntimeMutationBoundary.RuntimeFilesDeleted,
+                LocalModuleRuntimeMutationBoundary.RuntimeInventoryDeleted
+            };
+            for (int boundaryIndex = 0; boundaryIndex < boundaries.Length; boundaryIndex++)
+            {
+                string root = CreateTemporaryDirectory();
+                try
+                {
+                    LocalModuleManifestStore store;
+                    LocalModuleRuntimeManifest runtime;
+                    LocalModuleInstanceManifest instance;
+                    CreateTestManagedLocalModuleOwnership(
+                        root,
+                        out store,
+                        out runtime,
+                        out instance);
+                    store.DeleteInstance(instance.InstanceId, instance.OwnershipNonce);
+                    ThrowOnceLocalModuleMutationBoundary fault =
+                        new ThrowOnceLocalModuleMutationBoundary(boundaries[boundaryIndex]);
+
+                    AssertThrows<IOException>(delegate {
+                        new LocalModuleRuntimeInstaller(store, new FakePathSafety(true), fault)
+                            .DeleteUnreferencedRuntime(
+                                runtime.RuntimeId,
+                                runtime.OwnershipNonce);
+                    }, "The selected deletion boundary must simulate interruption.");
+
+                    new LocalModuleRuntimeInstaller(
+                        store,
+                        new FakePathSafety(true),
+                        NoopLocalModuleMutationBoundary.Instance).DeleteUnreferencedRuntime(
+                            runtime.RuntimeId,
+                            runtime.OwnershipNonce);
+                    AssertFalse(Directory.Exists(runtime.RuntimeRoot),
+                        "Deletion recovery must leave no runtime tree.");
+                    LocalModuleRuntimeManifest ignored;
+                    AssertFalse(store.TryReadRuntime(runtime.RuntimeId, out ignored),
+                        "Deletion recovery must leave no runtime manifest.");
+                    AssertEqual(0, store.OperationJournals.ReadForSubject(
+                        LocalModuleOperationSubject.Runtime,
+                        runtime.RuntimeId).Count,
+                        "Deletion recovery must consume its journal.");
+                }
+                finally
+                {
+                    DeleteTestTreeWithReadOnlyFiles(root);
+                }
+            }
         }
 
         private static void OfficialControllerLocatorEnforcesProtectedAllowedRoot()
@@ -2470,6 +2813,68 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             };
         }
 
+        private static void CreateTestManagedLocalModuleOwnership(
+            string root,
+            out LocalModuleManifestStore store,
+            out LocalModuleRuntimeManifest runtime,
+            out LocalModuleInstanceManifest instance)
+        {
+            string appRoot = Path.Combine(root, "app");
+            string runtimeContainer = Path.Combine(root, "program", "LocalModuleRuntime");
+            store = new LocalModuleManifestStore(
+                appRoot,
+                runtimeContainer,
+                new FakePathSafety(true),
+                null);
+            LocalModuleInstallerSelection package =
+                LocalModulePackageVerifier.CreateSupportedIdentity();
+            LocalModuleCapabilityProfile capability =
+                LocalModuleCapabilityProfile.Resolve("2.6.1");
+            string runtimeNonce = "55555555555555555555555555555555";
+            string runtimeId = LocalModuleManagedIdentity.CreateRuntimeId(
+                capability.CapabilityId,
+                package.Sha256);
+            string runtimeRoot = store.GetRuntimeRoot(runtimeId);
+            byte[] runtimeBytes = Encoding.ASCII.GetBytes("owned-runtime");
+            string runtimeFile = Path.Combine(runtimeRoot, "lib", "sample.beam");
+            Directory.CreateDirectory(Path.GetDirectoryName(runtimeFile));
+            File.WriteAllBytes(runtimeFile, runtimeBytes);
+            runtime = LocalModuleRuntimeManifest.Create(
+                package,
+                capability,
+                runtimeRoot,
+                runtimeNonce,
+                new[] { new LocalModuleRuntimeFile(
+                    @"lib\sample.beam",
+                    runtimeBytes.Length,
+                    ComputeSha256(runtimeBytes)) });
+            store.WriteRuntime(runtime);
+
+            ManagedLocalModuleProvisioningItemRequest item =
+                CreateManagedLocalModuleRequest(1).ManagedLocalModules[0];
+            string instanceNonce = "66666666666666666666666666666666";
+            string instanceId = LocalModuleManagedIdentity.CreateInstanceId(
+                item.Inn,
+                instanceNonce);
+            string profileRoot = store.GetInstanceRoot(instanceId);
+            LocalModuleConfiguration configuration = LocalModuleConfigurationWriter.Build(
+                capability,
+                runtimeRoot,
+                profileRoot,
+                item,
+                instanceNonce,
+                CreateLocalModuleTemplateObservation());
+            instance = LocalModuleInstanceManifest.Create(
+                item,
+                instanceId,
+                runtime.RuntimeId,
+                runtimeRoot,
+                configuration,
+                instanceNonce,
+                "cccccccccccccccccccccccccccccccc");
+            store.WriteInstance(instance);
+        }
+
         private static string ReadLineStarting(string text, string prefix)
         {
             string[] lines = text.Replace("\r\n", "\n").Split('\n');
@@ -2528,6 +2933,17 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 "esm_tspiot_provisioner_tests_" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(path);
             return path;
+        }
+
+        private static void DeleteTestTreeWithReadOnlyFiles(string root)
+        {
+            if (!Directory.Exists(root)) return;
+            string[] files = Directory.GetFiles(root, "*", SearchOption.AllDirectories);
+            for (int index = 0; index < files.Length; index++)
+            {
+                File.SetAttributes(files[index], FileAttributes.Normal);
+            }
+            Directory.Delete(root, true);
         }
 
         private static ControllerCapabilityProfile CreateTestCapabilityProfile(
@@ -3186,6 +3602,14 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 }
                 Directory.CreateDirectory(path);
             }
+
+            public void EnsureProtectedRuntimeFile(string path)
+            {
+                if (!_isSafe)
+                {
+                    throw new InvalidDataException("reparse path rejected");
+                }
+            }
         }
 
         private sealed class FakeWindowsServiceApi : IWindowsServiceApi
@@ -3310,6 +3734,28 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 return _trusted
                     ? FileTrustResult.Trusted(path, _observed)
                     : FileTrustResult.Rejected(_error ?? "trust rejected");
+            }
+        }
+
+        private sealed class ThrowOnceLocalModuleMutationBoundary :
+            ILocalModuleMutationBoundary
+        {
+            private readonly LocalModuleRuntimeMutationBoundary _selected;
+            private bool _thrown;
+
+            internal ThrowOnceLocalModuleMutationBoundary(
+                LocalModuleRuntimeMutationBoundary selected)
+            {
+                _selected = selected;
+            }
+
+            public void Reached(LocalModuleRuntimeMutationBoundary boundary)
+            {
+                if (!_thrown && boundary == _selected)
+                {
+                    _thrown = true;
+                    throw new IOException("Simulated crash at " + boundary.ToString() + ".");
+                }
             }
         }
 
