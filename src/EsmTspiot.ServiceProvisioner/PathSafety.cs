@@ -14,7 +14,8 @@ namespace EsmTspiot.ServiceProvisioner
         Profile = 2,
         Operations = 3,
         InstallerStaging = 4,
-        ProfileContainer = 5
+        ProfileContainer = 5,
+        Runtime = 6
     }
 
     internal interface IPathSafety
@@ -26,6 +27,7 @@ namespace EsmTspiot.ServiceProvisioner
             ProtectedDirectoryKind kind,
             string readOnlySid,
             string serviceSid);
+        void EnsureProtectedRuntimeFile(string path);
     }
 
     internal sealed class PathSafety : IPathSafety
@@ -34,6 +36,8 @@ namespace EsmTspiot.ServiceProvisioner
             new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
         private static readonly SecurityIdentifier AdministratorsSid =
             new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+        private static readonly SecurityIdentifier AllServicesSid =
+            new SecurityIdentifier("S-1-5-80-0");
 
         public ValidationResult Validate(string path, string requiredRoot)
         {
@@ -187,6 +191,13 @@ namespace EsmTspiot.ServiceProvisioner
                     preservedTraverseSids.Add(sid);
                 }
             }
+            if (kind == ProtectedDirectoryKind.Runtime)
+            {
+                AddDirectoryRule(
+                    security,
+                    AllServicesSid,
+                    FileSystemRights.ReadAndExecute | FileSystemRights.Synchronize);
+            }
             for (int index = 0; index < preservedTraverseSids.Count; index++)
             {
                 security.AddAccessRule(new FileSystemAccessRule(
@@ -198,6 +209,25 @@ namespace EsmTspiot.ServiceProvisioner
             }
 
             new DirectoryInfo(path).SetAccessControl(security);
+        }
+
+        public void EnsureProtectedRuntimeFile(string path)
+        {
+            string fullPath = Path.GetFullPath(path);
+            if (!File.Exists(fullPath))
+            {
+                throw new FileNotFoundException("Runtime file was not found.", fullPath);
+            }
+            FileSecurity security = new FileSecurity();
+            security.SetAccessRuleProtection(true, false);
+            security.SetOwner(AdministratorsSid);
+            AddFileRule(security, SystemSid, FileSystemRights.FullControl);
+            AddFileRule(security, AdministratorsSid, FileSystemRights.FullControl);
+            AddFileRule(
+                security,
+                AllServicesSid,
+                FileSystemRights.ReadAndExecute | FileSystemRights.Synchronize);
+            new FileInfo(fullPath).SetAccessControl(security);
         }
 
         private static IList<SecurityIdentifier> ReadSafeTraverseSids(string path)
@@ -311,6 +341,17 @@ namespace EsmTspiot.ServiceProvisioner
             string allowedWriterSid)
         {
             return ProtectedAclPolicy.IsProtected(security, allowedWriterSid);
+        }
+
+        private static void AddFileRule(
+            FileSecurity security,
+            SecurityIdentifier sid,
+            FileSystemRights rights)
+        {
+            security.AddAccessRule(new FileSystemAccessRule(
+                sid,
+                rights,
+                AccessControlType.Allow));
         }
     }
 }

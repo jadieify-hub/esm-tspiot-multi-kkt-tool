@@ -123,16 +123,15 @@ Environment is derived `ERL_LIBS`, `ERL_EPMD_PORT`, `ERL_EPMD_ADDRESS=127.0.0.1`
 - Create: `src/EsmTspiot.ServiceProvisioner/LocalModuleRuntimeInstaller.cs`
 - Create: `src/EsmTspiot.ServiceProvisioner/LocalModuleOperationJournalStore.cs`
 - Modify: `src/EsmTspiot.ServiceProvisioner/PathSafety.cs`
-- Modify: `src/EsmTspiot.ServiceProvisioner/ServiceSecurityDescriptor.cs`
 - Test: `tests/EsmTspiot.ServiceProvisioner.Tests/Program.cs`
 
 **Interfaces:** Runtime root `%ProgramFiles%\KRS\MultiKKT\LocalModuleRuntime\<version-id>`; instance root `%ProgramData%\KRS\MultiKKT\LocalModules\<instance-id>`. `CountRuntimeReferences` independently scans verified instance manifests.
 
-- [ ] **Step 1: Write failing tests** for wrapper/updater exclusion, three ownership levels, zero-reference delete and injected crash after every mutation boundary.
-- [ ] **Step 2: Run helper tests and verify RED.**
-- [ ] **Step 3: Implement fixed extraction:** `%SystemRoot%\System32\msiexec.exe /a <locked-msi> /qn TARGETDIR=<protected-stage> /l*v <protected-log>`; reject nonzero exit, invalid structure, reparse paths and writable final runtime. Copy the exact-package runtime tree while excluding the fixed wrapper/updater list and blank installation-specific `erl.ini`; verify required-file fingerprints, hash every copied file and confirm the official relative-layout launcher fallback before accepting runtime.
-- [ ] **Step 4: Implement atomic schema-versioned manifests/journals; derive all roots again in helper. Recovery completes idempotently or returns `CleanupPending`, never adopts unknown files.**
-- [ ] **Step 5: Run helper tests/safety and commit:** `git commit -m "Добавить общий runtime и manifest ЛМ"`.
+- [x] **Step 1: Write failing tests** for wrapper/updater exclusion, three ownership levels, zero-reference delete and injected crash after every mutation boundary.
+- [x] **Step 2: Run helper tests and verify RED.**
+- [x] **Step 3: Implement fixed extraction:** `%SystemRoot%\System32\msiexec.exe /a <locked-msi> /qn TARGETDIR=<protected-stage> /l*v <protected-log>`; reject nonzero exit, invalid structure, reparse paths and writable final runtime. Copy the exact-package runtime tree while excluding the fixed wrapper/updater list and blank installation-specific `erl.ini`; verify required-file fingerprints, hash every copied file and confirm the official relative-layout launcher fallback before accepting runtime.
+- [x] **Step 4: Implement atomic schema-versioned manifests/journals; derive all roots again in helper. Recovery completes idempotently or returns `CleanupPending`, never adopts unknown files.**
+- [x] **Step 5: Run helper tests/safety and commit:** `git commit -m "Добавить общий runtime и manifest ЛМ"`.
 
 ---
 
