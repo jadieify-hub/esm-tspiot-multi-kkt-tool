@@ -66,6 +66,12 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Supervisor replaces only child ProgramData", SupervisorReplacesOnlyChildProgramData);
             Run("Supervisor rejects caller supplied environment and arguments", SupervisorRejectsCallerSuppliedEnvironmentAndArguments);
             Run("Supervisor stops child gracefully without process kill", SupervisorStopsChildGracefullyWithoutProcessKill);
+            Run("Provisioner accepts only owned local module service mode", ProvisionerAcceptsOnlyOwnedLocalModuleServiceMode);
+            Run("Local module SCM creates exact restricted dependency pair", LocalModuleScmCreatesExactRestrictedDependencyPair);
+            Run("Local module child plan is rebuilt only from manifest", LocalModuleChildPlanIsRebuiltOnlyFromManifest);
+            Run("Local module ownership distinguishes shared Erlang children", LocalModuleOwnershipDistinguishesSharedErlangChildren);
+            Run("EPMD controller uses explicit port and blocks live-node kill", EpmdControllerUsesExplicitPortAndBlocksLiveNodeKill);
+            Run("Local module lifecycle orders database API and EPMD", LocalModuleLifecycleOrdersDatabaseApiAndEpmd);
             Run("LM profile adapter changes only supported fields", LmProfileAdapterChangesOnlySupportedFields);
             Run("LM profile adapter rejects ambiguous schema", LmProfileAdapterRejectsAmbiguousSchema);
             Run("LM profile adapter preserves unknown nonsecret fields", LmProfileAdapterPreservesUnknownNonsecretFields);
@@ -103,7 +109,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
             if (_failures == 0)
             {
-                Console.WriteLine("All 78 provisioner tests passed.");
+                Console.WriteLine("All 84 provisioner tests passed.");
                 return 0;
             }
 
@@ -180,9 +186,10 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             AssertFalse(ProvisioningRequestValidator.Validate(unknownOperation).IsValid,
                 "Unknown operations must fail closed.");
 
+            ProvisionerCommandLine ignored;
             AssertFalse(ProvisionerCommandLine.TryParse(
                     new[] { "--pipe", Guid.NewGuid().ToString("N"), "--operation", "not-a-guid" },
-                    out ProvisionerCommandLine ignored),
+                    out ignored),
                 "Command line must accept only two exact 32-hex identifiers.");
             AssertFalse(ProvisionerCommandLine.TryParse(
                     new[] { "--pipe", Guid.NewGuid().ToString("N"), "--operation", Guid.NewGuid().ToString("N"), "extra" },
@@ -1626,6 +1633,369 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 "Graceful stop wait must be bounded.");
         }
 
+        private static void ProvisionerAcceptsOnlyOwnedLocalModuleServiceMode()
+        {
+            string instanceId = "lmi-0123456789abcdef01234567";
+            string databaseService =
+                LocalModuleManagedIdentity.CreateDatabaseServiceName(instanceId);
+            ProvisionerCommandLine parsed;
+
+            AssertTrue(ProvisionerCommandLine.TryParse(
+                    new[] { "--supervise-local-module", databaseService },
+                    out parsed),
+                "The helper must accept its exact manifest-owned local-module service name.");
+            AssertEqual(ProvisionerMode.LocalModuleSupervisor, parsed.Mode,
+                "The local-module service switch must select only the dedicated host mode.");
+            AssertEqual(databaseService, parsed.ServiceName,
+                "The service identity must round-trip without caller-controlled normalization.");
+            AssertFalse(ProvisionerCommandLine.TryParse(
+                    new[] { "--supervise-local-module", databaseService, "--config", @"C:\caller" },
+                    out parsed),
+                "A caller must not append a config path or any other start token.");
+            AssertFalse(ProvisionerCommandLine.TryParse(
+                    new[] { "--supervise-local-module", databaseService.ToUpperInvariant() },
+                    out parsed),
+                "Non-canonical service spelling must fail closed.");
+            AssertFalse(ProvisionerCommandLine.TryParse(
+                    new[] { "--supervise-local-module", LmServiceIdentity.CreateName("00105700000001") },
+                    out parsed),
+                "The local-module switch must never accept a controller service.");
+        }
+
+        private static void LocalModuleScmCreatesExactRestrictedDependencyPair()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                LocalModuleManifestStore store;
+                LocalModuleRuntimeManifest runtime;
+                LocalModuleInstanceManifest instance;
+                CreateTestManagedLocalModuleOwnership(
+                    root,
+                    out store,
+                    out runtime,
+                    out instance);
+                FakeWindowsServiceCollectionApi api =
+                    new FakeWindowsServiceCollectionApi();
+                LocalModuleWindowsServicePair pair =
+                    new LocalModuleWindowsServicePair(
+                        api,
+                        VerifiedProvisionerBinary.CreateForTesting(
+                            @"C:\Program Files\KRS\MultiKKT\Provisioner\EsmTspiot.ServiceProvisioner.exe"));
+
+                pair.EnsureConfigured(
+                    instance,
+                    "S-1-5-21-111-222-333-1001");
+
+                AssertEqual(2, api.CreatedDefinitions.Count,
+                    "One INN must produce exactly one database and one API service.");
+                WindowsServiceDefinition database = api.CreatedDefinitions[0];
+                WindowsServiceDefinition apiService = api.CreatedDefinitions[1];
+                AssertEqual(instance.DatabaseServiceName, database.ServiceName,
+                    "The database service must be created first from the manifest identity.");
+                AssertEqual(0, database.Dependencies.Count,
+                    "The database service must have no local-module service dependency.");
+                AssertEqual(instance.ApiServiceName, apiService.ServiceName,
+                    "The API service must be created second from the manifest identity.");
+                AssertEqual(1, apiService.Dependencies.Count,
+                    "The API service must depend on exactly the database service.");
+                AssertEqual(instance.DatabaseServiceName, apiService.Dependencies[0],
+                    "SCM must enforce database-before-API ordering.");
+                AssertContains(database.ImagePath,
+                    "--supervise-local-module " + instance.DatabaseServiceName);
+                AssertContains(apiService.ImagePath,
+                    "--supervise-local-module " + instance.ApiServiceName);
+                AssertEqual(WindowsServiceSidType.Restricted, database.ServiceSidType,
+                    "Database service must use a restricted service SID.");
+                AssertEqual(WindowsServiceSidType.Restricted, apiService.ServiceSidType,
+                    "API service must use a restricted service SID.");
+                AssertTrue(database.SecurityDescriptor.IsRestrictive &&
+                           apiService.SecurityDescriptor.IsRestrictive,
+                    "Both services must retain the restrictive DACL contract.");
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        }
+
+        private static void LocalModuleChildPlanIsRebuiltOnlyFromManifest()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                LocalModuleManifestStore store;
+                LocalModuleRuntimeManifest runtime;
+                LocalModuleInstanceManifest instance;
+                CreateTestManagedLocalModuleOwnership(
+                    root,
+                    out store,
+                    out runtime,
+                    out instance);
+                LocalModuleCapabilityProfile capability =
+                    LocalModuleCapabilityProfile.Resolve("2.6.1");
+
+                ErlangChildStartPlan apiPlan =
+                    LocalModuleConfigurationWriter.RebuildStartPlan(
+                        capability,
+                        instance,
+                        LocalModuleProcessRole.Api);
+                ErlangChildStartPlan databasePlan =
+                    LocalModuleConfigurationWriter.RebuildStartPlan(
+                        capability,
+                        instance,
+                        LocalModuleProcessRole.Database);
+
+                AssertEqual(8, apiPlan.ArgumentTokens.Count,
+                    "The API command must contain only the fixed capability token set.");
+                AssertEqual("-args_file", apiPlan.ArgumentTokens[2],
+                    "The fixed command must select its manifest-derived vm.args file.");
+                AssertEqual(Path.Combine(instance.ConfigRoot, "regime-vm.args"),
+                    apiPlan.ArgumentTokens[3],
+                    "API vm.args path must be derived from the owned instance root.");
+                AssertEqual(Path.Combine(instance.ConfigRoot, "yenisei-sys.config"),
+                    databasePlan.ArgumentTokens[7],
+                    "Database sys.config path must be derived from the owned instance root.");
+                AssertEqual(instance.EpmdPort.ToString(),
+                    apiPlan.Environment["ERL_EPMD_PORT"],
+                    "Every child plan must carry its own explicit EPMD port.");
+                MethodInfo method = typeof(LocalModuleConfigurationWriter).GetMethod(
+                    "RebuildStartPlan",
+                    BindingFlags.Static | BindingFlags.NonPublic);
+                AssertEqual(3, method.GetParameters().Length,
+                    "The service host must not accept caller command, arguments or environment.");
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        }
+
+        private static void LocalModuleOwnershipDistinguishesSharedErlangChildren()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                LocalModuleManifestStore store;
+                LocalModuleRuntimeManifest runtime;
+                LocalModuleInstanceManifest instance;
+                CreateTestManagedLocalModuleOwnership(
+                    root,
+                    out store,
+                    out runtime,
+                    out instance);
+                LocalModuleCapabilityProfile capability =
+                    LocalModuleCapabilityProfile.Resolve("2.6.1");
+                VerifiedProvisionerBinary supervisor =
+                    VerifiedProvisionerBinary.CreateForTesting(
+                        @"C:\Program Files\KRS\MultiKKT\Provisioner\EsmTspiot.ServiceProvisioner.exe");
+                LocalModuleWindowsServicePair pair =
+                    new LocalModuleWindowsServicePair(
+                        new FakeWindowsServiceCollectionApi(),
+                        supervisor);
+                WindowsServiceDefinition definition = pair.BuildDefinition(
+                    instance,
+                    LocalModuleProcessRole.Api,
+                    "S-1-5-21-111-222-333-1001");
+                WindowsServiceRecord service =
+                    WindowsServiceRecord.FromDefinition(definition);
+                service.State = WindowsServiceState.Running;
+                service.ProcessId = 5001;
+                ErlangChildStartPlan plan =
+                    LocalModuleConfigurationWriter.RebuildStartPlan(
+                        capability,
+                        instance,
+                        LocalModuleProcessRole.Api);
+                LocalModuleProcessObservation observation =
+                    LocalModuleProcessObservation.CreateForTesting(
+                        service,
+                        6001,
+                        5001,
+                        plan.ExecutablePath,
+                        FindRequiredFileHash(capability, capability.ErlExecutableRelativePath),
+                        plan.ArgumentTokens,
+                        plan.Environment,
+                        instance.OwnershipNonce,
+                        new[] { 6001 });
+                LocalModuleServiceOwnershipVerifier verifier =
+                    new LocalModuleServiceOwnershipVerifier(capability);
+
+                AssertTrue(verifier.Verify(
+                        instance,
+                        LocalModuleProcessRole.Api,
+                        definition,
+                        observation).IsValid,
+                    "The exact service, parent, config, environment, nonce and listener must pass.");
+
+                List<string> anotherInstanceTokens =
+                    new List<string>(plan.ArgumentTokens);
+                anotherInstanceTokens[3] =
+                    @"C:\ProgramData\KRS\MultiKKT\LocalModules\lmi-ffffffffffffffffffffffff\config\regime-vm.args";
+                LocalModuleProcessObservation wrongInstance =
+                    LocalModuleProcessObservation.CreateForTesting(
+                        service,
+                        6002,
+                        5001,
+                        plan.ExecutablePath,
+                        FindRequiredFileHash(capability, capability.ErlExecutableRelativePath),
+                        anotherInstanceTokens,
+                        plan.Environment,
+                        instance.OwnershipNonce,
+                        new[] { 6002 });
+                AssertFalse(verifier.Verify(
+                        instance,
+                        LocalModuleProcessRole.Api,
+                        definition,
+                        wrongInstance).IsValid,
+                    "The same shared erl.exe must not authorize another instance config path.");
+
+                LocalModuleProcessObservation wrongParent =
+                    LocalModuleProcessObservation.CreateForTesting(
+                        service,
+                        6001,
+                        9999,
+                        plan.ExecutablePath,
+                        FindRequiredFileHash(capability, capability.ErlExecutableRelativePath),
+                        plan.ArgumentTokens,
+                        plan.Environment,
+                        instance.OwnershipNonce,
+                        new[] { 6001 });
+                AssertFalse(verifier.Verify(
+                        instance,
+                        LocalModuleProcessRole.Api,
+                        definition,
+                        wrongParent).IsValid,
+                    "A matching erl.exe outside the exact service process tree must fail.");
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        }
+
+        private static void EpmdControllerUsesExplicitPortAndBlocksLiveNodeKill()
+        {
+            LocalModuleCapabilityProfile capability =
+                LocalModuleCapabilityProfile.Resolve("2.6.1");
+            FakeEpmdCommandRunner liveRunner = new FakeEpmdCommandRunner(
+                new EpmdCommandResult(0, "epmd: up and running\nname krs_lm_regime_n01 at port 51001\n", string.Empty));
+            EpmdInstanceController liveController = new EpmdInstanceController(
+                capability,
+                @"C:\Program Files\KRS\MultiKKT\LocalModuleRuntime\lmrt-0123456789abcdef01234567",
+                43691,
+                liveRunner);
+
+            EpmdShutdownResult blocked = liveController.StopIfUnused();
+
+            AssertEqual(EpmdShutdownOutcome.LiveNodes, blocked.Outcome,
+                "EPMD shutdown must be blocked while any node remains registered.");
+            AssertEqual(1, liveRunner.Plans.Count,
+                "Blocked shutdown must not execute epmd -kill.");
+            AssertEqual("-names", liveRunner.Plans[0].ArgumentTokens[0],
+                "The first command must inspect this instance only.");
+            AssertEqual("-port", liveRunner.Plans[0].ArgumentTokens[1],
+                "Every EPMD command must carry an explicit -port token.");
+            AssertEqual("43691", liveRunner.Plans[0].ArgumentTokens[2],
+                "The inspected port must be the manifest-owned EPMD port.");
+            AssertEqual("43691", liveRunner.Plans[0].Environment["ERL_EPMD_PORT"],
+                "The command environment must repeat the same isolated EPMD port.");
+
+            FakeEpmdCommandRunner emptyRunner = new FakeEpmdCommandRunner(
+                new EpmdCommandResult(0, "epmd: up and running\n", string.Empty),
+                new EpmdCommandResult(0, "Killed\n", string.Empty));
+            EpmdShutdownResult stopped = new EpmdInstanceController(
+                capability,
+                @"C:\Program Files\KRS\MultiKKT\LocalModuleRuntime\lmrt-0123456789abcdef01234567",
+                43691,
+                emptyRunner).StopIfUnused();
+
+            AssertEqual(EpmdShutdownOutcome.Stopped, stopped.Outcome,
+                "An empty instance-specific EPMD may be stopped gracefully.");
+            AssertEqual(2, emptyRunner.Plans.Count,
+                "An empty EPMD requires one inspection and one exact kill command.");
+            AssertEqual("-kill", emptyRunner.Plans[1].ArgumentTokens[0],
+                "Only the empty instance may receive epmd -kill.");
+            AssertEqual("-port", emptyRunner.Plans[1].ArgumentTokens[1],
+                "The kill command must also include an explicit -port token.");
+            AssertFalse(emptyRunner.Plans[1].Environment.ContainsKey(
+                    "ERL_EPMD_RELAXED_COMMAND_CHECK"),
+                "Relaxed EPMD command checks are forbidden.");
+        }
+
+        private static void LocalModuleLifecycleOrdersDatabaseApiAndEpmd()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                LocalModuleManifestStore store;
+                LocalModuleRuntimeManifest runtime;
+                LocalModuleInstanceManifest instance;
+                CreateTestManagedLocalModuleOwnership(
+                    root,
+                    out store,
+                    out runtime,
+                    out instance);
+                List<string> events = new List<string>();
+                FakeWindowsServiceCollectionApi services =
+                    new FakeWindowsServiceCollectionApi(events);
+                LocalModuleWindowsServicePair pair =
+                    new LocalModuleWindowsServicePair(
+                        services,
+                        VerifiedProvisionerBinary.CreateForTesting(
+                            @"C:\Program Files\KRS\MultiKKT\Provisioner\EsmTspiot.ServiceProvisioner.exe"));
+                pair.EnsureConfigured(instance, null);
+                events.Clear();
+                FakeLocalModuleServiceReadinessProbe readiness =
+                    new FakeLocalModuleServiceReadinessProbe(events);
+                RecordingEpmdCommandRunner epmdRunner =
+                    new RecordingEpmdCommandRunner(
+                        events,
+                        new EpmdCommandResult(0, "epmd: up and running\n", string.Empty),
+                        new EpmdCommandResult(0, "Killed\n", string.Empty));
+                EpmdInstanceController epmd = new EpmdInstanceController(
+                    LocalModuleCapabilityProfile.Resolve("2.6.1"),
+                    instance.RuntimeRoot,
+                    instance.EpmdPort,
+                    epmdRunner);
+                LocalModuleServicePairLifecycle lifecycle =
+                    new LocalModuleServicePairLifecycle(
+                        services,
+                        readiness,
+                        epmd);
+
+                lifecycle.Start(instance);
+                LocalModuleServicePairStopOutcome outcome =
+                    lifecycle.Stop(instance);
+
+                AssertEqual(LocalModuleServicePairStopOutcome.Stopped, outcome,
+                    "The exact pair and its empty EPMD must stop cleanly.");
+                string[] expected =
+                {
+                    "start:" + instance.DatabaseServiceName,
+                    "ready:Database",
+                    "start:" + instance.ApiServiceName,
+                    "ready:Api",
+                    "stop:" + instance.ApiServiceName,
+                    "stopped:Api",
+                    "stop:" + instance.DatabaseServiceName,
+                    "stopped:Database",
+                    "epmd:-names",
+                    "epmd:-kill"
+                };
+                AssertEqual(expected.Length, events.Count,
+                    "The lifecycle must expose one deterministic operation sequence.");
+                for (int index = 0; index < expected.Length; index++)
+                {
+                    AssertEqual(expected[index], events[index],
+                        "Unexpected lifecycle event at index " + index.ToString() + ".");
+                }
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        }
+
         private static void LmProfileAdapterChangesOnlySupportedFields()
         {
             string root = CreateTemporaryDirectory();
@@ -2888,6 +3258,25 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             return string.Empty;
         }
 
+        private static string FindRequiredFileHash(
+            LocalModuleCapabilityProfile capability,
+            string relativePath)
+        {
+            for (int index = 0; index < capability.RequiredFiles.Count; index++)
+            {
+                LocalModuleRequiredFile file = capability.RequiredFiles[index];
+                if (string.Equals(
+                        file.RelativePath,
+                        relativePath,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    return file.Sha256;
+                }
+            }
+            throw new InvalidOperationException(
+                "Required file is absent from the exact capability profile.");
+        }
+
         private static ProvisioningPeerEvidence CreateValidServerEvidence()
         {
             return new ProvisioningPeerEvidence
@@ -3734,6 +4123,146 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 return _trusted
                     ? FileTrustResult.Trusted(path, _observed)
                     : FileTrustResult.Rejected(_error ?? "trust rejected");
+            }
+        }
+
+        private sealed class FakeWindowsServiceCollectionApi : IWindowsServiceApi
+        {
+            private readonly Dictionary<string, WindowsServiceRecord> _records =
+                new Dictionary<string, WindowsServiceRecord>(StringComparer.Ordinal);
+
+            internal FakeWindowsServiceCollectionApi()
+                : this(null)
+            {
+            }
+
+            internal FakeWindowsServiceCollectionApi(IList<string> events)
+            {
+                Events = events;
+                CreatedDefinitions = new List<WindowsServiceDefinition>();
+            }
+
+            internal IList<WindowsServiceDefinition> CreatedDefinitions { get; private set; }
+            internal IList<string> Events { get; private set; }
+
+            public WindowsServiceRecord Query(string serviceName)
+            {
+                WindowsServiceRecord record;
+                return _records.TryGetValue(serviceName, out record) ? record : null;
+            }
+
+            public void Create(WindowsServiceDefinition definition)
+            {
+                definition.Validate();
+                CreatedDefinitions.Add(definition);
+                _records.Add(
+                    definition.ServiceName,
+                    WindowsServiceRecord.FromDefinition(definition));
+            }
+
+            public void Update(WindowsServiceDefinition definition)
+            {
+                definition.Validate();
+                _records[definition.ServiceName] =
+                    WindowsServiceRecord.FromDefinition(definition);
+            }
+
+            public void Start(string serviceName)
+            {
+                WindowsServiceRecord record = Require(serviceName);
+                record.State = WindowsServiceState.Running;
+                if (Events != null) Events.Add("start:" + serviceName);
+            }
+
+            public void RequestStop(string serviceName)
+            {
+                WindowsServiceRecord record = Require(serviceName);
+                record.State = WindowsServiceState.Stopped;
+                if (Events != null) Events.Add("stop:" + serviceName);
+            }
+
+            public void Delete(string serviceName)
+            {
+                Require(serviceName);
+                _records.Remove(serviceName);
+            }
+
+            private WindowsServiceRecord Require(string serviceName)
+            {
+                WindowsServiceRecord record;
+                if (!_records.TryGetValue(serviceName, out record))
+                {
+                    throw new InvalidOperationException("unexpected service identity");
+                }
+                return record;
+            }
+        }
+
+        private sealed class FakeEpmdCommandRunner : IEpmdCommandRunner
+        {
+            private readonly Queue<EpmdCommandResult> _results;
+
+            internal FakeEpmdCommandRunner(params EpmdCommandResult[] results)
+            {
+                _results = new Queue<EpmdCommandResult>(results);
+                Plans = new List<EpmdCommandPlan>();
+            }
+
+            internal IList<EpmdCommandPlan> Plans { get; private set; }
+
+            public EpmdCommandResult Execute(EpmdCommandPlan plan)
+            {
+                Plans.Add(plan);
+                if (_results.Count == 0)
+                {
+                    throw new InvalidOperationException("No fake EPMD result is queued.");
+                }
+                return _results.Dequeue();
+            }
+        }
+
+        private sealed class FakeLocalModuleServiceReadinessProbe :
+            ILocalModuleServiceReadinessProbe
+        {
+            private readonly IList<string> _events;
+
+            internal FakeLocalModuleServiceReadinessProbe(IList<string> events)
+            {
+                _events = events;
+            }
+
+            public void WaitUntilOwnedListener(
+                LocalModuleInstanceManifest manifest,
+                LocalModuleProcessRole role)
+            {
+                _events.Add("ready:" + role.ToString());
+            }
+
+            public void WaitUntilStopped(
+                LocalModuleInstanceManifest manifest,
+                LocalModuleProcessRole role)
+            {
+                _events.Add("stopped:" + role.ToString());
+            }
+        }
+
+        private sealed class RecordingEpmdCommandRunner : IEpmdCommandRunner
+        {
+            private readonly IList<string> _events;
+            private readonly Queue<EpmdCommandResult> _results;
+
+            internal RecordingEpmdCommandRunner(
+                IList<string> events,
+                params EpmdCommandResult[] results)
+            {
+                _events = events;
+                _results = new Queue<EpmdCommandResult>(results);
+            }
+
+            public EpmdCommandResult Execute(EpmdCommandPlan plan)
+            {
+                _events.Add("epmd:" + plan.ArgumentTokens[0]);
+                return _results.Dequeue();
             }
         }
 

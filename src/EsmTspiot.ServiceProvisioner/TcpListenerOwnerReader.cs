@@ -6,14 +6,19 @@ using System.Runtime.InteropServices;
 
 namespace EsmTspiot.ServiceProvisioner
 {
-    internal sealed class TcpListenerOwnerReader
+    internal interface ITcpListenerOwnerReader
+    {
+        IList<int> FindListenerProcessIds(int port);
+    }
+
+    internal sealed class TcpListenerOwnerReader : ITcpListenerOwnerReader
     {
         private const int AddressFamilyInet = 2;
         private const int AddressFamilyInet6 = 23;
         private const int ErrorInsufficientBuffer = 122;
         private const int TcpTableOwnerPidListener = 3;
 
-        internal IList<int> FindListenerProcessIds(int port)
+        public IList<int> FindListenerProcessIds(int port)
         {
             if (port < 1 || port > 65535)
             {

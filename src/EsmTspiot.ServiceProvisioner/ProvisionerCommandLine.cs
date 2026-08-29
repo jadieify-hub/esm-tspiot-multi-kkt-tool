@@ -6,7 +6,8 @@ namespace EsmTspiot.ServiceProvisioner
     internal enum ProvisionerMode
     {
         ElevatedOperation = 1,
-        Supervisor = 2
+        Supervisor = 2,
+        LocalModuleSupervisor = 3
     }
 
     internal sealed class ProvisionerCommandLine
@@ -28,6 +29,27 @@ namespace EsmTspiot.ServiceProvisioner
                 {
                     Mode = ProvisionerMode.Supervisor,
                     ServiceName = LmServiceIdentity.CreateName(serial)
+                };
+                return true;
+            }
+            string instanceId;
+            LocalModuleProcessRole role;
+            if (args != null && args.Length == 2 &&
+                string.Equals(
+                    args[0],
+                    "--supervise-local-module",
+                    StringComparison.Ordinal) &&
+                LocalModuleServiceIdentity.TryParseName(
+                    args[1],
+                    out instanceId,
+                    out role))
+            {
+                result = new ProvisionerCommandLine
+                {
+                    Mode = ProvisionerMode.LocalModuleSupervisor,
+                    ServiceName = LocalModuleServiceIdentity.CreateName(
+                        instanceId,
+                        role)
                 };
                 return true;
             }

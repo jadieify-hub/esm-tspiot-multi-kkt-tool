@@ -159,7 +159,7 @@ namespace EsmTspiot.ServiceProvisioner
             }
 
             WindowsServiceRecord observed = _serviceApi.Query(definition.ServiceName);
-            if (!Matches(definition, observed))
+            if (!WindowsServiceDefinitionMatcher.Matches(definition, observed))
             {
                 throw new InvalidDataException("SCM did not retain the exact managed service definition.");
             }
@@ -199,7 +199,9 @@ namespace EsmTspiot.ServiceProvisioner
             string operatorSid,
             WindowsServiceRecord observed)
         {
-            return Matches(BuildDefinition(kktSerial, operatorSid), observed);
+            return WindowsServiceDefinitionMatcher.Matches(
+                BuildDefinition(kktSerial, operatorSid),
+                observed);
         }
 
         internal static int RunServiceMode(string serviceName)
@@ -255,59 +257,6 @@ namespace EsmTspiot.ServiceProvisioner
                 profileRoot,
                 new ProcessEnvironmentReader(),
                 new NativeControllerChildRuntime());
-        }
-
-        private static bool Matches(
-            WindowsServiceDefinition expected,
-            WindowsServiceRecord actual)
-        {
-            if (actual == null ||
-                !string.Equals(expected.ServiceName, actual.ServiceName, StringComparison.Ordinal) ||
-                !string.Equals(expected.DisplayName, actual.DisplayName, StringComparison.Ordinal) ||
-                !string.Equals(expected.ImagePath, actual.ImagePath, StringComparison.Ordinal) ||
-                !string.Equals(expected.Description, actual.Description, StringComparison.Ordinal) ||
-                !string.Equals(expected.AccountName, actual.AccountName, StringComparison.Ordinal) ||
-                expected.StartMode != actual.StartMode ||
-                expected.ErrorControl != actual.ErrorControl ||
-                expected.ServiceSidType != actual.ServiceSidType ||
-                actual.SecurityDescriptor == null || !actual.SecurityDescriptor.IsRestrictive ||
-                !string.Equals(
-                    expected.SecurityDescriptor.OperatorSid,
-                    actual.SecurityDescriptor.OperatorSid,
-                    StringComparison.Ordinal))
-            {
-                return false;
-            }
-            IList<string> dependencies = actual.Dependencies ?? new List<string>();
-            if (dependencies.Count != expected.Dependencies.Count)
-            {
-                return false;
-            }
-            for (int index = 0; index < dependencies.Count; index++)
-            {
-                if (!string.Equals(dependencies[index], expected.Dependencies[index], StringComparison.Ordinal))
-                {
-                    return false;
-                }
-            }
-            if (actual.RecoveryPolicy == null || expected.RecoveryPolicy == null ||
-                actual.RecoveryPolicy.ResetPeriodSeconds != expected.RecoveryPolicy.ResetPeriodSeconds ||
-                actual.RecoveryPolicy.RestartDelaysMilliseconds.Count !=
-                    expected.RecoveryPolicy.RestartDelaysMilliseconds.Count)
-            {
-                return false;
-            }
-            for (int index = 0;
-                index < expected.RecoveryPolicy.RestartDelaysMilliseconds.Count;
-                index++)
-            {
-                if (actual.RecoveryPolicy.RestartDelaysMilliseconds[index] !=
-                    expected.RecoveryPolicy.RestartDelaysMilliseconds[index])
-                {
-                    return false;
-                }
-            }
-            return true;
         }
 
         private sealed class SupervisorServiceHost : ServiceBase
