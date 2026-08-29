@@ -37,6 +37,10 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Local module verifier rejects package identity or signer mismatch", LocalModuleVerifierRejectsPackageIdentityOrSignerMismatch);
             Run("Managed local module protocol rejects duplicate INN or changed plan", ManagedLocalModuleProtocolRejectsDuplicateInnOrChangedPlan);
             Run("Managed provisioning session accepts only known monotonic messages", ManagedProvisioningSessionAcceptsOnlyKnownMonotonicMessages);
+            Run("Local module configs isolate every mutable path", LocalModuleConfigsIsolateEveryMutablePath);
+            Run("Local module start plans share only read-only runtime", LocalModuleStartPlansShareOnlyReadOnlyRuntime);
+            Run("Local module config rejects ambiguous template", LocalModuleConfigRejectsAmbiguousTemplate);
+            Run("Local module configs contain no customer credential", LocalModuleConfigsContainNoCredential);
             Run("Official controller locator enforces protected allowed root", OfficialControllerLocatorEnforcesProtectedAllowedRoot);
             Run("Official controller locator enforces full product trust", OfficialControllerLocatorEnforcesFullProductTrust);
             Run("Official installer verifier locks verifies and stages atomically", OfficialInstallerVerifierLocksVerifiesAndStagesAtomically);
@@ -94,7 +98,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
             if (_failures == 0)
             {
-                Console.WriteLine("All 69 provisioner tests passed.");
+                Console.WriteLine("All 73 provisioner tests passed.");
                 return 0;
             }
 
@@ -601,6 +605,149 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 "An unknown session message kind must be rejected.");
             AssertEqual(5, Enum.GetValues(typeof(ManagedProvisioningSessionKind)).Length,
                 "The session protocol must expose exactly the five reviewed message kinds.");
+        }
+
+        private static void LocalModuleConfigsIsolateEveryMutablePath()
+        {
+            string runtimeRoot =
+                @"C:\Program Files\KRS\MultiKKT\LocalModuleRuntime\2.6.1";
+            string profileRoot =
+                @"C:\ProgramData\KRS\MultiKKT\LocalModules\lm-n01";
+            LocalModuleConfiguration configuration = LocalModuleConfigurationWriter.Build(
+                LocalModuleCapabilityProfile.Resolve("2.6.1"),
+                runtimeRoot,
+                profileRoot,
+                CreateManagedLocalModuleRequest(1).ManagedLocalModules[0],
+                "0123456789abcdef0123456789abcdef",
+                CreateLocalModuleTemplateObservation());
+            string profileUri = profileRoot.Replace('\\', '/');
+
+            AssertContains(configuration.RegimeLocalIni, "ip_address = 127.0.0.1");
+            AssertContains(configuration.RegimeLocalIni, "port = 5995");
+            AssertContains(configuration.RegimeLocalIni, "db_url = http://127.0.0.1:5984");
+            AssertContains(configuration.RegimeLocalIni, profileUri + "/data/key-store");
+            AssertContains(configuration.YeniseiLocalIni, "bind_address = 127.0.0.1");
+            AssertContains(configuration.YeniseiLocalIni, profileUri + "/data/database");
+            AssertContains(configuration.YeniseiLocalIni, profileUri + "/data/index");
+            AssertContains(configuration.YeniseiLocalIni, profileUri + "/logs/yenisei.log");
+            AssertContains(configuration.RegimeSysConfig, profileUri + "/logs/regime.log");
+            AssertFalse(configuration.AllText.IndexOf("./yenisei/data", StringComparison.Ordinal) >= 0 ||
+                        configuration.AllText.IndexOf("var/log", StringComparison.Ordinal) >= 0,
+                "Generated configuration must not retain mutable paths relative to shared runtime.");
+            AssertThrows<InvalidDataException>(delegate {
+                LocalModuleConfigurationWriter.Build(
+                    LocalModuleCapabilityProfile.Resolve("2.6.1"),
+                    runtimeRoot,
+                    runtimeRoot,
+                    CreateManagedLocalModuleRequest(1).ManagedLocalModules[0],
+                    "0123456789abcdef0123456789abcdef",
+                    CreateLocalModuleTemplateObservation());
+            }, "A mutable profile must never be placed inside shared runtime.");
+        }
+
+        private static void LocalModuleStartPlansShareOnlyReadOnlyRuntime()
+        {
+            string runtimeRoot =
+                @"C:\Program Files\KRS\MultiKKT\LocalModuleRuntime\2.6.1";
+            LmServiceProvisioningBatchRequest request = CreateManagedLocalModuleRequest(2);
+            LocalModuleCapabilityProfile profile = LocalModuleCapabilityProfile.Resolve("2.6.1");
+            AssertEqual(
+                "a6d537344f70f4396614bba6095b1d21bd061f717bf609175f4584c24510f272",
+                profile.RuntimeContractSha256,
+                "The exact required-file contract must stay pinned to the reviewed image.");
+            AssertTrue(profile.ExcludedRuntimeRelativePaths.Contains(
+                    @"erts-13.0.4\bin\erl.ini"),
+                "The blank installation-specific erl.ini must not enter managed runtime.");
+            AssertThrows<NotSupportedException>(delegate {
+                profile.RequiredDirectories.Add("caller-controlled");
+            }, "The exact runtime contract must be immutable.");
+            AssertFalse(
+                typeof(LocalModuleRequiredFile).GetProperty(
+                    "RelativePath",
+                    BindingFlags.Instance | BindingFlags.NonPublic).CanWrite,
+                "Required-file identities must be immutable after capability resolution.");
+            LocalModuleTemplateObservation templates = CreateLocalModuleTemplateObservation();
+            LocalModuleConfiguration first = LocalModuleConfigurationWriter.Build(
+                profile,
+                runtimeRoot,
+                @"C:\ProgramData\KRS\MultiKKT\LocalModules\lm-n01",
+                request.ManagedLocalModules[0],
+                "0123456789abcdef0123456789abcdef",
+                templates);
+            LocalModuleConfiguration second = LocalModuleConfigurationWriter.Build(
+                profile,
+                runtimeRoot,
+                @"C:\ProgramData\KRS\MultiKKT\LocalModules\lm-n02",
+                request.ManagedLocalModules[1],
+                "abcdef0123456789abcdef0123456789",
+                templates);
+
+            AssertEqual(first.ApiStartPlan.ExecutablePath, second.ApiStartPlan.ExecutablePath,
+                "All instances must use the same verified erl.exe.");
+            AssertEqual(first.DatabaseStartPlan.ExecutablePath, second.DatabaseStartPlan.ExecutablePath,
+                "Both database instances must use the same verified erl.exe.");
+            AssertEqual(first.ApiStartPlan.WorkingDirectory, second.ApiStartPlan.WorkingDirectory,
+                "The shared read-only runtime must be the fixed working directory.");
+            AssertFalse(string.Equals(
+                    first.ApiStartPlan.ArgumentTokens[3],
+                    second.ApiStartPlan.ArgumentTokens[3],
+                    StringComparison.OrdinalIgnoreCase),
+                "Each API process must receive its own vm.args path.");
+            AssertFalse(string.Equals(
+                    first.DatabaseStartPlan.ArgumentTokens[7],
+                    second.DatabaseStartPlan.ArgumentTokens[7],
+                    StringComparison.OrdinalIgnoreCase),
+                "Each database process must receive its own sys.config path.");
+            AssertEqual("43691", first.ApiStartPlan.Environment["ERL_EPMD_PORT"],
+                "LM #1 must receive only EPMD 43691.");
+            AssertEqual("43692", second.ApiStartPlan.Environment["ERL_EPMD_PORT"],
+                "LM #2 must receive only EPMD 43692.");
+            AssertContains(first.DatabaseStartPlan.Environment["YENISEI_QUERY_SERVER_JAVASCRIPT"],
+                runtimeRoot.Replace('\\', '/'));
+            AssertThrows<NotSupportedException>(delegate {
+                first.ApiStartPlan.Environment["CALLER_VALUE"] = "not-allowed";
+            }, "The fixed process environment must be immutable after planning.");
+        }
+
+        private static void LocalModuleConfigRejectsAmbiguousTemplate()
+        {
+            LocalModuleTemplateObservation ambiguous = CreateLocalModuleTemplateObservation();
+            ambiguous.RegimeLocalIni = ambiguous.RegimeLocalIni +
+                Environment.NewLine + "[api]" + Environment.NewLine + "port = 9999";
+
+            AssertThrows<InvalidDataException>(delegate {
+                LocalModuleConfigurationWriter.Build(
+                    LocalModuleCapabilityProfile.Resolve("2.6.1"),
+                    @"C:\Program Files\KRS\MultiKKT\LocalModuleRuntime\2.6.1",
+                    @"C:\ProgramData\KRS\MultiKKT\LocalModules\lm-n01",
+                    CreateManagedLocalModuleRequest(1).ManagedLocalModules[0],
+                    "0123456789abcdef0123456789abcdef",
+                    ambiguous);
+            }, "A duplicated required section or key must fail closed.");
+        }
+
+        private static void LocalModuleConfigsContainNoCredential()
+        {
+            LocalModuleConfiguration configuration = LocalModuleConfigurationWriter.Build(
+                LocalModuleCapabilityProfile.Resolve("2.6.1"),
+                @"C:\Program Files\KRS\MultiKKT\LocalModuleRuntime\2.6.1",
+                @"C:\ProgramData\KRS\MultiKKT\LocalModules\lm-n01",
+                CreateManagedLocalModuleRequest(1).ManagedLocalModules[0],
+                "0123456789abcdef0123456789abcdef",
+                CreateLocalModuleTemplateObservation());
+            string text = configuration.AllText.ToLowerInvariant();
+
+            AssertFalse(text.IndexOf("password", StringComparison.Ordinal) >= 0 ||
+                        text.IndexOf("login", StringComparison.Ordinal) >= 0 ||
+                        text.IndexOf("proxy_user", StringComparison.Ordinal) >= 0 ||
+                        text.IndexOf("authorization", StringComparison.Ordinal) >= 0 ||
+                        text.IndexOf("cpu_util_cmd", StringComparison.Ordinal) >= 0,
+                "Generated configuration must not copy customer credentials or optional shell hooks.");
+            AssertContains(configuration.RegimeVmArgs, "-setcookie krs_lm_");
+            AssertEqual(
+                ReadLineStarting(configuration.RegimeVmArgs, "-setcookie "),
+                ReadLineStarting(configuration.YeniseiVmArgs, "-setcookie "),
+                "The two processes of one LM must share only their generated Erlang cookie.");
         }
 
         private static void OfficialControllerLocatorEnforcesProtectedAllowedRoot()
@@ -2296,6 +2443,44 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 SignerThumbprint = selection.SignerThumbprint,
                 RequireCodeSigningEku = true
             };
+        }
+
+        private static LocalModuleTemplateObservation CreateLocalModuleTemplateObservation()
+        {
+            return new LocalModuleTemplateObservation
+            {
+                RegimeLocalIni =
+                    "[api]\n" +
+                    "ip_address = 0.0.0.0\n" +
+                    "port = 5995\n" +
+                    "[local]\n" +
+                    "db_url = http://127.0.0.1:5984\n" +
+                    ";key_store_folder =\n" +
+                    "[remote]\n",
+                YeniseiLocalIni =
+                    "[admins]\n" +
+                    "[chttpd]\n" +
+                    "bind_address = 0.0.0.0\n" +
+                    "port = 5984\n" +
+                    "[log]\n" +
+                    "file = var/log/yenisei.log\n" +
+                    "[couchdb]\n" +
+                    "database_dir = ./yenisei/data\n" +
+                    "view_index_dir = ./yenisei/data\n"
+            };
+        }
+
+        private static string ReadLineStarting(string text, string prefix)
+        {
+            string[] lines = text.Replace("\r\n", "\n").Split('\n');
+            for (int index = 0; index < lines.Length; index++)
+            {
+                if (lines[index].StartsWith(prefix, StringComparison.Ordinal))
+                {
+                    return lines[index];
+                }
+            }
+            return string.Empty;
         }
 
         private static ProvisioningPeerEvidence CreateValidServerEvidence()
