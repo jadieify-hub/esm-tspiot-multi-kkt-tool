@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "source": "official MSI properties and an administrative image supplied by the operator",
+  "productVersion": "2.6.1",
+  "packageRevision": "2.6.1-7",
+  "capabilityId": "local-module-2.6.1-7",
+  "ertsVersion": "13.0.4",
+  "apiRelease": "2.6.1-7",
+  "databaseRelease": "2.2.5-2110",
+  "runtimeContractSha256": "a6d537344f70f4396614bba6095b1d21bd061f717bf609175f4584c24510f272",
+  "requiredBehaviors": [
+    "read-only shared runtime",
+    "per-INN local configuration",
+    "per-INN database and index directories",
+    "per-INN logs and key-store",
+    "per-INN Erlang node names, cookie and EPMD port",
+    "loopback-only API and database listeners"
+  ],
+  "excludedFromManagedRuntime": [
+    "Windows Installer registration",
+    "service-wrapper executable",
+    "automatic updater",
+    "shortcuts"
+  ]
+}

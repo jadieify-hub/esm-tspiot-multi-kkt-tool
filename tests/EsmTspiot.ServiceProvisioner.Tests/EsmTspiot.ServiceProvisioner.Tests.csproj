@@ -9,5 +9,6 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\EsmTspiot.ServiceProvisioner\EsmTspiot.ServiceProvisioner.csproj" />
     <None Include="Fixtures\official-lm-profile-sanitized.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Fixtures\local-module-2.6.1-sanitized.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

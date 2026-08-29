@@ -16,7 +16,7 @@
 - Один ЛМ на уникальный ИНН торговой точки; отдельный контроллер на каждую ККТ; максимум 32.
 - Порты: API `4995 + 1000*N`, DB `4984 + 1000*N`, EPMD `43690 + N`, gRPC `45000 + K`, REST `15000 + K`.
 - Explicit legacy gRPC `55001–55032` не перенумеровывается молча.
-- Vendor-файлы не изменяются и не попадают в Git/CI/release; `nssm.exe` и `InstallAutoUpdateLM.exe` не копируются.
+- Vendor-бинарники не изменяются и не попадают в Git/CI/release; `nssm.exe`, `InstallAutoUpdateLM.exe`, command-wrapper-файлы и пустой установочный `erts-*/bin/erl.ini` не копируются.
 - Runtime read-only; все изменяемые файлы на ИНН лежат только в защищённом app-owned `ProgramData`.
 - Запрещены reparse points, batch/PowerShell/`cmd.exe`/`sc.exe`, общий `taskkill`, пользовательские command/environment поля.
 - Одна автоматическая операция использует один UAC и один хэшированный IPC-сеанс; секреты не входят в plan/manifest/log.
@@ -99,17 +99,17 @@ Preserve valid assignments, allocate `K/N` from `1..32`, group exact normalized 
 
 **Interfaces:** `Resolve("2.6.1")` yields exact boot/required-file/fingerprint contract. `Build(...)` returns two `local.ini`, two `vm.args`, two `sys.config`. `ErlangChildStartPlan` contains only derived executable, working dir, fixed tokens and environment.
 
-- [ ] **Step 1: Write failing tests** `LocalModuleConfigsIsolateEveryMutablePath`, `LocalModuleStartPlansShareOnlyReadOnlyRuntime`, `LocalModuleConfigRejectsAmbiguousTemplate`, `LocalModuleConfigsContainNoCredential`.
-- [ ] **Step 2: Run helper tests and verify RED.**
-- [ ] **Step 3: Generate complete typed files, never unrestricted search/replace. Build only this command shape:**
+- [x] **Step 1: Write failing tests** `LocalModuleConfigsIsolateEveryMutablePath`, `LocalModuleStartPlansShareOnlyReadOnlyRuntime`, `LocalModuleConfigRejectsAmbiguousTemplate`, `LocalModuleConfigsContainNoCredential`.
+- [x] **Step 2: Run helper tests and verify RED.**
+- [x] **Step 3: Generate complete typed files, never unrestricted search/replace. Build only this command shape:**
 
 ```text
 erl.exe -boot <fixed-boot> -args_file <profile-vm.args> -epmd <fixed-epmd.exe> -config <profile-sys.config>
 ```
 
 Environment is derived `ERL_LIBS`, `ERL_EPMD_PORT`, `ERL_EPMD_ADDRESS=127.0.0.1`, restricted `PATH`, absolute query-server commands. Every mutable path normalizes below instance root.
-- [ ] **Step 4: Run helper tests and `msbuild ...ServiceProvisioner.csproj /p:LangVersion=5`; pass.**
-- [ ] **Step 5: Commit:** `git commit -m "Добавить изолированную конфигурацию ЛМ ЧЗ"`.
+- [x] **Step 4: Run helper tests and `msbuild ...ServiceProvisioner.csproj /p:LangVersion=5`; pass.**
+- [x] **Step 5: Commit:** `git commit -m "Добавить изолированную конфигурацию ЛМ ЧЗ"`.
 
 ---
 
@@ -130,7 +130,7 @@ Environment is derived `ERL_LIBS`, `ERL_EPMD_PORT`, `ERL_EPMD_ADDRESS=127.0.0.1`
 
 - [ ] **Step 1: Write failing tests** for wrapper/updater exclusion, three ownership levels, zero-reference delete and injected crash after every mutation boundary.
 - [ ] **Step 2: Run helper tests and verify RED.**
-- [ ] **Step 3: Implement fixed extraction:** `%SystemRoot%\System32\msiexec.exe /a <locked-msi> /qn TARGETDIR=<protected-stage> /l*v <protected-log>`; reject nonzero exit, invalid structure, reparse paths and writable final runtime.
+- [ ] **Step 3: Implement fixed extraction:** `%SystemRoot%\System32\msiexec.exe /a <locked-msi> /qn TARGETDIR=<protected-stage> /l*v <protected-log>`; reject nonzero exit, invalid structure, reparse paths and writable final runtime. Copy the exact-package runtime tree while excluding the fixed wrapper/updater list and blank installation-specific `erl.ini`; verify required-file fingerprints, hash every copied file and confirm the official relative-layout launcher fallback before accepting runtime.
 - [ ] **Step 4: Implement atomic schema-versioned manifests/journals; derive all roots again in helper. Recovery completes idempotently or returns `CleanupPending`, never adopts unknown files.**
 - [ ] **Step 5: Run helper tests/safety and commit:** `git commit -m "Добавить общий runtime и manifest ЛМ"`.
 
