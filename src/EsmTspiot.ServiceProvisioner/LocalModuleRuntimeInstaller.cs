@@ -579,6 +579,76 @@ namespace EsmTspiot.ServiceProvisioner
             return manifest;
         }
 
+        internal LocalModuleRuntimeManifest VerifyExistingRuntime(
+            string runtimeId,
+            LocalModuleInstallerSelection package,
+            LocalModuleCapabilityProfile capability)
+        {
+            if (package == null) throw new ArgumentNullException("package");
+            if (capability == null) throw new ArgumentNullException("capability");
+            string expectedRuntimeId = LocalModuleManagedIdentity.CreateRuntimeId(
+                capability.CapabilityId,
+                package.Sha256);
+            if (!string.Equals(runtimeId, expectedRuntimeId, StringComparison.Ordinal))
+            {
+                throw new InvalidDataException(
+                    "Existing runtime identity does not match the selected package.");
+            }
+            LocalModuleRuntimeManifest manifest = _manifests.ReadRuntime(runtimeId);
+            if (manifest.State != LocalModuleRuntimeLifecycleState.Ready ||
+                !string.Equals(
+                    manifest.CapabilityId,
+                    capability.CapabilityId,
+                    StringComparison.Ordinal) ||
+                !string.Equals(
+                    manifest.ProductVersion,
+                    capability.ProductVersion,
+                    StringComparison.Ordinal) ||
+                !string.Equals(
+                    manifest.PackageSha256,
+                    package.Sha256,
+                    StringComparison.OrdinalIgnoreCase) ||
+                manifest.PackageByteLength != package.ByteLength ||
+                !string.Equals(
+                    manifest.ProductCode,
+                    package.ProductCode,
+                    StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(
+                    manifest.UpgradeCode,
+                    package.UpgradeCode,
+                    StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(
+                    manifest.SignerThumbprint,
+                    package.SignerThumbprint,
+                    StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(
+                    manifest.RequiredFileContractSha256,
+                    capability.RuntimeContractSha256,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidDataException(
+                    "Existing runtime manifest does not match the exact package capability.");
+            }
+            IList<LocalModuleOperationJournal> pending =
+                _manifests.OperationJournals.ReadForSubject(
+                    LocalModuleOperationSubject.Runtime,
+                    runtimeId);
+            if (pending.Count != 0)
+            {
+                throw new InvalidDataException(
+                    "Existing runtime has an unfinished operation journal.");
+            }
+            LocalModuleVerifiedRuntimeImage expected =
+                new LocalModuleVerifiedRuntimeImage(
+                    manifest.RuntimeRoot,
+                    manifest.CapabilityId,
+                    manifest.RequiredFileContractSha256,
+                    manifest.Files,
+                    manifest.Directories);
+            VerifyRuntimeTree(manifest.RuntimeRoot, expected, true);
+            return manifest;
+        }
+
         internal void DeleteUnreferencedRuntime(
             string runtimeId,
             string ownershipNonce)
@@ -914,7 +984,7 @@ namespace EsmTspiot.ServiceProvisioner
         {
             _pathSafety.EnsureProtectedDirectory(
                 _manifests.RuntimeContainerRoot,
-                ProtectedDirectoryKind.InstallerStaging,
+                ProtectedDirectoryKind.RuntimeContainer,
                 null,
                 null);
             EnsureSafeUnder(

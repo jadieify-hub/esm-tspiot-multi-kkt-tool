@@ -115,7 +115,10 @@ namespace EsmTspiot.ServiceProvisioner
         private static void ValidateServiceName(string serviceName)
         {
             string serial;
-            if (!EsmTspiot.Shared.Services.LmServiceIdentity.TryParseName(serviceName, out serial))
+            if (!EsmTspiot.Shared.Services.LmServiceIdentity.TryParseName(
+                    serviceName,
+                    out serial) &&
+                !LocalModuleServiceIdentity.IsManagedName(serviceName))
             {
                 throw new ArgumentException("Managed service name is invalid.", "serviceName");
             }

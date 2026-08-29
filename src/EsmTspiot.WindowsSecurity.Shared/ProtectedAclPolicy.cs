@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Security.AccessControl;
 using System.Security.Principal;
 
@@ -24,6 +25,16 @@ namespace EsmTspiot.WindowsSecurity
             FileSystemSecurity security,
             string allowedWriterSid)
         {
+            IList<string> allowed = string.IsNullOrEmpty(allowedWriterSid)
+                ? null
+                : new[] { allowedWriterSid };
+            return IsProtectedForWriters(security, allowed);
+        }
+
+        internal static bool IsProtectedForWriters(
+            FileSystemSecurity security,
+            IList<string> allowedWriterSids)
+        {
             if (security == null)
             {
                 return false;
@@ -31,7 +42,7 @@ namespace EsmTspiot.WindowsSecurity
 
             SecurityIdentifier owner =
                 security.GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier;
-            if (owner == null || !IsPrivilegedSid(owner.Value, allowedWriterSid))
+            if (owner == null || !IsPrivilegedSid(owner.Value, allowedWriterSids))
             {
                 return false;
             }
@@ -52,7 +63,7 @@ namespace EsmTspiot.WindowsSecurity
                 }
 
                 SecurityIdentifier sid = rule.IdentityReference as SecurityIdentifier;
-                if (sid == null || !IsPrivilegedSid(sid.Value, allowedWriterSid))
+                if (sid == null || !IsPrivilegedSid(sid.Value, allowedWriterSids))
                 {
                     return false;
                 }
@@ -60,13 +71,32 @@ namespace EsmTspiot.WindowsSecurity
             return true;
         }
 
-        private static bool IsPrivilegedSid(string sid, string allowedWriterSid)
+        private static bool IsPrivilegedSid(
+            string sid,
+            IList<string> allowedWriterSids)
         {
-            return string.Equals(sid, SystemSid.Value, StringComparison.Ordinal) ||
+            if (string.Equals(sid, SystemSid.Value, StringComparison.Ordinal) ||
                 string.Equals(sid, AdministratorsSid.Value, StringComparison.Ordinal) ||
-                string.Equals(sid, TrustedInstallerSid.Value, StringComparison.Ordinal) ||
-                (!string.IsNullOrEmpty(allowedWriterSid) &&
-                 string.Equals(sid, allowedWriterSid, StringComparison.Ordinal));
+                string.Equals(sid, TrustedInstallerSid.Value, StringComparison.Ordinal))
+            {
+                return true;
+            }
+            if (allowedWriterSids == null)
+            {
+                return false;
+            }
+            for (int index = 0; index < allowedWriterSids.Count; index++)
+            {
+                if (!string.IsNullOrEmpty(allowedWriterSids[index]) &&
+                    string.Equals(
+                        sid,
+                        allowedWriterSids[index],
+                        StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+            return false;
         }
     }
 }

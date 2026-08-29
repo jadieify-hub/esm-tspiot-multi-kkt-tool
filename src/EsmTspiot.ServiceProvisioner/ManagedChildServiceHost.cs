@@ -177,13 +177,36 @@ namespace EsmTspiot.ServiceProvisioner
             _epmd = epmd;
         }
 
+        internal LocalModuleServicePairLifecycle(
+            IWindowsServiceApi serviceApi,
+            ILocalModuleServiceReadinessProbe readiness)
+        {
+            if (serviceApi == null) throw new ArgumentNullException("serviceApi");
+            if (readiness == null) throw new ArgumentNullException("readiness");
+            _serviceApi = serviceApi;
+            _readiness = readiness;
+            _epmd = null;
+        }
+
         internal void Start(LocalModuleInstanceManifest manifest)
+        {
+            ValidateServicePair(manifest);
+            StartDatabase(manifest);
+            StartApi(manifest);
+        }
+
+        internal void StartDatabase(LocalModuleInstanceManifest manifest)
         {
             ValidateServicePair(manifest);
             StartOne(
                 manifest,
                 LocalModuleProcessRole.Database,
                 manifest.DatabaseServiceName);
+        }
+
+        internal void StartApi(LocalModuleInstanceManifest manifest)
+        {
+            ValidateServicePair(manifest);
             StartOne(
                 manifest,
                 LocalModuleProcessRole.Api,
@@ -194,6 +217,11 @@ namespace EsmTspiot.ServiceProvisioner
             LocalModuleInstanceManifest manifest)
         {
             ValidateServicePair(manifest);
+            if (_epmd == null)
+            {
+                throw new InvalidOperationException(
+                    "This lifecycle instance is configured only for ordered start.");
+            }
             StopOne(
                 manifest,
                 LocalModuleProcessRole.Api,
