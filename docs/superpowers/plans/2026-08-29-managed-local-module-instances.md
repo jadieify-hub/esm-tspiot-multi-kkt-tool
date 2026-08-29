@@ -229,7 +229,7 @@ Implementation evidence: the elevated helper now owns the exact-MSI runtime sess
 - [x] **Step 2: Run full local matrix:** shared net8 `158/158`, shared net48 `153/153`, helper `105/105` and C# 5, Legacy C# 5, Modern, LM safety, UI layout and compact package. Every command exits 0; candidate ZIP is 455,661 bytes and its SHA-256 is `57fe619df5045bdbe6f7618447be5d069605079528722f2e4952d01c9fa1d09b`.
 - [ ] **Step 3: In clean VM verify** two INN groups from one read-only runtime, separate mutable state/EPMD/listeners, one-UAC flow, reboot autostart, shared-INN single-KKT removal, remove-all, second reboot and reinstall.
 - [ ] **Step 4: With owner present run one real-KKT canary**, then remaining KKT. Do not persist credentials/tokens/unmasked organization data.
-- [ ] **Step 5: Review duplication, boundaries, cancellation, recovery, ownership, no forced kill, UI width and cleanup. Record exact test counts/package hash and commit:** `git commit -m "Подготовить тестирование управляемых ЛМ ЧЗ"`.
+- [x] **Step 5: Review duplication, boundaries, cancellation, recovery, ownership, no forced kill, UI width and cleanup.** Exact test counts and package hash are recorded above; the reviewed implementation is fixed in commit `ba129ec` (`Добавить автоматическую настройку полного комплекта`).
 
 ## Self-review
 
