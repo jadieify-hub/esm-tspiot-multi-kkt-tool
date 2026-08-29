@@ -474,6 +474,7 @@ namespace EsmTspiot.ServiceProvisioner
                 new EpmdInstanceController(
                     capability,
                     runtime.RuntimeRoot,
+                    Path.Combine(instance.DataRoot, "temp"),
                     instance.EpmdPort,
                     _epmdRunner)).Stop(instance);
         }
@@ -588,6 +589,7 @@ namespace EsmTspiot.ServiceProvisioner
             EpmdShutdownResult result = new EpmdInstanceController(
                 capability,
                 runtime.RuntimeRoot,
+                Path.Combine(instance.DataRoot, "temp"),
                 instance.EpmdPort,
                 _epmdRunner).StopIfUnused();
             return result.Outcome == EpmdShutdownOutcome.LiveNodes

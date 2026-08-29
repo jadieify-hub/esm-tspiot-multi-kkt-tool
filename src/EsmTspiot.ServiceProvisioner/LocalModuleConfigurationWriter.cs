@@ -70,6 +70,7 @@ namespace EsmTspiot.ServiceProvisioner
             result.DatabaseStartPlan = BuildStartPlan(
                 capability,
                 fullRuntimeRoot,
+                Path.Combine(dataRoot, "temp"),
                 item.EpmdPort,
                 LocalModuleProcessRole.Database,
                 result.YeniseiVmArgsPath,
@@ -77,6 +78,7 @@ namespace EsmTspiot.ServiceProvisioner
             result.ApiStartPlan = BuildStartPlan(
                 capability,
                 fullRuntimeRoot,
+                Path.Combine(dataRoot, "temp"),
                 item.EpmdPort,
                 LocalModuleProcessRole.Api,
                 result.RegimeVmArgsPath,
@@ -125,6 +127,7 @@ namespace EsmTspiot.ServiceProvisioner
             return BuildStartPlan(
                 capability,
                 Path.GetFullPath(manifest.RuntimeRoot),
+                Path.Combine(manifest.DataRoot, "temp"),
                 manifest.EpmdPort,
                 role,
                 Path.Combine(manifest.ConfigRoot, prefix + "-vm.args"),
@@ -359,6 +362,7 @@ namespace EsmTspiot.ServiceProvisioner
         private static ErlangChildStartPlan BuildStartPlan(
             LocalModuleCapabilityProfile capability,
             string runtimeRoot,
+            string tempRoot,
             int epmdPort,
             LocalModuleProcessRole role,
             string vmArgsPath,
@@ -384,8 +388,14 @@ namespace EsmTspiot.ServiceProvisioner
             };
             Dictionary<string, string> environment = BuildProcessEnvironment(
                 runtimeRoot,
+                tempRoot,
                 capability,
                 epmdPort);
+            environment["ERL_CRASH_DUMP"] = Path.Combine(
+                tempRoot,
+                role == LocalModuleProcessRole.Api
+                    ? "regime-erl-crash.dump"
+                    : "yenisei-erl-crash.dump");
             if (role == LocalModuleProcessRole.Database)
             {
                 environment["YENISEI_QUERY_SERVER_JAVASCRIPT"] =
@@ -405,20 +415,35 @@ namespace EsmTspiot.ServiceProvisioner
 
         internal static Dictionary<string, string> BuildProcessEnvironment(
             string runtimeRoot,
+            string tempRoot,
             LocalModuleCapabilityProfile capability,
             int epmdPort)
         {
+            string fullRuntimeRoot = NormalizeRoot(runtimeRoot, "runtimeRoot");
+            string fullTempRoot = NormalizeRoot(tempRoot, "tempRoot");
             string windowsRoot = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+            if (string.IsNullOrWhiteSpace(windowsRoot) ||
+                !Path.IsPathRooted(windowsRoot))
+            {
+                throw new InvalidOperationException(
+                    "Windows runtime root is unavailable for the LM child process.");
+            }
+            windowsRoot = Path.GetFullPath(windowsRoot).TrimEnd(
+                Path.DirectorySeparatorChar);
             string system32 = Path.Combine(windowsRoot, "System32");
             return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
-                { "ERL_LIBS", Path.Combine(runtimeRoot, "lib") },
+                { "SystemRoot", windowsRoot },
+                { "windir", windowsRoot },
+                { "TEMP", fullTempRoot },
+                { "TMP", fullTempRoot },
+                { "ERL_LIBS", Path.Combine(fullRuntimeRoot, "lib") },
                 { "ERL_EPMD_PORT", epmdPort.ToString(CultureInfo.InvariantCulture) },
                 { "ERL_EPMD_ADDRESS", "127.0.0.1" },
                 { "PATH", string.Join(";", new[]
                     {
-                        Path.Combine(runtimeRoot, "bin"),
-                        Path.Combine(runtimeRoot, "erts-" + capability.ErtsVersion, "bin"),
+                        Path.Combine(fullRuntimeRoot, "bin"),
+                        Path.Combine(fullRuntimeRoot, "erts-" + capability.ErtsVersion, "bin"),
                         system32,
                         windowsRoot,
                         Path.Combine(system32, "Wbem")

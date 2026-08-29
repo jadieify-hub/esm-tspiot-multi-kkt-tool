@@ -226,7 +226,7 @@ Implementation evidence: the elevated helper now owns the exact-MSI runtime sess
 **Interfaces:** Acceptance ZIP contains KRS app/helper/scripts/checklist only. CI explicitly builds helper with `/p:LangVersion=5`. VM covers one KKT, three different INNs, two KKT sharing INN, reboot, remove-all, second reboot and reinstall.
 
 - [x] **Step 1: Harden gates** against `regime-*.msi`, `RollingPinForLM`, `yenisei`, `erts-*`, `epmd.exe`, `nssm.exe`, updater, raw databases/profiles, hidden UI credentials and personal paths.
-- [x] **Step 2: Run full local matrix:** shared net8 `158/158`, shared net48 `153/153`, helper `105/105` and C# 5, Legacy C# 5, Modern, LM safety, UI layout and compact package. Every command exits 0; candidate ZIP is 455,661 bytes and its SHA-256 is `57fe619df5045bdbe6f7618447be5d069605079528722f2e4952d01c9fa1d09b`.
+- [x] **Step 2: Run full local matrix:** shared net8 `158/158`, shared net48 `153/153`, helper `108/108` and C# 5, Legacy C# 5, Modern, LM safety, UI layout and compact package. Every command exits 0; the real `regime-2.6.1-7.msi` passes both the UI identity check and the helper recheck without persisting the certificate e-mail. Candidate ZIP is 455,784 bytes and its SHA-256 is `abfb5dccd111d20e9bb1cecca9a7c80ee3e12813c76c502a880522b221fe89ef`.
 - [ ] **Step 3: In clean VM verify** two INN groups from one read-only runtime, separate mutable state/EPMD/listeners, one-UAC flow, reboot autostart, shared-INN single-KKT removal, remove-all, second reboot and reinstall.
 - [ ] **Step 4: With owner present run one real-KKT canary**, then remaining KKT. Do not persist credentials/tokens/unmasked organization data.
 - [x] **Step 5: Review duplication, boundaries, cancellation, recovery, ownership, no forced kill, UI width and cleanup.** Exact test counts and package hash are recorded above; the reviewed implementation is fixed in commit `ba129ec` (`Добавить автоматическую настройку полного комплекта`).
@@ -237,3 +237,5 @@ Implementation evidence: the elevated helper now owns the exact-MSI runtime sess
 - No wildcard version, vendor redistribution, binary patch, shared mutable config or silent port migration remains.
 - `LmGateway*` means controller/binding, `ManagedLocalModule*` means LM/runtime, `CompleteStack*` means orchestration.
 - Production support is exact for `2.6.1-7`; another MSI cannot mutate instances without its exact capability and migration pair.
+- DB/API children receive only the required Windows roots plus profile-scoped `TEMP`/`TMP`; Erlang crash dumps stay in the owned profile instead of the shared runtime.
+- The persisted LM signer identity contains only the pinned organization CN/O and certificate thumbprint; the personal e-mail from the full certificate subject is neither stored nor displayed.

@@ -64,10 +64,8 @@ namespace EsmTspiot.WinForms.Shared
                 : new X509Certificate2(certificate))
             {
                 if (signer == null ||
-                    !string.Equals(
-                        signer.Subject,
-                        SupportedLocalModulePackageIdentity.SignerSubject,
-                        StringComparison.Ordinal) ||
+                    !SupportedLocalModulePackageIdentity
+                        .MatchesSignerSubject(signer.Subject) ||
                     !string.Equals(
                         signer.Thumbprint,
                         SupportedLocalModulePackageIdentity.SignerThumbprint,

@@ -6,6 +6,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
+using EsmTspiot.Shared.Services;
 
 namespace EsmTspiot.ServiceProvisioner
 {
@@ -80,9 +81,27 @@ namespace EsmTspiot.ServiceProvisioner
                 string.Equals(Normalize(expected.ProductName), observed.ProductName, StringComparison.Ordinal) &&
                 string.Equals(Normalize(expected.CompanyName), observed.CompanyName, StringComparison.Ordinal) &&
                 expected.Machine == observed.Machine &&
-                string.Equals(Normalize(expected.SignerSubject), observed.SignerSubject, StringComparison.Ordinal) &&
+                SignerSubjectMatches(
+                    Normalize(expected.SignerSubject),
+                    observed.SignerSubject) &&
                 string.Equals(Normalize(expected.SignerThumbprint), observed.SignerThumbprint, StringComparison.OrdinalIgnoreCase) &&
                 (!expected.RequireCodeSigningEku || observed.RequireCodeSigningEku);
+        }
+
+        private static bool SignerSubjectMatches(
+            string expected,
+            string observed)
+        {
+            if (string.Equals(expected, observed, StringComparison.Ordinal))
+            {
+                return true;
+            }
+            return string.Equals(
+                    expected,
+                    SupportedLocalModulePackageIdentity.SignerSubject,
+                    StringComparison.Ordinal) &&
+                SupportedLocalModulePackageIdentity
+                    .MatchesSignerSubject(observed);
         }
 
         private static string ComputeSha256(string path)

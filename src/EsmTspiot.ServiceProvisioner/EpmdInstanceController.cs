@@ -164,6 +164,7 @@ namespace EsmTspiot.ServiceProvisioner
         internal EpmdInstanceController(
             LocalModuleCapabilityProfile capability,
             string runtimeRoot,
+            string tempRoot,
             int epmdPort,
             IEpmdCommandRunner runner)
         {
@@ -187,6 +188,7 @@ namespace EsmTspiot.ServiceProvisioner
             _environment = new ReadOnlyDictionary<string, string>(
                 LocalModuleConfigurationWriter.BuildProcessEnvironment(
                     _runtimeRoot,
+                    tempRoot,
                     capability,
                     epmdPort));
         }

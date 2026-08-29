@@ -160,7 +160,9 @@ namespace EsmTspiot.ServiceProvisioner
                 !EsmTspiot.Shared.Services.CanonicalLmPlanHasher.FixedTimeEqualsHex(
                     selection.Sha256,
                     observed.Sha256) ||
-                !string.Equals(selection.SignerSubject, observed.SignerSubject, StringComparison.Ordinal) ||
+                !SignerSubjectMatches(
+                    selection.SignerSubject,
+                    observed.SignerSubject) ||
                 !string.Equals(
                     selection.SignerThumbprint,
                     observed.SignerThumbprint,
@@ -170,6 +172,22 @@ namespace EsmTspiot.ServiceProvisioner
                 throw new InvalidDataException(
                     "Local-module MSI hash, size or Authenticode signer does not match the confirmed package.");
             }
+        }
+
+        private static bool SignerSubjectMatches(
+            string expected,
+            string observed)
+        {
+            if (string.Equals(expected, observed, StringComparison.Ordinal))
+            {
+                return true;
+            }
+            return string.Equals(
+                    expected,
+                    SupportedLocalModulePackageIdentity.SignerSubject,
+                    StringComparison.Ordinal) &&
+                SupportedLocalModulePackageIdentity
+                    .MatchesSignerSubject(observed);
         }
 
         private static TrustedFileExpectation CreateTrustExpectation(

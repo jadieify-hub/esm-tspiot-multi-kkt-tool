@@ -16,10 +16,7 @@ namespace EsmTspiot.Shared.Services
             "{9449123B-61C4-40DE-AA6C-1BB9AA02EB67}";
         public const string SignerSubject =
             "CN=ООО ЦЕНТР РАЗВИТИЯ ПЕРСПЕКТИВНЫХ ТЕХНОЛОГИЙ, " +
-            "O=ООО ЦЕНТР РАЗВИТИЯ ПЕРСПЕКТИВНЫХ ТЕХНОЛОГИЙ, " +
-            "STREET=\"ул Рочдельская, 15 / строение 16а\", L=Москва, S=Москва, C=RU, " +
-            "OID.1.3.6.1.4.1.311.60.2.1.2=Moscow, OID.1.3.6.1.4.1.311.60.2.1.3=RU, " +
-            "SERIALNUMBER=1177746542247, OID.2.5.4.15=Private Organization";
+            "O=ООО ЦЕНТР РАЗВИТИЯ ПЕРСПЕКТИВНЫХ ТЕХНОЛОГИЙ";
         public const string SignerThumbprint =
             "6BA5F6BBE4BE27658253C78889334D0E24858C19";
 
@@ -41,6 +38,38 @@ namespace EsmTspiot.Shared.Services
                 SignerThumbprint = SignerThumbprint,
                 LicenseNoticeAccepted = licenseNoticeAccepted
             };
+        }
+
+        public static bool MatchesSignerSubject(string observedSubject)
+        {
+            return ContainsRdn(
+                    observedSubject,
+                    "CN=ООО ЦЕНТР РАЗВИТИЯ ПЕРСПЕКТИВНЫХ ТЕХНОЛОГИЙ") &&
+                ContainsRdn(
+                    observedSubject,
+                    "O=ООО ЦЕНТР РАЗВИТИЯ ПЕРСПЕКТИВНЫХ ТЕХНОЛОГИЙ");
+        }
+
+        private static bool ContainsRdn(
+            string observedSubject,
+            string expectedRdn)
+        {
+            if (string.IsNullOrWhiteSpace(observedSubject))
+            {
+                return false;
+            }
+            string[] parts = observedSubject.Split(',');
+            for (int index = 0; index < parts.Length; index++)
+            {
+                if (string.Equals(
+                    parts[index].Trim(),
+                    expectedRdn,
+                    System.StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+            return false;
         }
     }
 }
