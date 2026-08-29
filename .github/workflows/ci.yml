@@ -56,6 +56,10 @@ jobs:
       - name: Собрать Legacy и helper строго с C# 5
         run: msbuild src\EsmTspiot.Legacy.WinForms\EsmTspiot.Legacy.WinForms.csproj /restore /p:Configuration=Release /p:LangVersion=5
 
+      - name: Проверить операторский интерфейс
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify_ui_layout.ps1
+
       - name: Собрать Modern
         run: dotnet build src\EsmTspiot.Modern.WinForms\EsmTspiot.Modern.WinForms.csproj -c Release
 

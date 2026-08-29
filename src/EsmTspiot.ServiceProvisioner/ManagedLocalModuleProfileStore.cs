@@ -237,6 +237,9 @@ namespace EsmTspiot.ServiceProvisioner
             EnsureMutableDirectory(
                 Path.Combine(configuration.DataRoot, "key-store"),
                 serviceSids);
+            EnsureMutableDirectory(
+                Path.Combine(configuration.DataRoot, "temp"),
+                serviceSids);
             EnsureMutableDirectory(configuration.LogsRoot, serviceSids);
         }
 

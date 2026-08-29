@@ -221,6 +221,34 @@ try {
         throw "The pre-UAC batch recheck accepted a changed managed-state fingerprint."
     }
 
+    # The object-copy helper must receive the already observed confirmation
+    # explicitly; a generic clone may not silently turn false into true.
+    $localModuleSelectionType = $sharedAssembly.GetType(
+        "EsmTspiot.Shared.Models.LocalModuleInstallerSelection",
+        $true)
+    $unconfirmedSelection = [Activator]::CreateInstance(
+        $localModuleSelectionType)
+    $unconfirmedSelection.LicenseNoticeAccepted = $false
+    $selectionCopy = $page.GetType().GetMethod(
+        "CopyLocalModuleInstallerForCompleteSetup",
+        $staticFlags)
+    if ($null -eq $selectionCopy -or
+        $selectionCopy.GetParameters().Count -ne 2) {
+        throw "The complete-setup selection copy must receive explicit license confirmation."
+    }
+    $copyArguments = New-Object object[] 2
+    $copyArguments[0] = $unconfirmedSelection
+    $copyArguments[1] = $false
+    $notAccepted = $selectionCopy.Invoke($null, $copyArguments)
+    if ($notAccepted.LicenseNoticeAccepted) {
+        throw "The complete-setup selection copy silently elevated license confirmation."
+    }
+    $copyArguments[1] = $true
+    $accepted = $selectionCopy.Invoke($null, $copyArguments)
+    if (-not $accepted.LicenseNoticeAccepted) {
+        throw "The explicit license confirmation was not carried into the helper request."
+    }
+
     # When an old controller manifest and a managed LM cleanup journal describe
     # the same KKT, the combined row must expose CleanupPending instead of the
     # stale controller status.

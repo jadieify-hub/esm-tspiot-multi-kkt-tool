@@ -350,7 +350,8 @@ namespace EsmTspiot.WinForms.Shared
             }
             ValidateEditedCompletePlan(plan);
             ValidateNewCompletePlanPortsAreFree(plan);
-            if (!ConfirmCompleteSetup(plan))
+            bool licenseNoticeAccepted = ConfirmCompleteSetup(plan);
+            if (!licenseNoticeAccepted)
             {
                 _automaticSetupCancelledBeforeMutation = true;
                 _statusLabel.Text =
@@ -359,7 +360,7 @@ namespace EsmTspiot.WinForms.Shared
             }
 
             LmServiceProvisioningBatchRequest request =
-                CreateCompleteSetupRequest(plan);
+                CreateCompleteSetupRequest(plan, licenseNoticeAccepted);
             _statusLabel.Text =
                 "Ожидание подтверждения UAC и проверка обоих пакетов...";
             LmServiceProvisioningBatchResult result =
@@ -703,7 +704,9 @@ namespace EsmTspiot.WinForms.Shared
             message.AppendLine("• отдельный контроллер: по одному на каждую ККТ.");
             message.AppendLine();
             message.AppendLine(
-                "Подтвердите, что для каждой ККТ имеется отдельная действующая лицензия.");
+                "Сам ЛМ ЧЗ предоставляется поставщиком по безвозмездной лицензии.");
+            message.AppendLine(
+                "Подтвердите, что для каждой ККТ имеется отдельная действующая лицензия контроллера ЛМ ЧЗ.");
             message.AppendLine(
                 "Файлы поставщиков не изменяются и остаются только на этом компьютере.");
             message.AppendLine(
@@ -718,7 +721,8 @@ namespace EsmTspiot.WinForms.Shared
         }
 
         private LmServiceProvisioningBatchRequest CreateCompleteSetupRequest(
-            ManagedLocalModulePlan plan)
+            ManagedLocalModulePlan plan,
+            bool licenseNoticeAccepted)
         {
             WindowsIdentity identity = WindowsIdentity.GetCurrent();
             if (identity == null || identity.User == null)
@@ -737,7 +741,8 @@ namespace EsmTspiot.WinForms.Shared
                         _installerSelection),
                     LocalModuleInstallerSelection =
                         CopyLocalModuleInstallerForCompleteSetup(
-                            _localModuleInstallerSelection)
+                            _localModuleInstallerSelection,
+                            licenseNoticeAccepted)
                 };
             IList<ManagedLocalModuleProvisioningItemRequest> items =
                 ManagedLocalModuleRequestBuilder.Build(
@@ -772,7 +777,8 @@ namespace EsmTspiot.WinForms.Shared
 
         private static LocalModuleInstallerSelection
             CopyLocalModuleInstallerForCompleteSetup(
-            LocalModuleInstallerSelection source)
+            LocalModuleInstallerSelection source,
+            bool licenseNoticeAccepted)
         {
             if (source == null) return null;
             return new LocalModuleInstallerSelection
@@ -787,7 +793,7 @@ namespace EsmTspiot.WinForms.Shared
                 UpgradeCode = source.UpgradeCode,
                 SignerSubject = source.SignerSubject,
                 SignerThumbprint = source.SignerThumbprint,
-                LicenseNoticeAccepted = true
+                LicenseNoticeAccepted = licenseNoticeAccepted
             };
         }
 

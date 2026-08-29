@@ -145,11 +145,24 @@ $productionFiles.Add((Join-Path $repositoryRoot "src\EsmTspiot.Shared\Services\T
 $productionFiles.Add((Join-Path $repositoryRoot "build\EsmTspiot.Provisioner.targets"))
 $production = @($productionFiles | Sort-Object -Unique)
 
-$forbiddenPattern = 'RollingPin|taskkill(?:\.exe)?|sc\.exe|powershell\.exe|cmd\.exe|\bjunction\b|\bUPX\b|TerminateProcess|Process\.Kill|\.Kill\('
+$forbiddenPattern = 'RollingPin|taskkill(?:\.exe)?|sc\.exe|powershell\.exe|cmd\.exe|\bjunction\b|\bUPX\b|relaxed_command_check|TerminateProcess|Process\.Kill|\.Kill\('
 $forbidden = @(Invoke-CheckedSearch -Pattern $forbiddenPattern -Paths $production)
 if ($forbidden.Count -gt 0) {
     $details = $forbidden | ForEach-Object { "$(Get-RelativeRepositoryPath $_.Path):$($_.Line):$($_.Text)" }
     throw "Forbidden LM implementation pattern found:`n$($details -join [Environment]::NewLine)"
+}
+
+$emailPattern = '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
+$emailHits = @(Invoke-CheckedSearch -Pattern $emailPattern -Paths $production)
+$unexpectedEmails = @($emailHits | Where-Object {
+    $relativePath = Get-RelativeRepositoryPath $_.Path
+    -not (
+        $relativePath -eq 'src/EsmTspiot.ServiceProvisioner/ControllerCapabilityProfile.cs' -and
+        $_.Text -match '(?i)\bE=it@ao-esp\.ru\b')
+})
+if ($unexpectedEmails.Count -gt 0) {
+    $details = $unexpectedEmails | ForEach-Object { "$(Get-RelativeRepositoryPath $_.Path):$($_.Line):$($_.Text)" }
+    throw "Unexpected e-mail address found in LM production code:`n$($details -join [Environment]::NewLine)"
 }
 
 $secretPattern = '\b(newPassword|password|pass|token|secret|apiKey|authorization)\b'

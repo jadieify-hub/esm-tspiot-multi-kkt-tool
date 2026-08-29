@@ -666,6 +666,7 @@ namespace EsmTspiot.ServiceProvisioner
                         new EpmdInstanceController(
                             _capability,
                             _runtime.RuntimeRoot,
+                            Path.Combine(instance.DataRoot, "temp"),
                             instance.EpmdPort,
                             _epmdRunner)).Stop(instance);
                 }

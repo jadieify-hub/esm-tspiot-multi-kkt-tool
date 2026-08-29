@@ -37,12 +37,15 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Installer operation accepts only one verified setup selection", InstallerOperationAcceptsOnlyOneVerifiedSetupSelection);
             Run("Installer operation rejects stale or substituted source file", InstallerOperationRejectsStaleOrSubstitutedSourceFile);
             Run("Local module verifier accepts only the exact locked MSI", LocalModuleVerifierAcceptsOnlyExactLockedMsi);
+            Run("Local module verifier accepts safe pinned signer identity", LocalModuleVerifierAcceptsSafePinnedSignerIdentity);
+            Run("WinTrust matches safe local module identity only with pinned thumbprint", WinTrustMatchesSafeLocalModuleIdentityOnlyWithPinnedThumbprint);
             Run("Local module verifier rejects package identity or signer mismatch", LocalModuleVerifierRejectsPackageIdentityOrSignerMismatch);
             Run("Managed local module protocol accepts consistent shared INN rows", ManagedLocalModuleProtocolAcceptsConsistentSharedInnRows);
             Run("Managed provisioning session accepts only known monotonic messages", ManagedProvisioningSessionAcceptsOnlyKnownMonotonicMessages);
             Run("Managed session server interleaves caller and helper per KKT", ManagedSessionServerInterleavesCallerAndHelperPerKkt);
             Run("Local module configs isolate every mutable path", LocalModuleConfigsIsolateEveryMutablePath);
             Run("Local module start plans share only read-only runtime", LocalModuleStartPlansShareOnlyReadOnlyRuntime);
+            Run("Local module child environment supplies Windows runtime and isolated temp", LocalModuleChildEnvironmentSuppliesWindowsRuntimeAndIsolatedTemp);
             Run("Local module config rejects ambiguous template", LocalModuleConfigRejectsAmbiguousTemplate);
             Run("Local module configs contain no customer credential", LocalModuleConfigsContainNoCredential);
             Run("Local module runtime excludes wrappers and fixes extraction", LocalModuleRuntimeExcludesWrappersAndFixesExtraction);
@@ -572,6 +575,97 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             }
         }
 
+        private static void LocalModuleVerifierAcceptsSafePinnedSignerIdentity()
+        {
+            string directory = CreateTemporaryDirectory();
+            try
+            {
+                string path = Path.Combine(directory, "regime-test.msi");
+                byte[] content = Encoding.ASCII.GetBytes("exact-local-module-msi");
+                File.WriteAllBytes(path, content);
+                LocalModuleInstallerSelection selection =
+                    CreateLocalModuleInstallerSelection(path, content);
+                selection.SignerSubject =
+                    "CN=ООО ЦЕНТР РАЗВИТИЯ ПЕРСПЕКТИВНЫХ ТЕХНОЛОГИЙ, " +
+                    "O=ООО ЦЕНТР РАЗВИТИЯ ПЕРСПЕКТИВНЫХ ТЕХНОЛОГИЙ";
+                TrustedFileExpectation observed =
+                    CreateLocalModuleTrustExpectation(selection);
+                observed.SignerSubject =
+                    "E=employee@example.invalid, " + selection.SignerSubject +
+                    ", C=RU";
+
+                using (VerifiedLocalModulePackage package =
+                    new LocalModulePackageVerifier(
+                        selection,
+                        new FakeWindowsInstallerPackageReader(
+                            CreateLocalModulePackageMetadata()),
+                        new FakeFileTrustVerifier(observed, true),
+                        new FakePathSafety(true)).VerifyAndLock(selection))
+                {
+                    AssertEqual(Path.GetFullPath(path), package.FullPath,
+                        "A valid package must not require storing the signer's email.");
+                }
+                AssertFalse(selection.SignerSubject.IndexOf(
+                        '@') >= 0,
+                    "The persisted capability identity must contain no personal email.");
+            }
+            finally
+            {
+                Directory.Delete(directory, true);
+            }
+        }
+
+        private static void
+            WinTrustMatchesSafeLocalModuleIdentityOnlyWithPinnedThumbprint()
+        {
+            string safeSubject =
+                "CN=ООО ЦЕНТР РАЗВИТИЯ ПЕРСПЕКТИВНЫХ ТЕХНОЛОГИЙ, " +
+                "O=ООО ЦЕНТР РАЗВИТИЯ ПЕРСПЕКТИВНЫХ ТЕХНОЛОГИЙ";
+            TrustedFileExpectation expected = new TrustedFileExpectation
+            {
+                FileName = "regime-2.6.1-7.msi",
+                ByteLength = 51007488,
+                Sha256 = new string('a', 64),
+                FileVersion = string.Empty,
+                ProductVersion = string.Empty,
+                ProductName = string.Empty,
+                CompanyName = string.Empty,
+                Machine = PeMachine.Unknown,
+                SignerSubject = safeSubject,
+                SignerThumbprint =
+                    "6BA5F6BBE4BE27658253C78889334D0E24858C19",
+                RequireCodeSigningEku = true
+            };
+            TrustedFileExpectation observed = new TrustedFileExpectation
+            {
+                FileName = expected.FileName,
+                ByteLength = expected.ByteLength,
+                Sha256 = expected.Sha256,
+                FileVersion = expected.FileVersion,
+                ProductVersion = expected.ProductVersion,
+                ProductName = expected.ProductName,
+                CompanyName = expected.CompanyName,
+                Machine = expected.Machine,
+                SignerSubject = "E=employee@example.invalid, " + safeSubject +
+                    ", C=RU",
+                SignerThumbprint = expected.SignerThumbprint,
+                RequireCodeSigningEku = true
+            };
+            MethodInfo matches = typeof(WinTrustVerifier).GetMethod(
+                "Matches",
+                BindingFlags.Static | BindingFlags.NonPublic);
+
+            AssertTrue(matches != null && (bool)matches.Invoke(
+                    null,
+                    new object[] { expected, observed }),
+                "A safe CN/O identity plus the pinned thumbprint must match the full certificate subject.");
+            observed.SignerThumbprint = new string('0', 40);
+            AssertFalse((bool)matches.Invoke(
+                    null,
+                    new object[] { expected, observed }),
+                "The safe subject subset must never replace thumbprint pinning.");
+        }
+
         private static void LocalModuleVerifierRejectsPackageIdentityOrSignerMismatch()
         {
             string directory = CreateTemporaryDirectory();
@@ -903,6 +997,47 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             AssertThrows<NotSupportedException>(delegate {
                 first.ApiStartPlan.Environment["CALLER_VALUE"] = "not-allowed";
             }, "The fixed process environment must be immutable after planning.");
+        }
+
+        private static void LocalModuleChildEnvironmentSuppliesWindowsRuntimeAndIsolatedTemp()
+        {
+            string runtimeRoot =
+                @"C:\Program Files\KRS\MultiKKT\LocalModuleRuntime\2.6.1";
+            string profileRoot =
+                @"C:\ProgramData\KRS\MultiKKT\LocalModules\lm-n01";
+            LocalModuleConfiguration configuration =
+                LocalModuleConfigurationWriter.Build(
+                    LocalModuleCapabilityProfile.Resolve("2.6.1"),
+                    runtimeRoot,
+                    profileRoot,
+                    CreateManagedLocalModuleRequest(1).ManagedLocalModules[0],
+                    "0123456789abcdef0123456789abcdef",
+                    CreateLocalModuleTemplateObservation());
+            string windowsRoot = Environment.GetFolderPath(
+                Environment.SpecialFolder.Windows);
+            string tempRoot = Path.Combine(profileRoot, "data", "temp");
+
+            AssertEqual(windowsRoot,
+                configuration.ApiStartPlan.Environment["SystemRoot"],
+                "A replaced environment must retain the Windows runtime root.");
+            AssertEqual(windowsRoot,
+                configuration.ApiStartPlan.Environment["windir"],
+                "Windows children must receive the canonical windir value.");
+            AssertEqual(tempRoot,
+                configuration.ApiStartPlan.Environment["TEMP"],
+                "API temporary files must stay inside the owned LM profile.");
+            AssertEqual(tempRoot,
+                configuration.ApiStartPlan.Environment["TMP"],
+                "TMP must use the same isolated owned directory.");
+            AssertEqual(Path.Combine(tempRoot, "regime-erl-crash.dump"),
+                configuration.ApiStartPlan.Environment["ERL_CRASH_DUMP"],
+                "API crash dumps must not target the shared read-only runtime.");
+            AssertEqual(Path.Combine(tempRoot, "yenisei-erl-crash.dump"),
+                configuration.DatabaseStartPlan.Environment["ERL_CRASH_DUMP"],
+                "Database crash dumps must not target the shared read-only runtime.");
+            AssertFalse(configuration.ApiStartPlan.Environment.ContainsKey(
+                    "USERPROFILE"),
+                "The fixed child environment must not inherit a user profile.");
         }
 
         private static void LocalModuleConfigRejectsAmbiguousTemplate()
@@ -2110,6 +2245,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             EpmdInstanceController liveController = new EpmdInstanceController(
                 capability,
                 @"C:\Program Files\KRS\MultiKKT\LocalModuleRuntime\lmrt-0123456789abcdef01234567",
+                @"C:\ProgramData\KRS\MultiKKT\LocalModules\lm-n01\data\temp",
                 43691,
                 liveRunner);
 
@@ -2134,6 +2270,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             EpmdShutdownResult stopped = new EpmdInstanceController(
                 capability,
                 @"C:\Program Files\KRS\MultiKKT\LocalModuleRuntime\lmrt-0123456789abcdef01234567",
+                @"C:\ProgramData\KRS\MultiKKT\LocalModules\lm-n01\data\temp",
                 43691,
                 emptyRunner).StopIfUnused();
 
@@ -2183,6 +2320,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 EpmdInstanceController epmd = new EpmdInstanceController(
                     LocalModuleCapabilityProfile.Resolve("2.6.1"),
                     instance.RuntimeRoot,
+                    Path.Combine(instance.DataRoot, "temp"),
                     instance.EpmdPort,
                     epmdRunner);
                 LocalModuleServicePairLifecycle lifecycle =
@@ -2403,7 +2541,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     "One INN profile must contain exactly the six generated configuration files.");
                 AssertTrue(Directory.Exists(Path.Combine(replacement.DataRoot, "database")) &&
                            Directory.Exists(Path.Combine(replacement.DataRoot, "index")) &&
-                           Directory.Exists(Path.Combine(replacement.DataRoot, "key-store")),
+                           Directory.Exists(Path.Combine(replacement.DataRoot, "key-store")) &&
+                           Directory.Exists(Path.Combine(replacement.DataRoot, "temp")),
                     "Every mutable LM path must be created under its owned profile.");
             }
             finally
@@ -2572,6 +2711,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                         new EpmdInstanceController(
                             LocalModuleCapabilityProfile.Resolve("2.6.1"),
                             runtime.RuntimeRoot,
+                            Path.Combine(instance.DataRoot, "temp"),
                             instance.EpmdPort,
                             epmd));
                 ManagedLocalModuleLifecycleJournalStore journals =
