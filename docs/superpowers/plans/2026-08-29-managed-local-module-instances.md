@@ -4,7 +4,7 @@
 
 **Goal:** Реализовать единый цикл `ККТ -> ЕСМ -> ЛМ ЧЗ для ИНН -> контроллер ККТ` с предзаполненными адресами/портами, одним автоматическим запуском и полной очисткой.
 
-**Architecture:** Существующие `LmGateway*` остаются слоем контроллеров и привязки ЕСМ. Новый слой `ManagedLocalModule*` группирует ККТ по ИНН, создаёт общий read-only runtime точной версии MSI и отдельные конфиги/данные/службы `yenisei` и `regime` на ИНН. `CompleteStack*` координирует canary и одну elevated session, не дублируя доменную логику в WinForms.
+**Architecture:** Существующие `LmGateway*` остаются слоем discovery/read-back и контроллеров; автоматический сценарий не запрашивает credentials и не выполняет бизнес-инициализацию. Новый слой `ManagedLocalModule*` группирует ККТ по ИНН, создаёт общий read-only runtime точной версии MSI и отдельные конфиги/данные/службы `yenisei` и `regime` на ИНН. `CompleteStack*` координирует canary и одну elevated session, не дублируя доменную логику в WinForms.
 
 **Tech Stack:** C# 5-compatible syntax, WinForms, `net48` helper, `net48;net8.0` shared library, Windows Installer/SCM/process APIs через P/Invoke, `DataContractJsonSerializer`, package-free tests.
 
@@ -191,43 +191,42 @@ Implementation evidence: the elevated helper now owns the exact-MSI runtime sess
 **Files:**
 - Create: `src/EsmTspiot.WinForms.Shared/LocalModuleInstallerPicker.cs`
 - Create: `src/EsmTspiot.WinForms.Shared/CompleteStackProvisionerClient.cs`
-- Create: `src/EsmTspiot.WinForms.Shared/ManagedLocalModuleDetailsDialog.cs`
+- Create: `src/EsmTspiot.WinForms.Shared/ManagedLocalModuleInventoryReader.cs`
+- Create: `src/EsmTspiot.Shared/Services/ManagedLocalModuleRequestBuilder.cs`
+- Create: `src/EsmTspiot.Shared/Services/ManagedLocalModulePortPreflight.cs`
 - Modify: `src/EsmTspiot.WinForms.Shared/LmGatewayPage.Layout.cs`
 - Modify: `src/EsmTspiot.WinForms.Shared/LmGatewayPage.Services.cs`
 - Modify: `src/EsmTspiot.WinForms.Shared/LmGatewayPage.cs`
 - Modify: `src/EsmTspiot.WinForms.Shared/LmAutomaticSetupDialog.cs`
 - Modify: `src/EsmTspiot.WinForms.Shared/MainForm.cs`
-- Modify: `src/EsmTspiot.Shared/Services/AutomaticConfigurationCoordinator.cs`
-- Modify: `src/EsmTspiot.Shared/Services/LmAutomaticSetupCoordinator.cs`
 - Test: `tests/EsmTspiot.Shared.Tests/Program.cs`
+- Test: `tests/EsmTspiot.ServiceProvisioner.Tests/Program.cs`
 - Modify: `scripts/verify_ui_layout.ps1`
 
-**Interfaces:** Tab `ЛМ ЧЗ`; two compact installer selectors. Main grid is exactly `№ ККТ`, serial, INN, cash-software port, LM endpoint, LM state, ESM-link state. `RunSessionAsync(plan, onReadyItem, cancellation)` owns one helper/pipe/UAC.
+**Interfaces:** Tab `ЛМ ЧЗ`; two compact installer selectors. Main grid is exactly `№ ККТ`, serial, INN, cash-software port, LM endpoint, LM state, ESM-link state. `CompleteStackProvisionerClient.RunAsync(request, prepareItem, finalizeItem, cancellation)` owns one helper/pipe/UAC.
 
-- [ ] **Step 1: Write failing tests** for full-chain canary, one helper session, repeated same-INN endpoint and exact operator-grid columns.
-- [ ] **Step 2: Run shared tests and verify RED.**
-- [ ] **Step 3: Rebuild the tab within initial width. Prefill loopback/deterministic ports; hide DB/EPMD/gRPC/REST/service/hash/path fields in details/log.**
-- [ ] **Step 4: Implement one-UAC session. UI registers requested canary, sends only its preplanned index, waits for LM/controller, binds/read-backs, then advances. Canary failure aborts and leaves remaining KKT unregistered.**
-- [ ] **Step 5: Connect one-action full cleanup and one `Повторить очистку` state.**
-- [ ] **Step 6: Run shared tests, Legacy C# 5, Modern build and `verify_ui_layout.ps1`; commit:** `git commit -m "Добавить автоматическую настройку полного комплекта"`.
+- [x] **Step 1: Write failing tests** for canary stop/continuation, one helper session, repeated same-INN endpoint, occupied new ports, managed-stack removal and exact operator-grid columns.
+- [x] **Step 2: Run shared/helper tests and verify RED before each implementation slice.**
+- [x] **Step 3: Rebuild the tab within initial width. Prefill loopback/deterministic ports; keep DB/EPMD/gRPC/REST/service/hash/path fields out of the operator grid and remove hidden credential state.**
+- [x] **Step 4: Implement one-UAC session. UI registers only the requested next KKT, sends its immutable preplanned index, waits for LM/controller readiness, then advances. Canary failure aborts and leaves remaining KKT unregistered. Business initialization/binding is intentionally outside this operation.**
+- [x] **Step 5: Connect single-stack removal, one-action full cleanup and one `Завершить очистку` state.**
+- [x] **Step 6: Run shared tests, Legacy C# 5, Modern build and `verify_ui_layout.ps1`; commit:** `git commit -m "Добавить автоматическую настройку полного комплекта"`.
 
 ---
 
 ### Task 8: Full matrix, clean VM и acceptance package
 
 **Files:**
-- Create: `docs/testing/managed-local-module-vm-checklist.md`
-- Create: `scripts/build_managed_lm_acceptance.ps1`
-- Modify: `.github/workflows/ci.yml`
+- Create: `docs/testing/2026-08-29-field-acceptance-1.6.3.2.md`
 - Modify: `scripts/package_compact_release.ps1`
-- Modify: `scripts/verify_compact_security_contract.ps1`
+- Modify: `scripts/verify_lm_safety.ps1`
 - Modify: `README.md`
 - Modify: `INSTRUCTION_FOR_DUMMIES.md`
 
 **Interfaces:** Acceptance ZIP contains KRS app/helper/scripts/checklist only. CI explicitly builds helper with `/p:LangVersion=5`. VM covers one KKT, three different INNs, two KKT sharing INN, reboot, remove-all, second reboot and reinstall.
 
-- [ ] **Step 1: Harden gates** against `regime-*.msi`, `RollingPinForLM`, `yenisei`, `erts-*`, `epmd.exe`, `nssm.exe`, updater, raw databases/profiles and personal paths.
-- [ ] **Step 2: Run full local matrix:** shared net8/net48, helper tests and C# 5, Legacy C# 5, Modern, LM safety, UI layout, compact package. Every command exits 0.
+- [x] **Step 1: Harden gates** against `regime-*.msi`, `RollingPinForLM`, `yenisei`, `erts-*`, `epmd.exe`, `nssm.exe`, updater, raw databases/profiles, hidden UI credentials and personal paths.
+- [x] **Step 2: Run full local matrix:** shared net8 `158/158`, shared net48 `153/153`, helper `105/105` and C# 5, Legacy C# 5, Modern, LM safety, UI layout and compact package. Every command exits 0; candidate ZIP is 455,661 bytes and its SHA-256 is `57fe619df5045bdbe6f7618447be5d069605079528722f2e4952d01c9fa1d09b`.
 - [ ] **Step 3: In clean VM verify** two INN groups from one read-only runtime, separate mutable state/EPMD/listeners, one-UAC flow, reboot autostart, shared-INN single-KKT removal, remove-all, second reboot and reinstall.
 - [ ] **Step 4: With owner present run one real-KKT canary**, then remaining KKT. Do not persist credentials/tokens/unmasked organization data.
 - [ ] **Step 5: Review duplication, boundaries, cancellation, recovery, ownership, no forced kill, UI width and cleanup. Record exact test counts/package hash and commit:** `git commit -m "Подготовить тестирование управляемых ЛМ ЧЗ"`.

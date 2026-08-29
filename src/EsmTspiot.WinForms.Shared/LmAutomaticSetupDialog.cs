@@ -16,8 +16,6 @@ namespace EsmTspiot.WinForms.Shared
         public string SoftwarePort { get; set; }
         public string TargetAddress { get; set; }
         public string TargetPort { get; set; }
-        public string Login { get; set; }
-        public string Password { get; set; }
     }
 
     internal sealed class LmAutomaticSetupDialog : Form
@@ -26,6 +24,7 @@ namespace EsmTspiot.WinForms.Shared
         private readonly Button _continueButton = new Button();
         private readonly List<LmAutomaticSetupDialogRow> _initialRows =
             new List<LmAutomaticSetupDialogRow>();
+        private bool _synchronizingSharedEndpoint;
 
         internal LmAutomaticSetupDialog(IList<LmAutomaticSetupDialogRow> rows)
         {
@@ -44,25 +43,14 @@ namespace EsmTspiot.WinForms.Shared
 
             Text = "Параметры автоматической настройки";
             StartPosition = FormStartPosition.CenterParent;
-            Size = new Size(1080, 500);
-            MinimumSize = new Size(860, 380);
+            Size = new Size(900, 460);
+            MinimumSize = new Size(760, 360);
             Font = new Font("Segoe UI", 8.25F);
             BuildLayout();
             FillRows();
         }
 
         internal IList<LmAutomaticSetupDialogRow> Parameters { get; private set; }
-
-        protected override void Dispose(bool disposing)
-        {
-            if (disposing)
-            {
-                ClearSecrets(_initialRows);
-                ClearSecrets(Parameters);
-                ClearGridPasswords();
-            }
-            base.Dispose(disposing);
-        }
 
         private void BuildLayout()
         {
@@ -81,10 +69,10 @@ namespace EsmTspiot.WinForms.Shared
             Label instruction = new Label
             {
                 AutoSize = true,
-                MaximumSize = new Size(1020, 0),
-                Text = "Проверьте адрес и порт ЛМ ЧЗ и введите логин с паролем для каждой ККТ. " +
-                    "Порт кассового ПО показан для настройки кассовой программы; внутренние порты " +
-                    "контроллеров программа назначит сама.",
+                MaximumSize = new Size(840, 0),
+                Text = "Проверьте готовые локальные адреса и порты. " +
+                    "Порт кассового ПО нужен для Frontol/другой кассовой программы. " +
+                    "ККТ одного ИНН используют один ЛМ ЧЗ; при необходимости измените его API-порт.",
                 Margin = new Padding(0, 0, 0, 8)
             };
             root.Controls.Add(instruction, 0, 0);
@@ -95,7 +83,7 @@ namespace EsmTspiot.WinForms.Shared
             Label security = new Label
             {
                 AutoSize = true,
-                Text = "Логины и пароли используются только в текущем сеансе, не сохраняются в файл и не попадают в журнал.",
+                Text = "Полный автоматический режим разворачивает ЛМ на этом компьютере: адрес 127.0.0.1 фиксирован.",
                 ForeColor = SystemColors.GrayText,
                 Margin = new Padding(0, 8, 0, 8)
             };
@@ -143,21 +131,15 @@ namespace EsmTspiot.WinForms.Shared
             _grid.Columns.Add(ReadOnlyColumn("KktSerial", "Серийный № ККТ", 118));
             _grid.Columns.Add(ReadOnlyColumn("KktInn", "ИНН", 92));
             _grid.Columns.Add(ReadOnlyColumn("KktSoftwarePort", "Порт кассового ПО", 105));
-            _grid.Columns.Add(EditColumn("LmTargetAddress", "Адрес ЛМ ЧЗ", 125));
+            _grid.Columns.Add(ReadOnlyColumn("LmTargetAddress", "Адрес ЛМ ЧЗ", 125));
             _grid.Columns.Add(EditColumn("LmTargetPort", "Порт ЛМ ЧЗ", 82));
-            _grid.Columns.Add(EditColumn("LmLogin", "Логин", 120));
-            DataGridViewTextBoxColumn password = EditColumn("LmPassword", "Пароль", 120);
-            password.Tag = "Secret";
-            _grid.Columns.Add(password);
             DataGridViewTextBoxColumn validation = ReadOnlyColumn("Validation", "Проверка", 180);
             validation.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
             validation.MinimumWidth = 120;
             _grid.Columns.Add(validation);
 
             _grid.CellValueChanged += delegate { ValidateAllRows(); };
-            _grid.CellEndEdit += delegate { ValidateAllRows(); };
-            _grid.CellFormatting += FormatPasswordCell;
-            _grid.EditingControlShowing += ConfigurePasswordEditor;
+            _grid.CellEndEdit += SynchronizeEndpointForSameInn;
         }
 
         private void FillRows()
@@ -172,8 +154,6 @@ namespace EsmTspiot.WinForms.Shared
                     row.SoftwarePort ?? string.Empty,
                     row.TargetAddress ?? string.Empty,
                     row.TargetPort ?? string.Empty,
-                    row.Login ?? string.Empty,
-                    row.Password ?? string.Empty,
                     string.Empty);
             }
             ValidateAllRows();
@@ -182,10 +162,28 @@ namespace EsmTspiot.WinForms.Shared
         private void ValidateAllRows()
         {
             bool allValid = _grid.Rows.Count > 0;
+            Dictionary<string, string> endpointByInn =
+                new Dictionary<string, string>(StringComparer.Ordinal);
             for (int index = 0; index < _grid.Rows.Count; index++)
             {
                 DataGridViewRow row = _grid.Rows[index];
                 string message = ValidateRow(row);
+                string inn = CellText(row, "KktInn").Trim();
+                string endpoint =
+                    CellText(row, "LmTargetAddress").Trim() + ":" +
+                    CellText(row, "LmTargetPort").Trim();
+                string existing;
+                if (message.Length == 0 &&
+                    endpointByInn.TryGetValue(inn, out existing) &&
+                    !string.Equals(existing, endpoint, StringComparison.Ordinal))
+                {
+                    message = "Для одного ИНН нужен один ЛМ ЧЗ.";
+                }
+                else if (message.Length == 0 &&
+                    !endpointByInn.ContainsKey(inn))
+                {
+                    endpointByInn.Add(inn, endpoint);
+                }
                 row.Cells["Validation"].Value = message.Length == 0 ? "Готово" : message;
                 row.DefaultCellStyle.BackColor = message.Length == 0
                     ? SystemColors.Window
@@ -214,13 +212,15 @@ namespace EsmTspiot.WinForms.Shared
             {
                 return targetValidation.JoinMessages().Replace("\r\n", "; ");
             }
-            if (string.IsNullOrWhiteSpace(CellText(row, "LmLogin")))
+            string normalized;
+            bool loopback;
+            if (!LmGatewayInputValidator.TryNormalizeTargetAddress(
+                    address,
+                    out normalized,
+                    out loopback) ||
+                !loopback)
             {
-                return "Укажите логин ЛМ ЧЗ.";
-            }
-            if (string.IsNullOrWhiteSpace(CellText(row, "LmPassword")))
-            {
-                return "Укажите пароль ЛМ ЧЗ.";
+                return "Полный автоматический режим устанавливает ЛМ на этот компьютер; укажите 127.0.0.1.";
             }
             return string.Empty;
         }
@@ -252,69 +252,57 @@ namespace EsmTspiot.WinForms.Shared
                     KktInn = CellText(gridRow, "KktInn").Trim(),
                     SoftwarePort = CellText(gridRow, "KktSoftwarePort").Trim(),
                     TargetAddress = normalizedAddress,
-                    TargetPort = CellText(gridRow, "LmTargetPort").Trim(),
-                    Login = CellText(gridRow, "LmLogin").Trim(),
-                    Password = CellText(gridRow, "LmPassword")
+                    TargetPort = CellText(gridRow, "LmTargetPort").Trim()
                 });
             }
 
             Parameters = result;
-            ClearGridPasswords();
             DialogResult = DialogResult.OK;
             Close();
         }
 
-        private void FormatPasswordCell(object sender, DataGridViewCellFormattingEventArgs e)
+        private void SynchronizeEndpointForSameInn(
+            object sender,
+            DataGridViewCellEventArgs e)
         {
-            if (e.RowIndex < 0 || e.ColumnIndex < 0 ||
-                _grid.Columns[e.ColumnIndex].Name != "LmPassword")
+            if (_synchronizingSharedEndpoint || e.RowIndex < 0 ||
+                e.ColumnIndex < 0)
             {
                 return;
             }
-
-            string value = e.Value == null ? string.Empty : e.Value.ToString();
-            e.Value = value.Length == 0
-                ? string.Empty
-                : new string('\u25CF', Math.Min(value.Length, 12));
-            e.FormattingApplied = true;
-        }
-
-        private void ConfigurePasswordEditor(object sender, DataGridViewEditingControlShowingEventArgs e)
-        {
-            TextBox editor = e.Control as TextBox;
-            if (editor != null)
+            string columnName = _grid.Columns[e.ColumnIndex].Name;
+            if (columnName != "LmTargetAddress" &&
+                columnName != "LmTargetPort")
             {
-                editor.UseSystemPasswordChar = _grid.CurrentCell != null &&
-                    _grid.Columns[_grid.CurrentCell.ColumnIndex].Name == "LmPassword";
-            }
-        }
-
-        private void ClearGridPasswords()
-        {
-            if (_grid.IsDisposed)
-            {
+                ValidateAllRows();
                 return;
             }
-            for (int index = 0; index < _grid.Rows.Count; index++)
+            DataGridViewRow edited = _grid.Rows[e.RowIndex];
+            string inn = CellText(edited, "KktInn").Trim();
+            string address = CellText(edited, "LmTargetAddress").Trim();
+            string port = CellText(edited, "LmTargetPort").Trim();
+            _synchronizingSharedEndpoint = true;
+            try
             {
-                _grid.Rows[index].Cells["LmPassword"].Value = string.Empty;
-            }
-        }
-
-        private static void ClearSecrets(IList<LmAutomaticSetupDialogRow> rows)
-        {
-            if (rows == null)
-            {
-                return;
-            }
-            for (int index = 0; index < rows.Count; index++)
-            {
-                if (rows[index] != null)
+                for (int index = 0; index < _grid.Rows.Count; index++)
                 {
-                    rows[index].Login = string.Empty;
-                    rows[index].Password = string.Empty;
+                    DataGridViewRow row = _grid.Rows[index];
+                    if (index == e.RowIndex || !string.Equals(
+                        CellText(row, "KktInn").Trim(),
+                        inn,
+                        StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+                    row.Cells["LmTargetAddress"].Value = address;
+                    row.Cells["LmTargetPort"].Value = port;
                 }
             }
+            finally
+            {
+                _synchronizingSharedEndpoint = false;
+            }
+            ValidateAllRows();
         }
 
         private static LmAutomaticSetupDialogRow Copy(LmAutomaticSetupDialogRow source)
@@ -326,9 +314,7 @@ namespace EsmTspiot.WinForms.Shared
                 KktInn = source.KktInn ?? string.Empty,
                 SoftwarePort = source.SoftwarePort ?? string.Empty,
                 TargetAddress = source.TargetAddress ?? string.Empty,
-                TargetPort = source.TargetPort ?? string.Empty,
-                Login = source.Login ?? string.Empty,
-                Password = source.Password ?? string.Empty
+                TargetPort = source.TargetPort ?? string.Empty
             };
         }
 

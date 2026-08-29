@@ -50,12 +50,11 @@ try {
 
     $pathBox = Get-PrivateFieldValue -Instance $page -Name "_installerPathTextBox"
     $selectButton = Get-PrivateFieldValue -Instance $page -Name "_selectInstallerButton"
+    $localModulePathBox = Get-PrivateFieldValue -Instance $page -Name "_localModuleInstallerPathTextBox"
+    $selectLocalModuleButton = Get-PrivateFieldValue -Instance $page -Name "_selectLocalModuleInstallerButton"
     $installButton = Get-PrivateFieldValue -Instance $page -Name "_installControllerButton"
     $removeAllButton = Get-PrivateFieldValue -Instance $page -Name "_removeAllServicesButton"
     $grid = Get-PrivateFieldValue -Instance $page -Name "_grid"
-    $controllerAddressBox = Get-PrivateFieldValue -Instance $page -Name "_addressTextBox"
-    $controllerGrpcBox = Get-PrivateFieldValue -Instance $page -Name "_portTextBox"
-    $controllerRestBox = Get-PrivateFieldValue -Instance $page -Name "_restPortTextBox"
     $automaticInstallerButton = Get-PrivateFieldValue -Instance $form -Name "_automaticSelectInstallerButton"
     $automaticInstallerPath = Get-PrivateFieldValue -Instance $form -Name "_automaticInstallerTextBox"
     $automaticSetupButton = Get-PrivateFieldValue -Instance $form -Name "_bulkRegisterButton"
@@ -67,19 +66,17 @@ try {
         throw "The main form must default dkktPort to the ESM orchestrator port 4042; actual: '$($dkktPortBox.Text)'."
     }
 
-    if ($grid.Columns.Count -lt 2 -or $grid.Columns[1].Name -ne "KktOrdinal") {
-        throw "The LM KKT table must show an ordinal column immediately after selection."
+    if ($grid.Columns.Count -lt 1 -or $grid.Columns[0].Name -ne "KktOrdinal") {
+        throw "The LM KKT table must start with the stable KKT ordinal."
     }
     $expectedNames = @(
-        "SelectKkt",
         "KktOrdinal",
         "KktSerial",
         "KktInn",
         "KktSoftwarePort",
-        "LmTargetAddress",
-        "LmTargetPort",
-        "UserStatus",
-        "UserResult")
+        "LmEndpoint",
+        "LmState",
+        "EsmLinkState")
     if ($grid.Columns.Count -ne $expectedNames.Count) {
         throw "The operator-facing LM table must contain only $($expectedNames.Count) working columns; actual: $($grid.Columns.Count)."
     }
@@ -88,18 +85,22 @@ try {
             throw "Unexpected LM table column $index`: '$($grid.Columns[$index].Name)'."
         }
     }
-    $lmAddressColumn = $grid.Columns["LmTargetAddress"]
-    $lmPortColumn = $grid.Columns["LmTargetPort"]
-    if ($null -eq $lmAddressColumn) {
-        throw "The LM KKT table must show the target LM CHZ address in a dedicated column."
+    if ($null -eq $grid.Columns["LmEndpoint"]) {
+        throw "The LM KKT table must show the LM CHZ address and port."
     }
-    if ($null -eq $lmPortColumn) {
-        throw "The LM KKT table must show the target LM CHZ port in a dedicated column."
-    }
-    if ($null -ne $controllerAddressBox.Parent -or
-        $null -ne $controllerGrpcBox.Parent -or
-        $null -ne $controllerRestBox.Parent) {
-        throw "Internal controller address, gRPC and REST fields must not be shown to the operator."
+    foreach ($removedField in @(
+        "_addressTextBox",
+        "_portTextBox",
+        "_restPortTextBox",
+        "_loginTextBox",
+        "_passwordTextBox",
+        "_targetAddressTextBox",
+        "_targetPortTextBox",
+        "_saveDraftButton",
+        "_editorGroup")) {
+        if ($null -ne $page.GetType().GetField($removedField, $flags)) {
+            throw "Obsolete internal or credential field remains on the operator page: $removedField."
+        }
     }
 
     $sharedAssembly = [System.Reflection.Assembly]::LoadFrom(
@@ -116,8 +117,6 @@ try {
     $rowType.GetProperty("SoftwarePort").SetValue($row, "51401", $null)
     $rowType.GetProperty("TargetAddress").SetValue($row, "127.0.0.1", $null)
     $rowType.GetProperty("TargetPort").SetValue($row, "5995", $null)
-    $rowType.GetProperty("Login").SetValue($row, "operator", $null)
-    $rowType.GetProperty("Password").SetValue($row, "field-secret", $null)
     $rows.Add($row)
     $dialogType = $assembly.GetType(
         "EsmTspiot.WinForms.Shared.LmAutomaticSetupDialog",
@@ -136,8 +135,6 @@ try {
         "KktSoftwarePort",
         "LmTargetAddress",
         "LmTargetPort",
-        "LmLogin",
-        "LmPassword",
         "Validation")
     if ($parametersGrid.Columns.Count -ne $expectedParameterNames.Count) {
         throw "The automatic-setup dialog must contain only operator-facing fields."
@@ -147,31 +144,138 @@ try {
             throw "Unexpected automatic-setup column $index`: '$($parametersGrid.Columns[$index].Name)'."
         }
     }
-    foreach ($name in @("KktOrdinal", "KktSerial", "KktInn", "KktSoftwarePort", "Validation")) {
+    foreach ($name in @("KktOrdinal", "KktSerial", "KktInn", "KktSoftwarePort", "LmTargetAddress", "Validation")) {
         if (-not $parametersGrid.Columns[$name].ReadOnly) {
             throw "Automatic-setup identity/status column must be read-only: $name."
         }
     }
-    foreach ($name in @("LmTargetAddress", "LmTargetPort", "LmLogin", "LmPassword")) {
+    foreach ($name in @("LmTargetPort")) {
         if ($parametersGrid.Columns[$name].ReadOnly) {
             throw "Automatic-setup operator field must be editable: $name."
         }
     }
+
+    # The pre-UAC batch recheck must reject a change in either displayed
+    # fingerprint, even when the other fingerprint still matches.
+    $fingerprintType = $sharedAssembly.GetType(
+        "EsmTspiot.Shared.Models.LmManifestFingerprint",
+        $true)
+    $inventoryItemType = $sharedAssembly.GetType(
+        "EsmTspiot.Shared.Models.LmServiceInventoryItem",
+        $true)
+    $confirmationType = $sharedAssembly.GetType(
+        "EsmTspiot.Shared.Models.LmRemovalConfirmation",
+        $true)
+    $portsType = $sharedAssembly.GetType(
+        "EsmTspiot.Shared.Models.LmGatewayPorts",
+        $true)
+    $roleType = $sharedAssembly.GetType(
+        "EsmTspiot.Shared.Models.LmServiceRole",
+        $true)
+    $legacyFingerprint = [Activator]::CreateInstance($fingerprintType)
+    $legacyFingerprint.Sha256 = ("a" * 64)
+    $displayedManagedFingerprint = [Activator]::CreateInstance($fingerprintType)
+    $displayedManagedFingerprint.Sha256 = ("b" * 64)
+    $changedManagedFingerprint = [Activator]::CreateInstance($fingerprintType)
+    $changedManagedFingerprint.Sha256 = ("c" * 64)
+    $portsConstructor = $portsType.GetConstructor(@([int], [int]))
+    $ports = $portsConstructor.Invoke(@([int]45001, [int]15001))
+
+    $inventoryItem = [Activator]::CreateInstance($inventoryItemType)
+    $inventoryItem.KktSerial = "00105700000001"
+    $inventoryItem.ServiceName = "krs-esm-lm-00105700000001"
+    $inventoryItem.Role = [Enum]::Parse($roleType, "Managed")
+    $inventoryItem.Ports = $ports
+    $inventoryItem.ManifestFingerprint = $legacyFingerprint
+    $inventoryItem.ManagedStateFingerprint = $changedManagedFingerprint
+    $inventoryListType = [System.Collections.Generic.List``1].MakeGenericType(
+        $inventoryItemType)
+    $inventoryList = [Activator]::CreateInstance($inventoryListType)
+    $inventoryList.Add($inventoryItem)
+
+    $confirmation = [Activator]::CreateInstance($confirmationType)
+    $confirmation.KktSerial = $inventoryItem.KktSerial
+    $confirmation.GrpcPort = 45001
+    $confirmation.RestPort = 15001
+    $confirmation.ManifestFingerprint = $legacyFingerprint
+    $confirmation.ManagedStateFingerprint = $displayedManagedFingerprint
+    $confirmation.RetainedEsmWarningAccepted = $true
+    $confirmationListType = [System.Collections.Generic.List``1].MakeGenericType(
+        $confirmationType)
+    $confirmationList = [Activator]::CreateInstance($confirmationListType)
+    $confirmationList.Add($confirmation)
+
+    $staticFlags = [System.Reflection.BindingFlags]::Static -bor
+        [System.Reflection.BindingFlags]::NonPublic
+    $batchMatcher = $page.GetType().GetMethod(
+        "RemovalBatchStillMatches",
+        $staticFlags)
+    if ($null -eq $batchMatcher) {
+        throw "Pre-UAC removal-batch matcher was not found."
+    }
+    $matcherArguments = New-Object object[] 3
+    $matcherArguments[0] = $confirmationList
+    $matcherArguments[1] = $inventoryList
+    $matcherArguments[2] = $null
+    if ([bool]$batchMatcher.Invoke($null, $matcherArguments)) {
+        throw "The pre-UAC batch recheck accepted a changed managed-state fingerprint."
+    }
+
+    # When an old controller manifest and a managed LM cleanup journal describe
+    # the same KKT, the combined row must expose CleanupPending instead of the
+    # stale controller status.
+    $inventoryItem.ManagedStateFingerprint = $null
+    $inventoryItem.Status = [Enum]::Parse(
+        $sharedAssembly.GetType(
+            "EsmTspiot.Shared.Models.LmServiceProvisioningStatus",
+            $true),
+        "Succeeded")
+    $managedSnapshotType = $assembly.GetType(
+        "EsmTspiot.WinForms.Shared.ManagedLocalModuleInventorySnapshot",
+        $true)
+    $managedItemType = $assembly.GetType(
+        "EsmTspiot.WinForms.Shared.ManagedLocalModuleInventoryItem",
+        $true)
+    $managedSnapshot = [Activator]::CreateInstance($managedSnapshotType, $true)
+    $managedItem = [Activator]::CreateInstance($managedItemType, $true)
+    foreach ($entry in @(
+        @("KktSerial", $inventoryItem.KktSerial),
+        @("State", "Требуется очистка"),
+        @("CleanupPending", $true),
+        @("ManagedStateFingerprint", $displayedManagedFingerprint))) {
+        $managedItemType.GetProperty($entry[0], $flags).SetValue(
+            $managedItem,
+            $entry[1],
+            $null)
+    }
+    $managedSnapshotType.GetProperty("Items", $flags).GetValue(
+        $managedSnapshot,
+        $null).Add($managedItem)
+    $removableMatcher = $page.GetType().GetMethod(
+        "GetRemovableManagedItems",
+        $staticFlags)
+    if ($null -eq $removableMatcher) {
+        throw "Combined managed-removal inventory builder was not found."
+    }
+    $removableArguments = New-Object object[] 2
+    $removableArguments[0] = $inventoryList
+    $removableArguments[1] = $managedSnapshot
+    $combined = $removableMatcher.Invoke($null, $removableArguments)
+    $cleanupPending = [Enum]::Parse(
+        $sharedAssembly.GetType(
+            "EsmTspiot.Shared.Models.LmServiceProvisioningStatus",
+            $true),
+        "CleanupPending")
+    if ($combined.Count -ne 1 -or $combined[0].Status -ne $cleanupPending) {
+        throw "The combined LM row hid CleanupPending behind a stale controller status."
+    }
+
     $automaticParametersDialog.CreateControl()
     $automaticParametersDialog.PerformLayout()
     $parametersGrid.PerformLayout()
     [System.Windows.Forms.Application]::DoEvents()
-    $passwordCell = $parametersGrid.Rows[0].Cells["LmPassword"]
-    if ($passwordCell.FormattedValue -eq "field-secret") {
-        throw "The automatic-setup password must not be displayed as plain text."
-    }
     if (-not $continueButton.Enabled) {
         throw "A complete automatic-setup row must allow the operator to continue."
-    }
-    $passwordCell.Value = ""
-    [System.Windows.Forms.Application]::DoEvents()
-    if ($continueButton.Enabled) {
-        throw "Automatic setup must not continue while a KKT password is missing."
     }
     if ($installButton.Tag -ne "AutomaticSetup") {
         throw "The installer action must expose the single automatic setup command."
@@ -213,6 +317,7 @@ try {
 
     $pathToSelectGap = $selectButton.Left - $pathBox.Right
     $selectToInstallGap = $installButton.Left - $selectButton.Right
+    $localPathToSelectGap = $selectLocalModuleButton.Left - $localModulePathBox.Right
 
     if ($pathBox.Width -gt 400) {
         throw "Installer path field is too wide at 1450px page width: $($pathBox.Width)px (maximum 400px)."
@@ -222,6 +327,12 @@ try {
     }
     if ($selectToInstallGap -lt 0 -or $selectToInstallGap -gt 12) {
         throw "Unexpected gap between installer buttons: ${selectToInstallGap}px."
+    }
+    if ($localModulePathBox.Width -gt 400) {
+        throw "Local-module MSI path field is too wide: $($localModulePathBox.Width)px."
+    }
+    if ($localPathToSelectGap -lt 0 -or $localPathToSelectGap -gt 12) {
+        throw "Unexpected gap between local-module path and Select button: ${localPathToSelectGap}px."
     }
 
     $page.Size = [System.Drawing.Size]::new(748, 512)

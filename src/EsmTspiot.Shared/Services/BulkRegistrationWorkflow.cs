@@ -170,66 +170,12 @@ namespace EsmTspiot.Shared.Services
                 string serial = item.Input.KktSerial;
                 try
                 {
-                    Report(progress, i + 1, discovery.Items.Count, serial, "Начало", string.Empty, null);
-
-                    if (!item.Validation.IsValid)
-                    {
-                        outcome.Results.Add(new BulkKktRegistrationResult
-                        {
-                            KktSerial = serial,
-                            Status = BulkKktRegistrationStatus.InvalidData,
-                            Details = item.Validation.JoinMessages()
-                        });
-                        continue;
-                    }
-
-                    if (workItem.RequiresAdd)
-                    {
-                        ApiResponse addResponse = await SendAddWithRetry(item, i + 1, discovery.Items.Count, progress, cancellationToken);
-                        bool canInspectCreatedInstance = addResponse.IsSuccess ||
-                            TspiotErrorDecoder.ContainsErrorCode(addResponse.ResponseBody, 1010);
-                        if (!canInspectCreatedInstance)
-                        {
-                            outcome.Results.Add(new BulkKktRegistrationResult
-                            {
-                                KktSerial = serial,
-                                Status = BulkKktRegistrationStatus.AddFailed,
-                                Details = Describe(addResponse)
-                            });
-                            continue;
-                        }
-
-                        bool ready = await WaitForReadiness(
-                            item.Input.BaseUrl,
-                            serial,
-                            i + 1,
-                            discovery.Items.Count,
-                            progress,
-                            cancellationToken);
-                        if (!ready)
-                        {
-                            outcome.Results.Add(new BulkKktRegistrationResult
-                            {
-                                KktSerial = serial,
-                                Status = BulkKktRegistrationStatus.InspectionFailed,
-                                Details = "POST выполнен, но готовность экземпляра не подтверждена; PUT пропущен"
-                            });
-                            continue;
-                        }
-                    }
-
-                    ApiResponse registerResponse = await SendRegisterWithRetry(
-                        item, i + 1, discovery.Items.Count, progress, cancellationToken);
-                    outcome.Results.Add(new BulkKktRegistrationResult
-                    {
-                        KktSerial = serial,
-                        Status = registerResponse.IsSuccess
-                            ? (workItem.RequiresAdd
-                                ? BulkKktRegistrationStatus.Registered
-                                : BulkKktRegistrationStatus.RecoveredRegistration)
-                            : BulkKktRegistrationStatus.RegistrationFailed,
-                        Details = registerResponse.IsSuccess ? string.Empty : Describe(registerResponse)
-                    });
+                    outcome.Results.Add(await ExecuteItemAsync(
+                        workItem,
+                        i + 1,
+                        discovery.Items.Count,
+                        progress,
+                        cancellationToken));
                 }
                 catch (OperationCanceledException)
                 {
@@ -246,6 +192,108 @@ namespace EsmTspiot.Shared.Services
             }
 
             return outcome;
+        }
+
+        public async Task<BulkKktRegistrationResult> ExecuteItemAsync(
+            BulkRegistrationWorkItem workItem,
+            int current,
+            int total,
+            Action<BulkRegistrationProgress> progress,
+            CancellationToken cancellationToken)
+        {
+            if (workItem == null || workItem.Item == null ||
+                workItem.Item.Input == null ||
+                workItem.Item.Validation == null)
+            {
+                throw new ArgumentException(
+                    "Строка плана регистрации не задана.",
+                    "workItem");
+            }
+            if (current < 1 || total < current)
+            {
+                throw new ArgumentOutOfRangeException("current");
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            BulkKktRegistrationItem item = workItem.Item;
+            string serial = item.Input.KktSerial;
+            Report(
+                progress,
+                current,
+                total,
+                serial,
+                "Начало",
+                string.Empty,
+                null);
+            if (!item.Validation.IsValid)
+            {
+                return new BulkKktRegistrationResult
+                {
+                    KktSerial = serial,
+                    Status = BulkKktRegistrationStatus.InvalidData,
+                    Details = item.Validation.JoinMessages()
+                };
+            }
+
+            if (workItem.RequiresAdd)
+            {
+                ApiResponse addResponse = await SendAddWithRetry(
+                    item,
+                    current,
+                    total,
+                    progress,
+                    cancellationToken);
+                bool canInspectCreatedInstance = addResponse.IsSuccess ||
+                    TspiotErrorDecoder.ContainsErrorCode(
+                        addResponse.ResponseBody,
+                        1010);
+                if (!canInspectCreatedInstance)
+                {
+                    return new BulkKktRegistrationResult
+                    {
+                        KktSerial = serial,
+                        Status = BulkKktRegistrationStatus.AddFailed,
+                        Details = Describe(addResponse)
+                    };
+                }
+
+                bool ready = await WaitForReadiness(
+                    item.Input.BaseUrl,
+                    serial,
+                    current,
+                    total,
+                    progress,
+                    cancellationToken);
+                if (!ready)
+                {
+                    return new BulkKktRegistrationResult
+                    {
+                        KktSerial = serial,
+                        Status = BulkKktRegistrationStatus.InspectionFailed,
+                        Details =
+                            "POST выполнен, но готовность экземпляра не подтверждена; PUT пропущен"
+                    };
+                }
+            }
+
+            ApiResponse registerResponse = await SendRegisterWithRetry(
+                item,
+                current,
+                total,
+                progress,
+                cancellationToken);
+            return new BulkKktRegistrationResult
+            {
+                KktSerial = serial,
+                Status = registerResponse.IsSuccess
+                    ? (workItem.RequiresAdd
+                        ? BulkKktRegistrationStatus.Registered
+                        : BulkKktRegistrationStatus.RecoveredRegistration)
+                    : BulkKktRegistrationStatus.RegistrationFailed,
+                Details = registerResponse.IsSuccess
+                    ? string.Empty
+                    : Describe(registerResponse)
+            };
         }
 
         private async Task<ApiResponse> SendAddWithRetry(

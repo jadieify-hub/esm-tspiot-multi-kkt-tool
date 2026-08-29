@@ -66,6 +66,7 @@ namespace EsmTspiot.Shared.Services
             }
             else if (request.Operation == LmServiceOperation.EnsureManagedLocalModules)
             {
+                AppendInstaller(canonical, request.InstallerSelection);
                 AppendLocalModuleInstaller(canonical, request.LocalModuleInstallerSelection);
                 int count = request.ManagedLocalModules == null
                     ? 0
@@ -194,6 +195,10 @@ namespace EsmTspiot.Shared.Services
             Append(canonical, "manifest", confirmation == null || confirmation.ManifestFingerprint == null
                 ? null
                 : confirmation.ManifestFingerprint.Sha256);
+            Append(canonical, "managed-state", confirmation == null ||
+                confirmation.ManagedStateFingerprint == null
+                ? null
+                : confirmation.ManagedStateFingerprint.Sha256);
             Append(canonical, "warning-accepted", confirmation != null && confirmation.RetainedEsmWarningAccepted ? "1" : "0");
         }
 
@@ -205,6 +210,10 @@ namespace EsmTspiot.Shared.Services
             Append(canonical, "manifest", confirmation == null || confirmation.ManifestFingerprint == null
                 ? null
                 : confirmation.ManifestFingerprint.Sha256);
+            Append(canonical, "managed-state", confirmation == null ||
+                confirmation.ManagedStateFingerprint == null
+                ? null
+                : confirmation.ManagedStateFingerprint.Sha256);
             Append(canonical, "displayed-state", confirmation == null
                 ? null
                 : ((int)confirmation.DisplayedState).ToString(CultureInfo.InvariantCulture));

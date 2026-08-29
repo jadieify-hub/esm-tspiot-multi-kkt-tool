@@ -283,12 +283,13 @@ namespace EsmTspiot.ServiceProvisioner
             LmServiceProvisioningBatchRequest request,
             ValidationResult result)
         {
-            if (HasItems(request) || request.InstallerSelection != null ||
+            if (HasItems(request) ||
                 request.RemovalConfirmation != null || request.CleanupConfirmation != null ||
                 HasRemovalConfirmations(request))
             {
-                result.Add("EnsureManagedLocalModules принимает только MSI ЛМ и план уникальных ИНН.");
+                result.Add("EnsureManagedLocalModules принимает два установщика и сгруппированный план ККТ.");
             }
+            ValidateInstallerShape(request.InstallerSelection, result);
             ValidateLocalModuleInstallerShape(request.LocalModuleInstallerSelection, result);
 
             int count = request.ManagedLocalModules == null
@@ -296,16 +297,19 @@ namespace EsmTspiot.ServiceProvisioner
                 : request.ManagedLocalModules.Count;
             if (count < 1 || count > MaximumBatchSize)
             {
-                result.Add("EnsureManagedLocalModules должен содержать от 1 до 32 уникальных ИНН.");
+                result.Add("EnsureManagedLocalModules должен содержать от 1 до 32 ККТ.");
                 return;
             }
 
             HashSet<string> serials = new HashSet<string>(StringComparer.Ordinal);
-            HashSet<string> inns = new HashSet<string>(StringComparer.Ordinal);
+            HashSet<string> completedInns = new HashSet<string>(StringComparer.Ordinal);
             HashSet<int> kktOrdinals = new HashSet<int>();
             HashSet<int> moduleOrdinals = new HashSet<int>();
             HashSet<int> ports = new HashSet<int>();
             int previousModuleOrdinal = 0;
+            int previousKktOrdinal = 0;
+            string currentInn = null;
+            ManagedLocalModuleProvisioningItemRequest currentModule = null;
             for (int index = 0; index < count; index++)
             {
                 ManagedLocalModuleProvisioningItemRequest item =
@@ -322,31 +326,65 @@ namespace EsmTspiot.ServiceProvisioner
                 }
                 catch (ArgumentException)
                 {
-                    result.Add("Серийный номер опорной ККТ должен содержать 14 ASCII-цифр.");
+                    result.Add("Серийный номер ККТ должен содержать 14 ASCII-цифр.");
                 }
                 if (!serials.Add(item.KktSerial ?? string.Empty))
                 {
-                    result.Add("Опорная ККТ повторяется в плане управляемых ЛМ.");
+                    result.Add("ККТ повторяется в плане управляемых ЛМ.");
                 }
                 if (!IsAsciiDigits(item.Inn, 10) && !IsAsciiDigits(item.Inn, 12))
                 {
                     result.Add("ИНН управляемого ЛМ должен содержать 10 или 12 ASCII-цифр.");
                 }
-                if (!inns.Add(item.Inn ?? string.Empty))
-                {
-                    result.Add("В плане повторяется ИНН управляемого ЛМ.");
-                }
                 ValidateOrdinal(item.KktOrdinal, "K", kktOrdinals, result);
-                ValidateOrdinal(item.LocalModuleOrdinal, "N", moduleOrdinals, result);
-                if (item.LocalModuleOrdinal <= previousModuleOrdinal)
+                bool beginsGroup = !string.Equals(
+                    currentInn,
+                    item.Inn,
+                    StringComparison.Ordinal);
+                if (beginsGroup)
                 {
-                    result.Add("Управляемые ЛМ должны быть отсортированы по номеру N.");
+                    if (currentInn != null)
+                    {
+                        completedInns.Add(currentInn);
+                    }
+                    if (completedInns.Contains(item.Inn ?? string.Empty))
+                    {
+                        result.Add("Строки одного ИНН должны идти подряд.");
+                    }
+                    ValidateOrdinal(
+                        item.LocalModuleOrdinal,
+                        "N",
+                        moduleOrdinals,
+                        result);
+                    if (item.LocalModuleOrdinal <= previousModuleOrdinal)
+                    {
+                        result.Add("Группы ЛМ должны быть отсортированы по номеру N.");
+                    }
+                    previousModuleOrdinal = item.LocalModuleOrdinal;
+                    previousKktOrdinal = 0;
+                    currentInn = item.Inn;
+                    currentModule = item;
+                    ValidateLocalPort(item.ApiPort, "API ЛМ", ports, result);
+                    ValidateLocalPort(item.DatabasePort, "база ЛМ", ports, result);
+                    ValidateLocalPort(item.EpmdPort, "EPMD ЛМ", ports, result);
                 }
-                previousModuleOrdinal = item.LocalModuleOrdinal;
-
-                ValidateLocalPort(item.ApiPort, "API ЛМ", ports, result);
-                ValidateLocalPort(item.DatabasePort, "база ЛМ", ports, result);
-                ValidateLocalPort(item.EpmdPort, "EPMD ЛМ", ports, result);
+                else if (currentModule == null ||
+                    item.LocalModuleOrdinal != currentModule.LocalModuleOrdinal ||
+                    item.ApiPort != currentModule.ApiPort ||
+                    item.DatabasePort != currentModule.DatabasePort ||
+                    item.EpmdPort != currentModule.EpmdPort ||
+                    !string.Equals(
+                        item.RuntimeVersion,
+                        currentModule.RuntimeVersion,
+                        StringComparison.Ordinal))
+                {
+                    result.Add("Все ККТ одного ИНН должны ссылаться на один неизменный ЛМ.");
+                }
+                if (item.KktOrdinal <= previousKktOrdinal)
+                {
+                    result.Add("ККТ внутри группы ИНН должны быть отсортированы по номеру K.");
+                }
+                previousKktOrdinal = item.KktOrdinal;
                 ValidateLocalPort(item.ControllerGrpcPort, "gRPC контроллера", ports, result);
                 ValidateLocalPort(item.ControllerRestPort, "REST контроллера", ports, result);
                 if (string.IsNullOrWhiteSpace(item.RuntimeVersion) ||
@@ -396,7 +434,22 @@ namespace EsmTspiot.ServiceProvisioner
                 result.Add("Не задано подтверждение очистки.");
                 return;
             }
-            ValidateSerialAndFingerprint(confirmation.KktSerial, confirmation.ManifestFingerprint, result);
+            ValidateSerial(confirmation.KktSerial, result);
+            bool legacy = IsFingerprint(confirmation.ManifestFingerprint);
+            bool managed = IsFingerprint(confirmation.ManagedStateFingerprint);
+            if (confirmation.ManifestFingerprint != null && !legacy)
+            {
+                result.Add("Неверный отпечаток манифеста контроллера при очистке.");
+            }
+            if (confirmation.ManagedStateFingerprint != null && !managed)
+            {
+                result.Add("Неверный отпечаток показанного состояния очистки.");
+            }
+            if (!legacy && !managed)
+            {
+                result.Add(
+                    "Не задан отпечаток показанного состояния очистки.");
+            }
             if (confirmation.DisplayedState != LmServiceProvisioningStatus.CleanupPending)
             {
                 result.Add("Очистка разрешена только из показанного состояния CleanupPending.");
@@ -453,13 +506,29 @@ namespace EsmTspiot.ServiceProvisioner
             LmRemovalConfirmation confirmation,
             ValidationResult result)
         {
-            ValidateSerialAndFingerprint(
-                confirmation.KktSerial,
-                confirmation.ManifestFingerprint,
-                result);
-            if (confirmation.GrpcPort < 1 || confirmation.GrpcPort > 65535 ||
-                confirmation.RestPort < 1 || confirmation.RestPort > 65535 ||
-                confirmation.GrpcPort == confirmation.RestPort)
+            ValidateSerial(confirmation.KktSerial, result);
+            bool legacy = IsFingerprint(confirmation.ManifestFingerprint);
+            bool managed = IsFingerprint(
+                confirmation.ManagedStateFingerprint);
+            if (confirmation.ManifestFingerprint != null && !legacy)
+            {
+                result.Add("Неверный отпечаток манифеста контроллера.");
+            }
+            if (confirmation.ManagedStateFingerprint != null && !managed)
+            {
+                result.Add("Неверный отпечаток показанного состояния комплекта.");
+            }
+            if (!legacy && !managed)
+            {
+                result.Add(
+                    "Не задан отпечаток показанного управляемого состояния.");
+            }
+            if (legacy &&
+                (confirmation.GrpcPort < 1 ||
+                 confirmation.GrpcPort > 65535 ||
+                 confirmation.RestPort < 1 ||
+                 confirmation.RestPort > 65535 ||
+                 confirmation.GrpcPort == confirmation.RestPort))
             {
                 result.Add("Порты в подтверждении удаления неверны.");
             }
@@ -467,6 +536,21 @@ namespace EsmTspiot.ServiceProvisioner
             {
                 result.Add("Не подтверждено, что настройка в ЕСМ может остаться после локального удаления.");
             }
+        }
+
+        private static void ValidateSerial(
+            string serial,
+            ValidationResult result)
+        {
+            if (!IsAsciiDigits(serial, 14))
+            {
+                result.Add("Серийный номер ККТ в подтверждении неверен.");
+            }
+        }
+
+        private static bool IsFingerprint(LmManifestFingerprint fingerprint)
+        {
+            return fingerprint != null && IsHex(fingerprint.Sha256, 64);
         }
 
         private static void ValidateInstallerShape(

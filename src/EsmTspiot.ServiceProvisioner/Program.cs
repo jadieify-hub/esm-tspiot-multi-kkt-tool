@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using EsmTspiot.Shared.Models;
+using EsmTspiot.Shared.Services;
 
 namespace EsmTspiot.ServiceProvisioner
 {
@@ -62,7 +63,8 @@ namespace EsmTspiot.ServiceProvisioner
                                     request))
                             {
                                 LmServiceProvisioningBatchResult result =
-                                    session.ExecuteAll();
+                                    new ManagedProvisioningSessionServer(channel)
+                                        .Run(request, session);
                                 channel.WriteMessage(result);
                                 return ToExitCode(result.Status);
                             }
@@ -140,7 +142,9 @@ namespace EsmTspiot.ServiceProvisioner
                                 new PipeProvisioningCancellation(channel, request.OperationId))
                             {
                                 LmServiceProvisioningBatchResult result =
-                                    provisioner.RemoveAllManaged(request, cancellation);
+                                    RemoveAllCreatedComponents(
+                                        request,
+                                        cancellation);
                                 channel.WriteMessage(result);
                                 return ToExitCode(result.Status);
                             }
@@ -280,6 +284,141 @@ namespace EsmTspiot.ServiceProvisioner
                 }
             }
             channel.WriteMessage(result);
+        }
+
+        private static LmServiceProvisioningBatchResult
+            RemoveAllCreatedComponents(
+            LmServiceProvisioningBatchRequest request,
+            ILmProvisioningCancellation cancellation)
+        {
+            LmServiceProvisioningBatchResult result =
+                new LmServiceProvisioningBatchResult
+                {
+                    SchemaVersion =
+                        ProvisioningRequestValidator.CurrentSchemaVersion,
+                    OperationId = request.OperationId,
+                    PlanHash = request.PlanHash,
+                    Status = LmServiceProvisioningStatus.Succeeded
+                };
+            for (int index = 0;
+                index < request.RemovalConfirmations.Count;
+                index++)
+            {
+                LmRemovalConfirmation confirmation =
+                    request.RemovalConfirmations[index];
+                if (cancellation != null &&
+                    cancellation.IsCancellationRequested)
+                {
+                    for (int remaining = index;
+                        remaining < request.RemovalConfirmations.Count;
+                        remaining++)
+                    {
+                        result.Items.Add(new LmServiceProvisioningItemResult
+                        {
+                            KktSerial = request.RemovalConfirmations[remaining]
+                                .KktSerial,
+                            Status = LmServiceProvisioningStatus.Cancelled,
+                            Message =
+                                "Операция отменена до начала удаления этого комплекта."
+                        });
+                    }
+                    break;
+                }
+
+                LmServiceProvisioningBatchRequest single =
+                    CreateSingleRemovalRequest(request, confirmation);
+                try
+                {
+                    if (WindowsManagedLocalModuleRemovalPlatform
+                        .HasManagedState(
+                            request.InitiatingSid,
+                            confirmation.KktSerial))
+                    {
+                        ManagedLocalModuleRemovalWorkflow fullWorkflow =
+                            new ManagedLocalModuleRemovalWorkflow(
+                                WindowsManagedLocalModuleRemovalPlatform
+                                    .Create(single));
+                        result.Items.Add(fullWorkflow.RemoveKkt(
+                            confirmation.KktSerial,
+                            request.OperationId));
+                    }
+                    else
+                    {
+                        WindowsLmProvisioningPlatform legacyPlatform =
+                            WindowsLmProvisioningPlatform.Create(
+                                request.InitiatingSid,
+                                request.OperationId);
+                        result.Items.Add(new LmServiceProvisioner(
+                            legacyPlatform).RemoveManaged(single));
+                    }
+                }
+                catch (Exception ex)
+                {
+                    if (ex is OutOfMemoryException ||
+                        ex is StackOverflowException ||
+                        ex is AccessViolationException)
+                    {
+                        throw;
+                    }
+                    result.Items.Add(new LmServiceProvisioningItemResult
+                    {
+                        KktSerial = confirmation.KktSerial,
+                        Status =
+                            LmServiceProvisioningStatus.RequiresAttention,
+                        Message =
+                            "Удаление остановлено для этого комплекта: " +
+                            ex.GetType().Name + "."
+                    });
+                }
+            }
+            result.Status = AggregateRemovalStatus(result.Items);
+            return result;
+        }
+
+        private static LmServiceProvisioningBatchRequest
+            CreateSingleRemovalRequest(
+            LmServiceProvisioningBatchRequest batch,
+            LmRemovalConfirmation confirmation)
+        {
+            LmServiceProvisioningBatchRequest single =
+                new LmServiceProvisioningBatchRequest
+                {
+                    SchemaVersion =
+                        ProvisioningRequestValidator.CurrentSchemaVersion,
+                    Operation = LmServiceOperation.RemoveManaged,
+                    OperationId = batch.OperationId,
+                    InitiatingSid = batch.InitiatingSid,
+                    RemovalConfirmation = confirmation
+                };
+            single.PlanHash = CanonicalLmPlanHasher.Compute(single);
+            return single;
+        }
+
+        private static LmServiceProvisioningStatus AggregateRemovalStatus(
+            System.Collections.Generic.IList<
+                LmServiceProvisioningItemResult> items)
+        {
+            LmServiceProvisioningStatus aggregate =
+                LmServiceProvisioningStatus.Succeeded;
+            for (int index = 0; index < items.Count; index++)
+            {
+                LmServiceProvisioningStatus status = items[index].Status;
+                if (status == LmServiceProvisioningStatus.Failed ||
+                    status ==
+                        LmServiceProvisioningStatus.RequiresAttention ||
+                    status == LmServiceProvisioningStatus.RemovalBlocked)
+                {
+                    return status;
+                }
+                if (status ==
+                        LmServiceProvisioningStatus.CleanupPending ||
+                    status == LmServiceProvisioningStatus.MarkedForDelete ||
+                    status == LmServiceProvisioningStatus.Cancelled)
+                {
+                    aggregate = status;
+                }
+            }
+            return aggregate;
         }
 
         private static int ToExitCode(LmServiceProvisioningStatus status)

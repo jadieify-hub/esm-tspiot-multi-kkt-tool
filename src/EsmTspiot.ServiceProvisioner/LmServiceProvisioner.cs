@@ -304,25 +304,7 @@ namespace EsmTspiot.ServiceProvisioner
                     request.InstallerSelection,
                     request.OperationId))
                 {
-                    List<string> serials = new List<string>(_platform.GetManagedSerials());
-                    serials.Sort(StringComparer.Ordinal);
-                    for (int index = 0; index < serials.Count; index++)
-                    {
-                        _platform.MarkVersionPending(serials[index], request.OperationId);
-                    }
-                    for (int index = 0; index < serials.Count; index++)
-                    {
-                        LmServiceProvisioningItemRequest item = new LmServiceProvisioningItemRequest
-                        {
-                            KktSerial = serials[index]
-                        };
-                        _platform.RequestStop(item);
-                    }
-
-                    LmControllerInstallResult installed = installer.Run();
-                    installed.OperationId = request.OperationId;
-                    installed.PlanHash = request.PlanHash;
-                    return installed;
+                    return RunPreparedControllerInstaller(request, installer);
                 }
             }
             catch (Exception ex)
@@ -555,6 +537,107 @@ namespace EsmTspiot.ServiceProvisioner
                     LmServiceProvisioningStatus.Failed,
                     message));
             }
+        }
+
+        internal LmControllerInstallResult InstallPreparedControllerVersion(
+            LmServiceProvisioningBatchRequest request,
+            ILockedControllerInstaller installer)
+        {
+            ValidationResult validation = ProvisioningRequestValidator.Validate(request);
+            if (!validation.IsValid ||
+                request.Operation != LmServiceOperation.EnsureManagedLocalModules ||
+                installer == null)
+            {
+                return new LmControllerInstallResult
+                {
+                    Status = LmServiceProvisioningStatus.Failed,
+                    Message = installer == null
+                        ? "Подготовленный установщик контроллера отсутствует."
+                        : validation.JoinMessages(),
+                    OperationId = request == null ? string.Empty : request.OperationId,
+                    PlanHash = request == null ? string.Empty : request.PlanHash
+                };
+            }
+            try
+            {
+                return RunPreparedControllerInstaller(request, installer);
+            }
+            catch (Exception ex)
+            {
+                return new LmControllerInstallResult
+                {
+                    Status = ex is NotSupportedException
+                        ? LmServiceProvisioningStatus.UnsupportedController
+                        : LmServiceProvisioningStatus.Failed,
+                    Message = SafeMessage(ex),
+                    OperationId = request.OperationId,
+                    PlanHash = request.PlanHash
+                };
+            }
+        }
+
+        internal LmServiceProvisioningItemResult EnsureSessionItem(
+            LmServiceProvisioningBatchRequest request,
+            ManagedLocalModuleProvisioningItemRequest managedItem)
+        {
+            ValidationResult validation = ProvisioningRequestValidator.Validate(request);
+            if (!validation.IsValid ||
+                request.Operation != LmServiceOperation.EnsureManagedLocalModules ||
+                managedItem == null)
+            {
+                return CreateItemResult(
+                    managedItem == null
+                        ? null
+                        : ToControllerRequest(managedItem),
+                    LmServiceProvisioningStatus.Failed,
+                    validation.IsValid
+                        ? "Строка полного комплекта не задана."
+                        : validation.JoinMessages());
+            }
+
+            LmServiceProvisioningItemRequest item =
+                ToControllerRequest(managedItem);
+            using (_platform.AcquireItemLock(item.KktSerial))
+            {
+                return EnsureOne(request, item);
+            }
+        }
+
+        private LmControllerInstallResult RunPreparedControllerInstaller(
+            LmServiceProvisioningBatchRequest request,
+            ILockedControllerInstaller installer)
+        {
+            List<string> serials = new List<string>(_platform.GetManagedSerials());
+            serials.Sort(StringComparer.Ordinal);
+            for (int index = 0; index < serials.Count; index++)
+            {
+                _platform.MarkVersionPending(serials[index], request.OperationId);
+            }
+            for (int index = 0; index < serials.Count; index++)
+            {
+                _platform.RequestStop(new LmServiceProvisioningItemRequest
+                {
+                    KktSerial = serials[index]
+                });
+            }
+
+            LmControllerInstallResult installed = installer.Run();
+            installed.OperationId = request.OperationId;
+            installed.PlanHash = request.PlanHash;
+            return installed;
+        }
+
+        private static LmServiceProvisioningItemRequest ToControllerRequest(
+            ManagedLocalModuleProvisioningItemRequest item)
+        {
+            return new LmServiceProvisioningItemRequest
+            {
+                KktSerial = item.KktSerial,
+                GrpcPort = item.ControllerGrpcPort,
+                RestPort = item.ControllerRestPort,
+                TargetAddress = "127.0.0.1",
+                TargetPort = item.ApiPort
+            };
         }
 
         private static LmServiceProvisioningItemResult CreateItemResult(

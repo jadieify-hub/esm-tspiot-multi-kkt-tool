@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using EsmTspiot.Shared.Models;
+using EsmTspiot.Shared.Services;
 
 namespace EsmTspiot.ServiceProvisioner
 {
@@ -33,13 +34,6 @@ namespace EsmTspiot.ServiceProvisioner
 
     internal sealed class LocalModulePackageVerifier
     {
-        private const string SupportedSignerSubject =
-            "CN=ООО ЦЕНТР РАЗВИТИЯ ПЕРСПЕКТИВНЫХ ТЕХНОЛОГИЙ, " +
-            "O=ООО ЦЕНТР РАЗВИТИЯ ПЕРСПЕКТИВНЫХ ТЕХНОЛОГИЙ, " +
-            "STREET=\"ул Рочдельская, 15 / строение 16а\", L=Москва, S=Москва, C=RU, " +
-            "OID.1.3.6.1.4.1.311.60.2.1.2=Moscow, OID.1.3.6.1.4.1.311.60.2.1.3=RU, " +
-            "SERIALNUMBER=1177746542247, OID.2.5.4.15=Private Organization";
-
         private readonly LocalModuleInstallerSelection _expected;
         private readonly IWindowsInstallerPackageReader _packageReader;
         private readonly IFileTrustVerifier _trustVerifier;
@@ -72,20 +66,9 @@ namespace EsmTspiot.ServiceProvisioner
 
         internal static LocalModuleInstallerSelection CreateSupportedIdentity()
         {
-            return new LocalModuleInstallerSelection
-            {
-                SourcePath = string.Empty,
-                FileName = "regime-2.6.1-7.msi",
-                ByteLength = 51007488,
-                Sha256 = "68a9633cefc912c2c1defae40d1c8f433bb794ee66060b822f0895410ab6c5c6",
-                ProductName = "Локальный модуль Честный Знак",
-                ProductVersion = "2.6.1",
-                ProductCode = "{556FD8AD-43A3-4645-BC54-EBF3043ADF82}",
-                UpgradeCode = "{9449123B-61C4-40DE-AA6C-1BB9AA02EB67}",
-                SignerSubject = SupportedSignerSubject,
-                SignerThumbprint = "6BA5F6BBE4BE27658253C78889334D0E24858C19",
-                LicenseNoticeAccepted = true
-            };
+            return SupportedLocalModulePackageIdentity.Create(
+                string.Empty,
+                true);
         }
 
         internal VerifiedLocalModulePackage VerifyAndLock(

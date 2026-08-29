@@ -20,7 +20,7 @@ namespace EsmTspiot.WinForms.Shared
                 throw new ArgumentNullException("item");
             }
             _item = item;
-            Text = "Удаление контроллера ЛМ ЧЗ";
+            Text = "Удаление комплекта ККТ";
             StartPosition = FormStartPosition.CenterParent;
             Size = new Size(590, 360);
             MinimumSize = new Size(520, 320);
@@ -54,8 +54,9 @@ namespace EsmTspiot.WinForms.Shared
             {
                 Dock = DockStyle.Fill,
                 ForeColor = Color.DarkRed,
-                Text = "Будут безвозвратно удалены контроллер этой ККТ и его локальные данные.\r\n\r\n" +
-                    "Настройка связи в ЕСМ не очищается. Другие контроллеры не будут затронуты.",
+                Text = "Будут удалены созданные программой контроллер этой ККТ, профиль и связанный ЛМ ЧЗ, " +
+                    "если он больше не нужен другим ККТ того же ИНН.\r\n\r\n" +
+                    "Настройка связи в ЕСМ не очищается. Другие комплекты не будут затронуты.",
                 Margin = new Padding(0, 12, 0, 12)
             };
             root.Controls.Add(warning, 0, 1);
@@ -81,7 +82,7 @@ namespace EsmTspiot.WinForms.Shared
                 AutoSize = true
             };
             Button cancel = new Button { Text = "Отмена", AutoSize = true, DialogResult = DialogResult.Cancel };
-            _removeButton.Text = "Удалить контроллер и данные";
+            _removeButton.Text = "Удалить комплект и данные";
             _removeButton.AutoSize = true;
             _removeButton.Enabled = false;
             _removeButton.Click += delegate
@@ -92,6 +93,8 @@ namespace EsmTspiot.WinForms.Shared
                     GrpcPort = _item.Ports.GrpcPort,
                     RestPort = _item.Ports.RestPort,
                     ManifestFingerprint = _item.ManifestFingerprint,
+                    ManagedStateFingerprint =
+                        _item.ManagedStateFingerprint,
                     RetainedEsmWarningAccepted = true
                 };
                 DialogResult = DialogResult.OK;
@@ -120,7 +123,7 @@ namespace EsmTspiot.WinForms.Shared
                 throw new ArgumentException("Не заданы управляемые службы для удаления.", "items");
             }
             _items = items;
-            Text = "Удаление всех контроллеров ЛМ ЧЗ";
+            Text = "Удаление всех созданных комплектов";
             StartPosition = FormStartPosition.CenterParent;
             Size = new Size(680, 500);
             MinimumSize = new Size(600, 430);
@@ -149,7 +152,7 @@ namespace EsmTspiot.WinForms.Shared
             root.Controls.Add(new Label
             {
                 AutoSize = true,
-                Text = "Будут удалены все контроллеры ЛМ ЧЗ, созданные этой программой: " +
+                Text = "Будут удалены все комплекты ККТ, контроллеры и ЛМ ЧЗ, созданные этой программой: " +
                     _items.Count.ToString() + "."
             }, 0, 0);
 
@@ -169,7 +172,7 @@ namespace EsmTspiot.WinForms.Shared
             {
                 AutoSize = true,
                 ForeColor = Color.DarkRed,
-                Text = "Вместе с контроллерами будут удалены их локальные данные. Штатный контроллер не затрагивается.\r\n" +
+                Text = "Будут удалены службы, профили, управляемые копии ЛМ и локальные данные. Штатный контроллер не затрагивается.\r\n" +
                     "Привязки в ЕСМ автоматически не очищаются и после повторной установки " +
                     "могут потребовать повторной привязки."
             }, 0, 2);
@@ -203,7 +206,7 @@ namespace EsmTspiot.WinForms.Shared
                 AutoSize = true,
                 DialogResult = DialogResult.Cancel
             };
-            _removeButton.Text = "Удалить все контроллеры и данные";
+            _removeButton.Text = "Удалить все комплекты и данные";
             _removeButton.AutoSize = true;
             _removeButton.Enabled = false;
             _removeButton.Click += delegate
@@ -219,6 +222,8 @@ namespace EsmTspiot.WinForms.Shared
                         GrpcPort = item.Ports.GrpcPort,
                         RestPort = item.Ports.RestPort,
                         ManifestFingerprint = item.ManifestFingerprint,
+                        ManagedStateFingerprint =
+                            item.ManagedStateFingerprint,
                         RetainedEsmWarningAccepted = true
                     });
                 }

@@ -214,6 +214,21 @@ namespace EsmTspiot.ServiceProvisioner
             return true;
         }
 
+        internal bool TryComputeFingerprint(
+            string kktSerial,
+            out string fingerprint)
+        {
+            ManagedLocalModuleRemovalSnapshot snapshot;
+            if (!TryRead(kktSerial, out snapshot))
+            {
+                fingerprint = string.Empty;
+                return false;
+            }
+            fingerprint = ManagedStateFileFingerprint.Compute(
+                GetPath(kktSerial));
+            return true;
+        }
+
         internal void Delete(
             string kktSerial,
             string stackOwnershipNonce)

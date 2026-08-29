@@ -19,6 +19,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
     internal static class Program
     {
         private static int _failures;
+        private static int _testCount;
 
         private static int Main()
         {
@@ -30,13 +31,16 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Provisioning pipe accepts protected main images independently of filename", ProvisioningPipeAcceptsProtectedMainImageIndependentlyOfFilename);
             Run("Provisioning protocol rejects plan hash mismatch", ProvisioningProtocolRejectsPlanHashMismatch);
             Run("Remove-all protocol accepts only a confirmed managed batch", RemoveAllProtocolAcceptsOnlyConfirmedManagedBatch);
+            Run("Managed stack removal accepts its displayed fingerprint without controller ports", ManagedStackRemovalAcceptsDisplayedFingerprintWithoutControllerPorts);
+            Run("Managed cleanup accepts only its displayed managed-state fingerprint", ManagedCleanupAcceptsOnlyDisplayedManagedStateFingerprint);
             Run("Provisioning protocol exposes no credentials paths or commands", ProvisioningProtocolExposesNoCredentialsPathsOrCommands);
             Run("Installer operation accepts only one verified setup selection", InstallerOperationAcceptsOnlyOneVerifiedSetupSelection);
             Run("Installer operation rejects stale or substituted source file", InstallerOperationRejectsStaleOrSubstitutedSourceFile);
             Run("Local module verifier accepts only the exact locked MSI", LocalModuleVerifierAcceptsOnlyExactLockedMsi);
             Run("Local module verifier rejects package identity or signer mismatch", LocalModuleVerifierRejectsPackageIdentityOrSignerMismatch);
-            Run("Managed local module protocol rejects duplicate INN or changed plan", ManagedLocalModuleProtocolRejectsDuplicateInnOrChangedPlan);
+            Run("Managed local module protocol accepts consistent shared INN rows", ManagedLocalModuleProtocolAcceptsConsistentSharedInnRows);
             Run("Managed provisioning session accepts only known monotonic messages", ManagedProvisioningSessionAcceptsOnlyKnownMonotonicMessages);
+            Run("Managed session server interleaves caller and helper per KKT", ManagedSessionServerInterleavesCallerAndHelperPerKkt);
             Run("Local module configs isolate every mutable path", LocalModuleConfigsIsolateEveryMutablePath);
             Run("Local module start plans share only read-only runtime", LocalModuleStartPlansShareOnlyReadOnlyRuntime);
             Run("Local module config rejects ambiguous template", LocalModuleConfigRejectsAmbiguousTemplate);
@@ -81,6 +85,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Local module readiness requires owned descendant listener", LocalModuleReadinessRequiresOwnedDescendantListener);
             Run("Windows managed platform persists profile and exact service pair", WindowsManagedPlatformPersistsProfileAndExactServicePair);
             Run("Complete stack canary failure stops remaining groups", CompleteStackCanaryFailureStopsRemainingGroups);
+            Run("Complete stack provisions every KKT of shared INN", CompleteStackProvisionsEveryKktOfSharedInn);
+            Run("Complete stack skips a later unregistered KKT", CompleteStackSkipsLaterUnregisteredKkt);
             Run("Managed local module same INN ensure is idempotent", ManagedLocalModuleSameInnEnsureIsIdempotent);
             Run("Managed removal retains shared same-INN module", ManagedRemovalRetainsSharedSameInnModule);
             Run("Managed removal cleans complete stack in reverse", ManagedRemovalCleansCompleteStackInReverse);
@@ -125,7 +131,9 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
             if (_failures == 0)
             {
-                Console.WriteLine("All 100 provisioner tests passed.");
+                Console.WriteLine(
+                    "All " + _testCount.ToString() +
+                    " provisioner tests passed.");
                 return 0;
             }
 
@@ -329,6 +337,67 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             duplicate.PlanHash = CanonicalLmPlanHasher.Compute(duplicate);
             AssertFalse(ProvisioningRequestValidator.Validate(duplicate).IsValid,
                 "The same managed KKT must not appear twice in a remove-all request.");
+        }
+
+        private static void
+            ManagedStackRemovalAcceptsDisplayedFingerprintWithoutControllerPorts()
+        {
+            LmServiceProvisioningBatchRequest request =
+                CreateRequest(LmServiceOperation.RemoveManaged);
+            request.RemovalConfirmation = new LmRemovalConfirmation
+            {
+                KktSerial = "00105700000001",
+                GrpcPort = 0,
+                RestPort = 0,
+                ManagedStateFingerprint = new LmManifestFingerprint
+                {
+                    Sha256 = new string('e', 64)
+                },
+                RetainedEsmWarningAccepted = true
+            };
+            request.PlanHash = CanonicalLmPlanHasher.Compute(request);
+            AssertTrue(
+                ProvisioningRequestValidator.Validate(request).IsValid,
+                "A displayed managed-stack or cleanup-journal fingerprint must authorize removal even when the controller manifest is absent.");
+
+            request.RemovalConfirmation.ManagedStateFingerprint.Sha256 =
+                new string('g', 64);
+            request.PlanHash = CanonicalLmPlanHasher.Compute(request);
+            AssertFalse(
+                ProvisioningRequestValidator.Validate(request).IsValid,
+                "A non-hex managed-state fingerprint must be rejected.");
+        }
+
+        private static void ManagedCleanupAcceptsOnlyDisplayedManagedStateFingerprint()
+        {
+            LmServiceProvisioningBatchRequest request =
+                CreateRequest(LmServiceOperation.CleanupManaged);
+            request.CleanupConfirmation = new LmCleanupConfirmation
+            {
+                KktSerial = "00105700000001",
+                ManagedStateFingerprint = new LmManifestFingerprint
+                {
+                    Sha256 = new string('f', 64)
+                },
+                DisplayedState = LmServiceProvisioningStatus.CleanupPending
+            };
+            request.PlanHash = CanonicalLmPlanHasher.Compute(request);
+
+            AssertTrue(
+                ProvisioningRequestValidator.Validate(request).IsValid,
+                "A displayed full-stack cleanup fingerprint must authorize cleanup without a legacy controller manifest.");
+            AssertEqual(
+                new string('f', 64),
+                WindowsManagedLocalModuleRemovalPlatform
+                    .GetExpectedManagedStateFingerprint(request),
+                "The concrete removal platform must recheck the cleanup fingerprint immediately before mutation.");
+
+            request.CleanupConfirmation.ManagedStateFingerprint.Sha256 =
+                new string('z', 64);
+            request.PlanHash = CanonicalLmPlanHasher.Compute(request);
+            AssertFalse(
+                ProvisioningRequestValidator.Validate(request).IsValid,
+                "A non-hex managed cleanup fingerprint must be rejected.");
         }
 
         private static void ProvisioningProtocolExposesNoCredentialsPathsOrCommands()
@@ -570,17 +639,35 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             }
         }
 
-        private static void ManagedLocalModuleProtocolRejectsDuplicateInnOrChangedPlan()
+        private static void ManagedLocalModuleProtocolAcceptsConsistentSharedInnRows()
         {
             LmServiceProvisioningBatchRequest request = CreateManagedLocalModuleRequest(2);
             AssertTrue(ProvisioningRequestValidator.Validate(request).IsValid,
                 "A sorted exact-version local-module request must be accepted.");
 
-            LmServiceProvisioningBatchRequest duplicateInn = CreateManagedLocalModuleRequest(2);
-            duplicateInn.ManagedLocalModules[1].Inn = duplicateInn.ManagedLocalModules[0].Inn;
-            duplicateInn.PlanHash = CanonicalLmPlanHasher.Compute(duplicateInn);
-            AssertFalse(ProvisioningRequestValidator.Validate(duplicateInn).IsValid,
-                "One provisioning request must contain no more than one LM per INN.");
+            LmServiceProvisioningBatchRequest sharedInn = CreateManagedLocalModuleRequest(2);
+            ManagedLocalModuleProvisioningItemRequest first = sharedInn.ManagedLocalModules[0];
+            ManagedLocalModuleProvisioningItemRequest second = sharedInn.ManagedLocalModules[1];
+            second.Inn = first.Inn;
+            second.LocalModuleOrdinal = first.LocalModuleOrdinal;
+            second.ApiPort = first.ApiPort;
+            second.DatabasePort = first.DatabasePort;
+            second.EpmdPort = first.EpmdPort;
+            sharedInn.PlanHash = CanonicalLmPlanHasher.Compute(sharedInn);
+            AssertTrue(ProvisioningRequestValidator.Validate(sharedInn).IsValid,
+                "Two KKT of one INN must share one immutable LM definition in one session.");
+
+            LmServiceProvisioningBatchRequest inconsistent = CreateManagedLocalModuleRequest(2);
+            first = inconsistent.ManagedLocalModules[0];
+            second = inconsistent.ManagedLocalModules[1];
+            second.Inn = first.Inn;
+            second.LocalModuleOrdinal = first.LocalModuleOrdinal;
+            second.ApiPort = first.ApiPort + 1000;
+            second.DatabasePort = first.DatabasePort;
+            second.EpmdPort = first.EpmdPort;
+            inconsistent.PlanHash = CanonicalLmPlanHasher.Compute(inconsistent);
+            AssertFalse(ProvisioningRequestValidator.Validate(inconsistent).IsValid,
+                "One INN must never carry two different LM endpoints in one session.");
 
             LmServiceProvisioningBatchRequest changedPlan = CreateManagedLocalModuleRequest(1);
             changedPlan.ManagedLocalModules[0].ApiPort++;
@@ -588,6 +675,12 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             AssertFalse(changedValidation.IsValid,
                 "A port changed after confirmation must invalidate the plan hash.");
             AssertContains(changedValidation.JoinMessages(), "SHA-256");
+
+            LmServiceProvisioningBatchRequest changedController =
+                CreateManagedLocalModuleRequest(1);
+            changedController.InstallerSelection.Sha256 = new string('b', 64);
+            AssertFalse(ProvisioningRequestValidator.Validate(changedController).IsValid,
+                "The controller package must belong to the same immutable full-stack plan.");
         }
 
         private static void ManagedProvisioningSessionAcceptsOnlyKnownMonotonicMessages()
@@ -633,6 +726,81 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 "An unknown session message kind must be rejected.");
             AssertEqual(5, Enum.GetValues(typeof(ManagedProvisioningSessionKind)).Length,
                 "The session protocol must expose exactly the five reviewed message kinds.");
+        }
+
+        private static void ManagedSessionServerInterleavesCallerAndHelperPerKkt()
+        {
+            LmServiceProvisioningBatchRequest request =
+                CreateManagedLocalModuleRequest(2);
+            FakeManagedLocalModuleProvisioningPlatform platform =
+                new FakeManagedLocalModuleProvisioningPlatform();
+            using (CompleteStackProvisioningSession session =
+                new CompleteStackProvisioningSession(
+                    request,
+                    new ManagedLocalModuleProvisioner(platform),
+                    new ManagedLocalModuleProvisioningContext(
+                        "lmrt-0123456789abcdef01234567",
+                        "local-module-2.6.1-7",
+                        "2.6.1")))
+            {
+                FakeManagedProvisioningSessionChannel channel =
+                    new FakeManagedProvisioningSessionChannel(
+                        new[]
+                        {
+                            new ManagedProvisioningSessionMessage
+                            {
+                                SchemaVersion = ProvisioningRequestValidator.CurrentSchemaVersion,
+                                OperationId = request.OperationId,
+                                Sequence = 2,
+                                Kind = ManagedProvisioningSessionKind.ExecuteItem,
+                                ItemIndex = 0,
+                                Status = LmServiceProvisioningStatus.Pending
+                            },
+                            new ManagedProvisioningSessionMessage
+                            {
+                                SchemaVersion = ProvisioningRequestValidator.CurrentSchemaVersion,
+                                OperationId = request.OperationId,
+                                Sequence = 4,
+                                Kind = ManagedProvisioningSessionKind.ExecuteItem,
+                                ItemIndex = 1,
+                                Status = LmServiceProvisioningStatus.Cancelled,
+                                Message = "ККТ не зарегистрирована в ЕСМ."
+                            },
+                            new ManagedProvisioningSessionMessage
+                            {
+                                SchemaVersion = ProvisioningRequestValidator.CurrentSchemaVersion,
+                                OperationId = request.OperationId,
+                                Sequence = 6,
+                                Kind = ManagedProvisioningSessionKind.Finish,
+                                ItemIndex = -1,
+                                Status = LmServiceProvisioningStatus.Pending
+                            }
+                        });
+
+                LmServiceProvisioningBatchResult result =
+                    new ManagedProvisioningSessionServer(channel)
+                        .Run(request, session);
+
+                AssertEqual(3, channel.SessionMessages.Count,
+                    "The helper must send ready and one result per requested KKT.");
+                AssertEqual(ManagedProvisioningSessionKind.SessionReady,
+                    channel.SessionMessages[0].Kind,
+                    "The helper must complete immutable preflight before caller registration.");
+                AssertEqual(1L, channel.SessionMessages[0].Sequence,
+                    "The helper must start the global session sequence.");
+                AssertEqual(ManagedProvisioningSessionKind.ItemResult,
+                    channel.SessionMessages[1].Kind,
+                    "The first registered KKT must be provisioned before the next caller step.");
+                AssertEqual(3L, channel.SessionMessages[1].Sequence,
+                    "Caller and helper messages must share one monotonic sequence.");
+                AssertEqual(LmServiceProvisioningStatus.Cancelled,
+                    channel.SessionMessages[2].Status,
+                    "An unregistered later KKT must be skipped without local mutation.");
+                AssertEqual(2, result.Items.Count,
+                    "The final batch result must cover the immutable full plan.");
+                AssertEqual(1, platform.ReconciledInns.Count,
+                    "Only the successfully registered KKT may enter local provisioning.");
+            }
         }
 
         private static void LocalModuleConfigsIsolateEveryMutablePath()
@@ -2512,6 +2680,89 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 "No later profile may be created after canary failure.");
         }
 
+        private static void CompleteStackProvisionsEveryKktOfSharedInn()
+        {
+            LmServiceProvisioningBatchRequest request =
+                CreateManagedLocalModuleRequest(2);
+            ManagedLocalModuleProvisioningItemRequest first =
+                request.ManagedLocalModules[0];
+            ManagedLocalModuleProvisioningItemRequest second =
+                request.ManagedLocalModules[1];
+            second.Inn = first.Inn;
+            second.LocalModuleOrdinal = first.LocalModuleOrdinal;
+            second.ApiPort = first.ApiPort;
+            second.DatabasePort = first.DatabasePort;
+            second.EpmdPort = first.EpmdPort;
+            request.PlanHash = CanonicalLmPlanHasher.Compute(request);
+            FakeManagedLocalModuleProvisioningPlatform platform =
+                new FakeManagedLocalModuleProvisioningPlatform();
+            List<string> controllers = new List<string>();
+            using (CompleteStackProvisioningSession session =
+                new CompleteStackProvisioningSession(
+                    request,
+                    new ManagedLocalModuleProvisioner(platform),
+                    new ManagedLocalModuleProvisioningContext(
+                        "lmrt-0123456789abcdef01234567",
+                        "local-module-2.6.1-7",
+                        "2.6.1"),
+                    delegate(ManagedLocalModuleProvisioningItemRequest item)
+                    {
+                        controllers.Add(item.KktSerial);
+                        return new LmServiceProvisioningItemResult
+                        {
+                            KktSerial = item.KktSerial,
+                            Status = LmServiceProvisioningStatus.Succeeded,
+                            Message = "controller ready"
+                        };
+                    }))
+            {
+                LmServiceProvisioningBatchResult result = session.ExecuteAll();
+                AssertEqual(2, result.Items.Count,
+                    "Every KKT must receive a full-stack result.");
+                AssertEqual(LmServiceProvisioningStatus.ReadyToInitialize,
+                    result.Items[0].Status,
+                    "The first shared-INN KKT must be ready.");
+                AssertEqual(LmServiceProvisioningStatus.ReadyToInitialize,
+                    result.Items[1].Status,
+                    "The second shared-INN KKT must be ready.");
+            }
+            AssertEqual(2, controllers.Count,
+                "Each KKT of one INN must receive its own controller service.");
+            AssertEqual(1, platform.ProfilePreparationCount,
+                "The shared LM profile must be created only once.");
+        }
+
+        private static void CompleteStackSkipsLaterUnregisteredKkt()
+        {
+            LmServiceProvisioningBatchRequest request =
+                CreateManagedLocalModuleRequest(3);
+            FakeManagedLocalModuleProvisioningPlatform platform =
+                new FakeManagedLocalModuleProvisioningPlatform();
+            CompleteStackProvisioningSession session =
+                new CompleteStackProvisioningSession(
+                    request,
+                    new ManagedLocalModuleProvisioner(platform),
+                    new ManagedLocalModuleProvisioningContext(
+                        "lmrt-0123456789abcdef01234567",
+                        "local-module-2.6.1-7",
+                        "2.6.1"));
+
+            session.ExecuteItem(0);
+            LmServiceProvisioningItemResult skipped = session.SkipItem(
+                1,
+                "ККТ не зарегистрирована в ЕСМ.");
+            session.ExecuteItem(2);
+            LmServiceProvisioningBatchResult result = session.Finish();
+
+            AssertEqual(LmServiceProvisioningStatus.Cancelled, skipped.Status,
+                "A nonregistered later KKT must be explicitly skipped.");
+            AssertEqual(LmServiceProvisioningStatus.ReadyToInitialize,
+                result.Items[2].Status,
+                "An independent later KKT must continue after the skipped row.");
+            AssertEqual(2, platform.ReconciledInns.Count,
+                "The skipped KKT must never enter the mutation workflow.");
+        }
+
         private static void ManagedLocalModuleSameInnEnsureIsIdempotent()
         {
             ManagedLocalModuleProvisioningItemRequest item =
@@ -2750,6 +3001,40 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     new ManagedLocalModuleRemovalJournalStore(
                         manifests.MachineRoot,
                         pathSafety);
+                string displayedFingerprint;
+                AssertTrue(
+                    manifests.TryComputeStackFingerprint(
+                        item.KktSerial,
+                        out displayedFingerprint),
+                    "The displayed managed stack must have an exact fingerprint.");
+                WindowsManagedLocalModuleRemovalPlatform stalePlatform =
+                    new WindowsManagedLocalModuleRemovalPlatform(
+                        manifests,
+                        removalJournal,
+                        profiles,
+                        new LocalModuleRuntimeInstaller(
+                            manifests,
+                            pathSafety,
+                            NoopLocalModuleMutationBoundary.Instance),
+                        services,
+                        VerifiedProvisionerBinary.CreateForTesting(
+                            @"C:\Program Files\KRS\MultiKKT\Provisioner\EsmTspiot.ServiceProvisioner.exe"),
+                        new FakeLocalModuleServiceReadinessProbe(
+                            new List<string>()),
+                        new FakeEpmdCommandRunner(
+                            new EpmdCommandResult(
+                                0,
+                                "epmd: up and running\n",
+                                string.Empty)),
+                        NoopManagedKktControllerRemoval.Instance,
+                        new string('f', 64),
+                        delegate { });
+                AssertThrows<InvalidDataException>(delegate
+                {
+                    stalePlatform.Inspect(
+                        item.KktSerial,
+                        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+                }, "A changed managed stack must be rejected before cleanup mutation.");
                 WindowsManagedLocalModuleRemovalPlatform platform =
                     new WindowsManagedLocalModuleRemovalPlatform(
                         manifests,
@@ -2767,6 +3052,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                             new EpmdCommandResult(0, "epmd: up and running\n", string.Empty),
                             new EpmdCommandResult(0, "Killed\n", string.Empty)),
                         NoopManagedKktControllerRemoval.Instance,
+                        displayedFingerprint,
                         delegate { });
 
                 LmServiceProvisioningItemResult result =
@@ -3865,6 +4151,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
         {
             LmServiceProvisioningBatchRequest request =
                 CreateRequest(LmServiceOperation.EnsureManagedLocalModules);
+            request.InstallerSelection = CreateInstallerSelection();
             request.LocalModuleInstallerSelection = new LocalModuleInstallerSelection
             {
                 SourcePath = @"C:\Users\operator\Downloads\regime-2.6.1-7.msi",
@@ -4290,6 +4577,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
         private static void Run(string name, Action action)
         {
+            _testCount++;
             try
             {
                 action();
@@ -4833,6 +5121,41 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 IList<string> readOnlySids)
             {
                 EnsureProtectedRuntimeFile(path);
+            }
+        }
+
+        private sealed class FakeManagedProvisioningSessionChannel :
+            IManagedProvisioningSessionChannel
+        {
+            private readonly Queue<ManagedProvisioningSessionMessage> _incoming;
+
+            internal FakeManagedProvisioningSessionChannel(
+                IEnumerable<ManagedProvisioningSessionMessage> incoming)
+            {
+                _incoming = new Queue<ManagedProvisioningSessionMessage>(incoming);
+                SessionMessages = new List<ManagedProvisioningSessionMessage>();
+            }
+
+            internal IList<ManagedProvisioningSessionMessage> SessionMessages
+            {
+                get;
+                private set;
+            }
+
+            public ManagedProvisioningSessionMessage ReadSessionMessage()
+            {
+                if (_incoming.Count == 0)
+                {
+                    throw new EndOfStreamException(
+                        "The fake session has no caller message.");
+                }
+                return _incoming.Dequeue();
+            }
+
+            public void WriteSessionMessage(
+                ManagedProvisioningSessionMessage message)
+            {
+                SessionMessages.Add(message);
             }
         }
 

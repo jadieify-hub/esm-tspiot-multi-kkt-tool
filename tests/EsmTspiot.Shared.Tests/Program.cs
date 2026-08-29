@@ -102,6 +102,8 @@ namespace EsmTspiot.Shared.Tests
             Run("Managed LM planner groups KKT by INN", ManagedLmPlannerGroupsKktByInn);
             Run("Managed LM planner assigns stable ordinals", ManagedLmPlannerAssignsStableOrdinals);
             Run("Managed LM planner blocks occupied deterministic ports", ManagedLmPlannerBlocksOccupiedPorts);
+            Run("Managed LM port preflight ignores owned ports and blocks new conflicts", ManagedLmPortPreflightIgnoresOwnedPortsAndBlocksNewConflicts);
+            Run("Managed LM request repeats one endpoint for shared INN", ManagedLmRequestRepeatsOneEndpointForSharedInn);
             Run("LM gateway defaults use the fixed 45000 gRPC pool", LmDefaultsUse45000GrpcPool);
             Run("LM gateway draft defaults follow the KKT ordinal", LmGatewayDraftDefaultsFollowKktOrdinal);
             Run("LM gateway draft defaults do not crash on excess KKT", LmGatewayDraftDefaultsDoNotCrashOnExcessKkt);
@@ -140,6 +142,7 @@ namespace EsmTspiot.Shared.Tests
             Run("Bulk workflow retries service not started", BulkWorkflowRetriesServiceNotStarted);
             Run("Bulk workflow retries connection failure during add", BulkWorkflowRetriesConnectionFailureDuringAdd);
             Run("Bulk workflow retries connection failure during registration", BulkWorkflowRetriesConnectionFailureDuringRegistration);
+            Run("Bulk workflow executes one selected KKT", BulkWorkflowExecutesOneSelectedKkt);
             Run("Bulk workflow recovers when retry reports existing instance", BulkWorkflowRecoversWhenRetryReportsExistingInstance);
             Run("Bulk workflow skips PUT when readiness is not confirmed", BulkWorkflowSkipsPutWhenReadinessIsNotConfirmed);
             Run("Bulk workflow honors cancellation", BulkWorkflowHonorsCancellation);
@@ -177,6 +180,8 @@ namespace EsmTspiot.Shared.Tests
             Run("LM lifecycle preserves partial outcome on cancellation", LmLifecyclePreservesPartialOutcomeOnCancellation);
             Run("LM lifecycle reconciles unknown result before mutation", LmLifecycleReconcilesUnknownResultBeforeMutation);
             Run("LM removal workflow removes one selected managed service", LmRemovalWorkflowRemovesOneSelectedManagedService);
+            Run("LM removal workflow accepts managed stack fingerprint", LmRemovalWorkflowAcceptsManagedStackFingerprint);
+            Run("LM cleanup workflow locks the displayed managed stack fingerprint", LmCleanupWorkflowLocksDisplayedManagedStackFingerprint);
             Run("LM removal workflow blocks batch and official removal", LmRemovalWorkflowBlocksBatchAndOfficialRemoval);
             Run("LM removal outcome warns that ESM binding remains", LmRemovalOutcomeWarnsThatEsmBindingRemains);
 
@@ -1872,6 +1877,90 @@ namespace EsmTspiot.Shared.Tests
                 "The planner must report the deterministic port instead of shifting it.");
         }
 
+        private static void ManagedLmPortPreflightIgnoresOwnedPortsAndBlocksNewConflicts()
+        {
+            ManagedKktAssignment savedKkt = new ManagedKktAssignment
+            {
+                KktSerial = "00105700000001",
+                KktInn = "1234567894",
+                KktOrdinal = 1,
+                GrpcPort = 45001,
+                RestPort = 15001
+            };
+            ManagedLocalModuleAssignment savedModule =
+                new ManagedLocalModuleAssignment
+                {
+                    Inn = "1234567894",
+                    ModuleOrdinal = 1,
+                    InstanceId = "lm-existing",
+                    ApiPort = 5995,
+                    DatabasePort = 5984,
+                    EpmdPort = 43691,
+                    RuntimeVersion = "2.6.1"
+                };
+            ManagedLocalModulePlan plan = ManagedLocalModulePlanner.Build(
+                new List<LmGatewayKkt>
+                {
+                    CreateLmKkt("00105700000001", "1234567894"),
+                    CreateLmKkt("00105700000002", "1234567894")
+                },
+                new List<ManagedKktAssignment> { savedKkt },
+                new List<ManagedLocalModuleAssignment> { savedModule },
+                new List<TcpListenerSnapshotItem>());
+
+            IList<int> conflicts = ManagedLocalModulePortPreflight.FindConflicts(
+                plan,
+                new List<ManagedKktAssignment> { savedKkt },
+                new List<ManagedLocalModuleAssignment> { savedModule },
+                new List<int> { 5995, 5984, 43691, 45001, 15001, 45002 });
+
+            AssertEqual(1, conflicts.Count,
+                "Existing managed listeners must be left to helper ownership checks.");
+            AssertEqual(45002, conflicts[0],
+                "An occupied port required by the new KKT must fail preflight.");
+
+            plan.Items[0].Module.ApiPort = 6995;
+            conflicts = ManagedLocalModulePortPreflight.FindConflicts(
+                plan,
+                new List<ManagedKktAssignment> { savedKkt },
+                new List<ManagedLocalModuleAssignment> { savedModule },
+                new List<int> { 6995 });
+            AssertEqual(1, conflicts.Count,
+                "An edited port is new ownership and must be checked.");
+            AssertEqual(6995, conflicts[0],
+                "The changed API port must be reported exactly.");
+        }
+
+        private static void ManagedLmRequestRepeatsOneEndpointForSharedInn()
+        {
+            ManagedLocalModulePlan plan = ManagedLocalModulePlanner.Build(
+                new List<LmGatewayKkt>
+                {
+                    CreateLmKkt("00105700000001", "1234567894"),
+                    CreateLmKkt("00105700000002", "1234567894"),
+                    CreateLmKkt("00105700000003", "7707083893")
+                },
+                new List<ManagedKktAssignment>(),
+                new List<ManagedLocalModuleAssignment>(),
+                new List<TcpListenerSnapshotItem>());
+
+            IList<ManagedLocalModuleProvisioningItemRequest> request =
+                ManagedLocalModuleRequestBuilder.Build(plan, "2.6.1");
+
+            AssertEqual(3, request.Count,
+                "The immutable helper plan must retain one row per KKT.");
+            AssertEqual("1234567894", request[0].Inn,
+                "The canary must be the first KKT of the first INN group.");
+            AssertEqual("1234567894", request[1].Inn,
+                "The second KKT of the same INN must follow its canary.");
+            AssertEqual(request[0].LocalModuleOrdinal, request[1].LocalModuleOrdinal,
+                "KKT of one INN must share the same LM number.");
+            AssertEqual(request[0].ApiPort, request[1].ApiPort,
+                "KKT of one INN must show the same LM endpoint.");
+            AssertFalse(request[0].ControllerGrpcPort == request[1].ControllerGrpcPort,
+                "Every KKT must retain its own controller port.");
+        }
+
         private static void LmDefaultsUse45000GrpcPool()
         {
             LmGatewayDraft first = LmGatewayDraftDefaults.Create(
@@ -2838,6 +2927,37 @@ namespace EsmTspiot.Shared.Tests
             AssertEqual(BulkKktRegistrationStatus.Registered, outcome.Results[0].Status, "Expected successful PUT retry.");
         }
 
+        private static void BulkWorkflowExecutesOneSelectedKkt()
+        {
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            api.InstancesResponse = Success("{\"instances\":[]}");
+            api.DkktResponse = Success("{\"kkt\":[" +
+                "{\"kktSerial\":\"00105700000001\",\"fnSerial\":\"7300000000000001\",\"kktInn\":\"1234567894\"}," +
+                "{\"kktSerial\":\"00105700000002\",\"fnSerial\":\"7300000000000002\",\"kktInn\":\"1234567894\"}]}");
+            api.AddResponses.Enqueue(Success("{}"));
+            api.InstanceResponses.Enqueue(Success("{\"clientPort\":51402}"));
+            api.RegisterResponses.Enqueue(Success("{}"));
+            BulkRegistrationWorkflow workflow = CreateWorkflow(api);
+            BulkRegistrationDiscovery discovery = workflow.DiscoverAsync(
+                "http://127.0.0.1:51077", "4041", null, CancellationToken.None).Result;
+
+            BulkKktRegistrationResult result = workflow.ExecuteItemAsync(
+                discovery.Items[1],
+                2,
+                2,
+                null,
+                CancellationToken.None).Result;
+
+            AssertEqual("00105700000002", result.KktSerial,
+                "Only the selected immutable work item must be returned.");
+            AssertEqual(BulkKktRegistrationStatus.Registered, result.Status,
+                "The selected KKT must complete POST/readiness/PUT.");
+            AssertEqual(1, api.AddCalls,
+                "Executing one row must not start the preceding KKT.");
+            AssertEqual(1, api.RegisterCalls,
+                "Executing one row must issue one registration request.");
+        }
+
         private static void BulkWorkflowRecoversWhenRetryReportsExistingInstance()
         {
             FakeTspiotApiClient api = new FakeTspiotApiClient();
@@ -3495,6 +3615,58 @@ namespace EsmTspiot.Shared.Tests
             AssertEqual(LmGatewayLifecycleStatus.RemovedLocalArtifactsBindingRetained, result.Status, "Expected verified local removal.");
         }
 
+        private static void LmRemovalWorkflowAcceptsManagedStackFingerprint()
+        {
+            FakeLmProvisioner provisioner = new FakeLmProvisioner(null);
+            LmServiceInventoryItem selected = new LmServiceInventoryItem
+            {
+                KktSerial = "00105700000001",
+                ServiceName = LmServiceIdentity.CreateName("00105700000001"),
+                Role = LmServiceRole.Managed,
+                Ports = new LmGatewayPorts(0, 0),
+                Status = LmServiceProvisioningStatus.CleanupPending,
+                ManagedStateFingerprint = new LmManifestFingerprint
+                {
+                    Sha256 = new string('b', 64)
+                }
+            };
+            provisioner.RemoveResult = new LmServiceProvisioningItemResult
+            {
+                KktSerial = selected.KktSerial,
+                Status = LmServiceProvisioningStatus.Succeeded,
+                Message = "removed"
+            };
+            int inventoryReads = 0;
+            LmGatewayRemovalWorkflow workflow = new LmGatewayRemovalWorkflow(
+                provisioner,
+                delegate
+                {
+                    inventoryReads++;
+                    return inventoryReads == 1
+                        ? new List<LmServiceInventoryItem> { selected }
+                        : new List<LmServiceInventoryItem>();
+                });
+            LmRemovalConfirmation confirmation = new LmRemovalConfirmation
+            {
+                KktSerial = selected.KktSerial,
+                ManagedStateFingerprint = selected.ManagedStateFingerprint,
+                RetainedEsmWarningAccepted = true
+            };
+            string operationId = Guid.NewGuid().ToString("N");
+            string hash = ComputeRemovalHash(confirmation, operationId);
+
+            LmGatewayLifecycleResult result = workflow.RemoveAsync(
+                new[] { selected }, confirmation, operationId, hash,
+                CancellationToken.None).GetAwaiter().GetResult();
+
+            AssertEqual(1, provisioner.RemoveCalls,
+                "A displayed managed-stack fingerprint must authorize one exact removal.");
+            AssertEqual(
+                LmGatewayLifecycleStatus.RemovedLocalArtifactsBindingRetained,
+                result.Status,
+                "A disappeared managed stack must reconcile as removed.");
+        }
+
         private static void LmRemovalWorkflowBlocksBatchAndOfficialRemoval()
         {
             FakeLmProvisioner provisioner = new FakeLmProvisioner(null);
@@ -3516,6 +3688,85 @@ namespace EsmTspiot.Shared.Tests
             AssertEqual(LmGatewayLifecycleStatus.Blocked, batch.Status, "Batch removal must be blocked.");
             AssertEqual(LmGatewayLifecycleStatus.Blocked, protectedResult.Status, "Official service removal must be blocked.");
             AssertEqual(0, provisioner.RemoveCalls, "Blocked removals must never reach helper.");
+        }
+
+        private static void LmCleanupWorkflowLocksDisplayedManagedStackFingerprint()
+        {
+            LmServiceInventoryItem selected = new LmServiceInventoryItem
+            {
+                KktSerial = "00105700000001",
+                ServiceName = LmServiceIdentity.CreateName("00105700000001"),
+                Role = LmServiceRole.Managed,
+                Ports = new LmGatewayPorts(0, 0),
+                Status = LmServiceProvisioningStatus.CleanupPending,
+                ManagedStateFingerprint = new LmManifestFingerprint
+                {
+                    Sha256 = new string('c', 64)
+                }
+            };
+            FakeLmProvisioner provisioner = new FakeLmProvisioner(null)
+            {
+                CleanupResult = new LmServiceProvisioningItemResult
+                {
+                    KktSerial = selected.KktSerial,
+                    Status = LmServiceProvisioningStatus.Succeeded,
+                    Message = "cleaned"
+                }
+            };
+            int inventoryReads = 0;
+            LmGatewayRemovalWorkflow workflow = new LmGatewayRemovalWorkflow(
+                provisioner,
+                delegate
+                {
+                    inventoryReads++;
+                    return inventoryReads == 1
+                        ? new List<LmServiceInventoryItem> { selected }
+                        : new List<LmServiceInventoryItem>();
+                });
+            LmCleanupConfirmation confirmation = new LmCleanupConfirmation
+            {
+                KktSerial = selected.KktSerial,
+                ManagedStateFingerprint = selected.ManagedStateFingerprint,
+                DisplayedState = LmServiceProvisioningStatus.CleanupPending
+            };
+            string operationId = Guid.NewGuid().ToString("N");
+            string hash = ComputeCleanupHash(confirmation, operationId);
+
+            LmGatewayLifecycleResult result = workflow.CleanupAsync(
+                new[] { selected }, confirmation, operationId, hash,
+                CancellationToken.None).GetAwaiter().GetResult();
+
+            AssertEqual(1, provisioner.CleanupCalls,
+                "The exact displayed managed-state fingerprint must reach helper cleanup.");
+            AssertEqual(LmGatewayLifecycleStatus.RemovedLocalArtifactsBindingRetained,
+                result.Status,
+                "A disappeared managed stack must reconcile as cleaned.");
+
+            LmServiceInventoryItem changed = new LmServiceInventoryItem
+            {
+                KktSerial = selected.KktSerial,
+                ServiceName = selected.ServiceName,
+                Role = selected.Role,
+                Ports = selected.Ports,
+                Status = selected.Status,
+                ManagedStateFingerprint = new LmManifestFingerprint
+                {
+                    Sha256 = new string('d', 64)
+                }
+            };
+            FakeLmProvisioner blockedProvisioner = new FakeLmProvisioner(null);
+            LmGatewayRemovalWorkflow blockedWorkflow = new LmGatewayRemovalWorkflow(
+                blockedProvisioner,
+                delegate { return new List<LmServiceInventoryItem> { changed }; });
+
+            LmGatewayLifecycleResult blocked = blockedWorkflow.CleanupAsync(
+                new[] { changed }, confirmation, operationId, hash,
+                CancellationToken.None).GetAwaiter().GetResult();
+
+            AssertEqual(LmGatewayLifecycleStatus.Blocked, blocked.Status,
+                "A changed managed cleanup fingerprint must require a fresh confirmation.");
+            AssertEqual(0, blockedProvisioner.CleanupCalls,
+                "Stale managed cleanup confirmation must never reach helper.");
         }
 
         private static void LmRemovalOutcomeWarnsThatEsmBindingRemains()
@@ -3740,6 +3991,19 @@ namespace EsmTspiot.Shared.Tests
                 OperationId = operationId,
                 InitiatingSid = "S-1-5-21-1-2-3-1001",
                 RemovalConfirmation = confirmation
+            };
+            return CanonicalLmPlanHasher.Compute(request);
+        }
+
+        private static string ComputeCleanupHash(LmCleanupConfirmation confirmation, string operationId)
+        {
+            LmServiceProvisioningBatchRequest request = new LmServiceProvisioningBatchRequest
+            {
+                SchemaVersion = 1,
+                Operation = LmServiceOperation.CleanupManaged,
+                OperationId = operationId,
+                InitiatingSid = "S-1-5-21-1-2-3-1001",
+                CleanupConfirmation = confirmation
             };
             return CanonicalLmPlanHasher.Compute(request);
         }

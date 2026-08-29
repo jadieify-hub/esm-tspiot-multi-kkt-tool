@@ -19,5 +19,8 @@ namespace EsmTspiot.Shared.Models
 
         [DataMember(Order = 5)]
         public bool RetainedEsmWarningAccepted { get; set; }
+
+        [DataMember(Order = 6, EmitDefaultValue = false)]
+        public LmManifestFingerprint ManagedStateFingerprint { get; set; }
     }
 }

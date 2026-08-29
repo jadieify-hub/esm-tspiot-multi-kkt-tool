@@ -83,6 +83,13 @@ namespace EsmTspiot.ServiceProvisioner
             }
 
             LmRemovalConfirmation confirmation = request.RemovalConfirmation;
+            if (confirmation.ManifestFingerprint == null)
+            {
+                return Failure(
+                    confirmation.KktSerial,
+                    LmServiceProvisioningStatus.RemovalBlocked,
+                    "Показанный манифест контроллера больше недоступен; обновите список.");
+            }
             return Execute(
                 confirmation.KktSerial,
                 confirmation.ManifestFingerprint.Sha256,
@@ -107,6 +114,13 @@ namespace EsmTspiot.ServiceProvisioner
             }
 
             LmCleanupConfirmation confirmation = request.CleanupConfirmation;
+            if (confirmation.ManifestFingerprint == null)
+            {
+                return Failure(
+                    confirmation.KktSerial,
+                    LmServiceProvisioningStatus.RemovalBlocked,
+                    "Показанный манифест контроллера больше недоступен; обновите список.");
+            }
             return Execute(
                 confirmation.KktSerial,
                 confirmation.ManifestFingerprint.Sha256,

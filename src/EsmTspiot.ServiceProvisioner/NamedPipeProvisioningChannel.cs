@@ -14,7 +14,9 @@ using EsmTspiot.Shared.Models;
 
 namespace EsmTspiot.ServiceProvisioner
 {
-    internal sealed class NamedPipeProvisioningChannel : IDisposable
+    internal sealed class NamedPipeProvisioningChannel :
+        IDisposable,
+        IManagedProvisioningSessionChannel
     {
         internal const int MaximumMessageBytes = 1024 * 1024;
 
@@ -103,6 +105,17 @@ namespace EsmTspiot.ServiceProvisioner
             _stream.Write(length, 0, length.Length);
             _stream.Write(payload, 0, payload.Length);
             _stream.Flush();
+        }
+
+        public ManagedProvisioningSessionMessage ReadSessionMessage()
+        {
+            return ReadMessage<ManagedProvisioningSessionMessage>();
+        }
+
+        public void WriteSessionMessage(
+            ManagedProvisioningSessionMessage message)
+        {
+            WriteMessage(message);
         }
 
         internal bool ValidateControlMessage(

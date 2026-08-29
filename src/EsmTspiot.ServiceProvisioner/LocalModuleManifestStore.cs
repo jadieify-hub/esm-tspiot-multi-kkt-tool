@@ -383,6 +383,22 @@ namespace EsmTspiot.ServiceProvisioner
             return true;
         }
 
+        internal bool TryComputeStackFingerprint(
+            string kktSerial,
+            out string fingerprint)
+        {
+            string path = GetStackManifestPath(kktSerial);
+            EnsureMachineSafe(path);
+            if (!File.Exists(path))
+            {
+                fingerprint = string.Empty;
+                return false;
+            }
+            ReadStack(kktSerial);
+            fingerprint = ManagedStateFileFingerprint.Compute(path);
+            return true;
+        }
+
         internal int CountInstanceReferences(string instanceId)
         {
             ValidateInstanceId(instanceId);
