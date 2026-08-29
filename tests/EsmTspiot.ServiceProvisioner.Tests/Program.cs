@@ -33,6 +33,10 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Provisioning protocol exposes no credentials paths or commands", ProvisioningProtocolExposesNoCredentialsPathsOrCommands);
             Run("Installer operation accepts only one verified setup selection", InstallerOperationAcceptsOnlyOneVerifiedSetupSelection);
             Run("Installer operation rejects stale or substituted source file", InstallerOperationRejectsStaleOrSubstitutedSourceFile);
+            Run("Local module verifier accepts only the exact locked MSI", LocalModuleVerifierAcceptsOnlyExactLockedMsi);
+            Run("Local module verifier rejects package identity or signer mismatch", LocalModuleVerifierRejectsPackageIdentityOrSignerMismatch);
+            Run("Managed local module protocol rejects duplicate INN or changed plan", ManagedLocalModuleProtocolRejectsDuplicateInnOrChangedPlan);
+            Run("Managed provisioning session accepts only known monotonic messages", ManagedProvisioningSessionAcceptsOnlyKnownMonotonicMessages);
             Run("Official controller locator enforces protected allowed root", OfficialControllerLocatorEnforcesProtectedAllowedRoot);
             Run("Official controller locator enforces full product trust", OfficialControllerLocatorEnforcesFullProductTrust);
             Run("Official installer verifier locks verifies and stages atomically", OfficialInstallerVerifierLocksVerifiesAndStagesAtomically);
@@ -90,7 +94,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
             if (_failures == 0)
             {
-                Console.WriteLine("All 65 provisioner tests passed.");
+                Console.WriteLine("All 69 provisioner tests passed.");
                 return 0;
             }
 
@@ -303,6 +307,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 typeof(LmRemovalConfirmation),
                 typeof(LmCleanupConfirmation),
                 typeof(LmManifestFingerprint),
+                typeof(ManagedLocalModuleProvisioningItemRequest),
+                typeof(ManagedProvisioningSessionMessage),
                 typeof(LmControllerInstallResult),
                 typeof(LmServiceProvisioningItemResult),
                 typeof(LmServiceProvisioningBatchResult)
@@ -316,6 +322,24 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     string name = properties[propertyIndex].Name;
                     AssertFalse(ContainsForbiddenPropertyFragment(name),
                         credentialFreeTypes[typeIndex].Name + " exposes forbidden property " + name + ".");
+                }
+            }
+
+            Type[] pathFreeSessionTypes =
+            {
+                typeof(ManagedLocalModuleProvisioningItemRequest),
+                typeof(ManagedProvisioningSessionMessage)
+            };
+            for (int typeIndex = 0; typeIndex < pathFreeSessionTypes.Length; typeIndex++)
+            {
+                PropertyInfo[] properties = pathFreeSessionTypes[typeIndex].GetProperties();
+                for (int propertyIndex = 0; propertyIndex < properties.Length; propertyIndex++)
+                {
+                    AssertFalse(properties[propertyIndex].Name.IndexOf(
+                            "Path",
+                            StringComparison.OrdinalIgnoreCase) >= 0,
+                        pathFreeSessionTypes[typeIndex].Name +
+                        " must not accept caller-supplied paths.");
                 }
             }
 
@@ -342,6 +366,21 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                             name.IndexOf("Environment", StringComparison.OrdinalIgnoreCase) >= 0 ||
                             name.IndexOf("ServiceName", StringComparison.OrdinalIgnoreCase) >= 0,
                     "Installer selection may expose only its scoped source path and displayed file metadata.");
+            }
+
+            PropertyInfo[] localModuleInstallerProperties =
+                typeof(LocalModuleInstallerSelection).GetProperties();
+            for (int index = 0; index < localModuleInstallerProperties.Length; index++)
+            {
+                string name = localModuleInstallerProperties[index].Name;
+                bool allowedSourcePath = string.Equals(name, "SourcePath", StringComparison.Ordinal);
+                AssertFalse(!allowedSourcePath && ContainsForbiddenPropertyFragment(name),
+                    "The LM installer selection may expose only its scoped SourcePath and immutable package identity.");
+                AssertFalse(name.IndexOf("Command", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            name.IndexOf("Argument", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            name.IndexOf("Environment", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            name.IndexOf("Password", StringComparison.OrdinalIgnoreCase) >= 0,
+                    "The LM installer selection must not expose execution or secret fields.");
             }
         }
 
@@ -382,6 +421,186 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             stale.ByteLength++;
             AssertFalse(ProvisioningRequestValidator.ValidateInstallerSelection(selected, stale).IsValid,
                 "A changed source length must fail before installer execution.");
+        }
+
+        private static void LocalModuleVerifierAcceptsOnlyExactLockedMsi()
+        {
+            string directory = CreateTemporaryDirectory();
+            try
+            {
+                string path = Path.Combine(directory, "regime-test.msi");
+                byte[] content = Encoding.ASCII.GetBytes("exact-local-module-msi");
+                File.WriteAllBytes(path, content);
+                LocalModuleInstallerSelection selection = CreateLocalModuleInstallerSelection(path, content);
+                WindowsInstallerPackageMetadata metadata = CreateLocalModulePackageMetadata();
+                FakeWindowsInstallerPackageReader reader =
+                    new FakeWindowsInstallerPackageReader(metadata);
+                FakeFileTrustVerifier trust = new FakeFileTrustVerifier(
+                    CreateLocalModuleTrustExpectation(selection),
+                    true);
+                LocalModulePackageVerifier verifier = new LocalModulePackageVerifier(
+                    selection,
+                    reader,
+                    trust,
+                    new FakePathSafety(true));
+
+                using (VerifiedLocalModulePackage package = verifier.VerifyAndLock(selection))
+                {
+                    AssertEqual(Path.GetFullPath(path), package.FullPath,
+                        "The verified package must retain the exact locked source path.");
+                    AssertEqual("2.6.1", package.Metadata.ProductVersion,
+                        "The exact MSI ProductVersion must be retained.");
+                    AssertEqual("{556FD8AD-43A3-4645-BC54-EBF3043ADF82}",
+                        package.Metadata.ProductCode,
+                        "The exact MSI ProductCode must be retained.");
+                    AssertThrows<IOException>(delegate {
+                        using (FileStream ignored = new FileStream(
+                            path,
+                            FileMode.Open,
+                            FileAccess.Write,
+                            FileShare.ReadWrite))
+                        {
+                        }
+                    }, "The source package must remain locked against substitution.");
+                }
+            }
+
+            finally
+            {
+                Directory.Delete(directory, true);
+            }
+        }
+
+        private static void LocalModuleVerifierRejectsPackageIdentityOrSignerMismatch()
+        {
+            string directory = CreateTemporaryDirectory();
+            try
+            {
+                string path = Path.Combine(directory, "regime-test.msi");
+                byte[] content = Encoding.ASCII.GetBytes("exact-local-module-msi");
+                File.WriteAllBytes(path, content);
+                LocalModuleInstallerSelection selection = CreateLocalModuleInstallerSelection(path, content);
+
+                WindowsInstallerPackageMetadata wrongProduct = CreateLocalModulePackageMetadata();
+                wrongProduct.ProductCode = "{00000000-0000-0000-0000-000000000000}";
+                AssertThrows<InvalidDataException>(delegate {
+                    new LocalModulePackageVerifier(
+                        selection,
+                        new FakeWindowsInstallerPackageReader(wrongProduct),
+                        new FakeFileTrustVerifier(CreateLocalModuleTrustExpectation(selection), true),
+                        new FakePathSafety(true)).VerifyAndLock(selection).Dispose();
+                }, "A different ProductCode must be rejected.");
+
+                WindowsInstallerPackageMetadata wrongVersion = CreateLocalModulePackageMetadata();
+                wrongVersion.ProductVersion = "2.6.2";
+                AssertThrows<InvalidDataException>(delegate {
+                    new LocalModulePackageVerifier(
+                        selection,
+                        new FakeWindowsInstallerPackageReader(wrongVersion),
+                        new FakeFileTrustVerifier(CreateLocalModuleTrustExpectation(selection), true),
+                        new FakePathSafety(true)).VerifyAndLock(selection).Dispose();
+                }, "A different ProductVersion must be rejected.");
+
+                TrustedFileExpectation wrongSigner = CreateLocalModuleTrustExpectation(selection);
+                wrongSigner.SignerSubject = "CN=Unexpected Signer";
+                AssertThrows<InvalidDataException>(delegate {
+                    new LocalModulePackageVerifier(
+                        selection,
+                        new FakeWindowsInstallerPackageReader(CreateLocalModulePackageMetadata()),
+                        new FakeFileTrustVerifier(wrongSigner, true),
+                        new FakePathSafety(true)).VerifyAndLock(selection).Dispose();
+                }, "A substituted signer must be rejected even if a trust adapter reports success.");
+
+                TrustedFileExpectation substitutedFile =
+                    CreateLocalModuleTrustExpectation(selection);
+                substitutedFile.Sha256 = new string('c', 64);
+                AssertThrows<InvalidDataException>(delegate {
+                    new LocalModulePackageVerifier(
+                        selection,
+                        new FakeWindowsInstallerPackageReader(CreateLocalModulePackageMetadata()),
+                        new FakeFileTrustVerifier(substitutedFile, true),
+                        new FakePathSafety(true)).VerifyAndLock(selection).Dispose();
+                }, "A source file substituted after confirmation must be rejected.");
+
+                LocalModuleInstallerSelection staleSelection = CloneLocalModuleInstallerSelection(selection);
+                staleSelection.Sha256 = new string('b', 64);
+                AssertThrows<InvalidDataException>(delegate {
+                    new LocalModulePackageVerifier(
+                        selection,
+                        new FakeWindowsInstallerPackageReader(CreateLocalModulePackageMetadata()),
+                        new FakeFileTrustVerifier(CreateLocalModuleTrustExpectation(selection), true),
+                        new FakePathSafety(true)).VerifyAndLock(staleSelection).Dispose();
+                }, "A selection changed after confirmation must be rejected.");
+            }
+            finally
+            {
+                Directory.Delete(directory, true);
+            }
+        }
+
+        private static void ManagedLocalModuleProtocolRejectsDuplicateInnOrChangedPlan()
+        {
+            LmServiceProvisioningBatchRequest request = CreateManagedLocalModuleRequest(2);
+            AssertTrue(ProvisioningRequestValidator.Validate(request).IsValid,
+                "A sorted exact-version local-module request must be accepted.");
+
+            LmServiceProvisioningBatchRequest duplicateInn = CreateManagedLocalModuleRequest(2);
+            duplicateInn.ManagedLocalModules[1].Inn = duplicateInn.ManagedLocalModules[0].Inn;
+            duplicateInn.PlanHash = CanonicalLmPlanHasher.Compute(duplicateInn);
+            AssertFalse(ProvisioningRequestValidator.Validate(duplicateInn).IsValid,
+                "One provisioning request must contain no more than one LM per INN.");
+
+            LmServiceProvisioningBatchRequest changedPlan = CreateManagedLocalModuleRequest(1);
+            changedPlan.ManagedLocalModules[0].ApiPort++;
+            ValidationResult changedValidation = ProvisioningRequestValidator.Validate(changedPlan);
+            AssertFalse(changedValidation.IsValid,
+                "A port changed after confirmation must invalidate the plan hash.");
+            AssertContains(changedValidation.JoinMessages(), "SHA-256");
+        }
+
+        private static void ManagedProvisioningSessionAcceptsOnlyKnownMonotonicMessages()
+        {
+            string operationId = Guid.NewGuid().ToString("N");
+            ManagedProvisioningSessionMessage ready = new ManagedProvisioningSessionMessage
+            {
+                SchemaVersion = ProvisioningRequestValidator.CurrentSchemaVersion,
+                OperationId = operationId,
+                Sequence = 1,
+                Kind = ManagedProvisioningSessionKind.SessionReady,
+                ItemIndex = -1
+            };
+            AssertTrue(ProvisioningRequestValidator.ValidateSessionMessage(
+                    ready, operationId, 0, 2).IsValid,
+                "The first SessionReady message must be accepted.");
+
+            ManagedProvisioningSessionMessage execute = new ManagedProvisioningSessionMessage
+            {
+                SchemaVersion = ProvisioningRequestValidator.CurrentSchemaVersion,
+                OperationId = operationId,
+                Sequence = 2,
+                Kind = ManagedProvisioningSessionKind.ExecuteItem,
+                ItemIndex = 0
+            };
+            AssertTrue(ProvisioningRequestValidator.ValidateSessionMessage(
+                    execute, operationId, 1, 2).IsValid,
+                "The next ExecuteItem message must be accepted.");
+            AssertFalse(ProvisioningRequestValidator.ValidateSessionMessage(
+                    execute, operationId, 2, 2).IsValid,
+                "A repeated sequence must be rejected.");
+
+            ManagedProvisioningSessionMessage unknown = new ManagedProvisioningSessionMessage
+            {
+                SchemaVersion = ProvisioningRequestValidator.CurrentSchemaVersion,
+                OperationId = operationId,
+                Sequence = 3,
+                Kind = (ManagedProvisioningSessionKind)999,
+                ItemIndex = -1
+            };
+            AssertFalse(ProvisioningRequestValidator.ValidateSessionMessage(
+                    unknown, operationId, 2, 2).IsValid,
+                "An unknown session message kind must be rejected.");
+            AssertEqual(5, Enum.GetValues(typeof(ManagedProvisioningSessionKind)).Length,
+                "The session protocol must expose exactly the five reviewed message kinds.");
         }
 
         private static void OfficialControllerLocatorEnforcesProtectedAllowedRoot()
@@ -1971,6 +2190,114 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             };
         }
 
+        private static LmServiceProvisioningBatchRequest CreateManagedLocalModuleRequest(int count)
+        {
+            LmServiceProvisioningBatchRequest request =
+                CreateRequest(LmServiceOperation.EnsureManagedLocalModules);
+            request.LocalModuleInstallerSelection = new LocalModuleInstallerSelection
+            {
+                SourcePath = @"C:\Users\operator\Downloads\regime-2.6.1-7.msi",
+                FileName = "regime-2.6.1-7.msi",
+                ByteLength = 51007488,
+                Sha256 = "68a9633cefc912c2c1defae40d1c8f433bb794ee66060b822f0895410ab6c5c6",
+                ProductName = "Локальный модуль Честный Знак",
+                ProductVersion = "2.6.1",
+                ProductCode = "{556FD8AD-43A3-4645-BC54-EBF3043ADF82}",
+                UpgradeCode = "{9449123B-61C4-40DE-AA6C-1BB9AA02EB67}",
+                SignerSubject = "CN=ООО ЦЕНТР РАЗВИТИЯ ПЕРСПЕКТИВНЫХ ТЕХНОЛОГИЙ",
+                SignerThumbprint = "6BA5F6BBE4BE27658253C78889334D0E24858C19",
+                LicenseNoticeAccepted = true
+            };
+            for (int index = 0; index < count; index++)
+            {
+                int ordinal = index + 1;
+                request.ManagedLocalModules.Add(new ManagedLocalModuleProvisioningItemRequest
+                {
+                    KktSerial = (105700000001L + index).ToString("00000000000000"),
+                    Inn = (1000000002L + (index * 1000000001L)).ToString("0000000000"),
+                    KktOrdinal = ordinal,
+                    LocalModuleOrdinal = ordinal,
+                    ApiPort = 4995 + (1000 * ordinal),
+                    DatabasePort = 4984 + (1000 * ordinal),
+                    EpmdPort = 43690 + ordinal,
+                    ControllerGrpcPort = 45000 + ordinal,
+                    ControllerRestPort = 15000 + ordinal,
+                    RuntimeVersion = "2.6.1"
+                });
+            }
+            request.PlanHash = CanonicalLmPlanHasher.Compute(request);
+            return request;
+        }
+
+        private static LocalModuleInstallerSelection CreateLocalModuleInstallerSelection(
+            string path,
+            byte[] content)
+        {
+            return new LocalModuleInstallerSelection
+            {
+                SourcePath = path,
+                FileName = Path.GetFileName(path),
+                ByteLength = content.Length,
+                Sha256 = ComputeSha256(content),
+                ProductName = "Локальный модуль Честный Знак",
+                ProductVersion = "2.6.1",
+                ProductCode = "{556FD8AD-43A3-4645-BC54-EBF3043ADF82}",
+                UpgradeCode = "{9449123B-61C4-40DE-AA6C-1BB9AA02EB67}",
+                SignerSubject = "CN=Test CRPT",
+                SignerThumbprint = "6BA5F6BBE4BE27658253C78889334D0E24858C19",
+                LicenseNoticeAccepted = true
+            };
+        }
+
+        private static LocalModuleInstallerSelection CloneLocalModuleInstallerSelection(
+            LocalModuleInstallerSelection source)
+        {
+            return new LocalModuleInstallerSelection
+            {
+                SourcePath = source.SourcePath,
+                FileName = source.FileName,
+                ByteLength = source.ByteLength,
+                Sha256 = source.Sha256,
+                ProductName = source.ProductName,
+                ProductVersion = source.ProductVersion,
+                ProductCode = source.ProductCode,
+                UpgradeCode = source.UpgradeCode,
+                SignerSubject = source.SignerSubject,
+                SignerThumbprint = source.SignerThumbprint,
+                LicenseNoticeAccepted = source.LicenseNoticeAccepted
+            };
+        }
+
+        private static WindowsInstallerPackageMetadata CreateLocalModulePackageMetadata()
+        {
+            return new WindowsInstallerPackageMetadata
+            {
+                ProductName = "Локальный модуль Честный Знак",
+                ProductVersion = "2.6.1",
+                ProductCode = "{556FD8AD-43A3-4645-BC54-EBF3043ADF82}",
+                UpgradeCode = "{9449123B-61C4-40DE-AA6C-1BB9AA02EB67}"
+            };
+        }
+
+        private static TrustedFileExpectation CreateLocalModuleTrustExpectation(
+            LocalModuleInstallerSelection selection)
+        {
+            return new TrustedFileExpectation
+            {
+                FileName = selection.FileName,
+                ByteLength = selection.ByteLength,
+                Sha256 = selection.Sha256,
+                FileVersion = string.Empty,
+                ProductVersion = string.Empty,
+                ProductName = string.Empty,
+                CompanyName = string.Empty,
+                Machine = PeMachine.Unknown,
+                SignerSubject = selection.SignerSubject,
+                SignerThumbprint = selection.SignerThumbprint,
+                RequireCodeSigningEku = true
+            };
+        }
+
         private static ProvisioningPeerEvidence CreateValidServerEvidence()
         {
             return new ProvisioningPeerEvidence
@@ -2798,6 +3125,27 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 return _trusted
                     ? FileTrustResult.Trusted(path, _observed)
                     : FileTrustResult.Rejected(_error ?? "trust rejected");
+            }
+        }
+
+        private sealed class FakeWindowsInstallerPackageReader : IWindowsInstallerPackageReader
+        {
+            private readonly WindowsInstallerPackageMetadata _metadata;
+
+            internal FakeWindowsInstallerPackageReader(WindowsInstallerPackageMetadata metadata)
+            {
+                _metadata = metadata;
+            }
+
+            public WindowsInstallerPackageMetadata Read(string path)
+            {
+                return new WindowsInstallerPackageMetadata
+                {
+                    ProductName = _metadata.ProductName,
+                    ProductVersion = _metadata.ProductVersion,
+                    ProductCode = _metadata.ProductCode,
+                    UpgradeCode = _metadata.UpgradeCode
+                };
             }
         }
     }

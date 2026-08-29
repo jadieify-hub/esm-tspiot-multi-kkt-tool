@@ -10,6 +10,7 @@ namespace EsmTspiot.Shared.Models
         {
             Items = new List<LmServiceProvisioningItemRequest>();
             RemovalConfirmations = new List<LmRemovalConfirmation>();
+            ManagedLocalModules = new List<ManagedLocalModuleProvisioningItemRequest>();
         }
 
         [DataMember(Order = 1)]
@@ -41,5 +42,11 @@ namespace EsmTspiot.Shared.Models
 
         [DataMember(Order = 10, EmitDefaultValue = false)]
         public IList<LmRemovalConfirmation> RemovalConfirmations { get; private set; }
+
+        [DataMember(Order = 11, EmitDefaultValue = false)]
+        public LocalModuleInstallerSelection LocalModuleInstallerSelection { get; set; }
+
+        [DataMember(Order = 12, EmitDefaultValue = false)]
+        public IList<ManagedLocalModuleProvisioningItemRequest> ManagedLocalModules { get; private set; }
     }
 }

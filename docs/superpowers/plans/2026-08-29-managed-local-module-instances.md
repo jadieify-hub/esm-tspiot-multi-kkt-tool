@@ -78,12 +78,12 @@ Preserve valid assignments, allocate `K/N` from `1..32`, group exact normalized 
 
 **Interfaces:** `VerifyAndLock(LocalModuleInstallerSelection)` returns a locked `VerifiedLocalModulePackage`. Session kinds are exactly `SessionReady`, `ExecuteItem`, `ItemResult`, `Finish`, `CancelAfterCurrentItem`, with monotonically increasing sequence.
 
-- [ ] **Step 1: Write failing tests** for exact package, substituted source, wrong ProductCode/version/signer, duplicate INN, unknown message kind, repeated sequence, reflected secret/path/command property and plan-hash mismatch.
-- [ ] **Step 2: Run RED:** build/run `tests/EsmTspiot.ServiceProvisioner.Tests`; new verifier/protocol tests fail.
-- [ ] **Step 3: Implement read-only `_Property` inspection** using `MsiOpenDatabaseW`, view/execute/fetch and `MsiRecordGetStringW`; never run install actions during inspection.
-- [ ] **Step 4: Require exact metadata + WinTrust + size/hash after reopening without sharing. Hash operation, package identities, KKT/INN, K/N, ports and sequence in ordinal order.**
-- [ ] **Step 5: Run helper tests and `scripts/verify_lm_safety.ps1`; both pass.**
-- [ ] **Step 6: Commit:** `git commit -m "Добавить проверку MSI ЛМ и защищённый контракт"`.
+- [x] **Step 1: Write failing tests** for exact package, substituted source, wrong ProductCode/version/signer, duplicate INN, unknown message kind, repeated sequence, reflected secret/path/command property and plan-hash mismatch.
+- [x] **Step 2: Run RED:** build/run `tests/EsmTspiot.ServiceProvisioner.Tests`; new verifier/protocol tests fail.
+- [x] **Step 3: Implement read-only `_Property` inspection** using `MsiOpenDatabaseW`, view/execute/fetch and `MsiRecordGetStringW`; never run install actions during inspection.
+- [x] **Step 4: Require exact metadata + WinTrust + size/hash after reopening without sharing. Hash operation, package identities, KKT/INN, K/N, ports and sequence in ordinal order.**
+- [x] **Step 5: Run helper tests and `scripts/verify_lm_safety.ps1`; both pass.**
+- [x] **Step 6: Commit:** `git commit -m "Добавить проверку MSI ЛМ и защищённый контракт"`.
 
 ---
 
