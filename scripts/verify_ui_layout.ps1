@@ -256,6 +256,24 @@ try {
     $bindingDialogType = $assembly.GetType(
         "EsmTspiot.WinForms.Shared.LmGatewayBindingDialog",
         $true)
+    $credentialDefaultsType = $assembly.GetType(
+        "EsmTspiot.WinForms.Shared.LmGatewayCredentialDefaults",
+        $true)
+    $credentialFactory = $credentialDefaultsType.GetMethod(
+        "Create",
+        [System.Reflection.BindingFlags]::Static -bor
+        [System.Reflection.BindingFlags]::NonPublic)
+    $firstDefaults = $credentialFactory.Invoke($null, $null)
+    $secondDefaults = $credentialFactory.Invoke($null, $null)
+    if ($firstDefaults.Login -ne "admin" -or
+        $firstDefaults.Password -ne "admin" -or
+        [object]::ReferenceEquals($firstDefaults, $secondDefaults)) {
+        throw "Every ESM binding must receive a fresh admin/admin credential object."
+    }
+    $firstDefaults.Login = ""
+    $firstDefaults.Password = ""
+    $secondDefaults.Login = ""
+    $secondDefaults.Password = ""
     $bindingDialogConstructor = $bindingDialogType.GetConstructors(
         [System.Reflection.BindingFlags]::Instance -bor
         [System.Reflection.BindingFlags]::NonPublic)[0]
@@ -270,8 +288,12 @@ try {
     if (-not $bindingPassword.UseSystemPasswordChar) {
         throw "The one-time ESM binding password must be masked."
     }
-    if ($bindingConfirm.Enabled) {
-        throw "The ESM binding action must remain disabled without both credentials."
+    if ($bindingLogin.Text -ne "admin" -or
+        $bindingPassword.Text -ne "admin") {
+        throw "The one-time ESM binding dialog must prefill the deployed admin/admin credentials."
+    }
+    if (-not $bindingConfirm.Enabled) {
+        throw "The prefilled ESM binding action must be ready without repetitive operator input."
     }
     $bindingLogin.Text = "operator"
     $bindingPassword.Text = "temporary-secret"
@@ -661,6 +683,8 @@ try {
         (Join-Path $repoRoot "src\EsmTspiot.WinForms.Shared\MainForm.cs"))
     $pageSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot "src\EsmTspiot.WinForms.Shared\LmGatewayPage.cs"))
+    $pageServicesSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot "src\EsmTspiot.WinForms.Shared\LmGatewayPage.Services.cs"))
     if ($mainFormSource -notmatch 'InstructionFileSelector\.SelectAvailable') {
         throw "Help must use the packaged Markdown field guide when no PDF exists."
     }
@@ -672,6 +696,15 @@ try {
     if ($pageSource -notmatch '(?s)RefreshIfNeededAsync\(\).*?RefreshSilentlyAsync\(\)' -or
         $pageSource -notmatch '(?s)RefreshSilentlyAsync\(\).*?RunOperationAsync\(\s*RefreshCoreAsync,.*?false,\s*true,\s*false,\s*CancellationToken\.None') {
         throw "The automatic first LM-tab refresh must log failures without showing a modal dialog."
+    }
+    if ($pageServicesSource -notmatch '(?s)_completeStackProvisioner\.RunAsync.*?async delegate\(\s*int index,\s*LmServiceProvisioningItemResult item,.*?ExecuteCompleteAutomaticBindingAsync.*?LmGatewayCredentialDefaults\.Create') {
+        throw "Each prepared KKT, including the canary, must be bound before the complete automatic workflow advances."
+    }
+    if ($pageServicesSource -notmatch '(?s)await RefreshCoreAsync\(CancellationToken\.None\).*?_session\.ApplyOutcomeFallback\(automaticBindingOutcome\).*?FillRows\(null\).*?AreCompleteAutomaticBindingRowsSuccessful') {
+        throw "Automatic binding outcomes must remain visible after the final ESM readback refresh."
+    }
+    if ($pageServicesSource -notmatch '(?s)bool finalRefreshSucceeded\s*=\s*false.*?finalRefreshSucceeded\s*=\s*true.*?if \(finalRefreshSucceeded\).*?AreCompleteAutomaticBindingRowsSuccessful') {
+        throw "A best-effort final refresh must refine success only when the readback itself completed."
     }
 
     Write-Host (

@@ -157,11 +157,14 @@ function Test-AllowedSecretHit {
     if ($relative -eq "src/EsmTspiot.Shared/Services/LmGatewayBindingWorkflow.cs") {
         return $text -match 'credentials\.Password|Password = credentials\.Password|timeout\.Token'
     }
+    if ($relative -eq "src/EsmTspiot.WinForms.Shared/LmGatewayCredentialDefaults.cs") {
+        return $text -match '^\s*Password\s*=\s*"admin"\s*$'
+    }
     if ($relative -eq "src/EsmTspiot.Shared/Services/LmGatewayReadbackWorkflow.cs") {
         return $text -match 'timeout\.Token'
     }
     if ($relative -eq "src/EsmTspiot.WinForms.Shared/LmGatewayBindingDialog.cs") {
-        return $text -match 'Password\s*=\s*_passwordTextBox\.Text'
+        return $text -match 'Password\s*=\s*_passwordTextBox\.Text|_passwordTextBox\.Text\s*=\s*credentials\.Password|credentials\.Password\s*=\s*string\.Empty'
     }
     if ($relative -eq "src/EsmTspiot.WinForms.Shared/LmGatewayPage.Binding.cs") {
         return $text -match 'delegate\(CancellationToken token\)|ExecuteSelectedBindingAsync\(plan, credentials, token\)|credentials\.Password\s*=\s*string\.Empty|Password\s*=\s*credentials\.Password'
@@ -204,6 +207,20 @@ if (-not (Test-Path -LiteralPath $bindingPagePath -PathType Leaf) -or
 }
 $bindingPage = [IO.File]::ReadAllText($bindingPagePath)
 $bindingDialog = [IO.File]::ReadAllText($bindingDialogPath)
+$credentialDefaultsPath = Join-Path $repositoryRoot (
+    "src\EsmTspiot.WinForms.Shared\LmGatewayCredentialDefaults.cs")
+$legacyProject = [IO.File]::ReadAllText((Join-Path $repositoryRoot (
+    "src\EsmTspiot.Legacy.WinForms\EsmTspiot.Legacy.WinForms.csproj")))
+$modernProject = [IO.File]::ReadAllText((Join-Path $repositoryRoot (
+    "src\EsmTspiot.Modern.WinForms\EsmTspiot.Modern.WinForms.csproj")))
+$helperProject = [IO.File]::ReadAllText((Join-Path $repositoryRoot (
+    "src\EsmTspiot.ServiceProvisioner\EsmTspiot.ServiceProvisioner.csproj")))
+if (-not (Test-Path -LiteralPath $credentialDefaultsPath -PathType Leaf) -or
+    $legacyProject -notmatch 'LmGatewayCredentialDefaults\.cs' -or
+    $modernProject -notmatch 'LmGatewayCredentialDefaults\.cs' -or
+    $helperProject -match 'LmGatewayCredentialDefaults|EsmTspiot\.WinForms\.Shared') {
+    throw "Standard ESM credentials must be compiled only into the two WinForms applications, never into the privileged helper."
+}
 if ($gatewayPage -match '_loginTextBox|_passwordTextBox|LmGatewayCredentials|StoreCredentials') {
     throw "The operator LM page must not retain hidden credential controls or credential state."
 }

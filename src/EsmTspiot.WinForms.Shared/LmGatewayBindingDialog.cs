@@ -134,6 +134,7 @@ namespace EsmTspiot.WinForms.Shared
             AcceptButton = _confirmButton;
             CancelButton = cancel;
             Controls.Add(root);
+            PrefillStandardCredentials();
         }
 
         private static void AddField(
@@ -160,6 +161,22 @@ namespace EsmTspiot.WinForms.Shared
             _confirmButton.Enabled =
                 !string.IsNullOrWhiteSpace(_loginTextBox.Text) &&
                 !string.IsNullOrWhiteSpace(_passwordTextBox.Text);
+        }
+
+        private void PrefillStandardCredentials()
+        {
+            LmGatewayCredentials credentials = LmGatewayCredentialDefaults.Create();
+            try
+            {
+                _loginTextBox.Text = credentials.Login;
+                _passwordTextBox.Text = credentials.Password;
+            }
+            finally
+            {
+                credentials.Login = string.Empty;
+                credentials.Password = string.Empty;
+            }
+            UpdateActionState();
         }
     }
 }

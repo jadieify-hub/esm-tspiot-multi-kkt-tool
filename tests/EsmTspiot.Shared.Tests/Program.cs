@@ -111,6 +111,7 @@ namespace EsmTspiot.Shared.Tests
             Run("LM inventory display separates the official controller from KKT services", LmInventoryDisplaySeparatesOfficialControllerFromKktServices);
             Run("LM binding session does not invent readback", LmBindingSessionDoesNotInventReadback);
             Run("LM binding session applies verified readback", LmBindingSessionAppliesVerifiedReadback);
+            Run("LM binding fallback preserves newer readback", LmBindingFallbackPreservesNewerReadback);
             Run("LM binding session orders KKT for stable ordinals", LmBindingSessionOrdersKktForStableOrdinals);
             Run("LM binding session preserves current drafts on refresh", LmBindingSessionPreservesCurrentDraftsOnRefresh);
             Run("LM binding session discards a draft after INN changes", LmBindingSessionDiscardsDraftAfterInnChanges);
@@ -2170,6 +2171,119 @@ namespace EsmTspiot.Shared.Tests
             AssertEqual("5995", session.Rows[0].ObservedLmPort,
                 "The observed LM target port must be kept separately.");
             AssertContains(session.Rows[0].LastMessage, "127.0.0.1:5995");
+        }
+
+        private static void LmBindingFallbackPreservesNewerReadback()
+        {
+            LmGatewayBindingSession session = new LmGatewayBindingSession();
+            session.ReplaceDiscovery(CreateLmDiscovery(
+                CreateLmKkt("00105700000001", "1234567894")));
+            LmGatewayBindingOutcome accepted = new LmGatewayBindingOutcome();
+            accepted.Results.Add(new LmGatewayBindingResult
+            {
+                KktSerial = "00105700000001",
+                KktInn = "1234567894",
+                Status = LmGatewayBindingStatus.BindingAccepted,
+                Details = "PUT принят; read-back недоступен."
+            });
+
+            session.ApplyReadback(new List<LmGatewayReadbackObservation>
+            {
+                new LmGatewayReadbackObservation
+                {
+                    KktSerial = "00105700000001",
+                    KktInn = "1234567894",
+                    IsAvailable = true,
+                    IdentityMatches = true,
+                    HasLmConfiguration = true,
+                    EndpointMatches = true,
+                    LmAddress = "127.0.0.1",
+                    LmPort = "5995",
+                    Details = "Привязка подтверждена ЕСМ."
+                }
+            });
+            session.ApplyOutcomeFallback(accepted);
+
+            AssertEqual(LmGatewayBindingStatus.BindingVerified,
+                session.Rows[0].LastBindingStatus.Value,
+                "A stale accepted PUT must not overwrite a newer verified readback.");
+
+            session.ApplyReadback(new List<LmGatewayReadbackObservation>
+            {
+                new LmGatewayReadbackObservation
+                {
+                    KktSerial = "00105700000001",
+                    KktInn = "1234567894",
+                    IsAvailable = true,
+                    IdentityMatches = true,
+                    HasLmConfiguration = true,
+                    EndpointMatches = false,
+                    Details = "Адрес ЛМ не совпадает."
+                }
+            });
+            session.ApplyOutcomeFallback(accepted);
+
+            AssertEqual(LmGatewayBindingStatus.RequiresAttention,
+                session.Rows[0].LastBindingStatus.Value,
+                "A stale accepted PUT must not overwrite a newer mismatch.");
+            AssertContains(session.Rows[0].LastMessage, "не совпадает");
+
+            session.ApplyReadback(new List<LmGatewayReadbackObservation>
+            {
+                new LmGatewayReadbackObservation
+                {
+                    KktSerial = "00105700000001",
+                    KktInn = "1234567894",
+                    IsAvailable = false,
+                    Details = "Read-back недоступен."
+                }
+            });
+            session.ApplyOutcomeFallback(accepted);
+
+            AssertEqual(LmGatewayBindingStatus.BindingAccepted,
+                session.Rows[0].LastBindingStatus.Value,
+                "Accepted PUT must remain visible when final readback has no status.");
+            AssertContains(session.Rows[0].LastMessage, "Read-back недоступен");
+
+            session.ApplyReadback(new List<LmGatewayReadbackObservation>
+            {
+                new LmGatewayReadbackObservation
+                {
+                    KktSerial = "00105700000001",
+                    KktInn = "1234567894",
+                    IsAvailable = true,
+                    IdentityMatches = true,
+                    HasLmConfiguration = false,
+                    Details = "ЕСМ не сообщает настроенную привязку."
+                }
+            });
+            session.ApplyOutcomeFallback(accepted);
+
+            AssertEqual(LmGatewayBindingStatus.RequiresAttention,
+                session.Rows[0].LastBindingStatus.Value,
+                "An available final readback without LM configuration must fail the accepted fallback.");
+
+            LmGatewayBindingSession identitySession = new LmGatewayBindingSession();
+            identitySession.ReplaceDiscovery(CreateLmDiscovery(
+                CreateLmKkt("00105700000001", "1234567894")));
+            identitySession.ApplyOutcome(accepted);
+            identitySession.ApplyReadback(new List<LmGatewayReadbackObservation>
+            {
+                new LmGatewayReadbackObservation
+                {
+                    KktSerial = "00105700000001",
+                    KktInn = "7707083893",
+                    IsAvailable = true,
+                    IdentityMatches = false,
+                    HasLmConfiguration = true,
+                    Details = "Ответ относится к другому ИНН."
+                }
+            });
+            identitySession.ApplyOutcomeFallback(accepted);
+
+            AssertEqual(LmGatewayBindingStatus.RequiresAttention,
+                identitySession.Rows[0].LastBindingStatus.Value,
+                "A final identity mismatch must override an earlier accepted PUT.");
         }
 
         private static void LmBindingSessionOrdersKktForStableOrdinals()

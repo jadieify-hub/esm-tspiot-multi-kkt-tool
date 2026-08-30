@@ -14,7 +14,7 @@
 | `id` обозначает идентификатор экземпляра ЕСМ; в описанном процессе он задается равным `kktSerial` | CSI, раздел «Настройка ЕСМ», шаги 3–6 | `InstanceId`, `KktSerial` |
 | JSON-поле `address` имеет тип string | CSI, пример тела PUT | `LmConnectionRequest.Address` |
 | JSON-поле `port` имеет числовой тип | CSI, пример тела PUT | `LmConnectionRequest.Port`, `ControllerGrpcPort` после отдельного compatibility gate |
-| JSON-поля `login` и `password` имеют строковый тип | CSI, пример тела PUT | только короткоживущие credentials непосредственно перед PUT |
+| JSON-поля `login` и `password` имеют строковый тип; официальный пример использует `admin/admin` | CSI, пример тела PUT | новый короткоживущий credential-объект непосредственно перед каждым PUT; без сохранения |
 | Метод read-back: `GET https://localhost:<softPort>/api/v2/info` для ЕСМ 1.6.3+ | «Руководство по интеграции ЕСМ для разработчиков ПМСР», версия 1.9 от 25.08.2026, передано владельцем проекта | `TspiotDefaults.LmInfoPath`, `GetLmInfoAsync` |
 | Корневая идентичность ответа: `kktSerial`, `kktInn`; блок `lm` содержит endpoint самого ЛМ ЧЗ (`ip`, `port`), `status`, `version` | то же руководство, описание и пример ответа `/api/v2/info` с портом ЛМ `5995` | `LmGatewayInfoParser`, безопасная `LmGatewayInfo` |
 

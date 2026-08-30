@@ -1304,7 +1304,8 @@ namespace EsmTspiot.WinForms.Shared
                     : "Статус: завершено, требуется внимание";
 
                 string stackSummary = complete
-                    ? "Контроллеры и ЛМ ЧЗ запущены. ЛМ готовы к инициализации ЕСМ или сторонней утилитой."
+                    ? "Контроллеры и ЛМ ЧЗ запущены; ЕСМ принял настройки связи. " +
+                        "ЛМ готовы к бизнес-инициализации ЕСМ или сторонней утилитой."
                     : _lmGatewayPage.AutomaticSetupStatus;
                 MessageBox.Show(
                     this,
