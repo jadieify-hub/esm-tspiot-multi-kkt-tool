@@ -115,6 +115,8 @@ namespace EsmTspiot.Shared.Tests
             Run("LM binding session preserves current drafts on refresh", LmBindingSessionPreservesCurrentDraftsOnRefresh);
             Run("LM binding session discards a draft after INN changes", LmBindingSessionDiscardsDraftAfterInnChanges);
             Run("LM binding session builds a plan only for selected KKT", LmBindingSessionBuildsPlanOnlyForSelectedKkt);
+            Run("LM binding session builds an exact one-KKT plan", LmBindingSessionBuildsExactOneKktPlan);
+            Run("LM binding session ignores an unknown exact KKT", LmBindingSessionIgnoresUnknownExactKkt);
             Run("LM binding session can select all KKT for full automatic setup", LmBindingSessionCanSelectAllForAutomaticSetup);
             Run("LM binding session masks outcome details", LmBindingSessionMasksOutcomeDetails);
             Run("LM binding workflow sends items sequentially", LmBindingWorkflowSendsItemsSequentially);
@@ -127,7 +129,11 @@ namespace EsmTspiot.Shared.Tests
             Run("LM binding workflow preserves partial results on cancellation", LmBindingWorkflowPreservesPartialResultsOnCancellation);
             Run("LM binding workflow progress never contains password", LmBindingWorkflowProgressNeverContainsPassword);
             Run("API client preserves an injected timeout", ApiClientPreservesInjectedTimeout);
+            Run("Canonical hasher validates SHA-256 syntax", CanonicalHasherValidatesSha256Syntax);
             Run("Instruction selector uses the newest file time", InstructionSelectorUsesNewestFileTime);
+            Run("Instruction selector falls back to the field guide", InstructionSelectorFallsBackToFieldGuide);
+            Run("KKT service states are localized for operators", KktServiceStatesAreLocalizedForOperators);
+            Run("Unknown KKT service state remains diagnosable", UnknownKktServiceStateRemainsDiagnosable);
             Run("Deletion planner protects primary KKT", DeletionPlannerProtectsPrimaryKkt);
             Run("Deletion planner blocks ambiguous primary KKT", DeletionPlannerBlocksAmbiguousPrimaryKkt);
             Run("Deletion confirmation requires last four digits", DeletionConfirmationRequiresLastFourDigits);
@@ -2246,6 +2252,38 @@ namespace EsmTspiot.Shared.Tests
             AssertTrue(plan.Items[0].IsValid, "Expected selected row to produce a valid plan item.");
         }
 
+        private static void LmBindingSessionBuildsExactOneKktPlan()
+        {
+            LmGatewayBindingSession session = new LmGatewayBindingSession();
+            session.ReplaceDiscovery(CreateLmDiscovery(
+                CreateLmKkt("00105700000001", "1234567894"),
+                CreateLmKkt("00105700000002", "7707083893")));
+            session.TryUpdateDraft("00105700000001", "127.0.0.1", "45001", true);
+            session.TryUpdateDraft("00105700000002", "127.0.0.1", "45002", true);
+
+            LmGatewayBindingPlan plan = session.BuildPlanFor("00105700000002");
+            session.TryUpdateDraft("00105700000002", "127.0.0.1", "45999", true);
+
+            AssertEqual(1, plan.Items.Count,
+                "A row action must never bind another selected KKT.");
+            AssertEqual("00105700000002", plan.Items[0].Kkt.KktSerial,
+                "Expected the explicitly requested KKT.");
+            AssertEqual("45002", plan.Items[0].Input.ControllerGrpcPort,
+                "The exact plan must retain a stable controller-port snapshot.");
+        }
+
+        private static void LmBindingSessionIgnoresUnknownExactKkt()
+        {
+            LmGatewayBindingSession session = new LmGatewayBindingSession();
+            session.ReplaceDiscovery(CreateLmDiscovery(
+                CreateLmKkt("00105700000001", "1234567894")));
+
+            LmGatewayBindingPlan plan = session.BuildPlanFor("00105700000999");
+
+            AssertEqual(0, plan.Items.Count,
+                "An orphan or stale grid identity must not create a PUT plan.");
+        }
+
         private static void LmBindingSessionCanSelectAllForAutomaticSetup()
         {
             LmGatewayBindingSession session = new LmGatewayBindingSession();
@@ -2664,6 +2702,59 @@ namespace EsmTspiot.Shared.Tests
             {
                 Directory.Delete(directory, true);
             }
+        }
+
+        private static void CanonicalHasherValidatesSha256Syntax()
+        {
+            AssertTrue(CanonicalLmPlanHasher.IsWellFormedSha256(new string('a', 64)),
+                "A lowercase 64-character SHA-256 value must be accepted.");
+            AssertTrue(CanonicalLmPlanHasher.IsWellFormedSha256(new string('F', 64)),
+                "An uppercase 64-character SHA-256 value must be accepted.");
+            AssertFalse(CanonicalLmPlanHasher.IsWellFormedSha256(new string('a', 63)),
+                "A truncated fingerprint must be rejected.");
+            AssertFalse(CanonicalLmPlanHasher.IsWellFormedSha256(new string('z', 64)),
+                "A non-hex fingerprint must be rejected.");
+            AssertFalse(CanonicalLmPlanHasher.IsWellFormedSha256(null),
+                "A missing fingerprint must be rejected.");
+        }
+
+        private static void InstructionSelectorFallsBackToFieldGuide()
+        {
+            string directory = Path.Combine(
+                Path.GetTempPath(),
+                "esm_instruction_fallback_tests_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            try
+            {
+                string guide = Path.Combine(directory, "FIELD_TEST_1.6.3.2.md");
+                File.WriteAllText(guide, "guide");
+
+                AssertEqual(guide, InstructionFileSelector.SelectAvailable(directory),
+                    "The compact package field guide must keep the Help command usable.");
+            }
+            finally
+            {
+                Directory.Delete(directory, true);
+            }
+        }
+
+        private static void KktServiceStatesAreLocalizedForOperators()
+        {
+            AssertEqual("Запущена", KktServiceStateFormatter.ToDisplayText("Running"),
+                "Running must not leak into the Russian operator table.");
+            AssertEqual("Остановлена", KktServiceStateFormatter.ToDisplayText("STOPPED"),
+                "Stopped must not leak into the Russian operator table.");
+            AssertEqual("Запускается", KktServiceStateFormatter.ToDisplayText("StartPending"),
+                "A pending start must remain distinguishable.");
+        }
+
+        private static void UnknownKktServiceStateRemainsDiagnosable()
+        {
+            AssertEqual("VendorSpecificState",
+                KktServiceStateFormatter.ToDisplayText(" VendorSpecificState "),
+                "An unknown vendor state must remain visible instead of being hidden.");
+            AssertEqual("—", KktServiceStateFormatter.ToDisplayText(null),
+                "An absent state must have an explicit empty marker.");
         }
 
         private static void DeletionPlannerProtectsPrimaryKkt()

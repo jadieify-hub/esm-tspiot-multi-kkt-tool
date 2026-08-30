@@ -128,6 +128,7 @@ Author: Ruslan Kerusov
 4. The official vendor packages are not included. Supply the supported esm-lm-controller_1.6.3.2-windows-setup.exe and regime-2.6.1-7.msi files yourself, then select both in the application.
 5. This archive contains no vendor binaries, extracted runtime, credentials or managed profiles.
 6. Before a real installation, follow FIELD_TEST_1.6.3.2.md.
+7. After creating the local kits, select each ready KKT on the LM CHZ tab and use "Bind to ESM". Credentials are used for that operation only and are not saved.
 
 Run: MultiKKT-ESM-TSPioT.exe
 "@

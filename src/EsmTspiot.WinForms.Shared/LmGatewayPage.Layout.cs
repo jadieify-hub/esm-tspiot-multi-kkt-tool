@@ -26,18 +26,22 @@ namespace EsmTspiot.WinForms.Shared
             toolbar.Margin = new Padding(0, 0, 0, 6);
 
             ConfigureButton(_refreshButton, "Обновить");
+            ConfigureButton(_bindButton, "Привязать к ЕСМ");
+            _bindButton.Tag = "BindSelectedEsm";
             ConfigureButton(_removeServiceButton, "Удалить выбранный комплект");
             ConfigureButton(_removeAllServicesButton, "Удалить всё созданное");
             _removeAllServicesButton.Tag = "RemoveAllManaged";
             ConfigureButton(_cleanupButton, "Завершить очистку");
             ConfigureButton(_cancelButton, "Остановить");
             _refreshButton.Click += async delegate { await RefreshAsync(); };
+            _bindButton.Click += async delegate { await BindSelectedAsync(); };
             _removeServiceButton.Click += async delegate { await ConfirmAndRemoveServiceAsync(); };
             _removeAllServicesButton.Click += async delegate { await ConfirmAndRemoveAllServicesAsync(); };
             _cleanupButton.Click += async delegate { await ConfirmAndCleanupServiceAsync(); };
             _cancelButton.Click += delegate { CancelCurrentOperation(); };
             _cancelButton.Visible = false;
             toolbar.Controls.Add(_refreshButton);
+            toolbar.Controls.Add(_bindButton);
             toolbar.Controls.Add(_removeServiceButton);
             toolbar.Controls.Add(_removeAllServicesButton);
             toolbar.Controls.Add(_cleanupButton);
@@ -82,8 +86,10 @@ namespace EsmTspiot.WinForms.Shared
             DataGridViewTextBoxColumn inn = CreateTextColumn("ИНН", 75);
             inn.Name = "KktInn";
             _grid.Columns.Add(inn);
-            DataGridViewTextBoxColumn softwarePort = CreateTextColumn("Порт кассового ПО", 90);
+            DataGridViewTextBoxColumn softwarePort = CreateTextColumn("Порт ПО", 90);
             softwarePort.Name = "KktSoftwarePort";
+            softwarePort.ToolTipText =
+                "softPort для Frontol или другой кассовой программы.";
             _grid.Columns.Add(softwarePort);
             DataGridViewTextBoxColumn endpoint = CreateTextColumn(
                 "Адрес и порт ЛМ ЧЗ",

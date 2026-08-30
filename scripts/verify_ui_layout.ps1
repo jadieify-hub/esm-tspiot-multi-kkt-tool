@@ -18,6 +18,7 @@ Add-Type -AssemblyName System.Drawing
 $assembly = [System.Reflection.Assembly]::LoadFrom($appPath)
 $formType = $assembly.GetType("EsmTspiot.WinForms.Shared.MainForm", $true)
 $flags = [System.Reflection.BindingFlags]::Instance -bor [System.Reflection.BindingFlags]::NonPublic
+$allInstanceFlags = $flags -bor [System.Reflection.BindingFlags]::Public
 
 function Get-PrivateFieldValue {
     param(
@@ -32,8 +33,39 @@ function Get-PrivateFieldValue {
     return $field.GetValue($Instance)
 }
 
+function Set-ObjectPropertyValue {
+    param(
+        [object]$Instance,
+        [string]$Name,
+        [object]$Value
+    )
+
+    $property = $Instance.GetType().GetProperty($Name, $allInstanceFlags)
+    if ($null -eq $property) {
+        throw "Property not found: $Name"
+    }
+    $property.SetValue($Instance, $Value, $null)
+}
+
+function Get-Utf8Text {
+    param([string]$Base64)
+    return [System.Text.Encoding]::UTF8.GetString(
+        [Convert]::FromBase64String($Base64))
+}
+
+function Get-DescendantControls {
+    param([System.Windows.Forms.Control]$Root)
+    foreach ($child in $Root.Controls) {
+        $child
+        Get-DescendantControls -Root $child
+    }
+}
+
 $form = $null
 $automaticParametersDialog = $null
+$bindingDialog = $null
+$removeAllDialog = $null
+$kktDeletionDialog = $null
 try {
     $form = [Activator]::CreateInstance($formType)
     $page = Get-PrivateFieldValue -Instance $form -Name "_lmGatewayPage"
@@ -53,6 +85,7 @@ try {
     $localModulePathBox = Get-PrivateFieldValue -Instance $page -Name "_localModuleInstallerPathTextBox"
     $selectLocalModuleButton = Get-PrivateFieldValue -Instance $page -Name "_selectLocalModuleInstallerButton"
     $installButton = Get-PrivateFieldValue -Instance $page -Name "_installControllerButton"
+    $bindButton = Get-PrivateFieldValue -Instance $page -Name "_bindButton"
     $removeAllButton = Get-PrivateFieldValue -Instance $page -Name "_removeAllServicesButton"
     $grid = Get-PrivateFieldValue -Instance $page -Name "_grid"
     $automaticInstallerButton = Get-PrivateFieldValue -Instance $form -Name "_automaticSelectInstallerButton"
@@ -61,9 +94,25 @@ try {
     $automaticStopButton = Get-PrivateFieldValue -Instance $form -Name "_automaticStopButton"
     $automaticTab = Get-PrivateFieldValue -Instance $form -Name "_automationTab"
     $dkktPortBox = Get-PrivateFieldValue -Instance $form -Name "_dkktPortTextBox"
+    $logTextBox = Get-PrivateFieldValue -Instance $form -Name "_logTextBox"
+    $automaticStatus = Get-PrivateFieldValue -Instance $form -Name "_automationStatusLabel"
+    $officialControllerStatus = Get-PrivateFieldValue -Instance $page -Name "_officialControllerStatusLabel"
 
     if ($dkktPortBox.Text -ne "4042") {
         throw "The main form must default dkktPort to the ESM orchestrator port 4042; actual: '$($dkktPortBox.Text)'."
+    }
+    if (-not $logTextBox.ReadOnly) {
+        throw "The visible execution log must be read-only."
+    }
+    $expectedAutomaticStatus = Get-Utf8Text(
+        "0KHRgtCw0YLRg9GBOiDQvdGD0LbQvdGLINC+0LHQsCDQv9Cw0LrQtdGC0LA=")
+    if ($automaticStatus.Text -ne $expectedAutomaticStatus) {
+        throw "Automatic mode must initially state that both official packages are required."
+    }
+    $unusedByManagedText = Get-Utf8Text(
+        "0L3QtSDQuNGB0L/QvtC70YzQt9GD0LXRgtGB0Y8=")
+    if (-not $officialControllerStatus.Text.Contains($unusedByManagedText)) {
+        throw "The base controller status must explain that managed kits do not reuse it."
     }
 
     if ($grid.Columns.Count -lt 1 -or $grid.Columns[0].Name -ne "KktOrdinal") {
@@ -88,6 +137,107 @@ try {
     if ($null -eq $grid.Columns["LmEndpoint"]) {
         throw "The LM KKT table must show the LM CHZ address and port."
     }
+    $expectedSoftwarePortHeader = Get-Utf8Text("0J/QvtGA0YIg0J/Qng==")
+    $softwarePortColumn = $grid.Columns["KktSoftwarePort"]
+    if ($softwarePortColumn.HeaderText -ne $expectedSoftwarePortHeader -or
+        [string]::IsNullOrWhiteSpace($softwarePortColumn.ToolTipText)) {
+        throw "The software-port column needs a short header and an explanatory tooltip."
+    }
+
+    $page.GetType().GetField("_running", $flags).SetValue($page, $true)
+    $page.GetType().GetMethod("UpdateActionState", $flags).Invoke(
+        $page, $null) | Out-Null
+    if (-not $grid.Enabled) {
+        throw "The read-only LM table must remain scrollable while an operation is running."
+    }
+    $page.GetType().GetField("_running", $flags).SetValue($page, $false)
+    $page.GetType().GetMethod("UpdateActionState", $flags).Invoke(
+        $page, $null) | Out-Null
+
+    # A managed stack can outlive its ESM row after an interrupted or partial
+    # cleanup. It must remain visible and individually removable.
+    $snapshotType = $assembly.GetType(
+        "EsmTspiot.WinForms.Shared.ManagedLocalModuleInventorySnapshot",
+        $true)
+    $managedItemType = $assembly.GetType(
+        "EsmTspiot.WinForms.Shared.ManagedLocalModuleInventoryItem",
+        $true)
+    $orphanSnapshot = [Activator]::CreateInstance($snapshotType, $true)
+    $orphanItem = [Activator]::CreateInstance($managedItemType, $true)
+    $orphanSerial = "00105700009999"
+    Set-ObjectPropertyValue $orphanItem "KktSerial" $orphanSerial
+    Set-ObjectPropertyValue $orphanItem "Inn" "1234567894"
+    Set-ObjectPropertyValue $orphanItem "KktOrdinal" 9
+    Set-ObjectPropertyValue $orphanItem "SoftwarePort" 51409
+    Set-ObjectPropertyValue $orphanItem "Endpoint" "127.0.0.1:5995"
+    Set-ObjectPropertyValue $orphanItem "State" "Running"
+
+    $fingerprintProperty = $managedItemType.GetProperty(
+        "ManagedStateFingerprint", $allInstanceFlags)
+    $fingerprint = [Activator]::CreateInstance($fingerprintProperty.PropertyType)
+    Set-ObjectPropertyValue $fingerprint "Sha256" ("A" * 64)
+    Set-ObjectPropertyValue $orphanItem "ManagedStateFingerprint" $fingerprint
+
+    $assignmentProperty = $managedItemType.GetProperty(
+        "KktAssignment", $allInstanceFlags)
+    $assignment = [Activator]::CreateInstance($assignmentProperty.PropertyType)
+    Set-ObjectPropertyValue $assignment "KktSerial" $orphanSerial
+    Set-ObjectPropertyValue $assignment "KktInn" "1234567894"
+    Set-ObjectPropertyValue $assignment "KktOrdinal" 9
+    Set-ObjectPropertyValue $assignment "GrpcPort" 55009
+    Set-ObjectPropertyValue $assignment "RestPort" 15009
+    Set-ObjectPropertyValue $orphanItem "KktAssignment" $assignment
+
+    $orphanSnapshot.GetType().GetProperty(
+        "Items", $allInstanceFlags).GetValue(
+            $orphanSnapshot, $null).Add($orphanItem)
+    $page.GetType().GetField(
+        "_managedLocalModuleInventory", $flags).SetValue(
+            $page, $orphanSnapshot)
+    $page.GetType().GetField(
+        "_serviceInventory", $flags).GetValue($page).Clear()
+    $page.GetType().GetMethod("FillRows", $flags).Invoke(
+        $page, [object[]]@("")) | Out-Null
+
+    $expectedMissingEsmText = -join @(
+        [char]0x041D, [char]0x0435, [char]0x0442, [char]0x0020,
+        [char]0x0432, [char]0x0020, [char]0x0415, [char]0x0421,
+        [char]0x041C)
+    if ($grid.Rows.Count -ne 1 -or
+        $grid.Rows[0].Cells["KktSerial"].Value -ne $orphanSerial -or
+        $grid.Rows[0].Cells["EsmLinkState"].Value -ne $expectedMissingEsmText) {
+        throw "A managed stack missing from ESM must stay visible with a clear missing-ESM state."
+    }
+    $orphanContext = $grid.Rows[0].Tag
+    if ($null -ne $orphanContext.GetType().GetProperty(
+            "SessionRow", $allInstanceFlags).GetValue($orphanContext, $null) -or
+        $null -eq $orphanContext.GetType().GetProperty(
+            "Inventory", $allInstanceFlags).GetValue($orphanContext, $null)) {
+        throw "A managed stack missing from ESM must remain individually removable."
+    }
+    $orphanInnProperty = $orphanContext.GetType().GetProperty(
+        "KktInn", $allInstanceFlags)
+    if ($null -eq $orphanInnProperty -or
+        $orphanInnProperty.GetValue($orphanContext, $null) -ne "1234567894") {
+        throw "An orphaned managed stack must retain its INN for guarded removal."
+    }
+
+    $emptySnapshot = [Activator]::CreateInstance($snapshotType, $true)
+    $page.GetType().GetField(
+        "_managedLocalModuleInventory", $flags).SetValue(
+            $page, $emptySnapshot)
+    $page.GetType().GetMethod("FillRows", $flags).Invoke(
+        $page, [object[]]@("")) | Out-Null
+
+    $expectedBindText = -join @(
+        [char]0x041F, [char]0x0440, [char]0x0438, [char]0x0432,
+        [char]0x044F, [char]0x0437, [char]0x0430, [char]0x0442,
+        [char]0x044C, [char]0x0020, [char]0x043A, [char]0x0020,
+        [char]0x0415, [char]0x0421, [char]0x041C)
+    if ($bindButton.Text -ne $expectedBindText -or
+        $bindButton.Tag -ne "BindSelectedEsm") {
+        throw "The LM page must expose one explicit selected-row ESM binding action."
+    }
     foreach ($removedField in @(
         "_addressTextBox",
         "_portTextBox",
@@ -103,8 +253,79 @@ try {
         }
     }
 
+    $bindingDialogType = $assembly.GetType(
+        "EsmTspiot.WinForms.Shared.LmGatewayBindingDialog",
+        $true)
+    $bindingDialogConstructor = $bindingDialogType.GetConstructors(
+        [System.Reflection.BindingFlags]::Instance -bor
+        [System.Reflection.BindingFlags]::NonPublic)[0]
+    $bindingArguments = New-Object object[] 3
+    $bindingArguments[0] = "00105700000001"
+    $bindingArguments[1] = "1234567894"
+    $bindingArguments[2] = "127.0.0.1:45001"
+    $bindingDialog = $bindingDialogConstructor.Invoke($bindingArguments)
+    $bindingLogin = Get-PrivateFieldValue -Instance $bindingDialog -Name "_loginTextBox"
+    $bindingPassword = Get-PrivateFieldValue -Instance $bindingDialog -Name "_passwordTextBox"
+    $bindingConfirm = Get-PrivateFieldValue -Instance $bindingDialog -Name "_confirmButton"
+    if (-not $bindingPassword.UseSystemPasswordChar) {
+        throw "The one-time ESM binding password must be masked."
+    }
+    if ($bindingConfirm.Enabled) {
+        throw "The ESM binding action must remain disabled without both credentials."
+    }
+    $bindingLogin.Text = "operator"
+    $bindingPassword.Text = "temporary-secret"
+    if (-not $bindingConfirm.Enabled) {
+        throw "The ESM binding action must accept complete one-time credentials."
+    }
+    $credentialsProperty = $bindingDialogType.GetProperty(
+        "Credentials",
+        [System.Reflection.BindingFlags]::Instance -bor
+        [System.Reflection.BindingFlags]::NonPublic)
+    $credentials = $credentialsProperty.GetValue($bindingDialog, $null)
+    if ($credentials.Login -ne "operator" -or
+        $credentials.Password -ne "temporary-secret") {
+        throw "The ESM binding dialog did not return the entered one-time credentials."
+    }
+
     $sharedAssembly = [System.Reflection.Assembly]::LoadFrom(
         (Join-Path (Split-Path -Parent $appPath) "EsmTspiot.Shared.dll"))
+
+    $instanceType = $sharedAssembly.GetType(
+        "EsmTspiot.Shared.Models.KktInstanceInfo",
+        $true)
+    $instance = [Activator]::CreateInstance($instanceType)
+    $instance.Id = "00105700000001"
+    $instance.Port = "50401"
+    $instance.SoftPort = "51401"
+    $instance.ServiceState = "Running"
+    $deletionDialogType = $assembly.GetType(
+        "EsmTspiot.WinForms.Shared.KktDeletionConfirmationDialog",
+        $true)
+    $deletionConstructor = $deletionDialogType.GetConstructor(@($instanceType))
+    $kktDeletionDialog = $deletionConstructor.Invoke(@($instance))
+    $kktDeletionDialog.CreateControl()
+    $kktDeletionDialog.PerformLayout()
+    foreach ($control in @(Get-DescendantControls $kktDeletionDialog)) {
+        $control.PerformLayout()
+    }
+    [System.Windows.Forms.Application]::DoEvents()
+    $deleteButton = Get-PrivateFieldValue -Instance $kktDeletionDialog -Name "_deleteButton"
+    $cancelDeleteButton = Get-PrivateFieldValue -Instance $kktDeletionDialog -Name "_cancelButton"
+    if ($cancelDeleteButton.Left -le $deleteButton.Left) {
+        throw "The destructive KKT-delete action must be left of Cancel in the RTL button row."
+    }
+    $expectedRunningState = $sharedAssembly.GetType(
+        "EsmTspiot.Shared.Services.KktServiceStateFormatter",
+        $true).GetMethod("ToDisplayText").Invoke($null, @("Running"))
+    $deletionText = (@(Get-DescendantControls $kktDeletionDialog) |
+        Where-Object { $_ -is [System.Windows.Forms.Label] } |
+        ForEach-Object { $_.Text }) -join "`n"
+    if ($deletionText.Contains("Running") -or
+        -not $deletionText.Contains($expectedRunningState)) {
+        throw "The KKT deletion dialog must localize the service state."
+    }
+
     $rowType = $assembly.GetType(
         "EsmTspiot.WinForms.Shared.LmAutomaticSetupDialogRow",
         $true)
@@ -154,6 +375,12 @@ try {
             throw "Automatic-setup operator field must be editable: $name."
         }
     }
+    if ($parametersGrid.Columns["KktSoftwarePort"].HeaderText -ne
+            $expectedSoftwarePortHeader -or
+        [string]::IsNullOrWhiteSpace(
+            $parametersGrid.Columns["KktSoftwarePort"].ToolTipText)) {
+        throw "The automatic dialog needs the same concise software-port heading and hint."
+    }
 
     # The pre-UAC batch recheck must reject a change in either displayed
     # fingerprint, even when the other fingerprint still matches.
@@ -193,6 +420,24 @@ try {
     $inventoryList = [Activator]::CreateInstance($inventoryListType)
     $inventoryList.Add($inventoryItem)
 
+    $removeAllType = $assembly.GetType(
+        "EsmTspiot.WinForms.Shared.LmGatewayRemoveAllDialog",
+        $true)
+    $removeAllConstructor = $removeAllType.GetConstructors(
+        [System.Reflection.BindingFlags]::Instance -bor
+        [System.Reflection.BindingFlags]::NonPublic)[0]
+    $removeAllArguments = New-Object object[] 1
+    $removeAllArguments[0] = $inventoryList
+    $removeAllDialog = $removeAllConstructor.Invoke($removeAllArguments)
+    $serviceList = @(Get-DescendantControls $removeAllDialog) |
+        Where-Object {
+            $_ -is [System.Windows.Forms.TextBox] -and
+            $_.Multiline -and $_.ReadOnly
+        } | Select-Object -First 1
+    if ($null -eq $serviceList -or $serviceList.TabStop) {
+        throw "The read-only remove-all service list must not steal keyboard focus."
+    }
+
     $confirmation = [Activator]::CreateInstance($confirmationType)
     $confirmation.KktSerial = $inventoryItem.KktSerial
     $confirmation.GrpcPort = 45001
@@ -207,6 +452,26 @@ try {
 
     $staticFlags = [System.Reflection.BindingFlags]::Static -bor
         [System.Reflection.BindingFlags]::NonPublic
+    $lmStateFormatter = $page.GetType().GetMethod(
+        "GetLmStateText", $staticFlags)
+    $emptyLmStateArguments = New-Object object[] 2
+    $controllerOnlyArguments = New-Object object[] 2
+    $controllerOnlyArguments[0] = $inventoryItem
+    $emptyLmState = $lmStateFormatter.Invoke($null, $emptyLmStateArguments)
+    $controllerOnlyState = $lmStateFormatter.Invoke(
+        $null, $controllerOnlyArguments)
+    if ($emptyLmState -ne $controllerOnlyState) {
+        throw "The LM state must use one unambiguous not-created label."
+    }
+    $esmStateFormatter = $page.GetType().GetMethod(
+        "GetEsmLinkStateText", $staticFlags)
+    $expectedUnboundState = Get-Utf8Text(
+        "0J3QtSDQv9GA0LjQstGP0LfQsNC90LA=")
+    $unboundStateArguments = New-Object object[] 1
+    if ($esmStateFormatter.Invoke($null, $unboundStateArguments) -ne
+            $expectedUnboundState) {
+        throw "A KKT without binding evidence must be labelled as not bound."
+    }
     $batchMatcher = $page.GetType().GetMethod(
         "RemovalBatchStillMatches",
         $staticFlags)
@@ -308,6 +573,11 @@ try {
     if ($installButton.Tag -ne "AutomaticSetup") {
         throw "The installer action must expose the single automatic setup command."
     }
+    $expectedCreateKitsText = Get-Utf8Text(
+        "0KHQvtC30LTQsNGC0Ywg0LrQvtC80L/Qu9C10LrRgtGL")
+    if ($installButton.Text -ne $expectedCreateKitsText) {
+        throw "The LM-tab action must be named as kit creation, not generic configuration."
+    }
     if ($removeAllButton.Tag -ne "RemoveAllManaged") {
         throw "The LM controller page must expose the protected remove-all command."
     }
@@ -387,6 +657,23 @@ try {
         throw "The operator-facing LM table requires horizontal resizing: columns=${visibleGridWidth}px, grid=$($grid.ClientSize.Width)px."
     }
 
+    $mainFormSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot "src\EsmTspiot.WinForms.Shared\MainForm.cs"))
+    $pageSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot "src\EsmTspiot.WinForms.Shared\LmGatewayPage.cs"))
+    if ($mainFormSource -notmatch 'InstructionFileSelector\.SelectAvailable') {
+        throw "Help must use the packaged Markdown field guide when no PDF exists."
+    }
+    if ([regex]::Matches(
+            $mainFormSource,
+            'MessageBoxButtons\.YesNo,\s*MessageBoxIcon\.Warning,\s*MessageBoxDefaultButton\.Button2').Count -ne 3) {
+        throw "Every destructive or warning Yes/No prompt must default to No."
+    }
+    if ($pageSource -notmatch '(?s)RefreshIfNeededAsync\(\).*?RefreshSilentlyAsync\(\)' -or
+        $pageSource -notmatch '(?s)RefreshSilentlyAsync\(\).*?RunOperationAsync\(\s*RefreshCoreAsync,.*?false,\s*true,\s*false,\s*CancellationToken\.None') {
+        throw "The automatic first LM-tab refresh must log failures without showing a modal dialog."
+    }
+
     Write-Host (
         ("UI layout OK: wide path={0}px, path/select gap={1}px, select/install gap={2}px; " +
         "normal button right={3}/{4}px; automatic path={5}px.") -f
@@ -394,6 +681,15 @@ try {
         $installButton.Right, $page.ClientSize.Width, $automaticInstallerPath.Width)
 }
 finally {
+    if ($null -ne $kktDeletionDialog) {
+        $kktDeletionDialog.Dispose()
+    }
+    if ($null -ne $removeAllDialog) {
+        $removeAllDialog.Dispose()
+    }
+    if ($null -ne $bindingDialog) {
+        $bindingDialog.Dispose()
+    }
     if ($null -ne $automaticParametersDialog) {
         $automaticParametersDialog.Dispose()
     }

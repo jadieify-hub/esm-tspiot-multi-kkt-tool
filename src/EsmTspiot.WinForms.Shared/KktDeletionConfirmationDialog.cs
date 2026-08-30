@@ -63,7 +63,9 @@ namespace EsmTspiot.WinForms.Shared
             details.AutoSize = true;
             details.Text = "port: " + (_instance.Port ?? string.Empty) +
                 "    softPort: " + (_instance.SoftPort ?? string.Empty) +
-                "    состояние: " + (_instance.ServiceState ?? string.Empty);
+                "    состояние: " +
+                KktServiceStateFormatter.ToDisplayText(
+                    _instance.ServiceState);
             details.Margin = new Padding(0, 0, 0, 10);
 
             Label confirmationLabel = new Label();
@@ -99,8 +101,8 @@ namespace EsmTspiot.WinForms.Shared
             _cancelButton.AutoSize = true;
             _cancelButton.DialogResult = DialogResult.Cancel;
 
-            buttons.Controls.Add(_deleteButton);
             buttons.Controls.Add(_cancelButton);
+            buttons.Controls.Add(_deleteButton);
 
             root.Controls.Add(title, 0, 0);
             root.Controls.Add(details, 0, 1);

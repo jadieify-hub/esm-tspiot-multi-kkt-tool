@@ -575,7 +575,7 @@ namespace EsmTspiot.WinForms.Shared
 
             _automationStatusLabel.AutoSize = true;
             _automationStatusLabel.Anchor = AnchorStyles.Left;
-            _automationStatusLabel.Text = "Статус: установщик не выбран";
+            _automationStatusLabel.Text = "Статус: нужны оба пакета";
             _automationStatusLabel.Margin = new Padding(8, 6, 0, 3);
 
             Label hint = new Label();
@@ -694,7 +694,7 @@ namespace EsmTspiot.WinForms.Shared
             _logTextBox.Dock = DockStyle.Fill;
             _logTextBox.Multiline = true;
             _logTextBox.ScrollBars = ScrollBars.Both;
-            _logTextBox.ReadOnly = false;
+            _logTextBox.ReadOnly = true;
             _logTextBox.WordWrap = false;
             _logTextBox.HideSelection = false;
             _logTextBox.MinimumSize = new Size(0, 110);
@@ -1619,7 +1619,8 @@ namespace EsmTspiot.WinForms.Shared
                 "Будет запущен PowerShell от имени администратора и создана/запущена служба " + ServiceRecoveryCommandBuilder.BuildServiceName(input.KktSerial) + ". Продолжить?",
                 "Создание службы",
                 MessageBoxButtons.YesNo,
-                MessageBoxIcon.Warning);
+                MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button2);
             if (answer != DialogResult.Yes)
             {
                 AppendLog("Создание службы отменено пользователем.\r\n\r\n");
@@ -1718,7 +1719,8 @@ namespace EsmTspiot.WinForms.Shared
                 "ККТ с таким id уже есть в списке. Повторное добавление может вызвать ошибку 1010. Продолжить?",
                 "Повторное добавление",
                 MessageBoxButtons.YesNo,
-                MessageBoxIcon.Warning);
+                MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button2);
             return answer == DialogResult.Yes;
         }
 
@@ -1829,22 +1831,18 @@ namespace EsmTspiot.WinForms.Shared
             try
             {
                 string directory = AppDomain.CurrentDomain.BaseDirectory;
-                string[] files = Directory.GetFiles(directory, "Instruction-MultiKKT*.pdf");
-                if (files.Length == 0)
-                {
-                    files = Directory.GetFiles(directory, "instrukciya_dlya_chaynikov*.pdf");
-                }
-                if (files.Length == 0)
+                string path = InstructionFileSelector.SelectAvailable(directory);
+                if (string.IsNullOrEmpty(path))
                 {
                     MessageBox.Show(this,
-                        "PDF-инструкция не найдена рядом с программой.",
+                        "Инструкция не найдена рядом с программой.",
                         "Инструкция",
                         MessageBoxButtons.OK,
                         MessageBoxIcon.Information);
                     return;
                 }
 
-                OpenPath(InstructionFileSelector.SelectNewest(files));
+                OpenPath(path);
             }
             catch (Exception ex)
             {
@@ -1922,7 +1920,13 @@ namespace EsmTspiot.WinForms.Shared
 
             string message = result.JoinWarnings() + "\r\n\r\nПродолжить?";
             AppendLog("Предупреждение:\r\n" + result.JoinWarnings() + "\r\n\r\n");
-            DialogResult answer = MessageBox.Show(this, message, "Проверьте данные", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+            DialogResult answer = MessageBox.Show(
+                this,
+                message,
+                "Проверьте данные",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button2);
             if (answer != DialogResult.Yes)
             {
                 AppendLog("Операция отменена пользователем после предупреждения.\r\n\r\n");
@@ -2025,7 +2029,7 @@ namespace EsmTspiot.WinForms.Shared
                 instance.Id,
                 instance.Port,
                 instance.SoftPort,
-                instance.ServiceState);
+                KktServiceStateFormatter.ToDisplayText(instance.ServiceState));
             DataGridViewRow row = grid.Rows[rowIndex];
             if (storeCandidate)
             {

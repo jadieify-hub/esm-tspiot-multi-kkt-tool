@@ -160,6 +160,12 @@ function Test-AllowedSecretHit {
     if ($relative -eq "src/EsmTspiot.Shared/Services/LmGatewayReadbackWorkflow.cs") {
         return $text -match 'timeout\.Token'
     }
+    if ($relative -eq "src/EsmTspiot.WinForms.Shared/LmGatewayBindingDialog.cs") {
+        return $text -match 'Password\s*=\s*_passwordTextBox\.Text'
+    }
+    if ($relative -eq "src/EsmTspiot.WinForms.Shared/LmGatewayPage.Binding.cs") {
+        return $text -match 'delegate\(CancellationToken token\)|ExecuteSelectedBindingAsync\(plan, credentials, token\)|credentials\.Password\s*=\s*string\.Empty|Password\s*=\s*credentials\.Password'
+    }
     if ($relative -eq "src/EsmTspiot.ServiceProvisioner/OfficialLmProfileAdapter.cs") {
         return $text -match 'forbidden secret field|lower\.IndexOf\("(password|secret|token|apikey)"'
     }
@@ -190,8 +196,23 @@ $gatewayPageServicesPath = Join-Path $repositoryRoot "src\EsmTspiot.WinForms.Sha
 $gatewayPageServices = [IO.File]::ReadAllText($gatewayPageServicesPath)
 $gatewayPagePath = Join-Path $repositoryRoot "src\EsmTspiot.WinForms.Shared\LmGatewayPage.cs"
 $gatewayPage = [IO.File]::ReadAllText($gatewayPagePath)
+$bindingPagePath = Join-Path $repositoryRoot "src\EsmTspiot.WinForms.Shared\LmGatewayPage.Binding.cs"
+$bindingDialogPath = Join-Path $repositoryRoot "src\EsmTspiot.WinForms.Shared\LmGatewayBindingDialog.cs"
+if (-not (Test-Path -LiteralPath $bindingPagePath -PathType Leaf) -or
+    -not (Test-Path -LiteralPath $bindingDialogPath -PathType Leaf)) {
+    throw "The documented ESM binding must have a focused page coordinator and one-time credential dialog."
+}
+$bindingPage = [IO.File]::ReadAllText($bindingPagePath)
+$bindingDialog = [IO.File]::ReadAllText($bindingDialogPath)
 if ($gatewayPage -match '_loginTextBox|_passwordTextBox|LmGatewayCredentials|StoreCredentials') {
     throw "The operator LM page must not retain hidden credential controls or credential state."
+}
+if ($bindingPage -match 'Dictionary\s*<\s*string\s*,\s*LmGatewayCredentials|private\s+.*LmGatewayCredentials' -or
+    $bindingPage -notmatch '(?s)finally.*?credentials\.Login\s*=\s*string\.Empty.*?credentials\.Password\s*=\s*string\.Empty') {
+    throw "ESM binding credentials must remain one-operation values and be cleared in finally."
+}
+if ($bindingDialog -notmatch 'UseSystemPasswordChar\s*=\s*true') {
+    throw "The one-time ESM binding dialog must mask its password field."
 }
 if ($gatewayPageServices -notmatch '(?s)private async Task StartAutomaticSetupAsync\(\).*?ExecuteCompleteAutomaticSetupAsync') {
     throw "The LM-tab automatic entry point must use the complete KKT/controller/local-module workflow."
@@ -201,6 +222,10 @@ if ($gatewayPageServices -notmatch '(?s)public async Task<bool> RunCompleteAutom
 }
 if ($gatewayPageServices -notmatch '(?s)CreateCompleteSetupRequest.*?ManagedLocalModuleRequestBuilder\.Build.*?CanonicalLmPlanHasher\.Compute') {
     throw "The complete automatic request must be built from the immutable managed-LM plan and hashed before elevation."
+}
+if ($gatewayPageServices -match '(?s)FixedTimeEqualsHex\(\s*item\.ManifestFingerprint\.Sha256,\s*item\.ManifestFingerprint\.Sha256\)' -or
+    $gatewayPageServices -match '(?s)FixedTimeEqualsHex\(\s*managed\.ManagedStateFingerprint\.Sha256,\s*managed\.ManagedStateFingerprint\.Sha256\)') {
+    throw "A fingerprint must be validated for SHA-256 syntax, not compared with itself."
 }
 # This narrow list is intentional only for LM-specific structure and secret
 # checks. Forbidden implementation patterns and e-mail addresses use the full
