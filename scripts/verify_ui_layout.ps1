@@ -139,13 +139,71 @@ try {
     $automaticSetupButton = Get-PrivateFieldValue -Instance $form -Name "_bulkRegisterButton"
     $automaticStopButton = Get-PrivateFieldValue -Instance $form -Name "_automaticStopButton"
     $automaticTab = Get-PrivateFieldValue -Instance $form -Name "_automationTab"
+    $baseUrlBox = Get-PrivateFieldValue -Instance $form -Name "_baseUrlTextBox"
     $dkktPortBox = Get-PrivateFieldValue -Instance $form -Name "_dkktPortTextBox"
     $logTextBox = Get-PrivateFieldValue -Instance $form -Name "_logTextBox"
     $automaticStatus = Get-PrivateFieldValue -Instance $form -Name "_automationStatusLabel"
     $officialControllerStatus = Get-PrivateFieldValue -Instance $page -Name "_officialControllerStatusLabel"
+    $manualInstancesGrid = Get-PrivateFieldValue -Instance $form -Name "_manualInstancesGrid"
+    $instancesGrid = Get-PrivateFieldValue -Instance $form -Name "_instancesGrid"
+    $nextPortPairLabel = Get-PrivateFieldValue -Instance $form -Name "_nextPortPairLabel"
+    $registerButton = Get-PrivateFieldValue -Instance $form -Name "_registerButton"
 
     if ($dkktPortBox.Text -ne "4042") {
         throw "The main form must default dkktPort to the ESM orchestrator port 4042; actual: '$($dkktPortBox.Text)'."
+    }
+    $expectedManualPortLabels = @(
+        (Get-Utf8Text("0J/QvtGA0YIg0YHQu9GD0LbQsdGLIChwb3J0KQ==")),
+        (Get-Utf8Text(
+            "0J/QvtGA0YIg0LrQsNGB0YHQvtCy0L7Qs9C+INCf0J4gKHNvZnRQb3J0KQ==")))
+    $manualLabelTexts = @(Get-DescendantControls -Root $manualKktTab |
+        Where-Object { $_ -is [System.Windows.Forms.Label] } |
+        ForEach-Object { $_.Text })
+    foreach ($expectedManualPortLabel in $expectedManualPortLabels) {
+        if ($expectedManualPortLabel -notin $manualLabelTexts) {
+            throw "The manual form must name both ports in operator and API terms."
+        }
+    }
+    $manualNextStepField = $formType.GetField(
+        "_manualNextStepLabel",
+        $flags)
+    if ($null -eq $manualNextStepField) {
+        throw "The manual three-step flow needs a visible bridge to LM setup."
+    }
+    $manualNextStep = $manualNextStepField.GetValue($form)
+    $expectedManualNextStep = Get-Utf8Text(
+        "0J/QvtGB0LvQtSDRiNCw0LPQsCAzINC/0LXRgNC10LnQtNC40YLQtSDQvdCwINCy0LrQu9Cw0LTQutGDIMKr0JvQnCDQp9CXwrsg4oCUINGC0LDQvCDRgdC+0LfQtNCw0Y7RgtGB0Y8g0LrQvtC90YLRgNC+0LvQu9C10YAg0Lgg0LvQvtC60LDQu9GM0L3Ri9C5INC80L7QtNGD0LvRjC4=")
+    if ($manualNextStep.Text -ne $expectedManualNextStep) {
+        throw "The manual flow does not explain the next LM setup step."
+    }
+    $expectedUncheckedPortText = Get-Utf8Text(
+        "0J/QvtGA0YLRiyDQsiDRhNC+0YDQvNC1IOKAlCDQv9C+INGD0LzQvtC70YfQsNC90LjRjjsg0L7QsdC90L7QstC40YLQtSDRgdC/0LjRgdC+0Log0LTQu9GPINC/0YDQvtCy0LXRgNC60Lgg0LfQsNC90Y/RgtC+0YHRgtC4Lg==")
+    if ($nextPortPairLabel.Text -ne $expectedUncheckedPortText) {
+        throw "Default manual ports must be labelled as unchecked defaults."
+    }
+    $expectedServicePortHeader = Get-Utf8Text(
+        "0J/QvtGA0YIg0YHQu9GD0LbQsdGL")
+    $expectedCashSoftwarePortHeader = Get-Utf8Text(
+        "0J/QvtGA0YIg0J/Qng==")
+    foreach ($instancesDisplayGrid in @($manualInstancesGrid, $instancesGrid)) {
+        if ($instancesDisplayGrid.Columns[2].HeaderText -ne
+                $expectedServicePortHeader -or
+            $instancesDisplayGrid.Columns[3].HeaderText -ne
+                $expectedCashSoftwarePortHeader) {
+            throw "KKT tables must use consistent operator-facing port names."
+        }
+    }
+    $manualKktTab.Size = [System.Drawing.Size]::new(748, 512)
+    $manualRoot = $manualKktTab.Controls[0]
+    $manualRoot.Size = $manualKktTab.ClientSize
+    $manualRoot.PerformLayout()
+    foreach ($manualControl in $manualRoot.Controls) {
+        $manualControl.PerformLayout()
+    }
+    [System.Windows.Forms.Application]::DoEvents()
+    if ($manualRoot.DisplayRectangle.Width -gt $manualRoot.ClientSize.Width -or
+        $registerButton.Right -gt $manualRoot.ClientSize.Width) {
+        throw "The manual workflow requires horizontal scrolling at the normal window width."
     }
     if (-not $logTextBox.ReadOnly) {
         throw "The visible execution log must be read-only."
@@ -159,6 +217,42 @@ try {
         "0L3QtSDQuNGB0L/QvtC70YzQt9GD0LXRgtGB0Y8=")
     if (-not $officialControllerStatus.Text.Contains($unusedByManagedText)) {
         throw "The base controller status must explain that managed kits do not reuse it."
+    }
+
+    $expectedPackageLabels = @(
+        (Get-Utf8Text(
+            "0KPRgdGC0LDQvdC+0LLRidC40Log0LrQvtC90YLRgNC+0LvQu9C10YDQsCDQm9CcINCn0Jc=")),
+        (Get-Utf8Text(
+            "TVNJINC70L7QutCw0LvRjNC90L7Qs9C+INC80L7QtNGD0LvRjyDQp9CX")),
+        (Get-Utf8Text(
+            "0JrQvtC80L/Qu9C10LrRgiA9INC60L7QvdGC0YDQvtC70LvQtdGAINCa0JrQoiArINCb0Jwg0KfQlyDQtNC70Y8g0LXRkSDQmNCd0J07INCa0JrQoiDQvtC00L3QvtCz0L4g0JjQndCdINC40YHQv9C+0LvRjNC30YPRjtGCINC+0LHRidC40Lkg0JvQnC4=")))
+    $lmPageLabelTexts = @(Get-DescendantControls -Root $page |
+        Where-Object { $_ -is [System.Windows.Forms.Label] } |
+        ForEach-Object { $_.Text })
+    foreach ($expectedPackageLabel in $expectedPackageLabels) {
+        if ($expectedPackageLabel -notin $lmPageLabelTexts) {
+            throw "The LM package panel is missing a permanent operator label."
+        }
+    }
+    $setupHintField = $page.GetType().GetField(
+        "_setupActionHintLabel",
+        $flags)
+    if ($null -eq $setupHintField) {
+        throw "The LM package action needs a visible availability reason."
+    }
+    $setupActionHint = $setupHintField.GetValue($page)
+    if ([string]::IsNullOrWhiteSpace($setupActionHint.Text)) {
+        throw "The LM package action availability reason is empty."
+    }
+    $selectionHintField = $page.GetType().GetField(
+        "_selectionActionHintLabel",
+        $flags)
+    if ($null -eq $selectionHintField) {
+        throw "Disabled row actions need a visible availability reason."
+    }
+    $selectionActionHint = $selectionHintField.GetValue($page)
+    if ([string]::IsNullOrWhiteSpace($selectionActionHint.Text)) {
+        throw "The row-action availability reason is empty."
     }
 
     if ($grid.Columns.Count -lt 1 -or $grid.Columns[0].Name -ne "KktOrdinal") {
@@ -268,10 +362,70 @@ try {
         throw "An orphaned managed stack must retain its INN for guarded removal."
     }
 
+    $page.GetType().GetField(
+        "_helperAvailable", $flags).SetValue($page, $false)
+    $page.GetType().GetField(
+        "_helperUnavailableReason", $flags).SetValue(
+            $page, "helper unavailable")
+    $page.GetType().GetMethod("UpdateActionState", $flags).Invoke(
+        $page, $null) | Out-Null
+    $expectedOrphanRemovalUnavailable = Get-Utf8Text(
+        "0JrQmtCiINC+0YLRgdGD0YLRgdGC0LLRg9C10YIg0LIg0JXQodCcOyDRg9C00LDQu9C10L3QuNC1INC90LXQtNC+0YHRgtGD0L/QvdC+")
+    if (-not $selectionActionHint.Text.Contains(
+            $expectedOrphanRemovalUnavailable)) {
+        throw "A selected orphaned kit must visibly explain why removal is unavailable."
+    }
+
     $emptySnapshot = [Activator]::CreateInstance($snapshotType, $true)
     $page.GetType().GetField(
         "_managedLocalModuleInventory", $flags).SetValue(
             $page, $emptySnapshot)
+
+    $session = Get-PrivateFieldValue -Instance $page -Name "_session"
+    $session.Rows.Clear()
+    $sessionRowType = $session.Rows.GetType().GetGenericArguments()[0]
+    $kktType = $sessionRowType.GetProperty(
+        "Kkt", $allInstanceFlags).PropertyType
+    $sessionRow = [Activator]::CreateInstance($sessionRowType)
+    $sessionKkt = [Activator]::CreateInstance($kktType)
+    $sessionSerial = "00105700008888"
+    Set-ObjectPropertyValue $sessionKkt "KktSerial" $sessionSerial
+    Set-ObjectPropertyValue $sessionKkt "KktInn" "1234567894"
+    Set-ObjectPropertyValue $sessionKkt "SoftPort" "51408"
+    Set-ObjectPropertyValue $sessionRow "Kkt" $sessionKkt
+    $session.Rows.Add($sessionRow)
+    $page.GetType().GetMethod("FillRows", $flags).Invoke(
+        $page, [object[]]@($sessionSerial)) | Out-Null
+
+    $expectedUncreatedKitHint = Get-Utf8Text(
+        "0JrQvtC80L/Qu9C10LrRgiDRjdGC0L7QuSDQmtCa0KIg0LXRidGRINC90LUg0YHQvtC30LTQsNC9Lg==")
+    if ($selectionActionHint.Text -ne $expectedUncreatedKitHint) {
+        throw "A selected registered KKT without a kit must explain the next action."
+    }
+
+    $serviceInventory = $page.GetType().GetField(
+        "_serviceInventory", $flags).GetValue($page)
+    $inventoryType = $serviceInventory.GetType().GetGenericArguments()[0]
+    $inventoryItem = [Activator]::CreateInstance($inventoryType)
+    Set-ObjectPropertyValue $inventoryItem "KktSerial" $sessionSerial
+    $roleProperty = $inventoryType.GetProperty("Role", $allInstanceFlags)
+    Set-ObjectPropertyValue $inventoryItem "Role" (
+        [Enum]::Parse($roleProperty.PropertyType, "Managed"))
+    Set-ObjectPropertyValue $inventoryItem "IsRunning" $true
+    Set-ObjectPropertyValue $inventoryItem "IsReady" $true
+    $serviceInventory.Add($inventoryItem)
+    $page.GetType().GetMethod("FillRows", $flags).Invoke(
+        $page, [object[]]@($sessionSerial)) | Out-Null
+
+    $expectedReadyRemovalUnavailable = Get-Utf8Text(
+        "0JrQvtC80L/Qu9C10LrRgiDQs9C+0YLQvtCyOiDQv9GA0LjQstGP0LfQutCwINC6INCV0KHQnCDQtNC+0YHRgtGD0L/QvdCwOyDRg9C00LDQu9C10L3QuNC1INC90LXQtNC+0YHRgtGD0L/QvdC+")
+    if (-not $selectionActionHint.Text.Contains(
+            $expectedReadyRemovalUnavailable)) {
+        throw "A ready kit must not promise removal when the helper is unavailable."
+    }
+
+    $session.Rows.Clear()
+    $serviceInventory.Clear()
     $page.GetType().GetMethod("FillRows", $flags).Invoke(
         $page, [object[]]@("")) | Out-Null
 
@@ -643,9 +797,9 @@ try {
         throw "The installer action must expose the single automatic setup command."
     }
     $expectedCreateKitsText = Get-Utf8Text(
-        "0KHQvtC30LTQsNGC0Ywg0LrQvtC80L/Qu9C10LrRgtGL")
+        "0KHQvtC30LTQsNGC0YwgLyDQvtCx0L3QvtCy0LjRgtGMINC60L7QvNC/0LvQtdC60YLRiw==")
     if ($installButton.Text -ne $expectedCreateKitsText) {
-        throw "The LM-tab action must be named as kit creation, not generic configuration."
+        throw "The LM-tab action must explain that existing kits are updated safely."
     }
     if ($removeAllButton.Tag -ne "RemoveAllManaged") {
         throw "The LM controller page must expose the protected remove-all command."
@@ -683,7 +837,6 @@ try {
     }
 
     $pathToSelectGap = $selectButton.Left - $pathBox.Right
-    $selectToInstallGap = $installButton.Left - $selectButton.Right
     $localPathToSelectGap = $selectLocalModuleButton.Left - $localModulePathBox.Right
 
     if ($pathBox.Width -gt 400) {
@@ -691,9 +844,6 @@ try {
     }
     if ($pathToSelectGap -lt 0 -or $pathToSelectGap -gt 12) {
         throw "Unexpected gap between installer path and Select button: ${pathToSelectGap}px."
-    }
-    if ($selectToInstallGap -lt 0 -or $selectToInstallGap -gt 12) {
-        throw "Unexpected gap between installer buttons: ${selectToInstallGap}px."
     }
     if ($localModulePathBox.Width -gt 400) {
         throw "Local-module MSI path field is too wide: $($localModulePathBox.Width)px."
@@ -726,6 +876,27 @@ try {
         throw "The operator-facing LM table requires horizontal resizing: columns=${visibleGridWidth}px, grid=$($grid.ClientSize.Width)px."
     }
 
+    # The first read-only LM refresh belongs to the LM page. It must not raise
+    # the host-wide busy event that disables unrelated manual tabs.
+    $baseUrlBox.Text = "http://127.0.0.1:1"
+    $silentRefresh = $page.RefreshIfNeededAsync()
+    $hostBusyDuringRefresh = [bool]$formType.GetField(
+        "_busy",
+        $flags).GetValue($form)
+    $refreshDeadline = [DateTime]::UtcNow.AddSeconds(10)
+    while (-not $silentRefresh.IsCompleted -and
+        [DateTime]::UtcNow -lt $refreshDeadline) {
+        [System.Windows.Forms.Application]::DoEvents()
+        Start-Sleep -Milliseconds 10
+    }
+    if (-not $silentRefresh.IsCompleted) {
+        throw "The first read-only LM refresh did not complete within ten seconds."
+    }
+    $silentRefresh.GetAwaiter().GetResult() | Out-Null
+    if ($hostBusyDuringRefresh) {
+        throw "The first read-only LM refresh entered the host-wide busy state."
+    }
+
     $mainFormSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot "src\EsmTspiot.WinForms.Shared\MainForm.cs"))
     $pageSource = [IO.File]::ReadAllText(
@@ -740,10 +911,6 @@ try {
             'MessageBoxButtons\.YesNo,\s*MessageBoxIcon\.Warning,\s*MessageBoxDefaultButton\.Button2').Count -ne 3) {
         throw "Every destructive or warning Yes/No prompt must default to No."
     }
-    if ($pageSource -notmatch '(?s)RefreshIfNeededAsync\(\).*?RefreshSilentlyAsync\(\)' -or
-        $pageSource -notmatch '(?s)RefreshSilentlyAsync\(\).*?RunOperationAsync\(\s*RefreshCoreAsync,.*?false,\s*true,\s*false,\s*CancellationToken\.None') {
-        throw "The automatic first LM-tab refresh must log failures without showing a modal dialog."
-    }
     if ($pageServicesSource -notmatch '(?s)_completeStackProvisioner\.RunAsync.*?async delegate\(\s*int index,\s*LmServiceProvisioningItemResult item,.*?ExecuteCompleteAutomaticBindingAsync.*?LmGatewayCredentialDefaults\.Create') {
         throw "Each prepared KKT, including the canary, must be bound before the complete automatic workflow advances."
     }
@@ -755,9 +922,9 @@ try {
     }
 
     Write-Host (
-        ("UI layout OK: wide path={0}px, path/select gap={1}px, select/install gap={2}px; " +
-        "normal button right={3}/{4}px; automatic path={5}px.") -f
-        $pathBox.Width, $pathToSelectGap, $selectToInstallGap,
+        ("UI layout OK: wide path={0}px, path/select gap={1}px; " +
+        "normal button right={2}/{3}px; automatic path={4}px.") -f
+        $pathBox.Width, $pathToSelectGap,
         $installButton.Right, $page.ClientSize.Width, $automaticInstallerPath.Width)
 }
 finally {

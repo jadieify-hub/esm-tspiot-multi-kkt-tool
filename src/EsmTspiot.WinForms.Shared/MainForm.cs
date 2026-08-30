@@ -50,6 +50,7 @@ namespace EsmTspiot.WinForms.Shared
         private readonly Label _instancesSummaryLabel = new Label();
         private readonly Label _manualInstancesSummaryLabel = new Label();
         private readonly Label _nextPortPairLabel = new Label();
+        private readonly Label _manualNextStepLabel = new Label();
         private readonly Label _automationStatusLabel = new Label();
         private readonly TabControl _workspaceTabs = new TabControl();
         private readonly TabPage _manualKktTab = new TabPage();
@@ -335,8 +336,8 @@ namespace EsmTspiot.WinForms.Shared
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
             table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
-            AddCompactPortTextBox(table, 0, "Служба (port)", _portTextBox, "Порт экземпляра сервиса подключаемой ККТ");
-            AddCompactPortTextBox(table, 2, "Frontol (softPort)", _softPortTextBox, "Порт ЕСМ для Frontol");
+            AddCompactPortTextBox(table, 0, "Порт службы (port)", _portTextBox, "Порт экземпляра сервиса подключаемой ККТ");
+            AddCompactPortTextBox(table, 2, "Порт кассового ПО (softPort)", _softPortTextBox, "Порт для Frontol или другой кассовой программы");
             group.Controls.Add(table);
             return group;
         }
@@ -348,11 +349,12 @@ namespace EsmTspiot.WinForms.Shared
             panel.Dock = DockStyle.Fill;
             panel.AutoSize = true;
             panel.ColumnCount = 3;
-            panel.RowCount = 1;
+            panel.RowCount = 2;
             panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33F));
             panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 34F));
             panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33F));
             panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 42F));
+            panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
             ConfigureButton(_loadDkktButton, "1. Выбрать следующую\r\nККТ", LoadDkktDataAsync);
             ConfigureButton(_addButton, "2. Добавить\r\nэкземпляр", AddSelectedInstanceAsync);
@@ -365,6 +367,17 @@ namespace EsmTspiot.WinForms.Shared
             panel.Controls.Add(_loadDkktButton, 0, 0);
             panel.Controls.Add(_addButton, 1, 0);
             panel.Controls.Add(_registerButton, 2, 0);
+
+            _manualNextStepLabel.AutoSize = false;
+            _manualNextStepLabel.Dock = DockStyle.Fill;
+            _manualNextStepLabel.MinimumSize = new Size(0, 24);
+            _manualNextStepLabel.TextAlign = ContentAlignment.MiddleLeft;
+            _manualNextStepLabel.Margin = new Padding(0, 6, 0, 2);
+            _manualNextStepLabel.Text =
+                "После шага 3 перейдите на вкладку «ЛМ ЧЗ» — там создаются " +
+                "контроллер и локальный модуль.";
+            panel.Controls.Add(_manualNextStepLabel, 0, 1);
+            panel.SetColumnSpan(_manualNextStepLabel, 3);
 
             group.Controls.Add(panel);
             return group;
@@ -395,7 +408,8 @@ namespace EsmTspiot.WinForms.Shared
             _nextPortPairLabel.AutoSize = true;
             _nextPortPairLabel.Anchor = AnchorStyles.Left;
             _nextPortPairLabel.Margin = new Padding(8, 6, 0, 0);
-            _nextPortPairLabel.Text = "Следующая свободная пара: список не загружен";
+            _nextPortPairLabel.Text =
+                "Порты в форме — по умолчанию; обновите список для проверки занятости.";
             toolbar.Controls.Add(_refreshManualInstancesButton);
             toolbar.Controls.Add(_nextPortPairLabel);
 
@@ -428,8 +442,8 @@ namespace EsmTspiot.WinForms.Shared
 
             _manualInstancesGrid.Columns.Add(CreateInstancesColumn("Роль", 130, 24F));
             _manualInstancesGrid.Columns.Add(CreateInstancesColumn("Серийный номер", 135, 30F));
-            _manualInstancesGrid.Columns.Add(CreateInstancesColumn("port", 58, 11F));
-            _manualInstancesGrid.Columns.Add(CreateInstancesColumn("softPort", 68, 12F));
+            _manualInstancesGrid.Columns.Add(CreateInstancesColumn("Порт службы", 90, 14F));
+            _manualInstancesGrid.Columns.Add(CreateInstancesColumn("Порт ПО", 76, 12F));
             _manualInstancesGrid.Columns.Add(CreateInstancesColumn("Состояние", 90, 18F));
         }
 
@@ -487,8 +501,8 @@ namespace EsmTspiot.WinForms.Shared
 
             _instancesGrid.Columns.Add(CreateInstancesColumn("Роль", 150, 24F));
             _instancesGrid.Columns.Add(CreateInstancesColumn("Серийный номер ККТ", 150, 30F));
-            _instancesGrid.Columns.Add(CreateInstancesColumn("port", 62, 11F));
-            _instancesGrid.Columns.Add(CreateInstancesColumn("softPort", 72, 12F));
+            _instancesGrid.Columns.Add(CreateInstancesColumn("Порт службы", 90, 14F));
+            _instancesGrid.Columns.Add(CreateInstancesColumn("Порт ПО", 76, 12F));
             _instancesGrid.Columns.Add(CreateInstancesColumn("Состояние", 100, 18F));
         }
 
