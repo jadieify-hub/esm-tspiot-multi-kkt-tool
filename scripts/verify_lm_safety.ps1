@@ -195,6 +195,36 @@ function Test-AllowedSecretHit {
 Test-SearchWrapper
 Test-ProductionSourceDiscovery
 
+# Donation UI is deliberately offline. Keep its only external value as inert
+# text/QR data and reject APIs that could turn the dialog into a network or
+# browser integration later.
+$supportDialogPath = Join-Path $repositoryRoot (
+    "src\EsmTspiot.WinForms.Shared\SupportDevelopmentDialog.cs")
+$supportQrPath = Join-Path $repositoryRoot (
+    "src\EsmTspiot.WinForms.Shared\Assets\support-cloudtips-qr.png")
+if (-not (Test-Path -LiteralPath $supportDialogPath -PathType Leaf) -or
+    -not (Test-Path -LiteralPath $supportQrPath -PathType Leaf)) {
+    throw "The offline support dialog and its pinned QR asset must both exist."
+}
+$supportDialogSource = [IO.File]::ReadAllText($supportDialogPath)
+$supportForbiddenPattern = 'System\.Net|HttpClient|WebClient|WebRequest|Socket|TcpClient|Dns\.|Process\.Start|ProcessStartInfo|WebBrowser|Timer'
+if ($supportDialogSource -match $supportForbiddenPattern) {
+    throw "The support dialog must not contain network, browser, process-launch or timer APIs."
+}
+$expectedSupportUrl = "https://pay.cloudtips.ru/p/53698013"
+$supportUrls = @([regex]::Matches(
+    $supportDialogSource,
+    'https://[^"\s]+') | ForEach-Object Value)
+if ($supportUrls.Count -ne 1 -or $supportUrls[0] -ne $expectedSupportUrl) {
+    throw "The support dialog must contain only the approved CloudTips URL."
+}
+$expectedSupportQrHash =
+    "fa50f1d7549ae49f0ee15bd834c35866acbcbef725d7d5ca6eb257929b622bfc"
+$actualSupportQrHash = (Get-FileHash -LiteralPath $supportQrPath -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($actualSupportQrHash -ne $expectedSupportQrHash) {
+    throw "The embedded support QR differs from the user-provided PNG."
+}
+
 $gatewayPageServicesPath = Join-Path $repositoryRoot "src\EsmTspiot.WinForms.Shared\LmGatewayPage.Services.cs"
 $gatewayPageServices = [IO.File]::ReadAllText($gatewayPageServicesPath)
 $gatewayPagePath = Join-Path $repositoryRoot "src\EsmTspiot.WinForms.Shared\LmGatewayPage.cs"
@@ -220,6 +250,13 @@ if (-not (Test-Path -LiteralPath $credentialDefaultsPath -PathType Leaf) -or
     $modernProject -notmatch 'LmGatewayCredentialDefaults\.cs' -or
     $helperProject -match 'LmGatewayCredentialDefaults|EsmTspiot\.WinForms\.Shared') {
     throw "Standard ESM credentials must be compiled only into the two WinForms applications, never into the privileged helper."
+}
+if ($legacyProject -notmatch 'SupportDevelopmentDialog\.cs' -or
+    $modernProject -notmatch 'SupportDevelopmentDialog\.cs' -or
+    $legacyProject -notmatch 'support-cloudtips-qr\.png.*LogicalName="EsmTspiot\.WinForms\.Shared\.Assets\.support-cloudtips-qr\.png"' -or
+    $modernProject -notmatch 'support-cloudtips-qr\.png.*LogicalName="EsmTspiot\.WinForms\.Shared\.Assets\.support-cloudtips-qr\.png"' -or
+    $helperProject -match 'SupportDevelopmentDialog|support-cloudtips-qr') {
+    throw "The support dialog and pinned QR must be embedded only in both operator applications."
 }
 if ($gatewayPage -match '_loginTextBox|_passwordTextBox|LmGatewayCredentials|StoreCredentials') {
     throw "The operator LM page must not retain hidden credential controls or credential state."
