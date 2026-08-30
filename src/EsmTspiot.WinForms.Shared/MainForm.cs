@@ -157,7 +157,7 @@ namespace EsmTspiot.WinForms.Shared
                 _workspaceTabs.SelectedTab = _manualKktTab;
                 await RunButtonActionAsync(LoadDkktDataAsync);
             };
-            ToolStripMenuItem automatic = new ToolStripMenuItem("Автоматический режим");
+            ToolStripMenuItem automatic = new ToolStripMenuItem("Автоматическая настройка");
             automatic.Click += delegate { _workspaceTabs.SelectedTab = _automationTab; };
             ToolStripMenuItem lmGateways = new ToolStripMenuItem("ЛМ ЧЗ");
             lmGateways.Click += delegate { _workspaceTabs.SelectedTab = _lmGatewayTab; };
@@ -252,7 +252,7 @@ namespace EsmTspiot.WinForms.Shared
 
             ConfigureTabPage(_manualKktTab, "Ручное подключение");
             ConfigureTabPage(_instancesTab, "ККТ в ЕСМ");
-            ConfigureTabPage(_automationTab, "Автоматический режим");
+            ConfigureTabPage(_automationTab, "Автоматическая настройка");
             ConfigureTabPage(_lmGatewayTab, "ЛМ ЧЗ");
             ConfigureTabPage(_logTab, "Журнал");
 
@@ -262,11 +262,12 @@ namespace EsmTspiot.WinForms.Shared
             _lmGatewayTab.Controls.Add(_lmGatewayPage);
             _logTab.Controls.Add(BuildLogGroup());
 
+            _workspaceTabs.TabPages.Add(_automationTab);
             _workspaceTabs.TabPages.Add(_manualKktTab);
             _workspaceTabs.TabPages.Add(_instancesTab);
-            _workspaceTabs.TabPages.Add(_automationTab);
             _workspaceTabs.TabPages.Add(_lmGatewayTab);
             _workspaceTabs.TabPages.Add(_logTab);
+            _workspaceTabs.SelectedTab = _automationTab;
             _workspaceTabs.Selected += async delegate
             {
                 if (_workspaceTabs.SelectedTab == _lmGatewayTab && !_busy)
@@ -581,10 +582,10 @@ namespace EsmTspiot.WinForms.Shared
             Label hint = new Label();
             hint.AutoSize = false;
             hint.Dock = DockStyle.Fill;
-            hint.MinimumSize = new Size(0, 34);
+            hint.MinimumSize = new Size(0, 48);
             hint.Text =
-                "Программа последовательно зарегистрирует найденные ККТ, после контрольной " +
-                "ККТ создаст для каждой кассы контроллер, а для каждого ИНН — отдельный ЛМ ЧЗ.";
+                "Программа найдёт ККТ через драйвер АТОЛ, зарегистрирует их в ЕСМ, " +
+                "создаст контроллеры и ЛМ ЧЗ, затем привяжет в ЕСМ каждый контроллер к своей ККТ.";
             hint.Margin = new Padding(0, 5, 0, 0);
 
             commands.Controls.Add(installerLabel, 0, 0);
@@ -1309,7 +1310,7 @@ namespace EsmTspiot.WinForms.Shared
                     : _lmGatewayPage.AutomaticSetupStatus;
                 MessageBox.Show(
                     this,
-                    "Автоматический режим завершён.\r\n\r\n" +
+                    "Автоматическая настройка завершена.\r\n\r\n" +
                         BulkKktRegistrationResult.FormatSummary(
                             registrationOutcome.Results) +
                         "\r\n\r\n" + stackSummary +
