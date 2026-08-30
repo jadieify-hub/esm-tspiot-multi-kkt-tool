@@ -69,6 +69,52 @@ $kktDeletionDialog = $null
 try {
     $form = [Activator]::CreateInstance($formType)
     $page = Get-PrivateFieldValue -Instance $form -Name "_lmGatewayPage"
+    $workspaceTabs = Get-PrivateFieldValue -Instance $form -Name "_workspaceTabs"
+    $automationTab = Get-PrivateFieldValue -Instance $form -Name "_automationTab"
+    $manualKktTab = Get-PrivateFieldValue -Instance $form -Name "_manualKktTab"
+    $instancesTab = Get-PrivateFieldValue -Instance $form -Name "_instancesTab"
+    $lmGatewayTab = Get-PrivateFieldValue -Instance $form -Name "_lmGatewayTab"
+    $logTab = Get-PrivateFieldValue -Instance $form -Name "_logTab"
+
+    $expectedTabOrder = @(
+        $automationTab,
+        $manualKktTab,
+        $instancesTab,
+        $lmGatewayTab,
+        $logTab)
+    if ($workspaceTabs.TabPages.Count -ne $expectedTabOrder.Count) {
+        throw "The workspace must expose exactly five task tabs."
+    }
+    for ($tabIndex = 0; $tabIndex -lt $expectedTabOrder.Count; $tabIndex++) {
+        if (-not [object]::ReferenceEquals(
+            $workspaceTabs.TabPages[$tabIndex],
+            $expectedTabOrder[$tabIndex])) {
+            throw "Automatic setup must be first, followed by the uninterrupted manual workflow and the log."
+        }
+    }
+    if (-not [object]::ReferenceEquals(
+        $workspaceTabs.SelectedTab,
+        $automationTab)) {
+        throw "Automatic setup must be the default landing tab."
+    }
+    $expectedAutomationTitle = Get-Utf8Text(
+        "0JDQstGC0L7QvNCw0YLQuNGH0LXRgdC60LDRjyDQvdCw0YHRgtGA0L7QudC60LA=")
+    if ($automationTab.Text -ne $expectedAutomationTitle) {
+        throw "The primary tab needs an action-oriented automatic-setup title."
+    }
+    $atolText = Get-Utf8Text("0JDQotCe0Js=")
+    $bindingStem = Get-Utf8Text("0L/RgNC40LLRj9C3")
+    $bindingFutureStem = Get-Utf8Text("0L/RgNC40LLRj9C2")
+    $automaticHint = @(Get-DescendantControls -Root $automationTab |
+        Where-Object {
+            $_ -is [System.Windows.Forms.Label] -and
+            $_.Text.Contains($atolText) -and
+            ($_.Text.Contains($bindingStem) -or
+                $_.Text.Contains($bindingFutureStem))
+        })
+    if ($automaticHint.Count -ne 1) {
+        throw "The automatic page must visibly explain ATOL discovery and ESM binding."
+    }
 
     # Test the responsive layout directly without displaying a window or starting discovery.
     $page.Dock = [System.Windows.Forms.DockStyle]::None
@@ -555,7 +601,8 @@ try {
     $managedItem = [Activator]::CreateInstance($managedItemType, $true)
     foreach ($entry in @(
         @("KktSerial", $inventoryItem.KktSerial),
-        @("State", "Требуется очистка"),
+        @("State", (Get-Utf8Text(
+            "0KLRgNC10LHRg9C10YLRgdGPINC+0YfQuNGB0YLQutCw"))),
         @("CleanupPending", $true),
         @("ManagedStateFingerprint", $displayedManagedFingerprint))) {
         $managedItemType.GetProperty($entry[0], $flags).SetValue(
