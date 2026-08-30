@@ -68,6 +68,79 @@ function Get-RelativeRepositoryPath {
     return $full.Substring($prefix.Length).Replace('\', '/')
 }
 
+function Get-ProductionSourceFiles {
+    param([Parameter(Mandatory = $true)][string]$Root)
+
+    $files = New-Object System.Collections.Generic.List[string]
+    foreach ($relativeRoot in @(
+        "src\EsmTspiot.ServiceProvisioner",
+        "src\EsmTspiot.WinForms.Shared",
+        "src\EsmTspiot.Shared")) {
+        $sourceRoot = Join-Path $Root $relativeRoot
+        if (-not (Test-Path -LiteralPath $sourceRoot -PathType Container)) {
+            continue
+        }
+        foreach ($file in @(Get-ChildItem $sourceRoot -Recurse -Filter *.cs)) {
+            if ($file.FullName -notmatch '[\\/](bin|obj)[\\/]') {
+                $files.Add($file.FullName)
+            }
+        }
+    }
+    $provisionerTarget = Join-Path $Root "build\EsmTspiot.Provisioner.targets"
+    if (Test-Path -LiteralPath $provisionerTarget -PathType Leaf) {
+        $files.Add($provisionerTarget)
+    }
+    return @($files | Sort-Object -Unique)
+}
+
+function Test-AllowedForbiddenHit {
+    param($Hit)
+
+    $relative = Get-RelativeRepositoryPath $Hit.Path
+    if ($relative -eq "src/EsmTspiot.Shared/Services/ServiceRecoveryCommandBuilder.cs") {
+        return $Hit.Text -match '^\s*builder\.AppendLine\("        sc\.exe delete \$serviceName \| Out-Host"\);\s*$'
+    }
+    if ($relative -eq "src/EsmTspiot.WinForms.Shared/MainForm.cs") {
+        return $Hit.Text -match '^\s*startInfo\.FileName = "powershell\.exe";\s*$'
+    }
+    return $false
+}
+
+function Test-ProductionSourceDiscovery {
+    $testRoot = Join-Path ([IO.Path]::GetTempPath()) ("KrsLmSourceScope-" + [Guid]::NewGuid().ToString("N"))
+    [IO.Directory]::CreateDirectory($testRoot) | Out-Null
+    try {
+        $expected = @(
+            "src/EsmTspiot.ServiceProvisioner/FutureHelper.cs",
+            "src/EsmTspiot.Shared/Services/FutureCapability.cs",
+            "src/EsmTspiot.WinForms.Shared/FutureWorkflow.cs",
+            "build/EsmTspiot.Provisioner.targets")
+        foreach ($relative in $expected) {
+            $path = Join-Path $testRoot $relative.Replace('/', '\')
+            [IO.Directory]::CreateDirectory((Split-Path -Parent $path)) | Out-Null
+            [IO.File]::WriteAllText($path, "fixture", [Text.UTF8Encoding]::new($false))
+        }
+        foreach ($relative in @(
+            "src/EsmTspiot.Shared/bin/Ignored.cs",
+            "src/EsmTspiot.WinForms.Shared/obj/Ignored.cs")) {
+            $path = Join-Path $testRoot $relative.Replace('/', '\')
+            [IO.Directory]::CreateDirectory((Split-Path -Parent $path)) | Out-Null
+            [IO.File]::WriteAllText($path, "fixture", [Text.UTF8Encoding]::new($false))
+        }
+        $actual = @(Get-ProductionSourceFiles -Root $testRoot | ForEach-Object {
+            $_.Substring($testRoot.TrimEnd('\').Length + 1).Replace('\', '/')
+        })
+        if (@(Compare-Object ($expected | Sort-Object) ($actual | Sort-Object)).Count -ne 0) {
+            throw "Production source discovery does not cover the complete source fixture."
+        }
+    }
+    finally {
+        if (Test-Path -LiteralPath $testRoot) {
+            Remove-Item -LiteralPath $testRoot -Recurse -Force
+        }
+    }
+}
+
 function Test-AllowedSecretHit {
     param($Hit)
 
@@ -111,6 +184,7 @@ function Test-AllowedSecretHit {
 }
 
 Test-SearchWrapper
+Test-ProductionSourceDiscovery
 
 $gatewayPageServicesPath = Join-Path $repositoryRoot "src\EsmTspiot.WinForms.Shared\LmGatewayPage.Services.cs"
 $gatewayPageServices = [IO.File]::ReadAllText($gatewayPageServicesPath)
@@ -128,6 +202,9 @@ if ($gatewayPageServices -notmatch '(?s)public async Task<bool> RunCompleteAutom
 if ($gatewayPageServices -notmatch '(?s)CreateCompleteSetupRequest.*?ManagedLocalModuleRequestBuilder\.Build.*?CanonicalLmPlanHasher\.Compute') {
     throw "The complete automatic request must be built from the immutable managed-LM plan and hashed before elevation."
 }
+# This narrow list is intentional only for LM-specific structure and secret
+# checks. Forbidden implementation patterns and e-mail addresses use the full
+# production source set assembled by Get-ProductionSourceFiles below.
 $productionFiles = New-Object System.Collections.Generic.List[string]
 $productionFiles.AddRange([string[]]@(Get-ChildItem (Join-Path $repositoryRoot "src\EsmTspiot.ServiceProvisioner") -Recurse -Filter *.cs | ForEach-Object FullName))
 $productionFiles.AddRange([string[]]@(Get-ChildItem (Join-Path $repositoryRoot "src\EsmTspiot.WinForms.Shared") -Filter "Lm*.cs" | ForEach-Object FullName))
@@ -144,16 +221,18 @@ $productionFiles.AddRange([string[]]@(Get-ChildItem (Join-Path $repositoryRoot "
 $productionFiles.Add((Join-Path $repositoryRoot "src\EsmTspiot.Shared\Services\TspiotApiClient.cs"))
 $productionFiles.Add((Join-Path $repositoryRoot "build\EsmTspiot.Provisioner.targets"))
 $production = @($productionFiles | Sort-Object -Unique)
+$allProduction = @(Get-ProductionSourceFiles -Root $repositoryRoot)
 
 $forbiddenPattern = 'RollingPin|taskkill(?:\.exe)?|sc\.exe|powershell\.exe|cmd\.exe|\bjunction\b|\bUPX\b|relaxed_command_check|TerminateProcess|Process\.Kill|\.Kill\('
-$forbidden = @(Invoke-CheckedSearch -Pattern $forbiddenPattern -Paths $production)
+$forbidden = @(Invoke-CheckedSearch -Pattern $forbiddenPattern -Paths $allProduction)
+$forbidden = @($forbidden | Where-Object { -not (Test-AllowedForbiddenHit $_) })
 if ($forbidden.Count -gt 0) {
     $details = $forbidden | ForEach-Object { "$(Get-RelativeRepositoryPath $_.Path):$($_.Line):$($_.Text)" }
     throw "Forbidden LM implementation pattern found:`n$($details -join [Environment]::NewLine)"
 }
 
 $emailPattern = '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
-$emailHits = @(Invoke-CheckedSearch -Pattern $emailPattern -Paths $production)
+$emailHits = @(Invoke-CheckedSearch -Pattern $emailPattern -Paths $allProduction)
 $unexpectedEmails = @($emailHits | Where-Object {
     $relativePath = Get-RelativeRepositoryPath $_.Path
     -not (
@@ -186,4 +265,4 @@ if ($forbiddenTracked.Count -gt 0) {
     throw "Tracked binary, credential or vendor artifact found:`n$($forbiddenTracked -join [Environment]::NewLine)"
 }
 
-Write-Host "LM safety verification passed: forbidden patterns absent, secret hits allowlisted, no tracked vendor/binary artifacts."
+Write-Host "LM safety verification passed: full production forbidden/e-mail scan clean, LM secret hits allowlisted, no tracked vendor/binary artifacts."
