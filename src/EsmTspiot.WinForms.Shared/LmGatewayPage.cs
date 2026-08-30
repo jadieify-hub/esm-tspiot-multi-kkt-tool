@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Globalization;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -48,6 +49,7 @@ namespace EsmTspiot.WinForms.Shared
             _baseUrlProvider = baseUrlProvider;
             _logger = logger;
             _discoveryWorkflow = new LmGatewayDiscoveryWorkflow(apiClient);
+            _bindingWorkflow = new LmGatewayBindingWorkflow(apiClient);
             _readbackWorkflow = new LmGatewayReadbackWorkflow(apiClient);
             InitializeServiceFeatures();
 
@@ -113,12 +115,23 @@ namespace EsmTspiot.WinForms.Shared
 
         public Task RefreshIfNeededAsync()
         {
-            return _hasLoaded ? Task.FromResult(0) : RefreshAsync();
+            return _hasLoaded ? Task.FromResult(0) : RefreshSilentlyAsync();
         }
 
         public Task RefreshAsync()
         {
             return RunOperationAsync(RefreshCoreAsync, "Получение зарегистрированных ККТ из ЕСМ...");
+        }
+
+        private Task RefreshSilentlyAsync()
+        {
+            return RunOperationAsync(
+                RefreshCoreAsync,
+                "Получение зарегистрированных ККТ из ЕСМ...",
+                false,
+                true,
+                false,
+                CancellationToken.None);
         }
 
         protected override void Dispose(bool disposing)
@@ -361,10 +374,13 @@ namespace EsmTspiot.WinForms.Shared
                     GetRemovableManagedItems(
                         _serviceInventory,
                         _managedLocalModuleInventory);
+                HashSet<string> registeredSerials = new HashSet<string>(
+                    StringComparer.Ordinal);
                 int rowToSelect = -1;
                 for (int index = 0; index < _session.Rows.Count; index++)
                 {
                     LmGatewayBindingSessionRow item = _session.Rows[index];
+                    registeredSerials.Add(item.Kkt.KktSerial);
                     LmServiceInventoryItem inventory = FindInventory(item.Kkt.KktSerial);
                     ManagedLocalModuleInventoryItem managedLm =
                         _managedLocalModuleInventory.Find(
@@ -387,7 +403,8 @@ namespace EsmTspiot.WinForms.Shared
                         item.Kkt.KktSerial);
                     _grid.Rows[rowIndex].Tag = new LmGatewayGridRow(
                         item,
-                        removable ?? inventory);
+                        removable ?? inventory,
+                        item.Kkt.KktInn);
                     if (item.LastBindingStatus == LmGatewayBindingStatus.BindingVerified)
                     {
                         _grid.Rows[rowIndex].DefaultCellStyle.BackColor = Color.Honeydew;
@@ -411,6 +428,52 @@ namespace EsmTspiot.WinForms.Shared
                     if (string.Equals(item.Kkt.KktSerial, selectedSerial, StringComparison.Ordinal))
                     {
                         rowToSelect = rowIndex;
+                    }
+                }
+
+                for (int index = 0; index < removalInventory.Count; index++)
+                {
+                    LmServiceInventoryItem inventory = removalInventory[index];
+                    if (inventory == null ||
+                        string.IsNullOrWhiteSpace(inventory.KktSerial) ||
+                        registeredSerials.Contains(inventory.KktSerial))
+                    {
+                        continue;
+                    }
+
+                    ManagedLocalModuleInventoryItem managedLm =
+                        _managedLocalModuleInventory.Find(inventory.KktSerial);
+                    string inn = managedLm == null
+                        ? string.Empty
+                        : (managedLm.Inn ?? string.Empty);
+                    string ordinal = managedLm != null && managedLm.KktOrdinal > 0
+                        ? managedLm.KktOrdinal.ToString(CultureInfo.InvariantCulture)
+                        : "—";
+                    string softwarePort = managedLm != null &&
+                        managedLm.SoftwarePort > 0
+                            ? managedLm.SoftwarePort.ToString(
+                                CultureInfo.InvariantCulture)
+                            : string.Empty;
+                    int orphanRowIndex = _grid.Rows.Add(
+                        ordinal,
+                        inventory.KktSerial,
+                        inn,
+                        softwarePort,
+                        GetLmEndpointText(null, null, inventory, managedLm),
+                        GetLmStateText(inventory, managedLm),
+                        "Нет в ЕСМ");
+                    _grid.Rows[orphanRowIndex].Tag = new LmGatewayGridRow(
+                        null,
+                        inventory,
+                        inn);
+                    _grid.Rows[orphanRowIndex].DefaultCellStyle.BackColor =
+                        Color.LemonChiffon;
+                    if (string.Equals(
+                        inventory.KktSerial,
+                        selectedSerial,
+                        StringComparison.Ordinal))
+                    {
+                        rowToSelect = orphanRowIndex;
                     }
                 }
 
@@ -499,7 +562,7 @@ namespace EsmTspiot.WinForms.Shared
 
             _refreshButton.Enabled = idle;
             UpdateServiceActionState(idle, hasKkts);
-            _grid.Enabled = idle;
+            _grid.Enabled = true;
             _cancelButton.Visible = _running;
             _cancelButton.Enabled = _running && _cancellation != null && !_cancellation.IsCancellationRequested;
         }

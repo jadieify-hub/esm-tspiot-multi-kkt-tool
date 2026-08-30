@@ -130,7 +130,13 @@ namespace EsmTspiot.WinForms.Shared
             _grid.Columns.Add(ReadOnlyColumn("KktOrdinal", "№", 32));
             _grid.Columns.Add(ReadOnlyColumn("KktSerial", "Серийный № ККТ", 118));
             _grid.Columns.Add(ReadOnlyColumn("KktInn", "ИНН", 92));
-            _grid.Columns.Add(ReadOnlyColumn("KktSoftwarePort", "Порт кассового ПО", 105));
+            DataGridViewTextBoxColumn softwarePort = ReadOnlyColumn(
+                "KktSoftwarePort",
+                "Порт ПО",
+                105);
+            softwarePort.ToolTipText =
+                "softPort для Frontol или другой кассовой программы.";
+            _grid.Columns.Add(softwarePort);
             _grid.Columns.Add(ReadOnlyColumn("LmTargetAddress", "Адрес ЛМ ЧЗ", 125));
             _grid.Columns.Add(EditColumn("LmTargetPort", "Порт ЛМ ЧЗ", 82));
             DataGridViewTextBoxColumn validation = ReadOnlyColumn("Validation", "Проверка", 180);

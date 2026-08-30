@@ -6,6 +6,25 @@ namespace EsmTspiot.Shared.Services
 {
     public static class InstructionFileSelector
     {
+        public static string SelectAvailable(string directory)
+        {
+            if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+            {
+                return string.Empty;
+            }
+
+            string[] files = Directory.GetFiles(directory, "Instruction-MultiKKT*.pdf");
+            if (files.Length == 0)
+            {
+                files = Directory.GetFiles(directory, "instrukciya_dlya_chaynikov*.pdf");
+            }
+            if (files.Length == 0)
+            {
+                files = Directory.GetFiles(directory, "FIELD_TEST*.md");
+            }
+            return SelectNewest(files);
+        }
+
         public static string SelectNewest(IList<string> files)
         {
             string selected = string.Empty;

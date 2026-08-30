@@ -161,6 +161,7 @@ namespace EsmTspiot.WinForms.Shared
                 Dock = DockStyle.Fill,
                 Multiline = true,
                 ReadOnly = true,
+                TabStop = false,
                 ScrollBars = ScrollBars.Vertical,
                 BackColor = SystemColors.Window,
                 Text = BuildServiceList(),

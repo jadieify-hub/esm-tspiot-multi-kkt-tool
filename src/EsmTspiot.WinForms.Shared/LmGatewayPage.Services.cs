@@ -94,7 +94,7 @@ namespace EsmTspiot.WinForms.Shared
             _installerPathTextBox.ReadOnly = true;
             _installerPathTextBox.Tag = "Выберите esm-lm-controller_*-windows-setup.exe";
             ConfigureButton(_selectInstallerButton, "Выбрать…");
-            ConfigureButton(_installControllerButton, "Настроить все ККТ");
+            ConfigureButton(_installControllerButton, "Создать комплекты");
             _installControllerButton.Tag = "AutomaticSetup";
             _selectInstallerButton.Click += delegate { SelectInstaller(); };
             _installControllerButton.Click += async delegate { await StartAutomaticSetupAsync(); };
@@ -138,7 +138,8 @@ namespace EsmTspiot.WinForms.Shared
             _officialControllerStatusLabel.AutoSize = true;
             _officialControllerStatusLabel.Dock = DockStyle.Fill;
             _officialControllerStatusLabel.Text =
-                "Не найден. Установите или проверьте официальную версию контроллера.";
+                "Не найден. Для управляемых комплектов не используется; " +
+                "выберите официальный установщик выше.";
             group.Controls.Add(_officialControllerStatusLabel);
             return group;
         }
@@ -912,20 +913,24 @@ namespace EsmTspiot.WinForms.Shared
         {
             if (!string.IsNullOrEmpty(_serviceInventoryWarning))
             {
-                _officialControllerStatusLabel.Text = "Состояние штатного контроллера прочитать не удалось.";
+                _officialControllerStatusLabel.Text =
+                    "Состояние штатного контроллера прочитать не удалось. " +
+                    "Для управляемых комплектов он не используется.";
                 return;
             }
             LmServiceInventoryDisplay display = LmServiceInventoryDisplay.Create(_serviceInventory);
             if (display.OfficialControllers.Count == 0)
             {
                 _officialControllerStatusLabel.Text =
-                    "Не найден. Установите или проверьте официальную версию контроллера.";
+                    "Не найден. Для управляемых комплектов не используется; " +
+                    "выберите официальный установщик выше.";
                 return;
             }
 
             LmServiceInventoryItem official = display.OfficialControllers[0];
             _officialControllerStatusLabel.Text =
                 "Установлен, состояние: " + GetServiceStatusText(official) + "." +
+                " Для управляемых комплектов эта служба не используется." +
                 (display.OfficialControllers.Count > 1
                     ? " Внимание: найдено несколько штатных контроллеров."
                     : string.Empty);
@@ -1196,10 +1201,9 @@ namespace EsmTspiot.WinForms.Shared
             {
                 return;
             }
-            LmGatewayBindingSessionRow session = GetSelectedSessionRow();
             using (LmGatewayRemovalDialog dialog = new LmGatewayRemovalDialog(
                 item,
-                session == null || session.Kkt == null ? string.Empty : session.Kkt.KktInn))
+                GetSelectedKktInn()))
             {
                 if (dialog.ShowDialog(this) != DialogResult.OK || dialog.Confirmation == null)
                 {
@@ -1380,8 +1384,7 @@ namespace EsmTspiot.WinForms.Shared
                     LmServiceInventoryItem item = inventory[index];
                     if (item != null && item.Role == LmServiceRole.Managed &&
                         item.Ports != null && item.ManifestFingerprint != null &&
-                        CanonicalLmPlanHasher.FixedTimeEqualsHex(
-                            item.ManifestFingerprint.Sha256,
+                        CanonicalLmPlanHasher.IsWellFormedSha256(
                             item.ManifestFingerprint.Sha256) &&
                         item.Ports.GrpcPort > 0 && item.Ports.GrpcPort <= 65535 &&
                         item.Ports.RestPort > 0 && item.Ports.RestPort <= 65535 &&
@@ -1402,8 +1405,7 @@ namespace EsmTspiot.WinForms.Shared
                         managedInventory.Items[index];
                     if (managed == null ||
                         managed.ManagedStateFingerprint == null ||
-                        !CanonicalLmPlanHasher.FixedTimeEqualsHex(
-                            managed.ManagedStateFingerprint.Sha256,
+                        !CanonicalLmPlanHasher.IsWellFormedSha256(
                             managed.ManagedStateFingerprint.Sha256))
                     {
                         continue;
@@ -1574,11 +1576,14 @@ namespace EsmTspiot.WinForms.Shared
         {
             LmServiceInventoryItem selected = GetSelectedInventoryItem();
             bool managed = selected != null && selected.Role == LmServiceRole.Managed;
+            LmGatewayBindingSessionRow selectedSession = GetSelectedSessionRow();
             _selectInstallerButton.Enabled = idle;
             _selectLocalModuleInstallerButton.Enabled = idle;
             _installControllerButton.Enabled = idle && _installerSelection != null &&
                 _localModuleInstallerSelection != null &&
                 _helperAvailable && hasKkts;
+            _bindButton.Enabled = idle && selectedSession != null && managed &&
+                selected.IsRunning && selected.IsReady;
             _removeServiceButton.Enabled = idle && managed && _helperAvailable &&
                 selected.Status != LmServiceProvisioningStatus.CleanupPending;
             _removeAllServicesButton.Enabled = idle && _helperAvailable &&
@@ -1597,6 +1602,12 @@ namespace EsmTspiot.WinForms.Shared
                         ? "В таблице нет зарегистрированных ККТ."
                         : "Создать или обновить локальные контроллеры и ЛМ ЧЗ для всех ККТ.";
             _serviceToolTip.SetToolTip(_installControllerButton, setupReason);
+            _serviceToolTip.SetToolTip(_bindButton,
+                selectedSession == null
+                    ? "Выберите зарегистрированную ККТ."
+                    : !managed || !selected.IsRunning || !selected.IsReady
+                        ? "Сначала создайте и проверьте локальный комплект выбранной ККТ."
+                        : "Однократно передать ЕСМ адрес контроллера и введённые данные ЛМ ЧЗ.");
             _serviceToolTip.SetToolTip(_removeServiceButton,
                 _helperAvailable ? "Удалить выбранный комплект ККТ, контроллер и неиспользуемый ЛМ." : _helperUnavailableReason);
             _serviceToolTip.SetToolTip(_removeAllServicesButton,
@@ -1613,6 +1624,16 @@ namespace EsmTspiot.WinForms.Shared
             }
             LmGatewayGridRow row = _grid.SelectedRows[0].Tag as LmGatewayGridRow;
             return row == null ? null : row.Inventory;
+        }
+
+        private string GetSelectedKktInn()
+        {
+            if (_grid.SelectedRows.Count != 1)
+            {
+                return string.Empty;
+            }
+            LmGatewayGridRow row = _grid.SelectedRows[0].Tag as LmGatewayGridRow;
+            return row == null ? string.Empty : row.KktInn;
         }
 
         private LmServiceInventoryItem FindInventory(string serial)
@@ -1809,9 +1830,7 @@ namespace EsmTspiot.WinForms.Shared
             {
                 return managedLm.State;
             }
-            return controller == null
-                ? "Не создан"
-                : "ЛМ не создан";
+            return "Не создан";
         }
 
         private static string GetEsmLinkStateText(
@@ -1819,7 +1838,7 @@ namespace EsmTspiot.WinForms.Shared
         {
             if (session == null || !session.LastBindingStatus.HasValue)
             {
-                return "Ожидает инициализации";
+                return "Не привязана";
             }
             switch (session.LastBindingStatus.Value)
             {
@@ -1895,14 +1914,17 @@ namespace EsmTspiot.WinForms.Shared
         {
             internal LmGatewayGridRow(
                 LmGatewayBindingSessionRow sessionRow,
-                LmServiceInventoryItem inventory)
+                LmServiceInventoryItem inventory,
+                string kktInn)
             {
                 SessionRow = sessionRow;
                 Inventory = inventory;
+                KktInn = (kktInn ?? string.Empty).Trim();
             }
 
             internal LmGatewayBindingSessionRow SessionRow { get; private set; }
             internal LmServiceInventoryItem Inventory { get; private set; }
+            internal string KktInn { get; private set; }
         }
     }
 }

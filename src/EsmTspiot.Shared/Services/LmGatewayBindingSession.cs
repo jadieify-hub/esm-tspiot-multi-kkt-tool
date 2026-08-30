@@ -123,12 +123,33 @@ namespace EsmTspiot.Shared.Services
 
         public LmGatewayBindingPlan BuildSelectedPlan()
         {
+            return BuildPlan(delegate(LmGatewayBindingSessionRow row)
+            {
+                return row != null && row.IsSelected;
+            });
+        }
+
+        public LmGatewayBindingPlan BuildPlanFor(string kktSerial)
+        {
+            string expected = Trim(kktSerial);
+            return BuildPlan(delegate(LmGatewayBindingSessionRow row)
+            {
+                return row != null && row.Kkt != null && string.Equals(
+                    GetSerial(row.Kkt),
+                    expected,
+                    StringComparison.Ordinal);
+            });
+        }
+
+        private LmGatewayBindingPlan BuildPlan(
+            Func<LmGatewayBindingSessionRow, bool> include)
+        {
             LmGatewayDiscovery discovery = new LmGatewayDiscovery();
             IList<LmGatewayBindingInput> inputs = new List<LmGatewayBindingInput>();
             for (int index = 0; index < _rows.Count; index++)
             {
                 LmGatewayBindingSessionRow row = _rows[index];
-                if (row == null || !row.IsSelected || row.Kkt == null)
+                if (row == null || row.Kkt == null || include == null || !include(row))
                 {
                     continue;
                 }
@@ -143,7 +164,6 @@ namespace EsmTspiot.Shared.Services
                     ControllerGrpcPort = Trim(row.ControllerGrpcPort)
                 });
             }
-
             return LmGatewayBindingPlanner.Build(discovery, inputs);
         }
 

@@ -113,6 +113,23 @@ namespace EsmTspiot.Shared.Services
             return difference == 0;
         }
 
+        public static bool IsWellFormedSha256(string value)
+        {
+            if (value == null || value.Length != 64)
+            {
+                return false;
+            }
+
+            for (int index = 0; index < value.Length; index++)
+            {
+                if (NormalizeHex(value[index]) > 15)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         private static void AppendEnsureItem(StringBuilder canonical, LmServiceProvisioningItemRequest item)
         {
             Append(canonical, "kkt", item == null ? null : item.KktSerial);
