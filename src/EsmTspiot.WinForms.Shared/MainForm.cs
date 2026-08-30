@@ -174,9 +174,13 @@ namespace EsmTspiot.WinForms.Shared
             ToolStripMenuItem helpMenu = new ToolStripMenuItem("Справка");
             ToolStripMenuItem instruction = new ToolStripMenuItem("Открыть инструкцию");
             instruction.Click += delegate { OpenInstruction(); };
+            ToolStripMenuItem support = new ToolStripMenuItem("Поддержать разработку");
+            support.Click += delegate { ShowSupportDevelopment(); };
             ToolStripMenuItem about = new ToolStripMenuItem("О программе");
             about.Click += delegate { ShowAbout(); };
             helpMenu.DropDownItems.Add(instruction);
+            helpMenu.DropDownItems.Add(support);
+            helpMenu.DropDownItems.Add(new ToolStripSeparator());
             helpMenu.DropDownItems.Add(about);
 
             menu.Items.Add(fileMenu);
@@ -1322,16 +1326,17 @@ namespace EsmTspiot.WinForms.Shared
                     ? "Контроллеры и ЛМ ЧЗ запущены; ЕСМ принял настройки связи. " +
                         "ЛМ готовы к бизнес-инициализации ЕСМ или сторонней утилитой."
                     : _lmGatewayPage.AutomaticSetupStatus;
+                bool fullySuccessful = complete && !registrationHasFailures;
                 MessageBox.Show(
                     this,
-                    "Автоматическая настройка завершена.\r\n\r\n" +
-                        BulkKktRegistrationResult.FormatSummary(
-                            registrationOutcome.Results) +
-                        "\r\n\r\n" + stackSummary +
-                        "\r\n\r\nАдреса ЛМ и порты кассового ПО показаны на вкладке «ЛМ ЧЗ».",
+                    BuildAutomaticSetupCompletionMessage(
+                        registrationOutcome,
+                        stackSummary,
+                        complete,
+                        registrationHasFailures),
                     "Автоматическая настройка",
                     MessageBoxButtons.OK,
-                    complete && !registrationHasFailures
+                    fullySuccessful
                         ? MessageBoxIcon.Information
                         : MessageBoxIcon.Warning);
             }
@@ -1875,6 +1880,39 @@ namespace EsmTspiot.WinForms.Shared
                 UseShellExecute = true
             };
             Process.Start(startInfo);
+        }
+
+        private void ShowSupportDevelopment()
+        {
+            using (SupportDevelopmentDialog dialog =
+                new SupportDevelopmentDialog())
+            {
+                dialog.ShowDialog(this);
+            }
+        }
+
+        private static string BuildAutomaticSetupCompletionMessage(
+            BulkRegistrationOutcome registrationOutcome,
+            string stackSummary,
+            bool complete,
+            bool registrationHasFailures)
+        {
+            StringBuilder message = new StringBuilder();
+            message.Append("Автоматическая настройка завершена.\r\n\r\n");
+            message.Append(BulkKktRegistrationResult.FormatSummary(
+                registrationOutcome.Results));
+            message.Append("\r\n\r\n");
+            message.Append(stackSummary);
+            message.Append(
+                "\r\n\r\nАдреса ЛМ и порты кассового ПО показаны " +
+                "на вкладке «ЛМ ЧЗ».");
+            if (complete && !registrationHasFailures)
+            {
+                message.Append(
+                    "\r\n\r\nПрограмма помогла? Поддержать разработку: " +
+                    "меню Справка.");
+            }
+            return message.ToString();
         }
 
         private void ShowAbout()

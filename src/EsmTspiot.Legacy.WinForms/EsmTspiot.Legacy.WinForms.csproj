@@ -35,6 +35,8 @@
     <Compile Include="..\EsmTspiot.WinForms.Shared\ProvisionerProcessLauncher.cs" Link="ProvisionerProcessLauncher.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\KktDeletionConfirmationDialog.cs" Link="KktDeletionConfirmationDialog.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\KktSelectionDialog.cs" Link="KktSelectionDialog.cs" />
+    <Compile Include="..\EsmTspiot.WinForms.Shared\SupportDevelopmentDialog.cs" Link="SupportDevelopmentDialog.cs" />
+    <EmbeddedResource Include="..\EsmTspiot.WinForms.Shared\Assets\support-cloudtips-qr.png" Link="Assets\support-cloudtips-qr.png" LogicalName="EsmTspiot.WinForms.Shared.Assets.support-cloudtips-qr.png" />
     <None Include="..\EsmTspiot.WinForms.Shared\Assets\app.ico" Link="app.ico" />
   </ItemGroup>
 

@@ -19,6 +19,9 @@ $assembly = [System.Reflection.Assembly]::LoadFrom($appPath)
 $formType = $assembly.GetType("EsmTspiot.WinForms.Shared.MainForm", $true)
 $flags = [System.Reflection.BindingFlags]::Instance -bor [System.Reflection.BindingFlags]::NonPublic
 $allInstanceFlags = $flags -bor [System.Reflection.BindingFlags]::Public
+$allStaticFlags = [System.Reflection.BindingFlags]::Static -bor
+    [System.Reflection.BindingFlags]::NonPublic -bor
+    [System.Reflection.BindingFlags]::Public
 
 function Get-PrivateFieldValue {
     param(
@@ -66,6 +69,8 @@ $automaticParametersDialog = $null
 $bindingDialog = $null
 $removeAllDialog = $null
 $kktDeletionDialog = $null
+$supportDevelopmentDialog = $null
+$supportDialogCloseTimer = $null
 try {
     $form = [Activator]::CreateInstance($formType)
     $page = Get-PrivateFieldValue -Instance $form -Name "_lmGatewayPage"
@@ -114,6 +119,137 @@ try {
         })
     if ($automaticHint.Count -ne 1) {
         throw "The automatic page must visibly explain ATOL discovery and ESM binding."
+    }
+
+    $helpTitle = Get-Utf8Text("0KHQv9GA0LDQstC60LA=")
+    $supportTitle = Get-Utf8Text(
+        "0J/QvtC00LTQtdGA0LbQsNGC0Ywg0YDQsNC30YDQsNCx0L7RgtC60YM=")
+    $helpMenu = @($form.MainMenuStrip.Items | Where-Object {
+        $_ -is [System.Windows.Forms.ToolStripMenuItem] -and
+        $_.Text -eq $helpTitle
+    })
+    if ($helpMenu.Count -ne 1) {
+        throw "The main menu must contain one Help menu."
+    }
+    $supportMenuItem = @($helpMenu[0].DropDownItems | Where-Object {
+        $_ -is [System.Windows.Forms.ToolStripMenuItem] -and
+        $_.Text -eq $supportTitle
+    })
+    if ($supportMenuItem.Count -ne 1) {
+        throw "Help must contain one Support Development command."
+    }
+
+    $supportDialogType = $assembly.GetType(
+        "EsmTspiot.WinForms.Shared.SupportDevelopmentDialog", $true)
+    $script:supportDialogObserved = $false
+    $supportDialogCloseTimer = New-Object System.Windows.Forms.Timer
+    $supportDialogCloseTimer.Interval = 25
+    $supportDialogCloseTimer.add_Tick({
+        foreach ($openForm in [System.Windows.Forms.Application]::OpenForms) {
+            if ($openForm.GetType() -eq $supportDialogType) {
+                $script:supportDialogObserved = $true
+                $openForm.Close()
+                $supportDialogCloseTimer.Stop()
+                break
+            }
+        }
+    })
+    $supportDialogCloseTimer.Start()
+    $supportMenuItem[0].PerformClick()
+    $supportDialogCloseTimer.Stop()
+    if (-not $script:supportDialogObserved) {
+        throw "The Support Development menu command must open its dialog."
+    }
+
+    $supportDevelopmentDialog = [Activator]::CreateInstance(
+        $supportDialogType)
+    $supportDevelopmentDialog.CreateControl()
+    $supportDevelopmentDialog.PerformLayout()
+    foreach ($control in @(Get-DescendantControls $supportDevelopmentDialog)) {
+        $control.PerformLayout()
+    }
+    $supportDevelopmentDialog.Show()
+    [System.Windows.Forms.Application]::DoEvents()
+    $supportControls = @(Get-DescendantControls $supportDevelopmentDialog)
+    $supportPictures = @($supportControls | Where-Object {
+        $_ -is [System.Windows.Forms.PictureBox]
+    })
+    if ($supportPictures.Count -ne 1 -or
+        $null -eq $supportPictures[0].Image -or
+        $supportPictures[0].Image.Width -ne 296 -or
+        $supportPictures[0].Image.Height -ne 296 -or
+        $supportPictures[0].Width -ne 296 -or
+        $supportPictures[0].Height -ne 296) {
+        throw "The support dialog must display the embedded 296px QR image at 1:1 scale."
+    }
+    $supportUrl = "https://pay.cloudtips.ru/p/53698013"
+    if (@($supportControls | Where-Object {
+            $_.Text -eq $supportUrl
+        }).Count -ne 1) {
+        throw "The support dialog must show the exact donation URL as text."
+    }
+    $copyLinkText = Get-Utf8Text(
+        "0KHQutC+0L/QuNGA0L7QstCw0YLRjCDRgdGB0YvQu9C60YM=")
+    $copyLinkButtons = @($supportControls | Where-Object {
+            $_ -is [System.Windows.Forms.Button] -and
+            $_.Text -eq $copyLinkText
+        })
+    if ($copyLinkButtons.Count -ne 1) {
+        throw "The support dialog must expose one Copy Link button."
+    }
+    $clipboardBefore = [System.Windows.Forms.Clipboard]::GetDataObject()
+    try {
+        [System.Windows.Forms.Clipboard]::Clear()
+        $copyLinkButtons[0].PerformClick()
+        if ([System.Windows.Forms.Clipboard]::GetText() -ne $supportUrl) {
+            throw "Copy Link must place the exact donation URL on the clipboard."
+        }
+    }
+    finally {
+        if ($null -ne $clipboardBefore) {
+            [System.Windows.Forms.Clipboard]::SetDataObject(
+                $clipboardBefore, $true)
+        }
+        else {
+            [System.Windows.Forms.Clipboard]::Clear()
+        }
+    }
+    $offlineNotice = Get-Utf8Text(
+        "0J7RgtGB0LrQsNC90LjRgNGD0LnRgtC1INC60L7QtCDRgtC10LvQtdGE0L7QvdC+0LwuINCf0YDQvtCz0YDQsNC80LzQsCDQv9GA0Lgg0Y3RgtC+0Lwg0L3QuNC60YPQtNCwINC90LUg0L7QsdGA0LDRidCw0LXRgtGB0Y8g0Lgg0L3QuNGH0LXQs9C+INC90LUg0L/QtdGA0LXQtNCw0ZHRgi4=")
+    if (@($supportControls | Where-Object {
+            $_.Text -eq $offlineNotice
+        }).Count -ne 1) {
+        throw "The support dialog must state that the program sends nothing."
+    }
+    $closeText = Get-Utf8Text("0JfQsNC60YDRi9GC0Yw=")
+    if ($supportDevelopmentDialog.FormBorderStyle -ne
+            [System.Windows.Forms.FormBorderStyle]::FixedDialog -or
+        $null -eq $supportDevelopmentDialog.AcceptButton -or
+        $supportDevelopmentDialog.AcceptButton.Text -ne $closeText -or
+        $null -eq $supportDevelopmentDialog.CancelButton -or
+        $supportDevelopmentDialog.CancelButton.Text -ne $closeText) {
+        throw "The support dialog must be fixed and close by Enter or Escape."
+    }
+
+    $completionMessageMethod = $formType.GetMethod(
+        "BuildAutomaticSetupCompletionMessage", $allStaticFlags)
+    if ($null -eq $completionMessageMethod) {
+        throw "Automatic setup needs one testable completion-message formatter."
+    }
+    $outcomeType = $completionMessageMethod.GetParameters()[0].ParameterType
+    $emptyOutcome = [Activator]::CreateInstance($outcomeType)
+    $donationLine = Get-Utf8Text(
+        "0J/RgNC+0LPRgNCw0LzQvNCwINC/0L7QvNC+0LPQu9CwPyDQn9C+0LTQtNC10YDQttCw0YLRjCDRgNCw0LfRgNCw0LHQvtGC0LrRgzog0LzQtdC90Y4g0KHQv9GA0LDQstC60LAu")
+    $fullSuccessMessage = $completionMessageMethod.Invoke(
+        $null, @($emptyOutcome, "stack", $true, $false))
+    $partialMessage = $completionMessageMethod.Invoke(
+        $null, @($emptyOutcome, "stack", $true, $true))
+    $failedMessage = $completionMessageMethod.Invoke(
+        $null, @($emptyOutcome, "stack", $false, $false))
+    if (-not $fullSuccessMessage.EndsWith($donationLine) -or
+        $partialMessage.Contains($donationLine) -or
+        $failedMessage.Contains($donationLine)) {
+        throw "The support hint must be the final line of full-success results only."
     }
 
     # Test the responsive layout directly without displaying a window or starting discovery.
@@ -928,6 +1064,12 @@ try {
         $installButton.Right, $page.ClientSize.Width, $automaticInstallerPath.Width)
 }
 finally {
+    if ($null -ne $supportDialogCloseTimer) {
+        $supportDialogCloseTimer.Dispose()
+    }
+    if ($null -ne $supportDevelopmentDialog) {
+        $supportDevelopmentDialog.Dispose()
+    }
     if ($null -ne $kktDeletionDialog) {
         $kktDeletionDialog.Dispose()
     }
