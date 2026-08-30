@@ -24,6 +24,7 @@ namespace EsmTspiot.WinForms.Shared
         private readonly Button _refreshButton = new Button();
         private readonly Button _cancelButton = new Button();
         private readonly Label _statusLabel = new Label();
+        private readonly Label _selectionActionHintLabel = new Label();
         private readonly Label _officialControllerStatusLabel = new Label();
         private CancellationTokenSource _cancellation;
         private bool _running;
@@ -129,7 +130,7 @@ namespace EsmTspiot.WinForms.Shared
                 RefreshCoreAsync,
                 "Получение зарегистрированных ККТ из ЕСМ...",
                 false,
-                true,
+                false,
                 false,
                 CancellationToken.None);
         }

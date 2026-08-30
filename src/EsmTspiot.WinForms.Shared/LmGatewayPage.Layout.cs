@@ -10,7 +10,8 @@ namespace EsmTspiot.WinForms.Shared
             TableLayoutPanel root = new TableLayoutPanel();
             root.Dock = DockStyle.Fill;
             root.ColumnCount = 1;
-            root.RowCount = 4;
+            root.RowCount = 5;
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -55,10 +56,20 @@ namespace EsmTspiot.WinForms.Shared
             _statusLabel.Margin = new Padding(8, 0, 0, 4);
             toolbar.Controls.Add(_statusLabel);
 
+            _selectionActionHintLabel.AutoSize = false;
+            _selectionActionHintLabel.Dock = DockStyle.Fill;
+            _selectionActionHintLabel.MinimumSize = new Size(0, 24);
+            _selectionActionHintLabel.TextAlign = ContentAlignment.MiddleLeft;
+            _selectionActionHintLabel.AutoEllipsis = true;
+            _selectionActionHintLabel.Margin = new Padding(8, 0, 0, 4);
+            _selectionActionHintLabel.Text =
+                "Выберите строку ККТ — здесь появятся доступные действия.";
+
             ConfigureGrid();
 
             root.Controls.Add(toolbar, 0, 2);
-            root.Controls.Add(_grid, 0, 3);
+            root.Controls.Add(_selectionActionHintLabel, 0, 3);
+            root.Controls.Add(_grid, 0, 4);
             Controls.Add(root);
         }
 
