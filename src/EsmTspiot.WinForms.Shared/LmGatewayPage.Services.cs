@@ -324,6 +324,7 @@ namespace EsmTspiot.WinForms.Shared
                 throw new ArgumentNullException("registerKkt");
             }
 
+            string baseUrl = ValidateAndReadBaseUrl();
             cancellation.ThrowIfCancellationRequested();
             RefreshServiceInventory();
             EnsureNoPendingManagedCleanup(_managedLocalModuleInventory);
@@ -364,6 +365,9 @@ namespace EsmTspiot.WinForms.Shared
                 CreateCompleteSetupRequest(plan, licenseNoticeAccepted);
             _statusLabel.Text =
                 "Ожидание подтверждения UAC и проверка обоих пакетов...";
+            bool bindingsSuccessful = true;
+            LmGatewayBindingOutcome automaticBindingOutcome =
+                new LmGatewayBindingOutcome();
             LmServiceProvisioningBatchResult result =
                 await _completeStackProvisioner.RunAsync(
                     request,
@@ -378,7 +382,7 @@ namespace EsmTspiot.WinForms.Shared
                             ": регистрация в ЕСМ " + item.KktSerial + "...";
                         return await registerKkt(item.KktSerial, token);
                     },
-                    delegate(
+                    async delegate(
                         int index,
                         LmServiceProvisioningItemResult item,
                         CancellationToken token)
@@ -391,14 +395,26 @@ namespace EsmTspiot.WinForms.Shared
                         Log((item.KktSerial ?? string.Empty) + ": " +
                             item.Status.ToString() + ". " +
                             SensitiveDataMasker.Mask(item.Message) + "\r\n");
-                        return Task.FromResult(true);
+                        bool bound = await ExecuteCompleteAutomaticBindingAsync(
+                            baseUrl,
+                            candidates,
+                            request.ManagedLocalModules[index],
+                            automaticBindingOutcome,
+                            token);
+                        if (!bound)
+                        {
+                            bindingsSuccessful = false;
+                        }
+                        return bound;
                     },
                     cancellation);
 
-            bool success = IsCompleteSetupSuccessful(result);
+            bool localSetupSuccessful = IsCompleteSetupSuccessful(result);
+            bool finalRefreshSucceeded = false;
             try
             {
                 await RefreshCoreAsync(CancellationToken.None);
+                finalRefreshSucceeded = true;
             }
             catch (Exception ex)
             {
@@ -413,10 +429,83 @@ namespace EsmTspiot.WinForms.Shared
                 Log("Комплекты созданы, но итоговое обновление ЕСМ не удалось: " +
                     SensitiveDataMasker.Mask(ex.Message) + "\r\n");
             }
+            _session.ApplyOutcomeFallback(automaticBindingOutcome);
+            FillRows(null);
+            if (finalRefreshSucceeded)
+            {
+                bindingsSuccessful = bindingsSuccessful &&
+                    AreCompleteAutomaticBindingRowsSuccessful(
+                        request.ManagedLocalModules);
+            }
+            bool success = localSetupSuccessful && bindingsSuccessful;
             _statusLabel.Text = success
-                ? "Все комплекты запущены и готовы к инициализации ЛМ ЧЗ."
+                ? "Все комплекты запущены; ЕСМ принял настройки связи для каждой ККТ."
                 : "Настройка завершена не для всех ККТ. Проверьте таблицу и журнал.";
             return success;
+        }
+
+        private async Task<bool> ExecuteCompleteAutomaticBindingAsync(
+            string baseUrl,
+            IList<LmGatewayKkt> candidates,
+            ManagedLocalModuleProvisioningItemRequest itemRequest,
+            LmGatewayBindingOutcome automaticBindingOutcome,
+            CancellationToken cancellation)
+        {
+            if (itemRequest == null)
+            {
+                return false;
+            }
+
+            LmGatewayDiscovery discovery = new LmGatewayDiscovery();
+            LmGatewayKkt kkt = FindCompleteSetupKkt(
+                candidates,
+                itemRequest.KktSerial);
+            if (kkt == null)
+            {
+                Log((itemRequest.KktSerial ?? string.Empty) +
+                    ": не найдена строка ККТ для автоматической привязки.\r\n");
+                return false;
+            }
+
+            discovery.Items.Add(CopyCompleteSetupKkt(kkt));
+            IList<LmGatewayBindingInput> inputs =
+                new List<LmGatewayBindingInput>();
+            inputs.Add(new LmGatewayBindingInput
+            {
+                KktSerial = itemRequest.KktSerial,
+                KktInn = itemRequest.Inn,
+                ControllerAddress = LmGatewayDraftDefaults.ControllerAddress,
+                ControllerGrpcPort = itemRequest.ControllerGrpcPort.ToString(
+                    CultureInfo.InvariantCulture),
+                ExpectedLmAddress = LmGatewayDraftDefaults.ControllerAddress,
+                ExpectedLmPort = itemRequest.ApiPort.ToString(
+                    CultureInfo.InvariantCulture)
+            });
+
+            _statusLabel.Text = "ККТ " + itemRequest.KktSerial +
+                ": автоматическая привязка к ЕСМ...";
+            LmGatewayBindingPlan bindingPlan =
+                LmGatewayBindingPlanner.Build(discovery, inputs);
+            LmGatewayBindingOutcome outcome = await _bindingWorkflow.ExecuteAsync(
+                baseUrl,
+                bindingPlan,
+                delegate { return LmGatewayCredentialDefaults.Create(); },
+                ReportBindingProgress,
+                cancellation);
+            automaticBindingOutcome.Cancelled =
+                automaticBindingOutcome.Cancelled || outcome.Cancelled;
+            for (int index = 0; index < outcome.Results.Count; index++)
+            {
+                automaticBindingOutcome.Results.Add(outcome.Results[index]);
+            }
+            _session.ApplyOutcome(outcome);
+            for (int index = 0; index < outcome.Results.Count; index++)
+            {
+                Log(GetBindingResultText(outcome.Results[index]) + "\r\n");
+            }
+            return AreCompleteAutomaticBindingsSuccessful(
+                outcome,
+                1);
         }
 
         private IList<LmGatewayKkt> CopySessionKkts()
@@ -809,8 +898,59 @@ namespace EsmTspiot.WinForms.Shared
             for (int index = 0; index < result.Items.Count; index++)
             {
                 LmServiceProvisioningStatus status = result.Items[index].Status;
-                if (status != LmServiceProvisioningStatus.Succeeded &&
-                    status != LmServiceProvisioningStatus.ReadyToInitialize)
+                if (!IsCompleteSetupItemSuccessful(status))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private static bool IsCompleteSetupItemSuccessful(
+            LmServiceProvisioningStatus status)
+        {
+            return status == LmServiceProvisioningStatus.Succeeded ||
+                status == LmServiceProvisioningStatus.ReadyToInitialize;
+        }
+
+        private static bool AreCompleteAutomaticBindingsSuccessful(
+            LmGatewayBindingOutcome outcome,
+            int expectedCount)
+        {
+            if (outcome == null || outcome.Cancelled ||
+                outcome.Results.Count != expectedCount)
+            {
+                return false;
+            }
+            for (int index = 0; index < outcome.Results.Count; index++)
+            {
+                LmGatewayBindingStatus status = outcome.Results[index].Status;
+                if (status != LmGatewayBindingStatus.BindingVerified &&
+                    status != LmGatewayBindingStatus.BindingAccepted)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private bool AreCompleteAutomaticBindingRowsSuccessful(
+            IList<ManagedLocalModuleProvisioningItemRequest> items)
+        {
+            if (items == null || items.Count == 0)
+            {
+                return false;
+            }
+            for (int index = 0; index < items.Count; index++)
+            {
+                ManagedLocalModuleProvisioningItemRequest item = items[index];
+                LmGatewayBindingSessionRow row = FindSessionRow(
+                    item == null ? null : item.KktSerial);
+                if (row == null || !row.LastBindingStatus.HasValue ||
+                    (row.LastBindingStatus.Value !=
+                        LmGatewayBindingStatus.BindingVerified &&
+                     row.LastBindingStatus.Value !=
+                        LmGatewayBindingStatus.BindingAccepted))
                 {
                     return false;
                 }

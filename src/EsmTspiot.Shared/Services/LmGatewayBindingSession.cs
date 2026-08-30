@@ -169,6 +169,18 @@ namespace EsmTspiot.Shared.Services
 
         public void ApplyOutcome(LmGatewayBindingOutcome outcome)
         {
+            ApplyOutcome(outcome, false);
+        }
+
+        public void ApplyOutcomeFallback(LmGatewayBindingOutcome outcome)
+        {
+            ApplyOutcome(outcome, true);
+        }
+
+        private void ApplyOutcome(
+            LmGatewayBindingOutcome outcome,
+            bool preserveExistingStatus)
+        {
             if (outcome == null)
             {
                 return;
@@ -178,13 +190,18 @@ namespace EsmTspiot.Shared.Services
             {
                 LmGatewayBindingResult result = outcome.Results[index];
                 LmGatewayBindingSessionRow row = FindRow(result == null ? null : result.KktSerial);
-                if (row == null || result == null)
+                if (row == null || result == null ||
+                    (preserveExistingStatus && row.LastBindingStatus.HasValue))
                 {
                     continue;
                 }
 
                 row.LastBindingStatus = result.Status;
-                row.LastMessage = SensitiveDataMasker.Mask(result.Details);
+                if (!preserveExistingStatus ||
+                    string.IsNullOrWhiteSpace(row.LastMessage))
+                {
+                    row.LastMessage = SensitiveDataMasker.Mask(result.Details);
+                }
             }
         }
 
@@ -200,27 +217,37 @@ namespace EsmTspiot.Shared.Services
                 LmGatewayReadbackObservation observation = observations[index];
                 LmGatewayBindingSessionRow row = FindRow(
                     observation == null ? null : observation.KktSerial);
-                if (row == null || row.Kkt == null || observation == null ||
-                    !string.Equals(
-                        Trim(row.Kkt.KktInn),
-                        Trim(observation.KktInn),
-                        StringComparison.Ordinal))
+                if (row == null || row.Kkt == null || observation == null)
                 {
                     continue;
                 }
 
                 row.LastMessage = SensitiveDataMasker.Mask(observation.Details);
-                row.ObservedLmAddress = observation.IsAvailable && observation.HasLmConfiguration
-                    ? Trim(observation.LmAddress)
-                    : string.Empty;
-                row.ObservedLmPort = observation.IsAvailable && observation.HasLmConfiguration
-                    ? Trim(observation.LmPort)
-                    : string.Empty;
-                if (!observation.IsAvailable || !observation.HasLmConfiguration)
+                row.ObservedLmAddress = string.Empty;
+                row.ObservedLmPort = string.Empty;
+                if (!string.Equals(
+                        Trim(row.Kkt.KktInn),
+                        Trim(observation.KktInn),
+                        StringComparison.Ordinal) ||
+                    (observation.IsAvailable && !observation.IdentityMatches))
+                {
+                    row.LastBindingStatus =
+                        LmGatewayBindingStatus.RequiresAttention;
+                    continue;
+                }
+                if (!observation.IsAvailable)
                 {
                     row.LastBindingStatus = null;
                     continue;
                 }
+                if (!observation.HasLmConfiguration)
+                {
+                    row.LastBindingStatus =
+                        LmGatewayBindingStatus.RequiresAttention;
+                    continue;
+                }
+                row.ObservedLmAddress = Trim(observation.LmAddress);
+                row.ObservedLmPort = Trim(observation.LmPort);
                 if (observation.IsVerified)
                 {
                     row.LastBindingStatus = LmGatewayBindingStatus.BindingVerified;
