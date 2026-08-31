@@ -7,7 +7,7 @@ namespace EsmTspiot.Shared.Services
     {
         private const int PortBase = 50400;
         private const int SoftPortBase = 51400;
-        private const int FirstAdditionalPairIndex = 2;
+        private const int FirstPairIndex = 1;
         private const int MaximumPairIndex = 1000;
         private readonly HashSet<int> _occupiedIndexes = new HashSet<int>();
 
@@ -44,7 +44,7 @@ namespace EsmTspiot.Shared.Services
 
         public KktPortPair PeekNext()
         {
-            for (int index = FirstAdditionalPairIndex; index <= MaximumPairIndex; index++)
+            for (int index = FirstPairIndex; index <= MaximumPairIndex; index++)
             {
                 if (_occupiedIndexes.Contains(index))
                 {
