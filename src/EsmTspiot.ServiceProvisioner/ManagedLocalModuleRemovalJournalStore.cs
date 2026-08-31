@@ -131,10 +131,19 @@ namespace EsmTspiot.ServiceProvisioner
         private readonly string _securityRoot;
         private readonly string _root;
         private readonly IPathSafety _pathSafety;
+        private readonly string _initiatingSid;
 
         internal ManagedLocalModuleRemovalJournalStore(
             string machineRoot,
             IPathSafety pathSafety)
+            : this(machineRoot, pathSafety, null)
+        {
+        }
+
+        internal ManagedLocalModuleRemovalJournalStore(
+            string machineRoot,
+            IPathSafety pathSafety,
+            string initiatingSid)
         {
             if (pathSafety == null) throw new ArgumentNullException("pathSafety");
             if (string.IsNullOrWhiteSpace(machineRoot) ||
@@ -151,6 +160,7 @@ namespace EsmTspiot.ServiceProvisioner
                 _machineRoot,
                 "ManagedLocalModuleRemoval");
             _pathSafety = pathSafety;
+            _initiatingSid = initiatingSid;
         }
 
         internal void Write(
@@ -174,6 +184,12 @@ namespace EsmTspiot.ServiceProvisioner
             AtomicJsonFile.Write(
                 GetPath(snapshot.KktSerial),
                 AtomicJsonFile.Serialize(journal));
+            if (!string.IsNullOrEmpty(_initiatingSid))
+            {
+                _pathSafety.EnsureProtectedReadOnlyFile(
+                    GetPath(snapshot.KktSerial),
+                    new[] { _initiatingSid });
+            }
             EnsureSafe(GetPath(snapshot.KktSerial));
         }
 
@@ -259,13 +275,13 @@ namespace EsmTspiot.ServiceProvisioner
         {
             _pathSafety.EnsureProtectedDirectory(
                 _machineRoot,
-                ProtectedDirectoryKind.Operations,
-                null,
+                ProtectedDirectoryKind.InventoryContainer,
+                _initiatingSid,
                 null);
             _pathSafety.EnsureProtectedDirectory(
                 _root,
-                ProtectedDirectoryKind.Operations,
-                null,
+                ProtectedDirectoryKind.Inventory,
+                _initiatingSid,
                 null);
         }
 

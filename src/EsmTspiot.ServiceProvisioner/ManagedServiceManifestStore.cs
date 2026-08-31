@@ -152,8 +152,8 @@ namespace EsmTspiot.ServiceProvisioner
             string directory = Path.GetDirectoryName(path);
             _pathSafety.EnsureProtectedDirectory(
                 _root,
-                ProtectedDirectoryKind.Operations,
-                null,
+                ProtectedDirectoryKind.InventoryContainer,
+                _initiatingSid,
                 null);
             _pathSafety.EnsureProtectedDirectory(
                 _inventoryRoot,

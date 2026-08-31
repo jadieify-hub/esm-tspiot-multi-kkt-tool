@@ -32,7 +32,7 @@ namespace EsmTspiot.WinForms.Shared
             }
         }
 
-        private static LmControllerInstallerSelection Inspect(string path)
+        internal static LmControllerInstallerSelection Inspect(string path)
         {
             string fullPath = Path.GetFullPath(path);
             FileInfo file = new FileInfo(fullPath);

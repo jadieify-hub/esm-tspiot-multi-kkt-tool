@@ -251,11 +251,20 @@ namespace EsmTspiot.Shared.Services
 
         private static string BuildVerifiedDetails(LmGatewayReadbackObservation observation)
         {
-            string details = "Подтверждено ЕСМ: целевой ЛМ " +
-                observation.LmAddress + ":" + observation.LmPort + ".";
-            if (!string.IsNullOrEmpty(observation.LmStatus))
+            string lmStatus = observation.LmStatus ?? string.Empty;
+            bool reportsError = lmStatus.StartsWith(
+                "error",
+                StringComparison.OrdinalIgnoreCase);
+            string details = reportsError
+                ? "Адрес привязки подтверждён ЕСМ: " +
+                    observation.LmAddress + ":" + observation.LmPort + "."
+                : "Привязка подтверждена ЕСМ: целевой ЛМ " +
+                    observation.LmAddress + ":" + observation.LmPort + ".";
+            if (!string.IsNullOrEmpty(lmStatus))
             {
-                details += " Состояние: " + observation.LmStatus + ".";
+                details += reportsError
+                    ? " ЛМ сообщает ошибку: " + lmStatus + "."
+                    : " Состояние: " + lmStatus + ".";
             }
             if (!string.IsNullOrEmpty(observation.LmVersion))
             {

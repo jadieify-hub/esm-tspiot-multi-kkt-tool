@@ -80,6 +80,7 @@ namespace EsmTspiot.Shared.Tests
             Run("LM info API uses the current documented endpoint", LmInfoApiUsesCurrentDocumentedEndpoint);
             Run("LM info API classifies TLS certificate failure", LmInfoApiClassifiesTlsCertificateFailure);
             Run("LM readback explains a rejected TLS certificate", LmReadbackExplainsRejectedTlsCertificate);
+            Run("LM readback labels controller errors without implying health", LmReadbackLabelsControllerErrorsWithoutImplyingHealth);
             Run("LM info parser exposes only safe readback fields", LmInfoParserExposesOnlySafeReadbackFields);
             Run("LM discovery returns registered KKT with INN", LmDiscoveryReturnsRegisteredKktWithInn);
             Run("LM discovery aborts on malformed instance list", LmDiscoveryAbortsOnMalformedInstanceList);
@@ -110,6 +111,7 @@ namespace EsmTspiot.Shared.Tests
             Run("LM gateway draft defaults follow the KKT ordinal", LmGatewayDraftDefaultsFollowKktOrdinal);
             Run("LM gateway draft defaults do not crash on excess KKT", LmGatewayDraftDefaultsDoNotCrashOnExcessKkt);
             Run("LM gateway draft settings persist only the matching nonsecret endpoint", LmGatewayDraftSettingsPersistOnlyMatchingNonsecretEndpoint);
+            Run("Operator package paths persist without package data or secrets", OperatorPackagePathsPersistWithoutPackageDataOrSecrets);
             Run("LM inventory display separates the official controller from KKT services", LmInventoryDisplaySeparatesOfficialControllerFromKktServices);
             Run("LM binding session does not invent readback", LmBindingSessionDoesNotInventReadback);
             Run("LM binding session applies verified readback", LmBindingSessionAppliesVerifiedReadback);
@@ -149,6 +151,7 @@ namespace EsmTspiot.Shared.Tests
             Run("Unicode digits are rejected", UnicodeDigitsAreRejected);
             Run("Bulk workflow treats empty 204 as no instances", BulkWorkflowTreatsEmpty204AsNoInstances);
             Run("Bulk workflow skips PUT after POST completes registration", BulkWorkflowSkipsPutAfterPostCompletesRegistration);
+            Run("Bulk workflow does not skip PUT for an unregistered state", BulkWorkflowDoesNotSkipPutForUnregisteredState);
             Run("Bulk workflow blocks mismatched registration after POST", BulkWorkflowBlocksMismatchedRegistrationAfterPost);
             Run("Bulk workflow resumes incomplete existing instance", BulkWorkflowResumesIncompleteExistingInstance);
             Run("Bulk workflow continues after add failure", BulkWorkflowContinuesAfterAddFailure);
@@ -181,6 +184,7 @@ namespace EsmTspiot.Shared.Tests
             Run("LM provisioner contract exposes no arbitrary command", LmProvisionerContractExposesNoArbitraryCommand);
             Run("LM probe result separates service and listener state", LmProbeResultSeparatesServiceAndListenerState);
             Run("LM provisioning progress contains no credentials", LmProvisioningProgressContainsNoCredentials);
+            Run("LM provisioning result formats every item for the operator log", LmProvisioningResultFormatsEveryItemForOperatorLog);
             Run("Automatic mode registers KKT before LM setup", AutomaticModeRegistersKktBeforeLmSetup);
             Run("Automatic mode skips LM setup after registration failure", AutomaticModeSkipsLmSetupAfterRegistrationFailure);
             Run("LM automatic setup installs before configuring KKT", LmAutomaticSetupInstallsBeforeConfiguringKkt);
@@ -926,7 +930,7 @@ namespace EsmTspiot.Shared.Tests
 
         private static void InstanceDetailsParserReadsRegistrationData()
         {
-            string json = "{\"clientPort\":51402,\"regData\":{" +
+            string json = "{\"state\":\"Зарегистрирован\",\"clientPort\":51402,\"regData\":{" +
                 "\"kktSerial\":\"00105700000001\"," +
                 "\"fnSerial\":\"7300000000000001\"," +
                 "\"kktInn\":\"1234567894\"}}";
@@ -934,6 +938,8 @@ namespace EsmTspiot.Shared.Tests
 
             AssertTrue(InstanceDetailsParser.TryParse(json, out details), "Expected valid instance details.");
             AssertEqual("51402", details.ClientPort, "Expected client port.");
+            AssertEqual("Зарегистрирован", details.State, "Expected registration state.");
+            AssertTrue(details.IsRegistered, "Expected the registered state to be explicit.");
             AssertTrue(details.HasCompleteRegistrationData, "Expected complete regData.");
             AssertEqual("00105700000001", details.RegistrationData.KktSerial, "Expected KKT serial.");
             AssertEqual("7300000000000001", details.RegistrationData.FnSerial, "Expected FN serial.");
@@ -1164,6 +1170,38 @@ namespace EsmTspiot.Shared.Tests
             AssertContains(observation.Details, "сертификат ЕСМ");
             AssertContains(observation.Details, "доверенный корневой сертификат");
             AssertContains(observation.Details, "не отключайте проверку TLS");
+        }
+
+        private static void LmReadbackLabelsControllerErrorsWithoutImplyingHealth()
+        {
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            api.LmInfoResponses.Enqueue(Success(
+                "{\"kktSerial\":\"00105700000001\",\"kktInn\":\"1234567894\"," +
+                "\"lm\":{\"version\":\"\",\"status\":\"error 2055: LM is unavailable\"," +
+                "\"ip\":\"127.0.0.1\",\"port\":5995}}"));
+            LmGatewayReadbackWorkflow workflow = new LmGatewayReadbackWorkflow(api);
+
+            LmGatewayReadbackObservation observation = workflow.ReadAsync(
+                "http://127.0.0.1:51077",
+                new LmGatewayKkt
+                {
+                    InstanceId = "00105700000001",
+                    KktSerial = "00105700000001",
+                    KktInn = "1234567894",
+                    Port = "50401",
+                    SoftPort = "51401"
+                },
+                "127.0.0.1",
+                "5995",
+                CancellationToken.None).Result;
+
+            AssertTrue(observation.EndpointMatches.HasValue && observation.EndpointMatches.Value,
+                "The endpoint itself must remain confirmed.");
+            AssertContains(observation.Details, "Адрес привязки");
+            AssertContains(observation.Details, "ЛМ сообщает ошибку");
+            AssertContains(observation.Details, "error 2055");
+            AssertFalse(observation.Details.StartsWith("Подтверждено ЕСМ", StringComparison.Ordinal),
+                "A matching address must not make an unhealthy LM look fully confirmed.");
         }
 
         private static void LmInfoParserExposesOnlySafeReadbackFields()
@@ -3145,7 +3183,7 @@ namespace EsmTspiot.Shared.Tests
                 "\"fnSerial\":\"7300000000000001\",\"kktInn\":\"1234567894\"}]}");
             api.AddResponses.Enqueue(Success("{}"));
             api.InstanceResponses.Enqueue(Success(
-                "{\"clientPort\":51401,\"regData\":{" +
+                "{\"state\":\"Зарегистрирован\",\"clientPort\":51401,\"regData\":{" +
                 "\"kktSerial\":\" 00105700000001 \"," +
                 "\"fnSerial\":\" 7300000000000001 \"," +
                 "\"kktInn\":\" 1234567894  \"}}"));
@@ -3161,6 +3199,33 @@ namespace EsmTspiot.Shared.Tests
                 "A matching complete regData response after POST must suppress redundant PUT.");
             AssertEqual(BulkKktRegistrationStatus.Registered, outcome.Results[0].Status,
                 "POST-completed registration must be reported as registered.");
+        }
+
+        private static void BulkWorkflowDoesNotSkipPutForUnregisteredState()
+        {
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            api.InstancesResponse = Success("{\"instances\":[]}");
+            api.DkktResponse = Success(
+                "{\"kkt\":[{\"kktSerial\":\"00105700000001\"," +
+                "\"fnSerial\":\"7300000000000001\",\"kktInn\":\"1234567894\"}]}");
+            api.AddResponses.Enqueue(Success("{}"));
+            api.InstanceResponses.Enqueue(Success(
+                "{\"state\":\"Не зарегистрирован\",\"clientPort\":51401,\"regData\":{" +
+                "\"kktSerial\":\"00105700000001\"," +
+                "\"fnSerial\":\"7300000000000001\"," +
+                "\"kktInn\":\"1234567894\"}}"));
+            api.RegisterResponses.Enqueue(Success("{\"tspiotId\":\"1\"}"));
+            BulkRegistrationWorkflow workflow = CreateWorkflow(api);
+
+            BulkRegistrationDiscovery discovery = workflow.DiscoverAsync(
+                "http://127.0.0.1:51077", "4042", null, CancellationToken.None).Result;
+            BulkRegistrationOutcome outcome = workflow.ExecuteAsync(
+                discovery, null, CancellationToken.None).Result;
+
+            AssertEqual(1, api.RegisterCalls,
+                "Matching regData must not suppress PUT while ESM says the instance is unregistered.");
+            AssertEqual(BulkKktRegistrationStatus.Registered, outcome.Results[0].Status,
+                "Only the successful PUT may complete registration in this state.");
         }
 
         private static void BulkWorkflowBlocksMismatchedRegistrationAfterPost()
@@ -3702,6 +3767,63 @@ namespace EsmTspiot.Shared.Tests
                         "Provisioning progress must be credential-free.");
                 }
             }
+        }
+
+        private static void OperatorPackagePathsPersistWithoutPackageDataOrSecrets()
+        {
+            string root = Path.Combine(
+                Path.GetTempPath(),
+                "esm_tspiot_package_paths_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            string settingsPath = Path.Combine(root, "operator-package-paths.json");
+            string controllerPath = Path.Combine(
+                root,
+                "esm-lm-controller_1.6.3.2-windows-setup.exe");
+            string localModulePath = Path.Combine(root, "regime-2.6.1-7.msi");
+            try
+            {
+                OperatorPackagePathStore store =
+                    new OperatorPackagePathStore(settingsPath);
+
+                store.Save(controllerPath, localModulePath);
+                OperatorPackagePaths loaded = store.Load();
+
+                AssertEqual(Path.GetFullPath(controllerPath), loaded.ControllerInstallerPath,
+                    "The last controller package path must survive an application restart.");
+                AssertEqual(Path.GetFullPath(localModulePath), loaded.LocalModuleInstallerPath,
+                    "The last LM package path must survive an application restart.");
+                string json = File.ReadAllText(settingsPath);
+                AssertFalse(json.IndexOf("sha", StringComparison.OrdinalIgnoreCase) >= 0,
+                    "The path cache must not duplicate package trust data.");
+                AssertFalse(json.IndexOf("token", StringComparison.OrdinalIgnoreCase) >= 0,
+                    "The path cache must not contain credentials.");
+                AssertFalse(json.IndexOf("password", StringComparison.OrdinalIgnoreCase) >= 0,
+                    "The path cache must not contain credentials.");
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+        }
+
+        private static void LmProvisioningResultFormatsEveryItemForOperatorLog()
+        {
+            LmServiceProvisioningItemResult failed = new LmServiceProvisioningItemResult
+            {
+                KktSerial = "00105700000001",
+                Status = LmServiceProvisioningStatus.VersionVerificationPending,
+                Message = "ЛМ ЧЗ не запущен; контрольная ККТ остановила план."
+            };
+
+            string line = failed.FormatLogLine();
+
+            AssertContains(line, "00105700000001");
+            AssertContains(line, LmServiceProvisioningStatus.VersionVerificationPending.ToString());
+            AssertContains(line, "ЛМ ЧЗ не запущен");
+            AssertContains(line, "остановила план");
         }
 
         private static void LmAutomaticSetupInstallsBeforeConfiguringKkt()

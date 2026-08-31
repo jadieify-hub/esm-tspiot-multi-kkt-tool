@@ -31,8 +31,10 @@ namespace EsmTspiot.Shared.Services
                 }
 
                 object clientPort;
+                object state;
                 object regDataValue;
                 bool hasClientPort = TryGetValue(root, "clientPort", out clientPort);
+                TryGetValue(root, "state", out state);
                 bool hasRegData = TryGetValue(root, "regData", out regDataValue);
                 if (!hasClientPort && !hasRegData)
                 {
@@ -51,6 +53,7 @@ namespace EsmTspiot.Shared.Services
 
                 details = new KktInstanceDetails
                 {
+                    State = ToText(state).Trim(),
                     ClientPort = ToText(clientPort),
                     RegistrationData = ParseRegistrationData(regData)
                 };
@@ -64,8 +67,10 @@ namespace EsmTspiot.Shared.Services
                     }
 
                     JsonElement clientPort;
+                    JsonElement state;
                     JsonElement regData;
                     bool hasClientPort = TryGetProperty(root, "clientPort", out clientPort);
+                    TryGetProperty(root, "state", out state);
                     bool hasRegData = TryGetProperty(root, "regData", out regData);
                     if (!hasClientPort && !hasRegData)
                     {
@@ -83,6 +88,7 @@ namespace EsmTspiot.Shared.Services
 
                     details = new KktInstanceDetails
                     {
+                        State = ToText(state).Trim(),
                         ClientPort = ToText(clientPort),
                         RegistrationData = hasRegData && regData.ValueKind == JsonValueKind.Object
                             ? ParseRegistrationData(regData)

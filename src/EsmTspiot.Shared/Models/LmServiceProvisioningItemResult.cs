@@ -13,5 +13,16 @@ namespace EsmTspiot.Shared.Models
 
         [DataMember(Order = 3)]
         public string Message { get; set; }
+
+        public string FormatLogLine()
+        {
+            string line = "ККТ " + (KktSerial ?? string.Empty) +
+                ": " + Status.ToString();
+            if (!string.IsNullOrWhiteSpace(Message))
+            {
+                line += "; " + Message.Trim();
+            }
+            return line;
+        }
     }
 }

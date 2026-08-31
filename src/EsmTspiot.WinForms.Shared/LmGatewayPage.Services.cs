@@ -37,6 +37,7 @@ namespace EsmTspiot.WinForms.Shared
         private readonly List<LmServiceInventoryItem> _serviceInventory =
             new List<LmServiceInventoryItem>();
         private LmGatewayDraftSettingsStore _draftSettingsStore;
+        private OperatorPackagePathStore _packagePathStore;
         private LmServiceProvisionerClient _serviceProvisioner;
         private CompleteStackProvisionerClient _completeStackProvisioner;
         private LmServiceInventoryReader _inventoryReader;
@@ -63,6 +64,7 @@ namespace EsmTspiot.WinForms.Shared
             _serviceProbe = new LmGatewayProbe();
             _tcpListenerReader = new ReadOnlyTcpListenerOwnerReader();
             _draftSettingsStore = LmGatewayDraftSettingsStore.CreateDefault();
+            _packagePathStore = OperatorPackagePathStore.CreateDefault();
             _removalWorkflow = new LmGatewayRemovalWorkflow(
                 _serviceProvisioner,
                 ReadCombinedRemovalInventory);
@@ -188,19 +190,18 @@ namespace EsmTspiot.WinForms.Shared
                 if (_installerSelection == null)
                 {
                     _installerStatusLabel.Text = "Выбор отменён; путь к файлу очищен.";
+                    SaveInstallerPaths();
                     UpdateActionState();
                     return false;
                 }
-                _installerPathTextBox.Text = _installerSelection.SourcePath;
-                _serviceToolTip.SetToolTip(_installerPathTextBox, _installerSelection.SourcePath);
-                _installerStatusLabel.Text = _installerSelection.FileName +
-                    " | версия " + _installerSelection.FileVersion +
-                    " | цифровая подпись проверена";
+                ApplyControllerInstallerSelection();
+                SaveInstallerPaths();
                 RaiseInstallerSelectionChanged();
             }
             catch (Exception ex)
             {
                 ClearInstallerSelection();
+                SaveInstallerPaths();
                 MessageBox.Show(this, SensitiveDataMasker.Mask(ex.Message),
                     "Проверка установщика", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
@@ -219,24 +220,18 @@ namespace EsmTspiot.WinForms.Shared
                 {
                     _localModuleInstallerStatusLabel.Text =
                         "Выбор MSI отменён; путь очищен.";
+                    SaveInstallerPaths();
                     UpdateActionState();
                     return false;
                 }
-                _localModuleInstallerPathTextBox.Text =
-                    _localModuleInstallerSelection.SourcePath;
-                _serviceToolTip.SetToolTip(
-                    _localModuleInstallerPathTextBox,
-                    _localModuleInstallerSelection.SourcePath);
-                _localModuleInstallerStatusLabel.Text =
-                    _localModuleInstallerSelection.FileName +
-                    " | версия " +
-                    _localModuleInstallerSelection.ProductVersion +
-                    " | SHA-256 и подпись совпали";
+                ApplyLocalModuleInstallerSelection();
+                SaveInstallerPaths();
                 RaiseInstallerSelectionChanged();
             }
             catch (Exception ex)
             {
                 ClearLocalModuleInstallerSelection();
+                SaveInstallerPaths();
                 MessageBox.Show(
                     this,
                     SensitiveDataMasker.Mask(ex.Message),
@@ -425,11 +420,8 @@ namespace EsmTspiot.WinForms.Shared
                         _statusLabel.Text = "ККТ " +
                             (index + 1).ToString(CultureInfo.InvariantCulture) +
                             "/" + request.ManagedLocalModules.Count.ToString(
-                                CultureInfo.InvariantCulture) +
+                            CultureInfo.InvariantCulture) +
                             ": локальный комплект готов.";
-                        Log((item.KktSerial ?? string.Empty) + ": " +
-                            item.Status.ToString() + ". " +
-                            SensitiveDataMasker.Mask(item.Message) + "\r\n");
                         bool bound = await ExecuteCompleteAutomaticBindingAsync(
                             baseUrl,
                             candidates,
@@ -443,6 +435,15 @@ namespace EsmTspiot.WinForms.Shared
                         return bound;
                     },
                     cancellation);
+
+            Log("=== Итог создания локальных комплектов ===\r\n");
+            for (int resultIndex = 0;
+                resultIndex < result.Items.Count;
+                resultIndex++)
+            {
+                Log(SensitiveDataMasker.Mask(
+                    result.Items[resultIndex].FormatLogLine()) + "\r\n");
+            }
 
             bool localSetupSuccessful = IsCompleteSetupSuccessful(result);
             bool finalRefreshSucceeded = false;
@@ -1060,7 +1061,9 @@ namespace EsmTspiot.WinForms.Shared
                     "Не удалось проверить созданные программой компоненты; " +
                     "настройка и удаление служб заблокированы. " +
                     "Обычные операции с ККТ в ЕСМ доступны на других вкладках.";
-                Log(_serviceInventoryWarning + " Причина: " + ex.GetType().Name + ".\r\n");
+                Log(_serviceInventoryWarning + " Причина: " + ex.GetType().Name +
+                    ". Операция/путь: " +
+                    SensitiveDataMasker.Mask(ex.Message) + "\r\n");
             }
             UpdateOfficialControllerStatus();
             _helperAvailable = _serviceProvisioner.IsAvailable(out _helperUnavailableReason);
@@ -1924,6 +1927,152 @@ namespace EsmTspiot.WinForms.Shared
                 }
             }
             return 0;
+        }
+
+        private void RestoreInstallerSelections()
+        {
+            if (_packagePathStore == null)
+            {
+                return;
+            }
+            OperatorPackagePaths paths;
+            try
+            {
+                paths = _packagePathStore.Load();
+            }
+            catch (Exception ex)
+            {
+                if (!IsRecoverableInstallerPathException(ex))
+                {
+                    throw;
+                }
+                Log("Не удалось прочитать сохранённые пути к пакетам: " +
+                    ex.GetType().Name + ". " +
+                    SensitiveDataMasker.Mask(ex.Message) + "\r\n");
+                return;
+            }
+
+            bool discardInvalidPath = false;
+            if (!string.IsNullOrEmpty(paths.ControllerInstallerPath))
+            {
+                try
+                {
+                    _installerSelection = LmControllerInstallerPicker.Inspect(
+                        paths.ControllerInstallerPath);
+                    ApplyControllerInstallerSelection();
+                }
+                catch (Exception ex)
+                {
+                    if (!IsRecoverableInstallerPathException(ex))
+                    {
+                        throw;
+                    }
+                    ClearInstallerSelection();
+                    discardInvalidPath = true;
+                    Log("Сохранённый установщик контроллера больше не прошёл проверку: " +
+                        ex.GetType().Name + ". " +
+                        SensitiveDataMasker.Mask(ex.Message) + "\r\n");
+                }
+            }
+            if (!string.IsNullOrEmpty(paths.LocalModuleInstallerPath))
+            {
+                try
+                {
+                    _localModuleInstallerSelection =
+                        LocalModuleInstallerPicker.Inspect(
+                            paths.LocalModuleInstallerPath);
+                    ApplyLocalModuleInstallerSelection();
+                }
+                catch (Exception ex)
+                {
+                    if (!IsRecoverableInstallerPathException(ex))
+                    {
+                        throw;
+                    }
+                    ClearLocalModuleInstallerSelection();
+                    discardInvalidPath = true;
+                    Log("Сохранённый MSI ЛМ ЧЗ больше не прошёл проверку: " +
+                        ex.GetType().Name + ". " +
+                        SensitiveDataMasker.Mask(ex.Message) + "\r\n");
+                }
+            }
+            if (discardInvalidPath)
+            {
+                SaveInstallerPaths();
+            }
+        }
+
+        private void ApplyControllerInstallerSelection()
+        {
+            if (_installerSelection == null)
+            {
+                return;
+            }
+            _installerPathTextBox.Text = _installerSelection.SourcePath;
+            _serviceToolTip.SetToolTip(
+                _installerPathTextBox,
+                _installerSelection.SourcePath);
+            _installerStatusLabel.Text = _installerSelection.FileName +
+                " | версия " + _installerSelection.FileVersion +
+                " | цифровая подпись проверена";
+        }
+
+        private void ApplyLocalModuleInstallerSelection()
+        {
+            if (_localModuleInstallerSelection == null)
+            {
+                return;
+            }
+            _localModuleInstallerPathTextBox.Text =
+                _localModuleInstallerSelection.SourcePath;
+            _serviceToolTip.SetToolTip(
+                _localModuleInstallerPathTextBox,
+                _localModuleInstallerSelection.SourcePath);
+            _localModuleInstallerStatusLabel.Text =
+                _localModuleInstallerSelection.FileName +
+                " | версия " +
+                _localModuleInstallerSelection.ProductVersion +
+                " | SHA-256 и подпись совпали";
+        }
+
+        private void SaveInstallerPaths()
+        {
+            if (_packagePathStore == null)
+            {
+                return;
+            }
+            try
+            {
+                _packagePathStore.Save(
+                    _installerSelection == null
+                        ? string.Empty
+                        : _installerSelection.SourcePath,
+                    _localModuleInstallerSelection == null
+                        ? string.Empty
+                        : _localModuleInstallerSelection.SourcePath);
+            }
+            catch (Exception ex)
+            {
+                if (!IsRecoverableInstallerPathException(ex))
+                {
+                    throw;
+                }
+                Log("Не удалось запомнить пути к пакетам: " +
+                    ex.GetType().Name + ". " +
+                    SensitiveDataMasker.Mask(ex.Message) + "\r\n");
+            }
+        }
+
+        private static bool IsRecoverableInstallerPathException(Exception ex)
+        {
+            return ex is IOException ||
+                ex is UnauthorizedAccessException ||
+                ex is SerializationException ||
+                ex is InvalidDataException ||
+                ex is ArgumentException ||
+                ex is NotSupportedException ||
+                ex is CryptographicException ||
+                ex is System.Security.SecurityException;
         }
 
         private void ClearInstallerSelection()

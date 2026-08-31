@@ -109,7 +109,7 @@ namespace EsmTspiot.Shared.Services
                 KktInstanceDetails details;
                 if (detailResponse.IsSuccess && InstanceDetailsParser.TryParse(detailResponse.ResponseBody, out details))
                 {
-                    if (details.HasCompleteRegistrationData)
+                    if (details.HasCompleteRegistrationData && details.IsRegistered)
                     {
                         discovery.InitialResults.Add(new BulkKktRegistrationResult
                         {
@@ -283,15 +283,18 @@ namespace EsmTspiot.Shared.Services
                             KktSerial = serial,
                             Status = BulkKktRegistrationStatus.InspectionFailed,
                             Details =
-                                "POST завершил регистрацию, но regData не совпадают с выбранной ККТ; PUT пропущен"
+                                "После POST regData не совпадают с выбранной ККТ; PUT пропущен"
                         };
                     }
-                    return new BulkKktRegistrationResult
+                    if (createdDetails.IsRegistered)
                     {
-                        KktSerial = serial,
-                        Status = BulkKktRegistrationStatus.Registered,
-                        Details = "POST завершил регистрацию; повторный PUT не требуется"
-                    };
+                        return new BulkKktRegistrationResult
+                        {
+                            KktSerial = serial,
+                            Status = BulkKktRegistrationStatus.Registered,
+                            Details = "POST завершил регистрацию; повторный PUT не требуется"
+                        };
+                    }
                 }
             }
 

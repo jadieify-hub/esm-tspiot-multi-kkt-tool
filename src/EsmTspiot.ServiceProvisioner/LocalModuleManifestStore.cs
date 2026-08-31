@@ -208,14 +208,15 @@ namespace EsmTspiot.ServiceProvisioner
                 previousRuntimeId = existing.RuntimeId;
             }
             AtomicJsonFile.Write(path, AtomicJsonFile.Serialize(manifest));
-            _pathSafety.EnsureProtectedReadOnlyFile(
-                path,
-                new[]
-                {
-                    RestrictedServiceSid.Derive(
-                        manifest.DatabaseServiceName),
-                    RestrictedServiceSid.Derive(manifest.ApiServiceName)
-                });
+            List<string> readers = new List<string>();
+            if (!string.IsNullOrEmpty(_initiatingSid))
+            {
+                readers.Add(_initiatingSid);
+            }
+            readers.Add(RestrictedServiceSid.Derive(
+                manifest.DatabaseServiceName));
+            readers.Add(RestrictedServiceSid.Derive(manifest.ApiServiceName));
+            _pathSafety.EnsureProtectedReadOnlyFile(path, readers);
             EnsureMachineSafe(path);
             RefreshRuntimeReferenceCount(manifest.RuntimeId);
             if (!string.IsNullOrEmpty(previousRuntimeId) &&
@@ -820,8 +821,8 @@ namespace EsmTspiot.ServiceProvisioner
         {
             _pathSafety.EnsureProtectedDirectory(
                 _machineRoot,
-                ProtectedDirectoryKind.Operations,
-                null,
+                ProtectedDirectoryKind.InventoryContainer,
+                _initiatingSid,
                 null);
             string current = Path.GetDirectoryName(path);
             Stack<string> directories = new Stack<string>();
