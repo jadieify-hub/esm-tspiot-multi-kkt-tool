@@ -49,6 +49,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Local module config rejects ambiguous template", LocalModuleConfigRejectsAmbiguousTemplate);
             Run("Local module configs contain no customer credential", LocalModuleConfigsContainNoCredential);
             Run("Local module runtime excludes wrappers and fixes extraction", LocalModuleRuntimeExcludesWrappersAndFixesExtraction);
+            Run("Administrative MSI extraction uses native command syntax", AdministrativeMsiExtractionUsesNativeCommandSyntax);
             Run("Local module manifests enforce three ownership levels", LocalModuleManifestsEnforceThreeOwnershipLevels);
             Run("Local module runtime deletion requires zero references", LocalModuleRuntimeDeletionRequiresZeroReferences);
             Run("Existing local module runtime verifies without MSI extraction", ExistingLocalModuleRuntimeVerifiesWithoutMsiExtraction);
@@ -1130,6 +1131,29 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                         1,
                         new string('0', 64)) });
             }, "A verified image inventory must reject lexical path escape before copying.");
+        }
+
+        private static void AdministrativeMsiExtractionUsesNativeCommandSyntax()
+        {
+            LocalModuleAdministrativeExtractionPlan plan =
+                LocalModuleRuntimeInstaller.BuildAdministrativeExtractionPlan(
+                    @"C:\locked package\regime-2.6.1-7.msi",
+                    @"C:\protected stage\administrative image",
+                    @"C:\protected logs\extract.log");
+            MethodInfo join = typeof(LocalModuleRuntimeInstaller).GetMethod(
+                "JoinArguments",
+                BindingFlags.NonPublic | BindingFlags.Static);
+            AssertTrue(join != null,
+                "The production argument renderer must remain directly testable.");
+
+            string commandLine = (string)join.Invoke(
+                null,
+                new object[] { plan.ArgumentTokens });
+
+            AssertEqual(
+                @"/a ""C:\locked package\regime-2.6.1-7.msi"" /qn TARGETDIR=""C:\protected stage\administrative image"" /l*v ""C:\protected logs\extract.log""",
+                commandLine,
+                "msiexec switches must stay bare while path values remain quoted.");
         }
 
         private static void LocalModuleManifestsEnforceThreeOwnershipLevels()

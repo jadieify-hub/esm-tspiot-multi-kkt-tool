@@ -46,14 +46,6 @@ namespace EsmTspiot.Shared.Services
                 {
                     candidate.ProtectionReason = plan.BlockingReason;
                 }
-                else if (candidate.IsPrimary)
-                {
-                    candidate.ProtectionReason = "Первая ККТ защищена от удаления.";
-                }
-                else if (source.Count < 2)
-                {
-                    candidate.ProtectionReason = "Нельзя удалить единственный экземпляр ККТ.";
-                }
                 else if (!KktDeletionConfirmation.IsValidKktId(instance.Id))
                 {
                     candidate.ProtectionReason = "Серийный номер экземпляра некорректен; удаление заблокировано.";

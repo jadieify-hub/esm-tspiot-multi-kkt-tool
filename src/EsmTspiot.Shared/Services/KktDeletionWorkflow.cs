@@ -46,11 +46,6 @@ namespace EsmTspiot.Shared.Services
             {
                 return Blocked("Серийный номер ККТ должен содержать ровно 14 ASCII-цифр.");
             }
-            if (!KktDeletionConfirmation.Matches(normalizedId, confirmation))
-            {
-                return Blocked("Последние четыре цифры серийного номера введены неверно.");
-            }
-
             ApiResponse currentResponse = await _client.GetInstancesAsync(baseUrl, cancellationToken).ConfigureAwait(false);
             Report(responseCallback, currentResponse);
             if (currentResponse == null || !currentResponse.IsSuccess)
@@ -77,6 +72,16 @@ namespace EsmTspiot.Shared.Services
                     : selected.ProtectionReason);
             }
 
+            bool confirmationMatches = selected.IsPrimary
+                ? KktDeletionConfirmation.MatchesFullSerial(normalizedId, confirmation)
+                : KktDeletionConfirmation.Matches(normalizedId, confirmation);
+            if (!confirmationMatches)
+            {
+                return Blocked(selected.IsPrimary
+                    ? "Для удаления первой ККТ введите ее полный 14-значный серийный номер."
+                    : "Последние четыре цифры серийного номера введены неверно.");
+            }
+
             ApiResponse deleteResponse = await _client.DeleteInstanceAsync(baseUrl, normalizedId, cancellationToken).ConfigureAwait(false);
             Report(responseCallback, deleteResponse);
             if (deleteResponse == null || !deleteResponse.IsSuccess)
@@ -86,7 +91,7 @@ namespace EsmTspiot.Shared.Services
                     IsSuccess = false,
                     DeleteRequestAccepted = false,
                     DeleteResponse = deleteResponse,
-                    Message = "ЕСМ не подтвердил запрос на удаление дополнительной ККТ."
+                    Message = "ЕСМ не подтвердил запрос на удаление ККТ."
                 };
             }
 
@@ -114,7 +119,7 @@ namespace EsmTspiot.Shared.Services
                     FindInstance(verificationInstances, normalizedId) == null)
                 {
                     outcome.IsSuccess = true;
-                    outcome.Message = "Дополнительная ККТ удалена. Отсутствие экземпляра подтверждено повторным запросом.";
+                    outcome.Message = "ККТ удалена. Отсутствие экземпляра подтверждено повторным запросом.";
                     return outcome;
                 }
             }

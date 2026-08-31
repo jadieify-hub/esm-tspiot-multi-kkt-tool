@@ -1213,13 +1213,21 @@ namespace EsmTspiot.ServiceProvisioner
 
         private static string JoinArguments(IList<string> tokens)
         {
-            System.Text.StringBuilder text = new System.Text.StringBuilder();
-            for (int index = 0; index < tokens.Count; index++)
+            if (tokens == null || tokens.Count != 6 ||
+                !string.Equals(tokens[0], "/a", StringComparison.Ordinal) ||
+                !string.Equals(tokens[2], "/qn", StringComparison.Ordinal) ||
+                string.IsNullOrEmpty(tokens[3]) ||
+                !tokens[3].StartsWith("TARGETDIR=", StringComparison.Ordinal) ||
+                !string.Equals(tokens[4], "/l*v", StringComparison.Ordinal))
             {
-                if (index > 0) text.Append(' ');
-                text.Append(WindowsCommandLine.QuoteArgument(tokens[index]));
+                throw new InvalidDataException(
+                    "Administrative MSI extraction arguments are invalid.");
             }
-            return text.ToString();
+
+            return "/a " + WindowsCommandLine.QuoteArgument(tokens[1]) +
+                " /qn TARGETDIR=" + WindowsCommandLine.QuoteArgument(
+                    tokens[3].Substring("TARGETDIR=".Length)) +
+                " /l*v " + WindowsCommandLine.QuoteArgument(tokens[5]);
         }
 
         private static string NormalizeAbsolutePath(string value, string parameterName)

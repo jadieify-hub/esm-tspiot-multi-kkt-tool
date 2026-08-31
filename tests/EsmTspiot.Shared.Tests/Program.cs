@@ -40,6 +40,7 @@ namespace EsmTspiot.Shared.Tests
             Run("Known errors are decoded", KnownErrorsAreDecoded);
             Run("Error 1012 is decoded as manual service recovery", Error1012IsDecodedAsManualServiceRecovery);
             Run("Error 1013 is decoded as manual service recovery", Error1013IsDecodedAsManualServiceRecovery);
+            Run("Error 1026 explains multiple INN limitation", Error1026ExplainsMultipleInnLimitation);
             Run("Service recovery command uses KKT serial and ports", ServiceRecoveryCommandUsesKktSerialAndPorts);
             Run("Service recovery command recreates service with wrong ports", ServiceRecoveryCommandRecreatesServiceWithWrongPorts);
             Run("Service recovery command writes diagnostics", ServiceRecoveryCommandWritesDiagnostics);
@@ -136,16 +137,19 @@ namespace EsmTspiot.Shared.Tests
             Run("Instruction selector falls back to the field guide", InstructionSelectorFallsBackToFieldGuide);
             Run("KKT service states are localized for operators", KktServiceStatesAreLocalizedForOperators);
             Run("Unknown KKT service state remains diagnosable", UnknownKktServiceStateRemainsDiagnosable);
-            Run("Deletion planner protects primary KKT", DeletionPlannerProtectsPrimaryKkt);
+            Run("Deletion planner allows primary KKT with stronger confirmation", DeletionPlannerAllowsPrimaryKktWithStrongerConfirmation);
             Run("Deletion planner blocks ambiguous primary KKT", DeletionPlannerBlocksAmbiguousPrimaryKkt);
             Run("Deletion confirmation requires last four digits", DeletionConfirmationRequiresLastFourDigits);
-            Run("Deletion workflow refuses primary KKT", DeletionWorkflowRefusesPrimaryKkt);
+            Run("Deletion confirmation supports exact full serial", DeletionConfirmationSupportsExactFullSerial);
+            Run("Deletion workflow requires full serial for primary KKT", DeletionWorkflowRequiresFullSerialForPrimaryKkt);
             Run("Deletion workflow verifies additional KKT removal", DeletionWorkflowVerifiesAdditionalKktRemoval);
             Run("Deletion workflow reports unverified removal", DeletionWorkflowReportsUnverifiedRemoval);
             Run("Remote base URL produces warning", RemoteBaseUrlProducesWarning);
             Run("Base URL rejects credentials and query", BaseUrlRejectsCredentialsAndQuery);
             Run("Unicode digits are rejected", UnicodeDigitsAreRejected);
             Run("Bulk workflow treats empty 204 as no instances", BulkWorkflowTreatsEmpty204AsNoInstances);
+            Run("Bulk workflow skips PUT after POST completes registration", BulkWorkflowSkipsPutAfterPostCompletesRegistration);
+            Run("Bulk workflow blocks mismatched registration after POST", BulkWorkflowBlocksMismatchedRegistrationAfterPost);
             Run("Bulk workflow resumes incomplete existing instance", BulkWorkflowResumesIncompleteExistingInstance);
             Run("Bulk workflow continues after add failure", BulkWorkflowContinuesAfterAddFailure);
             Run("Bulk workflow retries service not started", BulkWorkflowRetriesServiceNotStarted);
@@ -160,6 +164,7 @@ namespace EsmTspiot.Shared.Tests
             Run("Diagnostic masker hides local user paths", DiagnosticMaskerHidesLocalUserPaths);
             Run("Diagnostic masker hides common secrets", DiagnosticMaskerHidesCommonSecrets);
             Run("Sensitive masker redacts JSON credentials", SensitiveMaskerRedactsJsonCredentials);
+            Run("Sensitive masker redacts derived token fields", SensitiveMaskerRedactsDerivedTokenFields);
             Run("Sensitive masker redacts LM info pass", SensitiveMaskerRedactsLmInfoPass);
             Run("Sensitive masker redacts key value credentials", SensitiveMaskerRedactsKeyValueCredentials);
             Run("Log formatter never persists reflected password", LogFormatterNeverPersistsReflectedPassword);
@@ -417,6 +422,16 @@ namespace EsmTspiot.Shared.Tests
             string message = TspiotErrorDecoder.Decode(500, body);
             AssertContains(message, "Ошибка 1013");
             AssertContains(message, "служба подключаемой ККТ");
+        }
+
+        private static void Error1026ExplainsMultipleInnLimitation()
+        {
+            string message = TspiotErrorDecoder.Decode(
+                403,
+                "{\"error\":{\"code\":1026,\"text\":\"Обнаружено несколько ИНН\"}}");
+
+            AssertContains(message, "1026");
+            AssertContains(message, "несколько ИНН");
         }
 
         private static void ServiceRecoveryCommandUsesKktSerialAndPorts()
@@ -2916,7 +2931,7 @@ namespace EsmTspiot.Shared.Tests
                 "An absent state must have an explicit empty marker.");
         }
 
-        private static void DeletionPlannerProtectsPrimaryKkt()
+        private static void DeletionPlannerAllowsPrimaryKktWithStrongerConfirmation()
         {
             KktDeletionPlan plan = KktDeletionPlanner.Build(new List<KktInstanceInfo>
             {
@@ -2925,7 +2940,7 @@ namespace EsmTspiot.Shared.Tests
             });
 
             AssertTrue(plan.HasReliablePrimary, "Expected a reliable primary KKT.");
-            AssertFalse(plan.Candidates[0].CanDelete, "Primary KKT must be protected.");
+            AssertTrue(plan.Candidates[0].CanDelete, "Primary KKT must be removable after stronger confirmation.");
             AssertTrue(plan.Candidates[0].IsPrimary, "Expected the first KKT to be marked as primary.");
             AssertTrue(plan.Candidates[1].CanDelete, "Additional KKT should be deletable.");
         }
@@ -2957,18 +2972,35 @@ namespace EsmTspiot.Shared.Tests
             AssertFalse(KktDeletionConfirmation.Matches("00105700000002", "00A2"), "Non-digits must be rejected.");
         }
 
-        private static void DeletionWorkflowRefusesPrimaryKkt()
+        private static void DeletionConfirmationSupportsExactFullSerial()
+        {
+            AssertTrue(KktDeletionConfirmation.MatchesFullSerial("00105700000001", " 00105700000001 "),
+                "Expected the exact full serial to match after trimming.");
+            AssertFalse(KktDeletionConfirmation.MatchesFullSerial("00105700000001", "0001"),
+                "The four-digit suffix must not authorize primary KKT deletion.");
+            AssertFalse(KktDeletionConfirmation.MatchesFullSerial("00105700000001", "00105700000002"),
+                "A different full serial must be rejected.");
+        }
+
+        private static void DeletionWorkflowRequiresFullSerialForPrimaryKkt()
         {
             FakeTspiotApiClient api = new FakeTspiotApiClient();
             api.InstancesResponses.Enqueue(Success(TwoInstancesJson()));
+            api.InstancesResponses.Enqueue(Success(TwoInstancesJson()));
+            api.DeleteResponses.Enqueue(Success("{}"));
+            api.InstancesResponses.Enqueue(Success("{\"instances\":[{\"id\":\"00105700000002\",\"port\":50402,\"softPort\":51402,\"serviceState\":\"Работает\"}]}"));
             KktDeletionWorkflow workflow = CreateDeletionWorkflow(api);
 
-            KktDeletionOutcome outcome = workflow.DeleteAsync(
+            KktDeletionOutcome suffixOutcome = workflow.DeleteAsync(
                 "http://127.0.0.1:51077", "00105700000001", "0001", null, CancellationToken.None).Result;
+            KktDeletionOutcome fullOutcome = workflow.DeleteAsync(
+                "http://127.0.0.1:51077", "00105700000001", "00105700000001", null, CancellationToken.None).Result;
 
-            AssertTrue(outcome.IsBlocked, "Primary KKT deletion must be blocked.");
-            AssertFalse(outcome.IsSuccess, "Blocked deletion cannot succeed.");
-            AssertEqual(0, api.DeleteCalls, "DELETE must not be sent for the primary KKT.");
+            AssertTrue(suffixOutcome.IsBlocked, "The short suffix must not authorize primary KKT deletion.");
+            AssertFalse(suffixOutcome.IsSuccess, "Blocked deletion cannot succeed.");
+            AssertTrue(fullOutcome.IsSuccess, "The exact full serial must authorize verified primary KKT deletion.");
+            AssertEqual(1, api.DeleteCalls, "Exactly one DELETE must be sent after full confirmation.");
+            AssertEqual("00105700000001", api.LastDeletedId, "Expected the selected primary KKT id.");
         }
 
         private static void DeletionWorkflowVerifiesAdditionalKktRemoval()
@@ -3102,6 +3134,60 @@ namespace EsmTspiot.Shared.Tests
                 "51401",
                 discovery.Items[0].Item.Input.SoftPort,
                 "The first KKT on a clean ESM must expose the first cash-software port.");
+        }
+
+        private static void BulkWorkflowSkipsPutAfterPostCompletesRegistration()
+        {
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            api.InstancesResponse = Success("{\"instances\":[]}");
+            api.DkktResponse = Success(
+                "{\"kkt\":[{\"kktSerial\":\"00105700000001\"," +
+                "\"fnSerial\":\"7300000000000001\",\"kktInn\":\"1234567894\"}]}");
+            api.AddResponses.Enqueue(Success("{}"));
+            api.InstanceResponses.Enqueue(Success(
+                "{\"clientPort\":51401,\"regData\":{" +
+                "\"kktSerial\":\" 00105700000001 \"," +
+                "\"fnSerial\":\" 7300000000000001 \"," +
+                "\"kktInn\":\" 1234567894  \"}}"));
+            BulkRegistrationWorkflow workflow = CreateWorkflow(api);
+
+            BulkRegistrationDiscovery discovery = workflow.DiscoverAsync(
+                "http://127.0.0.1:51077", "4042", null, CancellationToken.None).Result;
+            BulkRegistrationOutcome outcome = workflow.ExecuteAsync(
+                discovery, null, CancellationToken.None).Result;
+
+            AssertEqual(1, api.AddCalls, "Expected one POST.");
+            AssertEqual(0, api.RegisterCalls,
+                "A matching complete regData response after POST must suppress redundant PUT.");
+            AssertEqual(BulkKktRegistrationStatus.Registered, outcome.Results[0].Status,
+                "POST-completed registration must be reported as registered.");
+        }
+
+        private static void BulkWorkflowBlocksMismatchedRegistrationAfterPost()
+        {
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            api.InstancesResponse = Success("{\"instances\":[]}");
+            api.DkktResponse = Success(
+                "{\"kkt\":[{\"kktSerial\":\"00105700000001\"," +
+                "\"fnSerial\":\"7300000000000001\",\"kktInn\":\"1234567894\"}]}");
+            api.AddResponses.Enqueue(Success("{}"));
+            api.InstanceResponses.Enqueue(Success(
+                "{\"clientPort\":51401,\"regData\":{" +
+                "\"kktSerial\":\"00105700000001\"," +
+                "\"fnSerial\":\"7300000000000001\"," +
+                "\"kktInn\":\"7707083893\"}}"));
+            BulkRegistrationWorkflow workflow = CreateWorkflow(api);
+
+            BulkRegistrationDiscovery discovery = workflow.DiscoverAsync(
+                "http://127.0.0.1:51077", "4042", null, CancellationToken.None).Result;
+            BulkRegistrationOutcome outcome = workflow.ExecuteAsync(
+                discovery, null, CancellationToken.None).Result;
+
+            AssertEqual(0, api.RegisterCalls,
+                "A mismatched completed registration must never be overwritten with PUT.");
+            AssertEqual(BulkKktRegistrationStatus.InspectionFailed, outcome.Results[0].Status,
+                "Mismatched regData must stop the item for operator inspection.");
+            AssertContains(outcome.Results[0].Details, "не совпадают");
         }
 
         private static void BulkWorkflowResumesIncompleteExistingInstance()
@@ -3443,6 +3529,35 @@ namespace EsmTspiot.Shared.Tests
             AssertFalse(masked.Contains("path"), "Text after an escaped backslash must be masked.");
             AssertFalse(masked.Contains("omega"), "Text after an escaped newline must be masked.");
             AssertFalse(masked.Contains("\\u041f"), "Unicode escape must be masked.");
+        }
+
+        private static void SensitiveMaskerRedactsDerivedTokenFields()
+        {
+            const string responseBody =
+                "{\"espToken\":\"esp-secret\",\"accessToken\":\"access-secret\"," +
+                "\"refreshToken\":\"refresh-secret\",\"tokenCount\":2}";
+            string masked = SensitiveDataMasker.Mask(responseBody);
+
+            AssertFalse(masked.Contains("esp-secret"), "ESM token must be masked.");
+            AssertFalse(masked.Contains("access-secret"), "Access token must be masked.");
+            AssertFalse(masked.Contains("refresh-secret"), "Refresh token must be masked.");
+            AssertContains(masked, "\"espToken\":\"***\"");
+            AssertContains(masked, "\"accessToken\":\"***\"");
+            AssertContains(masked, "\"refreshToken\":\"***\"");
+            AssertContains(masked, "\"tokenCount\":2");
+
+            string formatted = LogFormatter.Format(new ApiResponse
+            {
+                Method = "GET",
+                Url = "http://127.0.0.1:51077/api/v1/instances/info/test",
+                StatusCode = 200,
+                ReasonPhrase = "OK",
+                ResponseBody = responseBody,
+                DecodedMessage = "Запрос выполнен успешно."
+            });
+            AssertFalse(formatted.Contains("esp-secret"),
+                "The ESM token must not reach the persisted response log.");
+            AssertContains(formatted, "\"espToken\":\"***\"");
         }
 
         private static void SensitiveMaskerRedactsLmInfoPass()

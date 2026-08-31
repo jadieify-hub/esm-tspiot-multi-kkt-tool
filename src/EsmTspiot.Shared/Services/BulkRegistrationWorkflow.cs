@@ -257,14 +257,14 @@ namespace EsmTspiot.Shared.Services
                     };
                 }
 
-                bool ready = await WaitForReadiness(
+                KktInstanceDetails createdDetails = await WaitForReadiness(
                     item.Input.BaseUrl,
                     serial,
                     current,
                     total,
                     progress,
                     cancellationToken);
-                if (!ready)
+                if (createdDetails == null)
                 {
                     return new BulkKktRegistrationResult
                     {
@@ -272,6 +272,25 @@ namespace EsmTspiot.Shared.Services
                         Status = BulkKktRegistrationStatus.InspectionFailed,
                         Details =
                             "POST выполнен, но готовность экземпляра не подтверждена; PUT пропущен"
+                    };
+                }
+                if (createdDetails.HasCompleteRegistrationData)
+                {
+                    if (!MatchesRegistration(item.Input, createdDetails.RegistrationData))
+                    {
+                        return new BulkKktRegistrationResult
+                        {
+                            KktSerial = serial,
+                            Status = BulkKktRegistrationStatus.InspectionFailed,
+                            Details =
+                                "POST завершил регистрацию, но regData не совпадают с выбранной ККТ; PUT пропущен"
+                        };
+                    }
+                    return new BulkKktRegistrationResult
+                    {
+                        KktSerial = serial,
+                        Status = BulkKktRegistrationStatus.Registered,
+                        Details = "POST завершил регистрацию; повторный PUT не требуется"
                     };
                 }
             }
@@ -365,7 +384,7 @@ namespace EsmTspiot.Shared.Services
                     TspiotErrorDecoder.ContainsErrorCode(response.ResponseBody, 1013));
         }
 
-        private async Task<bool> WaitForReadiness(
+        private async Task<KktInstanceDetails> WaitForReadiness(
             string baseUrl,
             string serial,
             int current,
@@ -382,7 +401,7 @@ namespace EsmTspiot.Shared.Services
                 KktInstanceDetails details;
                 if (response.IsSuccess && InstanceDetailsParser.TryParse(response.ResponseBody, out details))
                 {
-                    return true;
+                    return details;
                 }
 
                 if (attempt < MaximumTransientAttempts)
@@ -391,7 +410,26 @@ namespace EsmTspiot.Shared.Services
                 }
             }
 
-            return false;
+            return null;
+        }
+
+        private static bool MatchesRegistration(
+            TspiotFormInput input,
+            KktRegistrationData registration)
+        {
+            return input != null && registration != null &&
+                string.Equals(
+                    (input.KktSerial ?? string.Empty).Trim(),
+                    (registration.KktSerial ?? string.Empty).Trim(),
+                    StringComparison.Ordinal) &&
+                string.Equals(
+                    (input.FnSerial ?? string.Empty).Trim(),
+                    (registration.FnSerial ?? string.Empty).Trim(),
+                    StringComparison.Ordinal) &&
+                string.Equals(
+                    (input.KktInn ?? string.Empty).Trim(),
+                    (registration.KktInn ?? string.Empty).Trim(),
+                    StringComparison.Ordinal);
         }
 
         private async Task ReadSettingsForDiagnostics(

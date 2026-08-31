@@ -6,12 +6,19 @@ namespace EsmTspiot.Shared.Services
     {
         public static string Decode(int statusCode, string responseBody)
         {
+            string body = responseBody ?? string.Empty;
+
+            if (statusCode == 403 && ContainsErrorCode(body, 1026))
+            {
+                return "Ошибка 1026: ЕСМ обнаружил несколько ИНН у подключенных ККТ " +
+                    "и отказался выполнять общую регистрацию. Проверьте, не зарегистрирована " +
+                    "ли выбранная ККТ уже; если нет, ограничение находится на стороне ЕСМ.";
+            }
+
             if (statusCode == 403)
             {
                 return "Сервис вернул Forbidden. Проверьте регистрацию, сертификаты, права доступа и состояние ЕСМ/ТС ПИоТ.";
             }
-
-            string body = responseBody ?? string.Empty;
 
             if (ContainsErrorCode(body, 1010))
             {

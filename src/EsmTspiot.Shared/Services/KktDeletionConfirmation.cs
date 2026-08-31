@@ -19,6 +19,15 @@ namespace EsmTspiot.Shared.Services
                 StringComparison.Ordinal);
         }
 
+        public static bool MatchesFullSerial(string kktId, string confirmation)
+        {
+            string normalizedId = (kktId ?? string.Empty).Trim();
+            string normalizedConfirmation = (confirmation ?? string.Empty).Trim();
+            return IsValidKktId(normalizedId) &&
+                IsValidKktId(normalizedConfirmation) &&
+                string.Equals(normalizedId, normalizedConfirmation, StringComparison.Ordinal);
+        }
+
         public static bool IsValidKktId(string value)
         {
             string normalized = (value ?? string.Empty).Trim();
