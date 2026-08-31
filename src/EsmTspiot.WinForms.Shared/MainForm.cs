@@ -61,7 +61,7 @@ namespace EsmTspiot.WinForms.Shared
         private readonly ToolStripStatusLabel _operationStatusLabel = new ToolStripStatusLabel();
         private readonly ToolStripStatusLabel _connectionStatusLabel = new ToolStripStatusLabel();
         private readonly ToolStripMenuItem _operationsMenuItem = new ToolStripMenuItem("ККТ");
-        private readonly ToolStripMenuItem _deleteMenuItem = new ToolStripMenuItem("Удалить выбранную дополнительную ККТ");
+        private readonly ToolStripMenuItem _deleteMenuItem = new ToolStripMenuItem("Удалить выбранную ККТ");
         private readonly GroupBox _recoveryGroup = new GroupBox();
         private readonly Label _recoveryLabel = new Label();
         private readonly Button _createServiceButton = new Button();
@@ -468,7 +468,7 @@ namespace EsmTspiot.WinForms.Shared
             toolbar.Margin = new Padding(0, 0, 0, 6);
 
             ConfigureButton(_refreshInstancesButton, "Обновить список", CheckCurrentInstancesAsync);
-            ConfigureButton(_deleteKktButton, "Удалить дополнительную ККТ", DeleteSelectedKktAsync);
+            ConfigureButton(_deleteKktButton, "Удалить выбранную ККТ", DeleteSelectedKktAsync);
             _refreshInstancesButton.MinimumSize = new Size(120, 27);
             _deleteKktButton.MinimumSize = new Size(190, 27);
             _deleteKktButton.Enabled = false;
@@ -882,7 +882,7 @@ namespace EsmTspiot.WinForms.Shared
             {
                 MessageBox.Show(
                     this,
-                    "Выберите в таблице дополнительную ККТ, доступную для удаления.",
+                    "Выберите в таблице ККТ, доступную для удаления.",
                     "Удаление ККТ",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Information);
@@ -896,15 +896,15 @@ namespace EsmTspiot.WinForms.Shared
                 return;
             }
 
-            using (KktDeletionConfirmationDialog dialog = new KktDeletionConfirmationDialog(candidate.Instance))
+            using (KktDeletionConfirmationDialog dialog = new KktDeletionConfirmationDialog(candidate.Instance, candidate.IsPrimary))
             {
                 if (dialog.ShowDialog(this) != DialogResult.OK)
                 {
-                    AppendLog("Удаление дополнительной ККТ отменено пользователем.\r\n\r\n");
+                    AppendLog("Удаление ККТ отменено пользователем.\r\n\r\n");
                     return;
                 }
 
-                AppendLog("=== Удаление дополнительной ККТ " + candidate.Instance.Id + " ===\r\n");
+                AppendLog("=== Удаление ККТ " + candidate.Instance.Id + " ===\r\n");
                 KktDeletionOutcome outcome = await _deletionWorkflow.DeleteAsync(
                     endpoint.BaseUrl,
                     candidate.Instance.Id,
@@ -2028,14 +2028,22 @@ namespace EsmTspiot.WinForms.Shared
                 KktDeletionCandidate candidate = plan.Candidates[i];
                 KktInstanceInfo instance = candidate.Instance ?? new KktInstanceInfo();
                 string role;
-                if (candidate.IsPrimary)
+                if (candidate.CanDelete)
                 {
-                    role = "Первая ККТ (защищена)";
+                    deletableCount++;
+                }
+
+                if (candidate.IsPrimary && candidate.CanDelete)
+                {
+                    role = "Первая ККТ (полное подтверждение)";
+                }
+                else if (candidate.IsPrimary)
+                {
+                    role = "Первая ККТ (удаление заблокировано)";
                 }
                 else if (candidate.CanDelete)
                 {
                     role = "Дополнительная ККТ";
-                    deletableCount++;
                 }
                 else
                 {
@@ -2065,7 +2073,7 @@ namespace EsmTspiot.WinForms.Shared
             }
             else
             {
-                _instancesSummaryLabel.Text = "Экземпляров: " + instances.Count.ToString() + ". Дополнительных для удаления: " + deletableCount.ToString() + ".";
+                _instancesSummaryLabel.Text = "Экземпляров: " + instances.Count.ToString() + ". Доступно для удаления: " + deletableCount.ToString() + ".";
             }
 
             UpdateDeleteButtonState();

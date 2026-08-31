@@ -64,11 +64,33 @@ function Get-DescendantControls {
     }
 }
 
+function Invoke-ClipboardWriteWithRetry {
+    param(
+        [scriptblock]$Operation,
+        [string]$Description
+    )
+
+    $lastError = $null
+    for ($attempt = 1; $attempt -le 10; $attempt++) {
+        try {
+            & $Operation
+            return
+        }
+        catch [System.Runtime.InteropServices.ExternalException] {
+            $lastError = $_.Exception
+            Start-Sleep -Milliseconds 50
+        }
+    }
+
+    throw "$Description Clipboard remained unavailable: $($lastError.Message)"
+}
+
 $form = $null
 $automaticParametersDialog = $null
 $bindingDialog = $null
 $removeAllDialog = $null
 $kktDeletionDialog = $null
+$primaryKktDeletionDialog = $null
 $supportDevelopmentDialog = $null
 $supportDialogCloseTimer = $null
 try {
@@ -199,19 +221,37 @@ try {
     }
     $clipboardBefore = [System.Windows.Forms.Clipboard]::GetDataObject()
     try {
-        [System.Windows.Forms.Clipboard]::Clear()
-        $copyLinkButtons[0].PerformClick()
-        if ([System.Windows.Forms.Clipboard]::GetText() -ne $supportUrl) {
+        Invoke-ClipboardWriteWithRetry -Description "Before copy-link test." -Operation {
+            [System.Windows.Forms.Clipboard]::Clear()
+        }
+        $copied = $false
+        for ($attempt = 1; $attempt -le 10; $attempt++) {
+            $copyLinkButtons[0].PerformClick()
+            try {
+                if ([System.Windows.Forms.Clipboard]::GetText() -eq $supportUrl) {
+                    $copied = $true
+                    break
+                }
+            }
+            catch [System.Runtime.InteropServices.ExternalException] {
+            }
+            Start-Sleep -Milliseconds 50
+        }
+        if (-not $copied) {
             throw "Copy Link must place the exact donation URL on the clipboard."
         }
     }
     finally {
         if ($null -ne $clipboardBefore) {
-            [System.Windows.Forms.Clipboard]::SetDataObject(
-                $clipboardBefore, $true)
+            Invoke-ClipboardWriteWithRetry -Description "After copy-link test." -Operation {
+                [System.Windows.Forms.Clipboard]::SetDataObject(
+                    $clipboardBefore, $true)
+            }
         }
         else {
-            [System.Windows.Forms.Clipboard]::Clear()
+            Invoke-ClipboardWriteWithRetry -Description "After copy-link test." -Operation {
+                [System.Windows.Forms.Clipboard]::Clear()
+            }
         }
     }
     $offlineNotice = Get-Utf8Text(
@@ -684,6 +724,27 @@ try {
         throw "The KKT deletion dialog must localize the service state."
     }
 
+    $primaryDeletionConstructor = $deletionDialogType.GetConstructor(
+        [Type[]]@($instanceType, [bool]))
+    $primaryKktDeletionDialog = $primaryDeletionConstructor.Invoke(@($instance, $true))
+    $primaryConfirmation = Get-PrivateFieldValue -Instance $primaryKktDeletionDialog -Name "_confirmationTextBox"
+    $primaryDeleteButton = Get-PrivateFieldValue -Instance $primaryKktDeletionDialog -Name "_deleteButton"
+    $primaryDeletionText = (@(Get-DescendantControls $primaryKktDeletionDialog) |
+        Where-Object { $_ -is [System.Windows.Forms.Label] } |
+        ForEach-Object { $_.Text }) -join "`n"
+    if ($primaryConfirmation.MaxLength -ne 14 -or
+        -not $primaryDeletionText.Contains("14")) {
+        throw "Primary KKT deletion must visibly require the full 14-digit serial."
+    }
+    $primaryConfirmation.Text = "0001"
+    if ($primaryDeleteButton.Enabled) {
+        throw "A four-digit suffix must not authorize primary KKT deletion."
+    }
+    $primaryConfirmation.Text = "00105700000001"
+    if (-not $primaryDeleteButton.Enabled) {
+        throw "The exact primary KKT serial must enable the deletion action."
+    }
+
     $rowType = $assembly.GetType(
         "EsmTspiot.WinForms.Shared.LmAutomaticSetupDialogRow",
         $true)
@@ -1072,6 +1133,9 @@ finally {
     }
     if ($null -ne $kktDeletionDialog) {
         $kktDeletionDialog.Dispose()
+    }
+    if ($null -ne $primaryKktDeletionDialog) {
+        $primaryKktDeletionDialog.Dispose()
     }
     if ($null -ne $removeAllDialog) {
         $removeAllDialog.Dispose()

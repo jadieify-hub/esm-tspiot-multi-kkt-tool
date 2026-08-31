@@ -9,11 +9,17 @@ namespace EsmTspiot.WinForms.Shared
     public sealed class KktDeletionConfirmationDialog : Form
     {
         private readonly KktInstanceInfo _instance;
+        private readonly bool _requireFullSerial;
         private readonly TextBox _confirmationTextBox = new TextBox();
         private readonly Button _deleteButton = new Button();
         private readonly Button _cancelButton = new Button();
 
         public KktDeletionConfirmationDialog(KktInstanceInfo instance)
+            : this(instance, false)
+        {
+        }
+
+        public KktDeletionConfirmationDialog(KktInstanceInfo instance, bool requireFullSerial)
         {
             if (instance == null)
             {
@@ -21,7 +27,8 @@ namespace EsmTspiot.WinForms.Shared
             }
 
             _instance = instance;
-            Text = "Удаление дополнительной ККТ";
+            _requireFullSerial = requireFullSerial;
+            Text = "Удаление ККТ";
             StartPosition = FormStartPosition.CenterParent;
             ClientSize = new Size(430, 205);
             MinimumSize = new Size(400, 205);
@@ -70,14 +77,18 @@ namespace EsmTspiot.WinForms.Shared
 
             Label confirmationLabel = new Label();
             confirmationLabel.AutoSize = true;
-            confirmationLabel.Text = "Введите последние 4 цифры серийного номера ККТ:";
+            confirmationLabel.Text = _requireFullSerial
+                ? "Первая ККТ: введите полный 14-значный серийный номер:"
+                : "Введите последние 4 цифры серийного номера ККТ:";
             confirmationLabel.Margin = new Padding(0, 0, 0, 4);
 
             _confirmationTextBox.Width = 110;
-            _confirmationTextBox.MaxLength = 4;
+            _confirmationTextBox.MaxLength = _requireFullSerial ? 14 : 4;
             _confirmationTextBox.TextChanged += delegate
             {
-                _deleteButton.Enabled = KktDeletionConfirmation.Matches(_instance.Id, _confirmationTextBox.Text);
+                _deleteButton.Enabled = _requireFullSerial
+                    ? KktDeletionConfirmation.MatchesFullSerial(_instance.Id, _confirmationTextBox.Text)
+                    : KktDeletionConfirmation.Matches(_instance.Id, _confirmationTextBox.Text);
             };
 
             FlowLayoutPanel confirmationRow = new FlowLayoutPanel();

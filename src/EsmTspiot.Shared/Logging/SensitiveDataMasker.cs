@@ -202,6 +202,11 @@ namespace EsmTspiot.Shared.Logging
                 return false;
             }
 
+            if (key.EndsWith("token", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
             for (int index = 0; index < SensitiveKeys.Length; index++)
             {
                 if (string.Equals(key, SensitiveKeys[index], StringComparison.OrdinalIgnoreCase))
