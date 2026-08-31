@@ -226,7 +226,8 @@ namespace EsmTspiot.ServiceProvisioner
             ManagedLocalModuleRemovalJournalStore removal =
                 new ManagedLocalModuleRemovalJournalStore(
                     manifests.MachineRoot,
-                    pathSafety);
+                    pathSafety,
+                    initiatingSid);
             ManagedLocalModuleRemovalSnapshot pending;
             if (removal.TryRead(kktSerial, out pending))
             {
@@ -255,7 +256,8 @@ namespace EsmTspiot.ServiceProvisioner
             ManagedLocalModuleRemovalJournalStore removal =
                 new ManagedLocalModuleRemovalJournalStore(
                     manifests.MachineRoot,
-                    pathSafety);
+                    pathSafety,
+                    request.InitiatingSid);
             ManagedLocalModuleProfileStore profiles =
                 new ManagedLocalModuleProfileStore(
                     manifests,

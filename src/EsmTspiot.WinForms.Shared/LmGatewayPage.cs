@@ -57,6 +57,7 @@ namespace EsmTspiot.WinForms.Shared
             Dock = DockStyle.Fill;
             AutoScroll = false;
             BuildLayout();
+            RestoreInstallerSelections();
             FillRows(null);
             UpdateActionState();
         }

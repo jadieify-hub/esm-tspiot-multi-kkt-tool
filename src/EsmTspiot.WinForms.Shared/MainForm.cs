@@ -98,6 +98,7 @@ namespace EsmTspiot.WinForms.Shared
 
             BuildLayout();
             FillDefaults();
+            UpdateAutomaticInstallerSelection();
             Shown += delegate { ConstrainToWorkingArea(); };
             FormClosing += delegate
             {

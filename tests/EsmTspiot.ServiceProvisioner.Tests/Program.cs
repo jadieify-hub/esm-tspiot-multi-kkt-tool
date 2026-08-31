@@ -51,6 +51,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Local module runtime excludes wrappers and fixes extraction", LocalModuleRuntimeExcludesWrappersAndFixesExtraction);
             Run("Administrative MSI extraction uses native command syntax", AdministrativeMsiExtractionUsesNativeCommandSyntax);
             Run("Local module manifests enforce three ownership levels", LocalModuleManifestsEnforceThreeOwnershipLevels);
+            Run("Local module inventory keeps operator read only access", LocalModuleInventoryKeepsOperatorReadOnlyAccess);
             Run("Local module runtime deletion requires zero references", LocalModuleRuntimeDeletionRequiresZeroReferences);
             Run("Existing local module runtime verifies without MSI extraction", ExistingLocalModuleRuntimeVerifiesWithoutMsiExtraction);
             Run("Local module runtime recovers every mutation boundary", LocalModuleRuntimeRecoversEveryMutationBoundary);
@@ -96,6 +97,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Managed removal cleans complete stack in reverse", ManagedRemovalCleansCompleteStackInReverse);
             Run("Managed removal projects cleanup pending and retries", ManagedRemovalProjectsCleanupPendingAndRetries);
             Run("Managed removal journal survives deleted KKT stack", ManagedRemovalJournalSurvivesDeletedKktStack);
+            Run("Managed removal journal keeps operator read only access", ManagedRemovalJournalKeepsOperatorReadOnlyAccess);
             Run("Windows managed removal deletes owned stack and retry journal", WindowsManagedRemovalDeletesOwnedStackAndRetryJournal);
             Run("Managed update guard never stops unknown version", ManagedUpdateGuardNeverStopsUnknownVersion);
             Run("LM profile adapter changes only supported fields", LmProfileAdapterChangesOnlySupportedFields);
@@ -3099,6 +3101,98 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             }
         }
 
+        private static void LocalModuleInventoryKeepsOperatorReadOnlyAccess()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                const string operatorSid = "S-1-5-21-111-222-333-1001";
+                FakePathSafety pathSafety = new FakePathSafety(true);
+                LocalModuleManifestStore manifests;
+                LocalModuleRuntimeManifest runtime;
+                LocalModuleInstanceManifest instance;
+                CreateTestManagedLocalModuleOwnership(
+                    root,
+                    pathSafety,
+                    operatorSid,
+                    out manifests,
+                    out runtime,
+                    out instance);
+
+                AssertTrue(pathSafety.HasReadOnlyDirectoryAccess(
+                        manifests.MachineRoot,
+                        operatorSid),
+                    "The operator must be able to traverse the protected inventory root.");
+                AssertTrue(pathSafety.HasReadOnlyFileAccess(
+                        manifests.GetInstanceManifestPath(instance.InstanceId),
+                        operatorSid),
+                    "Writing an LM instance manifest must preserve operator read access.");
+            }
+            finally
+            {
+                DeleteTestTreeWithReadOnlyFiles(root);
+            }
+        }
+
+        private static void ManagedRemovalJournalKeepsOperatorReadOnlyAccess()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                const string operatorSid = "S-1-5-21-111-222-333-1001";
+                LocalModuleManifestStore manifests;
+                LocalModuleRuntimeManifest runtime;
+                LocalModuleInstanceManifest instance;
+                CreateTestManagedLocalModuleOwnership(
+                    root,
+                    out manifests,
+                    out runtime,
+                    out instance);
+                ManagedKktStackManifest stack = ManagedKktStackManifest.Create(
+                    CreateManagedLocalModuleRequest(1).ManagedLocalModules[0],
+                    instance.InstanceId,
+                    string.Empty,
+                    "79797979797979797979797979797979",
+                    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+                manifests.WriteStack(stack);
+                ManagedLocalModuleRemovalSnapshot snapshot =
+                    ManagedLocalModuleRemovalSnapshot.CreateOwned(
+                        stack,
+                        instance,
+                        runtime);
+                FakePathSafety pathSafety = new FakePathSafety(true);
+                ManagedLocalModuleRemovalJournalStore journal =
+                    new ManagedLocalModuleRemovalJournalStore(
+                        manifests.MachineRoot,
+                        pathSafety,
+                        operatorSid);
+
+                journal.Write(
+                    snapshot,
+                    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "simulated-error");
+
+                string removalRoot = Path.Combine(
+                    manifests.MachineRoot,
+                    "ManagedLocalModuleRemoval");
+                string journalPath = Path.Combine(
+                    removalRoot,
+                    stack.KktSerial + ".json");
+                AssertTrue(pathSafety.HasReadOnlyDirectoryAccess(
+                        removalRoot,
+                        operatorSid),
+                    "The operator must be able to enumerate removal recovery state.");
+                AssertTrue(pathSafety.HasReadOnlyFileAccess(
+                        journalPath,
+                        operatorSid),
+                    "A removal journal must remain readable after the elevated helper writes it.");
+            }
+            finally
+            {
+                DeleteTestTreeWithReadOnlyFiles(root);
+            }
+        }
+
         private static void WindowsManagedRemovalDeletesOwnedStackAndRetryJournal()
         {
             string root = CreateTemporaryDirectory();
@@ -4451,13 +4545,30 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             out LocalModuleRuntimeManifest runtime,
             out LocalModuleInstanceManifest instance)
         {
+            CreateTestManagedLocalModuleOwnership(
+                root,
+                new FakePathSafety(true),
+                null,
+                out store,
+                out runtime,
+                out instance);
+        }
+
+        private static void CreateTestManagedLocalModuleOwnership(
+            string root,
+            IPathSafety pathSafety,
+            string initiatingSid,
+            out LocalModuleManifestStore store,
+            out LocalModuleRuntimeManifest runtime,
+            out LocalModuleInstanceManifest instance)
+        {
             string appRoot = Path.Combine(root, "app");
             string runtimeContainer = Path.Combine(root, "program", "LocalModuleRuntime");
             store = new LocalModuleManifestStore(
                 appRoot,
                 runtimeContainer,
-                new FakePathSafety(true),
-                null);
+                pathSafety,
+                initiatingSid);
             LocalModuleInstallerSelection package =
                 LocalModulePackageVerifier.CreateSupportedIdentity();
             LocalModuleCapabilityProfile capability =
@@ -5218,10 +5329,60 @@ namespace EsmTspiot.ServiceProvisioner.Tests
         private sealed class FakePathSafety : IPathSafety
         {
             private readonly bool _isSafe;
+            private readonly List<DirectoryProtectionCall> _directoryCalls;
+            private readonly List<FileProtectionCall> _fileCalls;
 
             internal FakePathSafety(bool isSafe)
             {
                 _isSafe = isSafe;
+                _directoryCalls = new List<DirectoryProtectionCall>();
+                _fileCalls = new List<FileProtectionCall>();
+            }
+
+            internal bool HasReadOnlyDirectoryAccess(string path, string sid)
+            {
+                for (int index = 0; index < _directoryCalls.Count; index++)
+                {
+                    if (string.Equals(
+                            Path.GetFullPath(_directoryCalls[index].Path),
+                            Path.GetFullPath(path),
+                            StringComparison.OrdinalIgnoreCase) &&
+                        string.Equals(
+                            _directoryCalls[index].ReadOnlySid,
+                            sid,
+                            StringComparison.Ordinal))
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            internal bool HasReadOnlyFileAccess(string path, string sid)
+            {
+                for (int index = 0; index < _fileCalls.Count; index++)
+                {
+                    if (!string.Equals(
+                            Path.GetFullPath(_fileCalls[index].Path),
+                            Path.GetFullPath(path),
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+                    for (int sidIndex = 0;
+                        sidIndex < _fileCalls[index].ReadOnlySids.Count;
+                        sidIndex++)
+                    {
+                        if (string.Equals(
+                            _fileCalls[index].ReadOnlySids[sidIndex],
+                            sid,
+                            StringComparison.Ordinal))
+                        {
+                            return true;
+                        }
+                    }
+                }
+                return false;
             }
 
             public ValidationResult Validate(string path, string requiredRoot)
@@ -5261,6 +5422,12 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     throw new InvalidDataException("reparse path rejected");
                 }
                 Directory.CreateDirectory(path);
+                _directoryCalls.Add(new DirectoryProtectionCall
+                {
+                    Path = path,
+                    Kind = kind,
+                    ReadOnlySid = readOnlySid
+                });
             }
 
             public void EnsureProtectedDirectoryForServices(
@@ -5285,6 +5452,26 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 IList<string> readOnlySids)
             {
                 EnsureProtectedRuntimeFile(path);
+                _fileCalls.Add(new FileProtectionCall
+                {
+                    Path = path,
+                    ReadOnlySids = readOnlySids == null
+                        ? new List<string>()
+                        : new List<string>(readOnlySids)
+                });
+            }
+
+            private sealed class DirectoryProtectionCall
+            {
+                internal string Path { get; set; }
+                internal ProtectedDirectoryKind Kind { get; set; }
+                internal string ReadOnlySid { get; set; }
+            }
+
+            private sealed class FileProtectionCall
+            {
+                internal string Path { get; set; }
+                internal IList<string> ReadOnlySids { get; set; }
             }
         }
 

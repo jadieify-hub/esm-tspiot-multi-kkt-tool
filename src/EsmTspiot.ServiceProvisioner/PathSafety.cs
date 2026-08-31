@@ -17,7 +17,8 @@ namespace EsmTspiot.ServiceProvisioner
         ProfileContainer = 5,
         Runtime = 6,
         ProfileConfiguration = 7,
-        RuntimeContainer = 8
+        RuntimeContainer = 8,
+        InventoryContainer = 9
     }
 
     internal interface IPathSafety
@@ -212,6 +213,13 @@ namespace EsmTspiot.ServiceProvisioner
                     new SecurityIdentifier(readOnlySid),
                     FileSystemRights.ReadAndExecute | FileSystemRights.ListDirectory | FileSystemRights.Read);
             }
+            if (kind == ProtectedDirectoryKind.InventoryContainer &&
+                !string.IsNullOrEmpty(readOnlySid))
+            {
+                AddDirectTraverseRule(
+                    security,
+                    new SecurityIdentifier(readOnlySid));
+            }
             if (kind == ProtectedDirectoryKind.Profile)
             {
                 if (serviceSids == null || serviceSids.Count == 0)
@@ -334,7 +342,7 @@ namespace EsmTspiot.ServiceProvisioner
                 {
                     AddFileRule(
                         security,
-                        ParseExactServiceSid(readOnlySids[index]),
+                        ParseExactReadOnlySid(readOnlySids[index]),
                         FileSystemRights.ReadAndExecute |
                             FileSystemRights.Read |
                             FileSystemRights.Synchronize);
@@ -362,7 +370,6 @@ namespace EsmTspiot.ServiceProvisioner
                     rule.AccessControlType == AccessControlType.Allow &&
                     rule.InheritanceFlags == InheritanceFlags.None &&
                     (rule.FileSystemRights & ~allowed) == 0 &&
-                    sid.Value.StartsWith("S-1-5-80-", StringComparison.Ordinal) &&
                     !ContainsSid(result, sid.Value))
                 {
                     result.Add(sid);
@@ -473,6 +480,37 @@ namespace EsmTspiot.ServiceProvisioner
                 throw new InvalidDataException("An exact Windows service SID is required.");
             }
             return new SecurityIdentifier(value);
+        }
+
+        private static SecurityIdentifier ParseExactReadOnlySid(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                throw new InvalidDataException(
+                    "An exact Windows SID is required for read-only access.");
+            }
+            try
+            {
+                return new SecurityIdentifier(value);
+            }
+            catch (ArgumentException ex)
+            {
+                throw new InvalidDataException(
+                    "An exact Windows SID is required for read-only access.",
+                    ex);
+            }
+        }
+
+        private static void AddDirectTraverseRule(
+            DirectorySecurity security,
+            SecurityIdentifier sid)
+        {
+            security.AddAccessRule(new FileSystemAccessRule(
+                sid,
+                FileSystemRights.Traverse | FileSystemRights.Synchronize,
+                InheritanceFlags.None,
+                PropagationFlags.None,
+                AccessControlType.Allow));
         }
 
         private static void AddFileRule(
