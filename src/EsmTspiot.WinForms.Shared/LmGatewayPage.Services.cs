@@ -344,6 +344,7 @@ namespace EsmTspiot.WinForms.Shared
             CancellationToken cancellation)
         {
             _automaticSetupCancelledBeforeMutation = false;
+            _automaticSetupStopReason = string.Empty;
             if (!HasRequiredInstallerSelections)
             {
                 throw new InvalidOperationException(
@@ -410,7 +411,18 @@ namespace EsmTspiot.WinForms.Shared
                             "/" + request.ManagedLocalModules.Count.ToString(
                                 CultureInfo.InvariantCulture) +
                             ": регистрация в ЕСМ " + item.KktSerial + "...";
-                        return await registerKkt(item.KktSerial, token);
+                        bool registered = await registerKkt(
+                            item.KktSerial,
+                            token);
+                        if (!registered &&
+                            string.IsNullOrWhiteSpace(
+                                _automaticSetupStopReason))
+                        {
+                            _automaticSetupStopReason =
+                                "остановлена регистрация контрольной ККТ " +
+                                item.KktSerial;
+                        }
+                        return registered;
                     },
                     async delegate(
                         int index,
@@ -431,6 +443,15 @@ namespace EsmTspiot.WinForms.Shared
                         if (!bound)
                         {
                             bindingsSuccessful = false;
+                            if (string.IsNullOrWhiteSpace(
+                                _automaticSetupStopReason))
+                            {
+                                _automaticSetupStopReason =
+                                    "остановлена привязка контрольного " +
+                                    "комплекта ККТ " +
+                                    request.ManagedLocalModules[index]
+                                        .KktSerial;
+                            }
                         }
                         return bound;
                     },
@@ -443,6 +464,19 @@ namespace EsmTspiot.WinForms.Shared
             {
                 Log(SensitiveDataMasker.Mask(
                     result.Items[resultIndex].FormatLogLine()) + "\r\n");
+                if (!IsCompleteSetupItemSuccessful(
+                        result.Items[resultIndex].Status) &&
+                    string.IsNullOrWhiteSpace(_automaticSetupStopReason))
+                {
+                    _automaticSetupStopReason =
+                        "остановлен контрольный локальный комплект ККТ " +
+                        (result.Items[resultIndex].KktSerial ?? string.Empty) +
+                        (string.IsNullOrWhiteSpace(
+                            result.Items[resultIndex].Message)
+                            ? string.Empty
+                            : ": " + SensitiveDataMasker.Mask(
+                                result.Items[resultIndex].Message));
+                }
             }
 
             bool localSetupSuccessful = IsCompleteSetupSuccessful(result);

@@ -10,6 +10,7 @@ namespace EsmTspiot.Shared.Services
     public sealed class BulkRegistrationWorkflow
     {
         private const int MaximumTransientAttempts = 3;
+        private const int MaximumRegistrationConfirmationAttempts = 30;
         private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(2);
 
         private readonly ITspiotApiClient _api;
@@ -43,36 +44,98 @@ namespace EsmTspiot.Shared.Services
             Action<BulkRegistrationProgress> progress,
             CancellationToken cancellationToken)
         {
-            BulkRegistrationDiscovery discovery = new BulkRegistrationDiscovery();
-
             ApiResponse instancesResponse = await _api.GetInstancesAsync(baseUrl, cancellationToken);
             Report(progress, 0, 0, string.Empty, "Получение экземпляров", string.Empty, instancesResponse);
             if (!instancesResponse.IsSuccess)
             {
-                discovery.ErrorMessage = "Не удалось получить список экземпляров ЕСМ/ТС ПИоТ.";
-                return discovery;
+                return FailedDiscovery(
+                    "Не удалось получить список экземпляров ЕСМ/ТС ПИоТ.");
             }
 
             IList<KktInstanceInfo> instances;
             if (!InstanceInfoParser.TryParse(instancesResponse, out instances))
             {
-                discovery.ErrorMessage = "Ответ /api/v1/instances/info не соответствует ожидаемому контракту.";
-                return discovery;
+                return FailedDiscovery(
+                    "Ответ /api/v1/instances/info не соответствует ожидаемому контракту.");
             }
 
             ApiResponse devicesResponse = await _api.GetDkktListAsync(baseUrl, cancellationToken);
             Report(progress, 0, 0, string.Empty, "Получение физических ККТ", string.Empty, devicesResponse);
             if (!devicesResponse.IsSuccess)
             {
-                discovery.ErrorMessage = "Не удалось получить список физических ККТ.";
-                return discovery;
+                return FailedDiscovery(
+                    "Не удалось получить список физических ККТ.");
             }
 
             IList<DkktDeviceInfo> devices;
-            if (!DkktListParser.TryParse(devicesResponse.ResponseBody, out devices))
+            if (!DkktListParser.TryParse(devicesResponse, out devices))
             {
-                discovery.ErrorMessage = "Ответ /api/v1/dkktList не соответствует ожидаемому контракту.";
-                return discovery;
+                return FailedDiscovery(
+                    "Ответ /api/v1/dkktList не соответствует ожидаемому контракту.");
+            }
+
+            return await BuildDiscoveryAsync(
+                baseUrl,
+                dkktPort,
+                instances,
+                devices,
+                progress,
+                cancellationToken);
+        }
+
+        public async Task<BulkRegistrationDiscovery> DiscoverFromDevicesAsync(
+            string baseUrl,
+            string dkktPort,
+            IList<DkktDeviceInfo> devices,
+            Action<BulkRegistrationProgress> progress,
+            CancellationToken cancellationToken)
+        {
+            if (devices == null) throw new ArgumentNullException("devices");
+            ApiResponse instancesResponse = await _api.GetInstancesAsync(
+                baseUrl,
+                cancellationToken);
+            Report(
+                progress,
+                0,
+                0,
+                string.Empty,
+                "Получение экземпляров для VCOM-плана",
+                string.Empty,
+                instancesResponse);
+            if (!instancesResponse.IsSuccess)
+            {
+                return FailedDiscovery(
+                    "Не удалось получить список экземпляров ЕСМ/ТС ПИоТ.");
+            }
+
+            IList<KktInstanceInfo> instances;
+            if (!InstanceInfoParser.TryParse(instancesResponse, out instances))
+            {
+                return FailedDiscovery(
+                    "Ответ /api/v1/instances/info не соответствует ожидаемому контракту.");
+            }
+            return await BuildDiscoveryAsync(
+                baseUrl,
+                dkktPort,
+                instances,
+                devices,
+                progress,
+                cancellationToken);
+        }
+
+        private async Task<BulkRegistrationDiscovery> BuildDiscoveryAsync(
+            string baseUrl,
+            string dkktPort,
+            IList<KktInstanceInfo> instances,
+            IList<DkktDeviceInfo> devices,
+            Action<BulkRegistrationProgress> progress,
+            CancellationToken cancellationToken)
+        {
+            BulkRegistrationDiscovery discovery = new BulkRegistrationDiscovery();
+
+            for (int deviceIndex = 0; deviceIndex < devices.Count; deviceIndex++)
+            {
+                discovery.ObservedDevices.Add(devices[deviceIndex]);
             }
 
             BulkKktRegistrationPlan plan = BulkKktRegistrationPlanner.Build(baseUrl, dkktPort, devices, instances);
@@ -137,6 +200,11 @@ namespace EsmTspiot.Shared.Services
             }
 
             return discovery;
+        }
+
+        private static BulkRegistrationDiscovery FailedDiscovery(string message)
+        {
+            return new BulkRegistrationDiscovery { ErrorMessage = message };
         }
 
         public async Task<BulkRegistrationOutcome> ExecuteAsync(
@@ -304,17 +372,93 @@ namespace EsmTspiot.Shared.Services
                 total,
                 progress,
                 cancellationToken);
+            if (registerResponse.IsSuccess)
+            {
+                return await WaitForRegistrationConfirmation(
+                    item,
+                    workItem.RequiresAdd
+                        ? BulkKktRegistrationStatus.Registered
+                        : BulkKktRegistrationStatus.RecoveredRegistration,
+                    current,
+                    total,
+                    progress,
+                    cancellationToken);
+            }
             return new BulkKktRegistrationResult
             {
                 KktSerial = serial,
-                Status = registerResponse.IsSuccess
-                    ? (workItem.RequiresAdd
-                        ? BulkKktRegistrationStatus.Registered
-                        : BulkKktRegistrationStatus.RecoveredRegistration)
-                    : BulkKktRegistrationStatus.RegistrationFailed,
-                Details = registerResponse.IsSuccess
-                    ? string.Empty
-                    : Describe(registerResponse)
+                Status = BulkKktRegistrationStatus.RegistrationFailed,
+                Details = Describe(registerResponse)
+            };
+        }
+
+        private async Task<BulkKktRegistrationResult>
+            WaitForRegistrationConfirmation(
+                BulkKktRegistrationItem item,
+                BulkKktRegistrationStatus successStatus,
+                int current,
+                int total,
+                Action<BulkRegistrationProgress> progress,
+                CancellationToken cancellationToken)
+        {
+            string serial = item.Input.KktSerial;
+            for (int attempt = 1;
+                attempt <= MaximumRegistrationConfirmationAttempts;
+                attempt++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                ApiResponse response = await _api.GetInstanceAsync(
+                    item.Input.BaseUrl,
+                    serial,
+                    cancellationToken);
+                Report(
+                    progress,
+                    current,
+                    total,
+                    serial,
+                    "Подтверждение регистрации",
+                    "Проверка " + attempt.ToString(),
+                    response);
+
+                KktInstanceDetails details;
+                if (response.IsSuccess &&
+                    InstanceDetailsParser.TryParse(response.ResponseBody, out details))
+                {
+                    if (details.HasCompleteRegistrationData &&
+                        !MatchesRegistration(item.Input, details.RegistrationData))
+                    {
+                        return new BulkKktRegistrationResult
+                        {
+                            KktSerial = serial,
+                            Status = BulkKktRegistrationStatus.InspectionFailed,
+                            Details =
+                                "После PUT regData не совпадают с выбранной ККТ"
+                        };
+                    }
+                    if (details.IsRegistered &&
+                        details.HasCompleteRegistrationData)
+                    {
+                        return new BulkKktRegistrationResult
+                        {
+                            KktSerial = serial,
+                            Status = successStatus,
+                            Details = "регистрация подтверждена read-back ЕСМ"
+                        };
+                    }
+                }
+
+                if (attempt < MaximumRegistrationConfirmationAttempts)
+                {
+                    await _delay(RetryDelay, cancellationToken);
+                }
+            }
+
+            return new BulkKktRegistrationResult
+            {
+                KktSerial = serial,
+                Status = BulkKktRegistrationStatus.RegistrationFailed,
+                Details =
+                    "ЕСМ принял PUT, но регистрация не подтверждена read-back за 60 секунд"
             };
         }
 

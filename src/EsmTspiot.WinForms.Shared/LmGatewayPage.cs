@@ -32,6 +32,7 @@ namespace EsmTspiot.WinForms.Shared
         private bool _loadingGrid;
         private bool _hasLoaded;
         private bool _automaticSetupCancelledBeforeMutation;
+        private string _automaticSetupStopReason = string.Empty;
 
         public LmGatewayPage(
             Func<string> baseUrlProvider,
@@ -107,6 +108,11 @@ namespace EsmTspiot.WinForms.Shared
         public bool AutomaticSetupCancelledBeforeMutation
         {
             get { return _automaticSetupCancelledBeforeMutation; }
+        }
+
+        public string AutomaticSetupStopReason
+        {
+            get { return _automaticSetupStopReason ?? string.Empty; }
         }
 
         public void SetHostBusy(bool busy)
@@ -312,7 +318,7 @@ namespace EsmTspiot.WinForms.Shared
 
             StringBuilder log = new StringBuilder();
             log.AppendLine("=== ККТ, контроллеры и управляемые ЛМ ЧЗ ===");
-            log.AppendLine("Зарегистрированных ККТ: " + discovery.Items.Count.ToString() + ".");
+            log.AppendLine("Экземпляров в ЕСМ: " + discovery.Items.Count.ToString() + ".");
             for (int index = 0; index < discovery.Issues.Count; index++)
             {
                 LmGatewayDiscoveryIssue issue = discovery.Issues[index];

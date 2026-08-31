@@ -53,6 +53,11 @@ namespace EsmTspiot.Shared.Tests
             Run("Instance parser reads root arrays", InstanceParserReadsRootArrays);
             Run("Instance response accepts empty 204 as no instances", InstanceResponseAcceptsEmpty204AsNoInstances);
             Run("Dkkt parser reads kkt array", DkktParserReadsKktArray);
+            Run("Dkkt response accepts only an empty 204", DkktResponseAcceptsOnlyEmpty204);
+            Run("Automatic registration keeps the one-INN flow", AutomaticRegistrationKeepsOneInnFlow);
+            Run("Automatic registration keeps fully registered multi-INN flow", AutomaticRegistrationKeepsRegisteredMultiInnFlow);
+            Run("Automatic registration selects VCOM for pending multi-INN flow", AutomaticRegistrationSelectsVcomForPendingMultiInnFlow);
+            Run("Automatic registration selects VCOM when no live sessions exist", AutomaticRegistrationSelectsVcomWithoutLiveSessions);
             Run("Dkkt selector excludes already created instances", DkktSelectorExcludesAlreadyCreatedInstances);
             Run("Port allocator selects pair after existing instances", PortAllocatorSelectsPairAfterExistingInstances);
             Run("Port allocator reserves either side and consecutive selections", PortAllocatorReservesEitherSideAndConsecutiveSelections);
@@ -150,6 +155,7 @@ namespace EsmTspiot.Shared.Tests
             Run("Base URL rejects credentials and query", BaseUrlRejectsCredentialsAndQuery);
             Run("Unicode digits are rejected", UnicodeDigitsAreRejected);
             Run("Bulk workflow treats empty 204 as no instances", BulkWorkflowTreatsEmpty204AsNoInstances);
+            Run("Bulk workflow plans supplied sequential VCOM devices", BulkWorkflowPlansSuppliedSequentialVcomDevices);
             Run("Bulk workflow skips PUT after POST completes registration", BulkWorkflowSkipsPutAfterPostCompletesRegistration);
             Run("Bulk workflow does not skip PUT for an unregistered state", BulkWorkflowDoesNotSkipPutForUnregisteredState);
             Run("Bulk workflow blocks mismatched registration after POST", BulkWorkflowBlocksMismatchedRegistrationAfterPost);
@@ -158,11 +164,19 @@ namespace EsmTspiot.Shared.Tests
             Run("Bulk workflow retries service not started", BulkWorkflowRetriesServiceNotStarted);
             Run("Bulk workflow retries connection failure during add", BulkWorkflowRetriesConnectionFailureDuringAdd);
             Run("Bulk workflow retries connection failure during registration", BulkWorkflowRetriesConnectionFailureDuringRegistration);
+            Run("Bulk workflow waits for registered state after PUT", BulkWorkflowWaitsForRegisteredStateAfterPut);
+            Run("Bulk workflow rejects mismatched readback after PUT", BulkWorkflowRejectsMismatchedReadbackAfterPut);
+            Run("Bulk workflow times out an unconfirmed PUT", BulkWorkflowTimesOutUnconfirmedPut);
             Run("Bulk workflow executes one selected KKT", BulkWorkflowExecutesOneSelectedKkt);
             Run("Bulk workflow recovers when retry reports existing instance", BulkWorkflowRecoversWhenRetryReportsExistingInstance);
             Run("Bulk workflow skips PUT when readiness is not confirmed", BulkWorkflowSkipsPutWhenReadinessIsNotConfirmed);
             Run("Bulk workflow honors cancellation", BulkWorkflowHonorsCancellation);
             Run("Bulk workflow preserves results when request is cancelled", BulkWorkflowPreservesResultsWhenRequestIsCancelled);
+            Run("Sequential discovery rejects externally held KKT sessions", SequentialDiscoveryRejectsExternalSessions);
+            Run("Sequential discovery maps each VCOM through the real dkktList", SequentialDiscoveryMapsEachVcom);
+            Run("Sequential registration disposes its VCOM before returning", SequentialRegistrationDisposesVcomBeforeReturning);
+            Run("Sequential cancellation keeps the completed KKT", SequentialCancellationKeepsCompletedKkt);
+            Run("Sequential final verification closes every VCOM on failure", SequentialFinalVerificationClosesEveryVcomOnFailure);
             Run("Diagnostic masker hides fiscal identifiers", DiagnosticMaskerHidesFiscalIdentifiers);
             Run("Diagnostic masker hides local user paths", DiagnosticMaskerHidesLocalUserPaths);
             Run("Diagnostic masker hides common secrets", DiagnosticMaskerHidesCommonSecrets);
@@ -436,6 +450,8 @@ namespace EsmTspiot.Shared.Tests
 
             AssertContains(message, "1026");
             AssertContains(message, "несколько ИНН");
+            AssertContains(message, "автоматическую настройку");
+            AssertContains(message, "только с кассами одного ИНН");
         }
 
         private static void ServiceRecoveryCommandUsesKktSerialAndPorts()
@@ -632,6 +648,105 @@ namespace EsmTspiot.Shared.Tests
             AssertEqual("1234567894", devices[0].KktInn, "Expected kktInn.");
             AssertEqual("Атол 55Ф", devices[0].ModelName, "Expected modelName.");
             AssertEqual("1.0.1", devices[0].DkktVersion, "Expected dkktVersion.");
+        }
+
+        private static void DkktResponseAcceptsOnlyEmpty204()
+        {
+            IList<DkktDeviceInfo> devices;
+            AssertTrue(
+                DkktListParser.TryParse(new ApiResponse
+                {
+                    IsSuccess = true,
+                    StatusCode = 204,
+                    ResponseBody = " \r\n\t"
+                }, out devices),
+                "An empty 204 must mean that no live driver sessions exist.");
+            AssertEqual(0, devices.Count, "An empty 204 must produce an empty device list.");
+
+            AssertFalse(
+                DkktListParser.TryParse(new ApiResponse
+                {
+                    IsSuccess = true,
+                    StatusCode = 204,
+                    ResponseBody = "{\"kkt\":[]}"
+                }, out devices),
+                "A 204 response must not carry a body.");
+            AssertFalse(
+                DkktListParser.TryParse(new ApiResponse
+                {
+                    IsSuccess = true,
+                    StatusCode = 200,
+                    ResponseBody = string.Empty
+                }, out devices),
+                "An empty 200 response must remain a contract failure.");
+        }
+
+        private static void AutomaticRegistrationKeepsOneInnFlow()
+        {
+            BulkRegistrationDiscovery discovery = CreateRegistrationModeDiscovery(
+                new[] { "1234567894" },
+                true);
+
+            AssertEqual(
+                AutomaticRegistrationMode.ExistingSessions,
+                AutomaticRegistrationModeSelector.Select(discovery),
+                "One visible INN must keep the existing no-dialog flow.");
+        }
+
+        private static void AutomaticRegistrationKeepsRegisteredMultiInnFlow()
+        {
+            BulkRegistrationDiscovery discovery = CreateRegistrationModeDiscovery(
+                new[] { "1234567894", "7707083893" },
+                false);
+
+            AssertEqual(
+                AutomaticRegistrationMode.ExistingSessions,
+                AutomaticRegistrationModeSelector.Select(discovery),
+                "Already registered KKT must not require VCOM takeover.");
+        }
+
+        private static void AutomaticRegistrationSelectsVcomForPendingMultiInnFlow()
+        {
+            BulkRegistrationDiscovery discovery = CreateRegistrationModeDiscovery(
+                new[] { "1234567894", "7707083893" },
+                true);
+
+            AssertEqual(
+                AutomaticRegistrationMode.SequentialVcom,
+                AutomaticRegistrationModeSelector.Select(discovery),
+                "Pending KKT of different INNs must be isolated through VCOM.");
+        }
+
+        private static void AutomaticRegistrationSelectsVcomWithoutLiveSessions()
+        {
+            BulkRegistrationDiscovery discovery = CreateRegistrationModeDiscovery(
+                new string[0],
+                false);
+
+            AssertEqual(
+                AutomaticRegistrationMode.SequentialVcom,
+                AutomaticRegistrationModeSelector.Select(discovery),
+                "An empty dkktList must trigger deterministic VCOM discovery.");
+        }
+
+        private static BulkRegistrationDiscovery CreateRegistrationModeDiscovery(
+            string[] inns,
+            bool hasPendingItem)
+        {
+            BulkRegistrationDiscovery discovery = new BulkRegistrationDiscovery();
+            for (int index = 0; index < inns.Length; index++)
+            {
+                discovery.ObservedDevices.Add(new DkktDeviceInfo
+                {
+                    KktSerial = (105700000001L + index).ToString("00000000000000"),
+                    KktInn = inns[index]
+                });
+            }
+            if (hasPendingItem)
+            {
+                discovery.Items.Add(new BulkRegistrationWorkItem());
+            }
+            return discovery;
         }
 
         private static void DkktSelectorExcludesAlreadyCreatedInstances()
@@ -869,7 +984,7 @@ namespace EsmTspiot.Shared.Tests
             AssertContains(summary, "Уже существует: 1");
             AssertContains(summary, "Некорректные данные: 1");
             AssertContains(summary, "Ошибок добавления: 1");
-            AssertContains(summary, "Создано без регистрации: 1");
+            AssertContains(summary, "Регистрация не завершена (экземпляр существует): 1");
         }
 
         private static void BulkRegistrationResultFormatsLogLine()
@@ -3215,6 +3330,8 @@ namespace EsmTspiot.Shared.Tests
                 "\"fnSerial\":\"7300000000000001\"," +
                 "\"kktInn\":\"1234567894\"}}"));
             api.RegisterResponses.Enqueue(Success("{\"tspiotId\":\"1\"}"));
+            EnqueueRegisteredReadback(
+                api, "00105700000001", "7300000000000001", "1234567894");
             BulkRegistrationWorkflow workflow = CreateWorkflow(api);
 
             BulkRegistrationDiscovery discovery = workflow.DiscoverAsync(
@@ -3263,6 +3380,8 @@ namespace EsmTspiot.Shared.Tests
             api.InstanceResponses.Enqueue(Success("{\"clientPort\":51401}"));
             api.SettingsResponse = Success("[]");
             api.RegisterResponses.Enqueue(Success("{\"tspiotId\":\"1\"}"));
+            EnqueueRegisteredReadback(
+                api, "00105700000001", "7300000000000001", "1234567894");
             BulkRegistrationWorkflow workflow = CreateWorkflow(api);
 
             BulkRegistrationDiscovery discovery = workflow.DiscoverAsync(
@@ -3288,6 +3407,8 @@ namespace EsmTspiot.Shared.Tests
             api.AddResponses.Enqueue(Success("{}"));
             api.InstanceResponses.Enqueue(Success("{\"clientPort\":51402}"));
             api.RegisterResponses.Enqueue(Success("{}"));
+            EnqueueRegisteredReadback(
+                api, "00105700000002", "7300000000000001", "1234567894");
             BulkRegistrationWorkflow workflow = CreateWorkflow(api);
 
             BulkRegistrationDiscovery discovery = workflow.DiscoverAsync(
@@ -3310,6 +3431,8 @@ namespace EsmTspiot.Shared.Tests
             api.AddResponses.Enqueue(Success("{}"));
             api.InstanceResponses.Enqueue(Success("{\"clientPort\":51401}"));
             api.RegisterResponses.Enqueue(Success("{}"));
+            EnqueueRegisteredReadback(
+                api, "00105700000001", "7300000000000001", "1234567894");
             BulkRegistrationWorkflow workflow = CreateWorkflow(api);
 
             BulkRegistrationDiscovery discovery = workflow.DiscoverAsync(
@@ -3330,6 +3453,8 @@ namespace EsmTspiot.Shared.Tests
             api.AddResponses.Enqueue(Success("{}"));
             api.InstanceResponses.Enqueue(Success("{\"clientPort\":51402}"));
             api.RegisterResponses.Enqueue(Success("{}"));
+            EnqueueRegisteredReadback(
+                api, "00105700000001", "7300000000000001", "1234567894");
             BulkRegistrationWorkflow workflow = CreateWorkflow(api);
 
             BulkRegistrationDiscovery discovery = workflow.DiscoverAsync(
@@ -3350,6 +3475,8 @@ namespace EsmTspiot.Shared.Tests
             api.InstanceResponses.Enqueue(Success("{\"clientPort\":51402}"));
             api.RegisterResponses.Enqueue(ConnectionFailure());
             api.RegisterResponses.Enqueue(Success("{}"));
+            EnqueueRegisteredReadback(
+                api, "00105700000001", "7300000000000001", "1234567894");
             BulkRegistrationWorkflow workflow = CreateWorkflow(api);
 
             BulkRegistrationDiscovery discovery = workflow.DiscoverAsync(
@@ -3359,6 +3486,157 @@ namespace EsmTspiot.Shared.Tests
 
             AssertEqual(2, api.RegisterCalls, "Expected PUT retry after a connection failure.");
             AssertEqual(BulkKktRegistrationStatus.Registered, outcome.Results[0].Status, "Expected successful PUT retry.");
+        }
+
+        private static void BulkWorkflowPlansSuppliedSequentialVcomDevices()
+        {
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            api.InstancesResponse = NoContent();
+            BulkRegistrationWorkflow workflow = CreateWorkflow(api);
+            IList<DkktDeviceInfo> devices = new List<DkktDeviceInfo>();
+            devices.Add(new DkktDeviceInfo
+            {
+                KktSerial = "00105700000001",
+                FnSerial = "7300000000000001",
+                KktInn = "1234567894"
+            });
+            devices.Add(new DkktDeviceInfo
+            {
+                KktSerial = "00105700000002",
+                FnSerial = "7300000000000002",
+                KktInn = "7707083893"
+            });
+
+            BulkRegistrationDiscovery discovery = workflow
+                .DiscoverFromDevicesAsync(
+                    "http://127.0.0.1:51077",
+                    "4042",
+                    devices,
+                    null,
+                    CancellationToken.None).Result;
+
+            AssertTrue(discovery.IsValid, "Sequentially observed devices must produce a valid plan.");
+            AssertEqual(2, discovery.Items.Count, "Every supplied real KKT must be planned.");
+            AssertEqual(0, api.DkktCalls, "Supplied VCOM observations must not be replaced by a shared dkktList read.");
+            AssertEqual("50401", discovery.Items[0].Item.Input.Port, "First supplied KKT must keep the first deterministic pair.");
+            AssertEqual("51402", discovery.Items[1].Item.Input.SoftPort, "Second supplied KKT must keep the second deterministic pair.");
+        }
+
+        private static void BulkWorkflowWaitsForRegisteredStateAfterPut()
+        {
+            FakeTspiotApiClient api = CreateSinglePendingKktApi();
+            api.InstanceResponses.Enqueue(Success(
+                "{\"state\":\"Не зарегистрирован\",\"clientPort\":51401}"));
+            api.RegisterResponses.Enqueue(Success("{}"));
+            api.InstanceResponses.Enqueue(Success(RegistrationDetailsJson(
+                "Не зарегистрирован",
+                "00105700000001",
+                "7300000000000001",
+                "1234567894")));
+            api.InstanceResponses.Enqueue(Success(RegistrationDetailsJson(
+                "Зарегистрирован",
+                " 00105700000001 ",
+                " 7300000000000001 ",
+                " 1234567894  ")));
+            BulkRegistrationWorkflow workflow = CreateWorkflow(api);
+
+            BulkRegistrationDiscovery discovery = workflow.DiscoverAsync(
+                "http://127.0.0.1:51077", "4042", null, CancellationToken.None).Result;
+            BulkRegistrationOutcome outcome = workflow.ExecuteAsync(
+                discovery, null, CancellationToken.None).Result;
+
+            AssertEqual(BulkKktRegistrationStatus.Registered, outcome.Results[0].Status,
+                "PUT must succeed only after registered readback.");
+            AssertEqual(3, api.InstanceCalls,
+                "Expected one post-POST inspection and two post-PUT readbacks.");
+        }
+
+        private static void BulkWorkflowRejectsMismatchedReadbackAfterPut()
+        {
+            FakeTspiotApiClient api = CreateSinglePendingKktApi();
+            api.InstanceResponses.Enqueue(Success(
+                "{\"state\":\"Не зарегистрирован\",\"clientPort\":51401}"));
+            api.RegisterResponses.Enqueue(Success("{}"));
+            api.InstanceResponses.Enqueue(Success(RegistrationDetailsJson(
+                "Зарегистрирован",
+                "00105700000001",
+                "7300000000000001",
+                "7707083893")));
+            BulkRegistrationWorkflow workflow = CreateWorkflow(api);
+
+            BulkRegistrationDiscovery discovery = workflow.DiscoverAsync(
+                "http://127.0.0.1:51077", "4042", null, CancellationToken.None).Result;
+            BulkRegistrationOutcome outcome = workflow.ExecuteAsync(
+                discovery, null, CancellationToken.None).Result;
+
+            AssertEqual(BulkKktRegistrationStatus.InspectionFailed, outcome.Results[0].Status,
+                "A registered response for another identity must be blocked.");
+            AssertContains(outcome.Results[0].Details, "не совпадают");
+        }
+
+        private static void BulkWorkflowTimesOutUnconfirmedPut()
+        {
+            FakeTspiotApiClient api = CreateSinglePendingKktApi();
+            api.InstanceResponses.Enqueue(Success(
+                "{\"state\":\"Не зарегистрирован\",\"clientPort\":51401}"));
+            api.RegisterResponses.Enqueue(Success("{}"));
+            for (int attempt = 0; attempt < 30; attempt++)
+            {
+                api.InstanceResponses.Enqueue(Success(RegistrationDetailsJson(
+                    "Не зарегистрирован",
+                    "00105700000001",
+                    "7300000000000001",
+                    "1234567894")));
+            }
+            BulkRegistrationWorkflow workflow = CreateWorkflow(api);
+
+            BulkRegistrationDiscovery discovery = workflow.DiscoverAsync(
+                "http://127.0.0.1:51077", "4042", null, CancellationToken.None).Result;
+            BulkRegistrationOutcome outcome = workflow.ExecuteAsync(
+                discovery, null, CancellationToken.None).Result;
+
+            AssertEqual(BulkKktRegistrationStatus.RegistrationFailed, outcome.Results[0].Status,
+                "An accepted PUT without registered readback must not authorize a local kit.");
+            AssertContains(outcome.Results[0].Details, "не подтверждена");
+            AssertEqual(31, api.InstanceCalls,
+                "The bounded confirmation loop must stop after thirty post-PUT reads.");
+        }
+
+        private static FakeTspiotApiClient CreateSinglePendingKktApi()
+        {
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            api.InstancesResponse = Success("{\"instances\":[]}");
+            api.DkktResponse = Success(
+                "{\"kkt\":[{\"kktSerial\":\"00105700000001\"," +
+                "\"fnSerial\":\"7300000000000001\",\"kktInn\":\"1234567894\"}]}");
+            api.AddResponses.Enqueue(Success("{}"));
+            return api;
+        }
+
+        private static string RegistrationDetailsJson(
+            string state,
+            string serial,
+            string fnSerial,
+            string inn)
+        {
+            return "{\"state\":\"" + state +
+                "\",\"clientPort\":51401,\"regData\":{" +
+                "\"kktSerial\":\"" + serial +
+                "\",\"fnSerial\":\"" + fnSerial +
+                "\",\"kktInn\":\"" + inn + "\"}}";
+        }
+
+        private static void EnqueueRegisteredReadback(
+            FakeTspiotApiClient api,
+            string serial,
+            string fnSerial,
+            string inn)
+        {
+            api.InstanceResponses.Enqueue(Success(RegistrationDetailsJson(
+                "Зарегистрирован",
+                serial,
+                fnSerial,
+                inn)));
         }
 
         private static void BulkWorkflowExecutesOneSelectedKkt()
@@ -3371,6 +3649,8 @@ namespace EsmTspiot.Shared.Tests
             api.AddResponses.Enqueue(Success("{}"));
             api.InstanceResponses.Enqueue(Success("{\"clientPort\":51402}"));
             api.RegisterResponses.Enqueue(Success("{}"));
+            EnqueueRegisteredReadback(
+                api, "00105700000002", "7300000000000002", "1234567894");
             BulkRegistrationWorkflow workflow = CreateWorkflow(api);
             BulkRegistrationDiscovery discovery = workflow.DiscoverAsync(
                 "http://127.0.0.1:51077", "4041", null, CancellationToken.None).Result;
@@ -3401,6 +3681,8 @@ namespace EsmTspiot.Shared.Tests
             api.AddResponses.Enqueue(Failure(400, "{\"error\":{\"code\":1010}}"));
             api.InstanceResponses.Enqueue(Success("{\"clientPort\":51401}"));
             api.RegisterResponses.Enqueue(Success("{}"));
+            EnqueueRegisteredReadback(
+                api, "00105700000001", "7300000000000001", "1234567894");
             BulkRegistrationWorkflow workflow = CreateWorkflow(api);
 
             BulkRegistrationDiscovery discovery = workflow.DiscoverAsync(
@@ -3461,7 +3743,9 @@ namespace EsmTspiot.Shared.Tests
                 "{\"kktSerial\":\"00105700000001\",\"fnSerial\":\"7300000000000001\",\"kktInn\":\"1234567894\"}," +
                 "{\"kktSerial\":\"00105700000002\",\"fnSerial\":\"7300000000000001\",\"kktInn\":\"1234567894\"}]}");
             api.InstanceResponses.Enqueue(Success("{\"clientPort\":51401}"));
-            api.CancelOnInstanceCall = 2;
+            EnqueueRegisteredReadback(
+                api, "00105700000001", "7300000000000001", "1234567894");
+            api.CancelOnInstanceCall = 3;
             BulkRegistrationWorkflow workflow = CreateWorkflow(api);
 
             BulkRegistrationDiscovery discovery = workflow.DiscoverAsync(
@@ -3475,6 +3759,286 @@ namespace EsmTspiot.Shared.Tests
             AssertEqual(2, outcome.Results.Count, "Expected previous and interrupted KKT results.");
             AssertEqual(BulkKktRegistrationStatus.Registered, outcome.Results[0].Status, "Expected preserved first result.");
             AssertEqual(BulkKktRegistrationStatus.Cancelled, outcome.Results[1].Status, "Expected interrupted second result.");
+        }
+
+        private static void SequentialDiscoveryRejectsExternalSessions()
+        {
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            string foreign = DkktListJson(
+                "00105700000009", "7300000000000009", "7707083893");
+            api.DkktResponses.Enqueue(Success(foreign));
+            api.DkktResponses.Enqueue(Success(foreign));
+            api.DkktResponses.Enqueue(Success(foreign));
+            FakeKktConnectionProvider connections = new FakeKktConnectionProvider();
+            connections.Add("COM9", "00105700000001");
+            SequentialKktRegistrationCoordinator coordinator =
+                CreateSequentialCoordinator(api, connections);
+
+            SequentialKktDiscovery discovery = coordinator.DiscoverAsync(
+                "http://127.0.0.1:51077",
+                null,
+                CancellationToken.None).Result;
+
+            AssertFalse(discovery.IsValid,
+                "Foreign live sessions must block deterministic VCOM discovery.");
+            AssertTrue(discovery.HasExternalSessions,
+                "The operator needs a retryable external-holder diagnosis.");
+            AssertEqual(1, discovery.BlockingDevices.Count,
+                "The last real dkktList snapshot must be shown to the operator.");
+            AssertEqual(0, connections.OpenCount,
+                "No application VCOM may open while another program holds KKT sessions.");
+            AssertContains(discovery.ErrorMessage, "другой программой");
+        }
+
+        private static void SequentialDiscoveryMapsEachVcom()
+        {
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            api.DkktResponses.Enqueue(NoContent());
+            api.DkktResponses.Enqueue(NoContent());
+            api.DkktResponses.Enqueue(NoContent());
+            api.DkktResponses.Enqueue(Success(DkktListJson(
+                "00105700000001", "7300000000000001", "1234567894")));
+            api.DkktResponses.Enqueue(Success(DkktListJson(
+                "00105700000002", "7300000000000002", "7707083893")));
+            FakeKktConnectionProvider connections = new FakeKktConnectionProvider();
+            connections.Add("COM9", "00105700000001");
+            connections.Add("COM11", "00105700000002");
+            List<BulkRegistrationProgress> progress =
+                new List<BulkRegistrationProgress>();
+            SequentialKktRegistrationCoordinator coordinator =
+                CreateSequentialCoordinator(api, connections);
+
+            SequentialKktDiscovery discovery = coordinator.DiscoverAsync(
+                "http://127.0.0.1:51077",
+                delegate(BulkRegistrationProgress item) { progress.Add(item); },
+                CancellationToken.None).Result;
+
+            AssertTrue(discovery.IsValid, "Both VCOM mappings must be accepted.");
+            AssertEqual(2, discovery.Targets.Count, "Expected one target per MI_00 port.");
+            AssertEqual("COM9", discovery.Targets[0].Port.PortName,
+                "Port order must remain deterministic.");
+            AssertEqual("00105700000002", discovery.Targets[1].Device.KktSerial,
+                "The second real dkktList row must be attached to COM11.");
+            AssertEqual(2, connections.DisposedCount,
+                "Discovery must close every port immediately after its snapshot.");
+            AssertTrue(ContainsProgressText(progress, "ИНН") &&
+                ContainsProgressText(progress, "ККТ: 1"),
+                "Every poll must expose visible INNs and KKT count.");
+        }
+
+        private static void SequentialRegistrationDisposesVcomBeforeReturning()
+        {
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            api.DkktResponses.Enqueue(Success(DkktListJson(
+                "00105700000001", "7300000000000001", "1234567894")));
+            FakeKktConnectionProvider connections = new FakeKktConnectionProvider();
+            connections.Add("COM9", "00105700000001");
+            SequentialKktRegistrationTarget target = CreateSequentialTarget(
+                "COM9", "00105700000001", "7300000000000001", "1234567894");
+            SequentialKktRegistrationCoordinator coordinator =
+                CreateSequentialCoordinator(api, connections);
+            bool registrationObservedOpenLease = false;
+
+            BulkKktRegistrationResult result = coordinator.ExecuteWithTargetAsync(
+                "http://127.0.0.1:51077",
+                target,
+                delegate(CancellationToken token)
+                {
+                    registrationObservedOpenLease =
+                        connections.LastLease != null &&
+                        !connections.LastLease.IsDisposed;
+                    return Task.FromResult(new BulkKktRegistrationResult
+                    {
+                        KktSerial = target.Device.KktSerial,
+                        Status = BulkKktRegistrationStatus.Registered
+                    });
+                },
+                null,
+                CancellationToken.None).Result;
+
+            AssertTrue(registrationObservedOpenLease,
+                "The physical KKT must remain visible while POST/PUT run.");
+            AssertEqual(BulkKktRegistrationStatus.Registered, result.Status,
+                "The registration result must pass through unchanged.");
+            AssertTrue(connections.LastLease.IsDisposed,
+                "The helper/controller phase starts only after the VCOM lease is disposed.");
+        }
+
+        private static void SequentialCancellationKeepsCompletedKkt()
+        {
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            api.DkktResponses.Enqueue(Success(DkktListJson(
+                "00105700000001", "7300000000000001", "1234567894")));
+            FakeKktConnectionProvider connections = new FakeKktConnectionProvider();
+            connections.Add("COM9", "00105700000001");
+            connections.Add("COM11", "00105700000002");
+            SequentialKktRegistrationCoordinator coordinator =
+                CreateSequentialCoordinator(api, connections);
+            SequentialKktRegistrationTarget first = CreateSequentialTarget(
+                "COM9", "00105700000001", "7300000000000001", "1234567894");
+            SequentialKktRegistrationTarget second = CreateSequentialTarget(
+                "COM11", "00105700000002", "7300000000000002", "7707083893");
+
+            BulkKktRegistrationResult completed = coordinator.ExecuteWithTargetAsync(
+                "http://127.0.0.1:51077",
+                first,
+                delegate(CancellationToken token)
+                {
+                    return Task.FromResult(new BulkKktRegistrationResult
+                    {
+                        KktSerial = first.Device.KktSerial,
+                        Status = BulkKktRegistrationStatus.Registered
+                    });
+                },
+                null,
+                CancellationToken.None).Result;
+            CancellationTokenSource cancellation = new CancellationTokenSource();
+            cancellation.Cancel();
+            bool cancelled = false;
+            try
+            {
+                coordinator.ExecuteWithTargetAsync(
+                    "http://127.0.0.1:51077",
+                    second,
+                    delegate(CancellationToken token)
+                    {
+                        throw new InvalidOperationException(
+                            "Cancelled target must never run.");
+                    },
+                    null,
+                    cancellation.Token).GetAwaiter().GetResult();
+            }
+            catch (OperationCanceledException)
+            {
+                cancelled = true;
+            }
+            finally
+            {
+                cancellation.Dispose();
+            }
+
+            AssertTrue(cancelled, "Cancellation between targets must be observed.");
+            AssertEqual(BulkKktRegistrationStatus.Registered, completed.Status,
+                "The completed KKT result must not be rolled back or rewritten.");
+            AssertEqual(1, connections.OpenCount,
+                "The next VCOM must not open after cancellation.");
+            AssertEqual(1, connections.DisposedCount,
+                "The completed target lease must already be closed.");
+        }
+
+        private static void SequentialFinalVerificationClosesEveryVcomOnFailure()
+        {
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            api.DkktResponses.Enqueue(Success(DkktListJson(
+                "00105700000001", "7300000000000001", "1234567894")));
+            api.DkktResponses.Enqueue(Success(DkktListJson(
+                "00105700000001", "7300000000000001", "1234567894")));
+            FakeKktConnectionProvider connections = new FakeKktConnectionProvider();
+            connections.Add("COM9", "00105700000001");
+            connections.Add("COM11", "00105700000002");
+            SequentialKktDiscovery discovery = new SequentialKktDiscovery();
+            discovery.Targets.Add(CreateSequentialTarget(
+                "COM9", "00105700000001", "7300000000000001", "1234567894"));
+            discovery.Targets.Add(CreateSequentialTarget(
+                "COM11", "00105700000002", "7300000000000002", "7707083893"));
+            SequentialKktRegistrationCoordinator coordinator =
+                CreateSequentialCoordinator(api, connections);
+
+            bool verified = coordinator.VerifyAllAsync(
+                "http://127.0.0.1:51077",
+                discovery,
+                null,
+                CancellationToken.None).Result;
+
+            AssertFalse(verified,
+                "A partial final dkktList must not be reported as complete.");
+            AssertEqual(2, connections.DisposedCount,
+                "Every final-verification lease must close after failure.");
+            AssertEqual("COM11", connections.DisposeOrder[0],
+                "Final verification must unwind leases in reverse order.");
+            AssertEqual("COM9", connections.DisposeOrder[1],
+                "The first lease must be the last one released.");
+        }
+
+        private static SequentialKktRegistrationCoordinator
+            CreateSequentialCoordinator(
+                FakeTspiotApiClient api,
+                FakeKktConnectionProvider connections)
+        {
+            return new SequentialKktRegistrationCoordinator(
+                api,
+                connections,
+                delegate(TimeSpan delay, CancellationToken token)
+                {
+                    return Task.FromResult(0);
+                },
+                3,
+                2);
+        }
+
+        private static SequentialKktRegistrationTarget CreateSequentialTarget(
+            string port,
+            string serial,
+            string fnSerial,
+            string inn)
+        {
+            return new SequentialKktRegistrationTarget
+            {
+                Port = new KktConnectionPort
+                {
+                    PortName = port,
+                    HardwareId = "USB\\VID_2912&PID_0005&MI_00"
+                },
+                Identity = new KktConnectionIdentity
+                {
+                    PortName = port,
+                    KktSerial = serial,
+                    ModelName = "АТОЛ 30Ф",
+                    FirmwareVersion = "5.8.1"
+                },
+                Device = new DkktDeviceInfo
+                {
+                    KktSerial = serial,
+                    FnSerial = fnSerial,
+                    KktInn = inn
+                }
+            };
+        }
+
+        private static ApiResponse NoContent()
+        {
+            return new ApiResponse
+            {
+                IsSuccess = true,
+                StatusCode = 204,
+                ResponseBody = string.Empty
+            };
+        }
+
+        private static string DkktListJson(
+            string serial,
+            string fnSerial,
+            string inn)
+        {
+            return "{\"kkt\":[{\"kktSerial\":\"" + serial +
+                "\",\"fnSerial\":\"" + fnSerial +
+                "\",\"kktInn\":\"" + inn + "\"}]}";
+        }
+
+        private static bool ContainsProgressText(
+            IList<BulkRegistrationProgress> progress,
+            string expected)
+        {
+            for (int index = 0; index < progress.Count; index++)
+            {
+                if ((progress[index].Message ?? string.Empty).IndexOf(
+                    expected,
+                    StringComparison.Ordinal) >= 0)
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         private static BulkRegistrationWorkflow CreateWorkflow(FakeTspiotApiClient api)
@@ -4704,6 +5268,97 @@ namespace EsmTspiot.Shared.Tests
             public string Accept { get; set; }
         }
 
+        private sealed class FakeKktConnectionProvider : IKktConnectionProvider
+        {
+            private readonly List<KktConnectionPort> _ports =
+                new List<KktConnectionPort>();
+            private readonly Dictionary<string, KktConnectionIdentity> _identities =
+                new Dictionary<string, KktConnectionIdentity>(StringComparer.OrdinalIgnoreCase);
+
+            public FakeKktConnectionProvider()
+            {
+                DisposeOrder = new List<string>();
+            }
+
+            public int OpenCount { get; private set; }
+            public int DisposedCount { get; private set; }
+            public FakeKktConnectionLease LastLease { get; private set; }
+            public IList<string> DisposeOrder { get; private set; }
+
+            public void Add(string portName, string serial)
+            {
+                KktConnectionPort port = new KktConnectionPort
+                {
+                    PortName = portName,
+                    HardwareId = "USB\\VID_2912&PID_0005&MI_00"
+                };
+                _ports.Add(port);
+                _identities.Add(portName, new KktConnectionIdentity
+                {
+                    PortName = portName,
+                    KktSerial = serial,
+                    ModelName = "АТОЛ 30Ф",
+                    FirmwareVersion = "5.8.1"
+                });
+            }
+
+            public IList<KktConnectionPort> EnumeratePorts()
+            {
+                return new List<KktConnectionPort>(_ports);
+            }
+
+            public Task<IKktConnectionLease> OpenAsync(
+                KktConnectionPort port,
+                CancellationToken cancellationToken)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                OpenCount++;
+                KktConnectionIdentity identity;
+                if (port == null ||
+                    !_identities.TryGetValue(port.PortName, out identity))
+                {
+                    throw new InvalidOperationException("Unknown fake port.");
+                }
+                LastLease = new FakeKktConnectionLease(
+                    identity,
+                    delegate(string disposedPort)
+                    {
+                        DisposedCount++;
+                        DisposeOrder.Add(disposedPort);
+                    });
+                return Task.FromResult<IKktConnectionLease>(LastLease);
+            }
+        }
+
+        private sealed class FakeKktConnectionLease : IKktConnectionLease
+        {
+            private readonly Action<string> _disposed;
+
+            public FakeKktConnectionLease(
+                KktConnectionIdentity identity,
+                Action<string> disposed)
+            {
+                Identity = identity;
+                _disposed = disposed;
+            }
+
+            public KktConnectionIdentity Identity { get; private set; }
+            public bool IsDisposed { get; private set; }
+
+            public void Dispose()
+            {
+                if (IsDisposed)
+                {
+                    return;
+                }
+                IsDisposed = true;
+                if (_disposed != null)
+                {
+                    _disposed(Identity.PortName);
+                }
+            }
+        }
+
         private sealed class FakeTspiotApiClient : ITspiotApiClient
         {
             public FakeTspiotApiClient()
@@ -4713,6 +5368,7 @@ namespace EsmTspiot.Shared.Tests
                 DeleteResponses = new Queue<ApiResponse>();
                 InstanceResponses = new Queue<ApiResponse>();
                 InstancesResponses = new Queue<ApiResponse>();
+                DkktResponses = new Queue<ApiResponse>();
                 LmGatewayResponses = new Queue<ApiResponse>();
                 LmInfoResponses = new Queue<ApiResponse>();
                 LmGatewayCalls = new List<LmGatewayCall>();
@@ -4727,6 +5383,7 @@ namespace EsmTspiot.Shared.Tests
             public Queue<ApiResponse> DeleteResponses { get; private set; }
             public Queue<ApiResponse> InstanceResponses { get; private set; }
             public Queue<ApiResponse> InstancesResponses { get; private set; }
+            public Queue<ApiResponse> DkktResponses { get; private set; }
             public Queue<ApiResponse> LmGatewayResponses { get; private set; }
             public Queue<ApiResponse> LmInfoResponses { get; private set; }
             public IList<LmGatewayCall> LmGatewayCalls { get; private set; }
@@ -4735,6 +5392,7 @@ namespace EsmTspiot.Shared.Tests
             public int DeleteCalls { get; private set; }
             public int InstanceCalls { get; private set; }
             public int InstancesCalls { get; private set; }
+            public int DkktCalls { get; private set; }
             public int LmInfoCalls { get; private set; }
             public int CancelOnInstanceCall { get; set; }
             public Action<int> LmGatewayCallObserved { get; set; }
@@ -4748,7 +5406,10 @@ namespace EsmTspiot.Shared.Tests
 
             public Task<ApiResponse> GetDkktListAsync(string baseUrl, CancellationToken cancellationToken)
             {
-                return Task.FromResult(DkktResponse);
+                DkktCalls++;
+                return Task.FromResult(DkktResponses.Count == 0
+                    ? DkktResponse
+                    : DkktResponses.Dequeue());
             }
 
             public Task<ApiResponse> GetInstanceAsync(string baseUrl, string id, CancellationToken cancellationToken)

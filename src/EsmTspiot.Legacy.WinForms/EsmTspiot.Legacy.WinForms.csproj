@@ -6,7 +6,8 @@
     <AssemblyName>EsmTspiot.Legacy.WinForms</AssemblyName>
     <RootNamespace>EsmTspiot.Legacy.WinForms</RootNamespace>
     <LangVersion>latest</LangVersion>
-    <PlatformTarget>AnyCPU</PlatformTarget>
+    <PlatformTarget>x86</PlatformTarget>
+    <Prefer32Bit>true</Prefer32Bit>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <ApplicationIcon>..\EsmTspiot.WinForms.Shared\Assets\app.ico</ApplicationIcon>
   </PropertyGroup>
@@ -29,6 +30,9 @@
     <Compile Include="..\EsmTspiot.WinForms.Shared\LocalModuleInstallerPicker.cs" Link="LocalModuleInstallerPicker.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmServiceProvisionerClient.cs" Link="LmServiceProvisionerClient.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\CompleteStackProvisionerClient.cs" Link="CompleteStackProvisionerClient.cs" />
+    <Compile Include="..\EsmTspiot.WinForms.Shared\AtolDriverRuntimeLocator.cs" Link="AtolDriverRuntimeLocator.cs" />
+    <Compile Include="..\EsmTspiot.WinForms.Shared\AtolVcomEnumerator.cs" Link="AtolVcomEnumerator.cs" />
+    <Compile Include="..\EsmTspiot.WinForms.Shared\AtolFptrConnectionProvider.cs" Link="AtolFptrConnectionProvider.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmServiceInventoryReader.cs" Link="LmServiceInventoryReader.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\ManagedLocalModuleInventoryReader.cs" Link="ManagedLocalModuleInventoryReader.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayProbe.cs" Link="LmGatewayProbe.cs" />

@@ -5,6 +5,17 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+if ([IntPtr]::Size -ne 4) {
+    $x86PowerShell = Join-Path $env:WINDIR 'SysWOW64\WindowsPowerShell\v1.0\powershell.exe'
+    if (-not (Test-Path -LiteralPath $x86PowerShell -PathType Leaf)) {
+        throw '32-bit PowerShell is required to inspect the x86 compact main executable.'
+    }
+    & $x86PowerShell -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath `
+        -StageRoot $StageRoot
+    exit $LASTEXITCODE
+}
+
 $stage = [IO.Path]::GetFullPath($StageRoot).TrimEnd('\')
 $mainPath = Join-Path $stage 'MultiKKT-ESM-TSPioT.exe'
 $helperPath = Join-Path $stage 'Provisioner\EsmTspiot.ServiceProvisioner.exe'
