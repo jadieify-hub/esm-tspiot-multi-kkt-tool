@@ -59,7 +59,7 @@ namespace EsmTspiot.Shared.Services
             }
 
             IList<KktInstanceInfo> currentInstances;
-            if (!InstanceInfoParser.TryParse(currentResponse.ResponseBody, out currentInstances))
+            if (!InstanceInfoParser.TryParse(currentResponse, out currentInstances))
             {
                 return Blocked("ЕСМ вернул неожиданный список экземпляров. Удаление заблокировано.");
             }
@@ -110,7 +110,7 @@ namespace EsmTspiot.Shared.Services
 
                 IList<KktInstanceInfo> verificationInstances;
                 if (verificationResponse != null && verificationResponse.IsSuccess &&
-                    InstanceInfoParser.TryParse(verificationResponse.ResponseBody, out verificationInstances) &&
+                    InstanceInfoParser.TryParse(verificationResponse, out verificationInstances) &&
                     FindInstance(verificationInstances, normalizedId) == null)
                 {
                     outcome.IsSuccess = true;

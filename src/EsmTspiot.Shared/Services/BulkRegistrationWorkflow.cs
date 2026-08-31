@@ -54,7 +54,7 @@ namespace EsmTspiot.Shared.Services
             }
 
             IList<KktInstanceInfo> instances;
-            if (!InstanceInfoParser.TryParse(instancesResponse.ResponseBody, out instances))
+            if (!InstanceInfoParser.TryParse(instancesResponse, out instances))
             {
                 discovery.ErrorMessage = "Ответ /api/v1/instances/info не соответствует ожидаемому контракту.";
                 return discovery;
