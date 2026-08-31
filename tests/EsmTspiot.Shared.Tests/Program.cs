@@ -55,7 +55,7 @@ namespace EsmTspiot.Shared.Tests
             Run("Dkkt selector excludes already created instances", DkktSelectorExcludesAlreadyCreatedInstances);
             Run("Port allocator selects pair after existing instances", PortAllocatorSelectsPairAfterExistingInstances);
             Run("Port allocator reserves either side and consecutive selections", PortAllocatorReservesEitherSideAndConsecutiveSelections);
-            Run("Port allocator reserves the primary KKT pair", PortAllocatorReservesPrimaryKktPair);
+            Run("Port allocator starts with the primary KKT pair", PortAllocatorStartsWithPrimaryKktPair);
             Run("Bulk planner assigns first sequential port pairs", BulkPlannerAssignsFirstSequentialPortPairs);
             Run("Bulk planner uses the orchestrator DKKT port by default", BulkPlannerUsesOrchestratorDkktPortByDefault);
             Run("Bulk planner reserves implicit first soft port", BulkPlannerReservesImplicitFirstSoftPort);
@@ -643,10 +643,10 @@ namespace EsmTspiot.Shared.Tests
                 "http://127.0.0.1:51077", "4041", devices, new List<KktInstanceInfo>());
 
             AssertEqual(2, plan.Items.Count, "Expected two planned devices.");
-            AssertEqual("50402", plan.Items[0].Input.Port, "Expected first additional KKT port.");
-            AssertEqual("51402", plan.Items[0].Input.SoftPort, "Expected first additional KKT soft port.");
-            AssertEqual("50403", plan.Items[1].Input.Port, "Expected second additional KKT port.");
-            AssertEqual("51403", plan.Items[1].Input.SoftPort, "Expected second additional KKT soft port.");
+            AssertEqual("50401", plan.Items[0].Input.Port, "Expected first KKT port.");
+            AssertEqual("51401", plan.Items[0].Input.SoftPort, "Expected first KKT soft port.");
+            AssertEqual("50402", plan.Items[1].Input.Port, "Expected second KKT port.");
+            AssertEqual("51402", plan.Items[1].Input.SoftPort, "Expected second KKT soft port.");
         }
 
         private static void BulkPlannerUsesOrchestratorDkktPortByDefault()
@@ -695,12 +695,12 @@ namespace EsmTspiot.Shared.Tests
             AssertEqual("51404", second.SoftPort, "Expected matching softPort for the second selection.");
         }
 
-        private static void PortAllocatorReservesPrimaryKktPair()
+        private static void PortAllocatorStartsWithPrimaryKktPair()
         {
             KktPortPair pair = new KktPortPairAllocator(new List<KktInstanceInfo>()).ReserveNext();
 
-            AssertEqual("50402", pair.Port, "The primary KKT port must never be allocated to an additional KKT.");
-            AssertEqual("51402", pair.SoftPort, "The primary KKT softPort must never be allocated to an additional KKT.");
+            AssertEqual("50401", pair.Port, "A clean ESM must allocate the primary KKT service port first.");
+            AssertEqual("51401", pair.SoftPort, "A clean ESM must allocate the primary KKT software port first.");
         }
 
         private static void BulkPlannerReservesImplicitFirstSoftPort()
@@ -806,8 +806,8 @@ namespace EsmTspiot.Shared.Tests
                 new List<KktInstanceInfo>());
 
             AssertFalse(plan.Items[0].Validation.IsValid, "Expected the first device to remain invalid.");
-            AssertEqual("50402", plan.Items[1].Input.Port, "An invalid device must not consume the first additional port pair.");
-            AssertEqual("51402", plan.Items[1].Input.SoftPort, "An invalid device must not consume the first additional softPort.");
+            AssertEqual("50401", plan.Items[1].Input.Port, "An invalid device must not consume the first KKT port pair.");
+            AssertEqual("51401", plan.Items[1].Input.SoftPort, "An invalid device must not consume the first KKT softPort.");
         }
 
         private static void BulkPlannerSkipsDuplicateDevices()
@@ -3094,6 +3094,14 @@ namespace EsmTspiot.Shared.Tests
                 "00105700000001",
                 discovery.Items[0].Item.Input.KktSerial,
                 "Expected the discovered KKT to be planned after an empty instance response.");
+            AssertEqual(
+                "50401",
+                discovery.Items[0].Item.Input.Port,
+                "The first KKT on a clean ESM must use the first service port.");
+            AssertEqual(
+                "51401",
+                discovery.Items[0].Item.Input.SoftPort,
+                "The first KKT on a clean ESM must expose the first cash-software port.");
         }
 
         private static void BulkWorkflowResumesIncompleteExistingInstance()
