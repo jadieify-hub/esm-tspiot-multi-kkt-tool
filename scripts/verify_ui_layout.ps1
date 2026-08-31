@@ -4,6 +4,16 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+if ([IntPtr]::Size -ne 4) {
+    $x86PowerShell = Join-Path $env:WINDIR "SysWOW64\WindowsPowerShell\v1.0\powershell.exe"
+    if (-not (Test-Path -LiteralPath $x86PowerShell -PathType Leaf)) {
+        throw "32-bit PowerShell is required to inspect the x86 Legacy operator application."
+    }
+    & $x86PowerShell -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath `
+        -Configuration $Configuration
+    exit $LASTEXITCODE
+}
+
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $appPath = Join-Path $repoRoot (
     "src\EsmTspiot.Legacy.WinForms\bin\{0}\net48\EsmTspiot.Legacy.WinForms.exe" -f $Configuration)
@@ -1116,6 +1126,33 @@ try {
     }
     if ($pageServicesSource -notmatch '(?s)bool finalRefreshSucceeded\s*=\s*false.*?finalRefreshSucceeded\s*=\s*true.*?if \(finalRefreshSucceeded\).*?AreCompleteAutomaticBindingRowsSuccessful') {
         throw "A best-effort final refresh must refine success only when the readback itself completed."
+    }
+    if ($mainFormSource -notmatch 'AutomaticRegistrationModeSelector\.Select' -or
+        $mainFormSource -notmatch 'new AtolFptrConnectionProvider\(' -or
+        $mainFormSource -notmatch 'ExecuteWithTargetAsync\(' -or
+        $mainFormSource -notmatch 'VerifyAllAsync\(') {
+        throw "Automatic setup must select and execute the isolated ATOL VCOM workflow."
+    }
+    $defaultsSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot "src\EsmTspiot.Shared\Models\TspiotDefaults.cs"))
+    if ($defaultsSource -notmatch 'LmSettingsPath\s*=\s*"/api/v1/settings/lm"') {
+        throw "The working LM binding endpoint must remain /api/v1/settings/lm."
+    }
+    $legacyProjectSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot "src\EsmTspiot.Legacy.WinForms\EsmTspiot.Legacy.WinForms.csproj"))
+    $modernProjectSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot "src\EsmTspiot.Modern.WinForms\EsmTspiot.Modern.WinForms.csproj"))
+    $helperProjectSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot "src\EsmTspiot.ServiceProvisioner\EsmTspiot.ServiceProvisioner.csproj"))
+    foreach ($adapterFile in @(
+        "AtolDriverRuntimeLocator.cs",
+        "AtolVcomEnumerator.cs",
+        "AtolFptrConnectionProvider.cs")) {
+        if (-not $legacyProjectSource.Contains($adapterFile) -or
+            -not $modernProjectSource.Contains($adapterFile) -or
+            $helperProjectSource.Contains($adapterFile)) {
+            throw "ATOL adapter source must be compiled into both operator apps and never into helper: $adapterFile"
+        }
     }
 
     Write-Host (

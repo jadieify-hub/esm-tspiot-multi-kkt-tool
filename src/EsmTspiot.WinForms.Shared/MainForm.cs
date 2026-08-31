@@ -601,10 +601,12 @@ namespace EsmTspiot.WinForms.Shared
             Label hint = new Label();
             hint.AutoSize = false;
             hint.Dock = DockStyle.Fill;
-            hint.MinimumSize = new Size(0, 48);
+            hint.MinimumSize = new Size(0, 64);
             hint.Text =
-                "Программа найдёт ККТ через драйвер АТОЛ, зарегистрирует их в ЕСМ, " +
-                "создаст контроллеры и ЛМ ЧЗ, затем привяжет в ЕСМ каждый контроллер к своей ККТ.";
+                "Программа найдёт USB/VCOM ККТ через установленный драйвер АТОЛ, " +
+                "поочерёдно зарегистрирует ККТ в ЕСМ, закроет связь после каждой регистрации, " +
+                "создаст контроллеры и ЛМ ЧЗ, затем привяжет их к своим ККТ. " +
+                "Если кассы удерживает Frontol/«Тест драйвера», программа попросит закрыть его и повторить.";
             hint.Margin = new Padding(0, 5, 0, 0);
 
             commands.Controls.Add(installerLabel, 0, 0);
@@ -1209,6 +1211,46 @@ namespace EsmTspiot.WinForms.Shared
                 {
                     throw new InvalidOperationException(discovery.ErrorMessage);
                 }
+                SequentialKktRegistrationCoordinator sequentialCoordinator = null;
+                SequentialKktDiscovery sequentialDiscovery = null;
+                AutomaticRegistrationMode registrationMode =
+                    AutomaticRegistrationModeSelector.Select(discovery);
+                if (registrationMode ==
+                    AutomaticRegistrationMode.SequentialVcom)
+                {
+                    _automationStatusLabel.Text =
+                        "Статус: поочерёдная проверка VCOM АТОЛ...";
+                    sequentialCoordinator =
+                        new SequentialKktRegistrationCoordinator(
+                            _client,
+                            new AtolFptrConnectionProvider());
+                    sequentialDiscovery =
+                        await DiscoverSequentialKktsWithRetryAsync(
+                            sequentialCoordinator,
+                            baseUrl,
+                            token);
+                    if (sequentialDiscovery == null)
+                    {
+                        _automationStatusLabel.Text =
+                            "Статус: поочерёдная регистрация отменена";
+                        AppendLog(
+                            "Поочерёдная VCOM-регистрация отменена до " +
+                            "изменения следующей ККТ. Уже завершённые группы " +
+                            "не откатывались.\r\n\r\n");
+                        return;
+                    }
+                    discovery = await _bulkWorkflow.DiscoverFromDevicesAsync(
+                        baseUrl,
+                        dkktPort,
+                        CopySequentialDevices(sequentialDiscovery),
+                        HandleBulkProgress,
+                        token);
+                    if (!discovery.IsValid)
+                    {
+                        throw new InvalidOperationException(
+                            discovery.ErrorMessage);
+                    }
+                }
                 AppendBulkDiscovery(discovery);
 
                 IList<LmGatewayKkt> registered =
@@ -1240,6 +1282,7 @@ namespace EsmTspiot.WinForms.Shared
 
                 HashSet<string> attempted =
                     new HashSet<string>(StringComparer.Ordinal);
+                string stopReason = string.Empty;
                 _automationStatusLabel.Text =
                     "Статус: проверьте готовые адреса и порты...";
                 bool complete = await _lmGatewayPage
@@ -1260,12 +1303,45 @@ namespace EsmTspiot.WinForms.Shared
                             BulkKktRegistrationResult itemResult;
                             try
                             {
-                                itemResult = await _bulkWorkflow.ExecuteItemAsync(
-                                    work,
-                                    workOrdinalBySerial[serial],
-                                    discovery.Items.Count,
-                                    HandleBulkProgress,
-                                    itemToken);
+                                if (sequentialCoordinator != null)
+                                {
+                                    SequentialKktRegistrationTarget target =
+                                        sequentialDiscovery.FindBySerial(serial);
+                                    if (target == null)
+                                    {
+                                        throw new InvalidOperationException(
+                                            "Для ККТ " + serial +
+                                            " не найден ранее проверенный VCOM.");
+                                    }
+                                    itemResult = await sequentialCoordinator
+                                        .ExecuteWithTargetAsync(
+                                            baseUrl,
+                                            target,
+                                            delegate(
+                                                System.Threading.CancellationToken
+                                                    registrationToken)
+                                            {
+                                                return _bulkWorkflow
+                                                    .ExecuteItemAsync(
+                                                        work,
+                                                        workOrdinalBySerial[serial],
+                                                        discovery.Items.Count,
+                                                        HandleBulkProgress,
+                                                        registrationToken);
+                                            },
+                                            HandleBulkProgress,
+                                            itemToken);
+                                }
+                                else
+                                {
+                                    itemResult = await _bulkWorkflow
+                                        .ExecuteItemAsync(
+                                            work,
+                                            workOrdinalBySerial[serial],
+                                            discovery.Items.Count,
+                                            HandleBulkProgress,
+                                            itemToken);
+                                }
                             }
                             catch (OperationCanceledException)
                             {
@@ -1293,7 +1369,16 @@ namespace EsmTspiot.WinForms.Shared
                             }
                             registrationOutcome.Results.Add(itemResult);
                             AppendBulkResult(itemResult);
-                            return IsSuccessfulBulkRegistration(itemResult.Status);
+                            bool successful = IsSuccessfulBulkRegistration(
+                                itemResult.Status);
+                            if (!successful &&
+                                string.IsNullOrWhiteSpace(stopReason))
+                            {
+                                stopReason =
+                                    "регистрация контрольной ККТ " + serial +
+                                    " остановлена: " + itemResult.Details;
+                            }
+                            return successful;
                         },
                         token);
                 if (!complete &&
@@ -1307,11 +1392,58 @@ namespace EsmTspiot.WinForms.Shared
                 }
                 _automaticCancellation.Token.ThrowIfCancellationRequested();
 
+                string finalVcomError = string.Empty;
+                if (complete && sequentialCoordinator != null)
+                {
+                    _automationStatusLabel.Text =
+                        "Статус: итоговая проверка всех VCOM ККТ...";
+                    try
+                    {
+                        bool allVisible = await sequentialCoordinator
+                            .VerifyAllAsync(
+                                baseUrl,
+                                sequentialDiscovery,
+                                HandleBulkProgress,
+                                token);
+                        if (!allVisible)
+                        {
+                            complete = false;
+                            finalVcomError =
+                                "Итоговая проверка не увидела в dkktList " +
+                                "все ранее сопоставленные ККТ.";
+                        }
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        complete = false;
+                        finalVcomError =
+                            "Итоговая VCOM-проверка не завершена: " +
+                            SensitiveDataMasker.Mask(ex.Message);
+                    }
+                    if (!string.IsNullOrWhiteSpace(finalVcomError))
+                    {
+                        AppendLog(finalVcomError + "\r\n");
+                    }
+                }
+
+                if (!complete && string.IsNullOrWhiteSpace(stopReason))
+                {
+                    stopReason = string.IsNullOrWhiteSpace(
+                        _lmGatewayPage.AutomaticSetupStopReason)
+                        ? "остановлен контрольный локальный комплект"
+                        : _lmGatewayPage.AutomaticSetupStopReason;
+                }
+
                 AddUnattemptedBulkResults(
                     discovery,
                     workBySerial,
                     attempted,
-                    registrationOutcome.Results);
+                    registrationOutcome.Results,
+                    stopReason);
                 AppendBulkResults(registrationOutcome.Results);
 
                 _workspaceTabs.SelectedTab = _lmGatewayTab;
@@ -1326,7 +1458,9 @@ namespace EsmTspiot.WinForms.Shared
                 string stackSummary = complete
                     ? "Контроллеры и ЛМ ЧЗ запущены; ЕСМ принял настройки связи. " +
                         "ЛМ готовы к бизнес-инициализации ЕСМ или сторонней утилитой."
-                    : _lmGatewayPage.AutomaticSetupStatus;
+                    : (!string.IsNullOrWhiteSpace(finalVcomError)
+                        ? finalVcomError
+                        : _lmGatewayPage.AutomaticSetupStatus);
                 bool fullySuccessful = complete && !registrationHasFailures;
                 MessageBox.Show(
                     this,
@@ -1366,6 +1500,82 @@ namespace EsmTspiot.WinForms.Shared
                     _automaticCancellation = null;
                 }
             }
+        }
+
+        private async Task<SequentialKktDiscovery>
+            DiscoverSequentialKktsWithRetryAsync(
+                SequentialKktRegistrationCoordinator coordinator,
+                string baseUrl,
+                System.Threading.CancellationToken cancellationToken)
+        {
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                SequentialKktDiscovery discovery =
+                    await coordinator.DiscoverAsync(
+                        baseUrl,
+                        HandleBulkProgress,
+                        cancellationToken);
+                if (discovery.IsValid)
+                {
+                    AppendLog(
+                        "VCOM-карта АТОЛ построена: " +
+                        discovery.Targets.Count.ToString() + " ККТ.\r\n");
+                    return discovery;
+                }
+
+                string reason = string.IsNullOrWhiteSpace(
+                    discovery.ErrorMessage)
+                    ? "Не удалось построить VCOM-карту ККТ."
+                    : discovery.ErrorMessage;
+                AppendLog(
+                    "VCOM-проверка остановлена: " +
+                    SensitiveDataMasker.Mask(reason) + "\r\n");
+                DialogResult answer = MessageBox.Show(
+                    this,
+                    reason +
+                        "\r\n\r\nЕсли Frontol или «Тест драйвера ККТ» " +
+                        "открыты, закройте их на время регистрации. " +
+                        "Программа не завершает их сама.\r\n\r\n" +
+                        "Нажмите «Повторить» после освобождения касс.",
+                    "ККТ заняты другой программой",
+                    MessageBoxButtons.RetryCancel,
+                    MessageBoxIcon.Warning,
+                    MessageBoxDefaultButton.Button2);
+                if (answer != DialogResult.Retry)
+                {
+                    return null;
+                }
+            }
+        }
+
+        private static IList<DkktDeviceInfo> CopySequentialDevices(
+            SequentialKktDiscovery discovery)
+        {
+            List<DkktDeviceInfo> devices = new List<DkktDeviceInfo>();
+            if (discovery == null) return devices;
+            for (int index = 0; index < discovery.Targets.Count; index++)
+            {
+                SequentialKktRegistrationTarget target =
+                    discovery.Targets[index];
+                DkktDeviceInfo source = target == null
+                    ? null
+                    : target.Device;
+                if (source == null) continue;
+                devices.Add(new DkktDeviceInfo
+                {
+                    KktSerial = source.KktSerial,
+                    FnSerial = source.FnSerial,
+                    KktInn = source.KktInn,
+                    KktRnm = source.KktRnm,
+                    ModelName = source.ModelName,
+                    DkktVersion = source.DkktVersion,
+                    Developer = source.Developer,
+                    Manufacturer = source.Manufacturer,
+                    ShiftState = source.ShiftState
+                });
+            }
+            return devices;
         }
 
         private static IList<LmGatewayKkt> BuildCompleteSetupCandidates(
@@ -1481,7 +1691,8 @@ namespace EsmTspiot.WinForms.Shared
             BulkRegistrationDiscovery discovery,
             IDictionary<string, BulkRegistrationWorkItem> workBySerial,
             ISet<string> attempted,
-            IList<BulkKktRegistrationResult> results)
+            IList<BulkKktRegistrationResult> results,
+            string stopReason)
         {
             for (int index = 0; index < discovery.Items.Count; index++)
             {
@@ -1497,8 +1708,9 @@ namespace EsmTspiot.WinForms.Shared
                     {
                         KktSerial = serial,
                         Status = BulkKktRegistrationStatus.Cancelled,
-                        Details =
-                            "не начато после остановки контрольной ККТ или локального комплекта"
+                        Details = string.IsNullOrWhiteSpace(stopReason)
+                            ? "не начато: причина остановки не передана"
+                            : "не начато: " + stopReason
                     });
                 }
             }

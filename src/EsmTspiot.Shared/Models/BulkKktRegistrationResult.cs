@@ -29,7 +29,7 @@ namespace EsmTspiot.Shared.Models
             builder.AppendLine("Не удалось проверить: " + Count(results, BulkKktRegistrationStatus.InspectionFailed).ToString());
             builder.AppendLine("Некорректные данные: " + Count(results, BulkKktRegistrationStatus.InvalidData).ToString());
             builder.AppendLine("Ошибок добавления: " + Count(results, BulkKktRegistrationStatus.AddFailed).ToString());
-            builder.AppendLine("Создано без регистрации: " + Count(results, BulkKktRegistrationStatus.RegistrationFailed).ToString());
+            builder.AppendLine("Регистрация не завершена (экземпляр существует): " + Count(results, BulkKktRegistrationStatus.RegistrationFailed).ToString());
             builder.Append("Отменено: " + Count(results, BulkKktRegistrationStatus.Cancelled).ToString());
             return builder.ToString();
         }

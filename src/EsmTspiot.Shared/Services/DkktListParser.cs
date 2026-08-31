@@ -75,6 +75,23 @@ namespace EsmTspiot.Shared.Services
             return true;
         }
 
+        public static bool TryParse(
+            ApiResponse response,
+            out IList<DkktDeviceInfo> devices)
+        {
+            devices = new List<DkktDeviceInfo>();
+            if (response == null || !response.IsSuccess)
+            {
+                return false;
+            }
+            if (response.StatusCode == 204)
+            {
+                return string.IsNullOrWhiteSpace(response.ResponseBody);
+            }
+
+            return TryParse(response.ResponseBody, out devices);
+        }
+
 #if NETFRAMEWORK
         private static bool TryGetRecords(object root, out object[] records)
         {
