@@ -50,6 +50,7 @@ namespace EsmTspiot.Shared.Tests
             Run("Forbidden is decoded", ForbiddenIsDecoded);
             Run("Instance parser reads nested instances", InstanceParserReadsNestedInstances);
             Run("Instance parser reads root arrays", InstanceParserReadsRootArrays);
+            Run("Instance response accepts empty 204 as no instances", InstanceResponseAcceptsEmpty204AsNoInstances);
             Run("Dkkt parser reads kkt array", DkktParserReadsKktArray);
             Run("Dkkt selector excludes already created instances", DkktSelectorExcludesAlreadyCreatedInstances);
             Run("Port allocator selects pair after existing instances", PortAllocatorSelectsPairAfterExistingInstances);
@@ -144,6 +145,7 @@ namespace EsmTspiot.Shared.Tests
             Run("Remote base URL produces warning", RemoteBaseUrlProducesWarning);
             Run("Base URL rejects credentials and query", BaseUrlRejectsCredentialsAndQuery);
             Run("Unicode digits are rejected", UnicodeDigitsAreRejected);
+            Run("Bulk workflow treats empty 204 as no instances", BulkWorkflowTreatsEmpty204AsNoInstances);
             Run("Bulk workflow resumes incomplete existing instance", BulkWorkflowResumesIncompleteExistingInstance);
             Run("Bulk workflow continues after add failure", BulkWorkflowContinuesAfterAddFailure);
             Run("Bulk workflow retries service not started", BulkWorkflowRetriesServiceNotStarted);
@@ -555,6 +557,49 @@ namespace EsmTspiot.Shared.Tests
             AssertEqual(2, instances.Count, "Expected two instances.");
             AssertTrue(InstanceInfoParser.ContainsId(json, "B"), "Expected id B to be found.");
             AssertFalse(InstanceInfoParser.ContainsId(json, "C"), "Expected id C not to be found.");
+        }
+
+        private static void InstanceResponseAcceptsEmpty204AsNoInstances()
+        {
+            IList<KktInstanceInfo> instances;
+            ApiResponse noContent = new ApiResponse
+            {
+                StatusCode = 204,
+                IsSuccess = true,
+                ResponseBody = string.Empty
+            };
+            ApiResponse unexpectedEmptyOk = new ApiResponse
+            {
+                StatusCode = 200,
+                IsSuccess = true,
+                ResponseBody = string.Empty
+            };
+            ApiResponse unexpected204Body = new ApiResponse
+            {
+                StatusCode = 204,
+                IsSuccess = true,
+                ResponseBody = "[]"
+            };
+            ApiResponse failedResponse = new ApiResponse
+            {
+                StatusCode = 500,
+                IsSuccess = false,
+                ResponseBody = "[]"
+            };
+
+            AssertTrue(
+                InstanceInfoParser.TryParse(noContent, out instances),
+                "HTTP 204 with an empty body must mean an empty instance list.");
+            AssertEqual(0, instances.Count, "Expected no registered instances after HTTP 204.");
+            AssertFalse(
+                InstanceInfoParser.TryParse(unexpectedEmptyOk, out instances),
+                "HTTP 200 with an empty body must remain an invalid contract.");
+            AssertFalse(
+                InstanceInfoParser.TryParse(unexpected204Body, out instances),
+                "HTTP 204 with a non-empty body must be rejected as an anomalous response.");
+            AssertFalse(
+                InstanceInfoParser.TryParse(failedResponse, out instances),
+                "An unsuccessful response must not be parsed as an instance list.");
         }
 
         private static void DkktParserReadsKktArray()
@@ -3024,6 +3069,31 @@ namespace EsmTspiot.Shared.Tests
         {
             AssertEqual(method, request.Method, "Expected HTTP method.");
             AssertEqual(url, request.Url, "Expected request URL.");
+        }
+
+        private static void BulkWorkflowTreatsEmpty204AsNoInstances()
+        {
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            api.InstancesResponse = new ApiResponse
+            {
+                IsSuccess = true,
+                StatusCode = 204,
+                ResponseBody = string.Empty
+            };
+            api.DkktResponse = Success(
+                "{\"kkt\":[{\"kktSerial\":\"00105700000001\"," +
+                "\"fnSerial\":\"7300000000000001\",\"kktInn\":\"1234567894\"}]}");
+            BulkRegistrationWorkflow workflow = CreateWorkflow(api);
+
+            BulkRegistrationDiscovery discovery = workflow.DiscoverAsync(
+                "http://127.0.0.1:51077", "4042", null, CancellationToken.None).Result;
+
+            AssertTrue(discovery.IsValid, "A clean ESM returning HTTP 204 must produce a valid plan.");
+            AssertEqual(1, discovery.Items.Count, "The physical KKT must remain available for registration.");
+            AssertEqual(
+                "00105700000001",
+                discovery.Items[0].Item.Input.KktSerial,
+                "Expected the discovered KKT to be planned after an empty instance response.");
         }
 
         private static void BulkWorkflowResumesIncompleteExistingInstance()

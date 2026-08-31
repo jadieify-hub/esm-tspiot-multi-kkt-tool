@@ -107,6 +107,22 @@ namespace EsmTspiot.Shared.Services
             return true;
         }
 
+        public static bool TryParse(ApiResponse response, out IList<KktInstanceInfo> instances)
+        {
+            instances = new List<KktInstanceInfo>();
+            if (response == null || !response.IsSuccess)
+            {
+                return false;
+            }
+
+            if (response.StatusCode == 204)
+            {
+                return string.IsNullOrWhiteSpace(response.ResponseBody);
+            }
+
+            return TryParse(response.ResponseBody, out instances);
+        }
+
         public static bool ContainsId(string json, string id)
         {
             IList<KktInstanceInfo> instances;

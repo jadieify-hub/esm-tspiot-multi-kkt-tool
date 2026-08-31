@@ -1008,7 +1008,7 @@ namespace EsmTspiot.WinForms.Shared
 
             IList<KktInstanceInfo> instances;
             if (!instancesResponse.IsSuccess ||
-                !InstanceInfoParser.TryParse(instancesResponse.ResponseBody, out instances))
+                !InstanceInfoParser.TryParse(instancesResponse, out instances))
             {
                 MessageBox.Show(
                     this,
@@ -1709,7 +1709,7 @@ namespace EsmTspiot.WinForms.Shared
             }
 
             IList<KktInstanceInfo> instances;
-            if (!InstanceInfoParser.TryParse(response.ResponseBody, out instances))
+            if (!InstanceInfoParser.TryParse(response, out instances))
             {
                 AppendLog("Операция остановлена: ответ /instances/info не соответствует ожидаемому формату.\r\n\r\n");
                 MessageBox.Show(
@@ -2010,7 +2010,7 @@ namespace EsmTspiot.WinForms.Shared
 
             IList<KktInstanceInfo> instances;
             if (response == null || !response.IsSuccess ||
-                !InstanceInfoParser.TryParse(response.ResponseBody, out instances))
+                !InstanceInfoParser.TryParse(response, out instances))
             {
                 _instancesSummaryLabel.Text = response != null && response.IsSuccess
                     ? "ЕСМ вернул неожиданный формат списка экземпляров."

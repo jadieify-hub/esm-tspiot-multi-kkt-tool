@@ -164,7 +164,7 @@ dotnet publish .\src\EsmTspiot.Modern.WinForms\EsmTspiot.Modern.WinForms.csproj 
 dotnet run --project .\tests\EsmTspiot.Shared.Tests\EsmTspiot.Shared.Tests.csproj
 ```
 
-Отдельно запускаются 108 тестов привилегированного helper. Shared-раннер содержит 165 сценариев для .NET 8; 160 общих сценариев также прогоняются в .NET Framework. Workflow `.github/workflows/ci.yml` также собирает Legacy вместе с helper строго в режиме C# 5, отдельно собирает helper с явным `LangVersion=5`, проверяет операторский интерфейс, собирает Modern, запускает LM safety gate без внешней зависимости от `rg` и проверяет состав и main/helper-контракт компактного ZIP.
+Отдельно запускаются 108 тестов привилегированного helper. Shared-раннер содержит 167 сценариев для .NET 8; 162 общих сценариев также прогоняются в .NET Framework. Workflow `.github/workflows/ci.yml` также собирает Legacy вместе с helper строго в режиме C# 5, отдельно собирает helper с явным `LangVersion=5`, проверяет операторский интерфейс, собирает Modern, запускает LM safety gate без внешней зависимости от `rg` и проверяет состав и main/helper-контракт компактного ZIP.
 
 Компактная поставка:
 

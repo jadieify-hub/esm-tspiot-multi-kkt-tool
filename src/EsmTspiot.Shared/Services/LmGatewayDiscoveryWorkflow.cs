@@ -38,7 +38,7 @@ namespace EsmTspiot.Shared.Services
             }
 
             IList<KktInstanceInfo> instances;
-            if (!InstanceInfoParser.TryParse(instancesResponse.ResponseBody, out instances))
+            if (!InstanceInfoParser.TryParse(instancesResponse, out instances))
             {
                 discovery.ErrorMessage = "ЕСМ вернул некорректный список экземпляров ККТ.";
                 return discovery;
