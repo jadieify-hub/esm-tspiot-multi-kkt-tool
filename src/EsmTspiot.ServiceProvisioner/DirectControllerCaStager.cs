@@ -73,7 +73,7 @@ namespace EsmTspiot.ServiceProvisioner
                     "Controller CA path escapes its fixed profile root.");
             }
 
-            RequireProtectedPath(source, officialRoot);
+            RequireSafePath(source, officialRoot);
             if (!File.Exists(source))
             {
                 throw new FileNotFoundException(
@@ -83,7 +83,7 @@ namespace EsmTspiot.ServiceProvisioner
             byte[] payload = ReadBoundedFile(source);
             ValidatePem(payload, privateKey);
 
-            RequireProtectedPath(destination, cloneRoot);
+            RequireSafePath(destination, cloneRoot);
             try
             {
                 if (File.Exists(destination))
@@ -102,6 +102,7 @@ namespace EsmTspiot.ServiceProvisioner
                     }
                 }
                 _writer.WriteBytes(destination, payload);
+                _pathSafety.EnsureProtectedReadOnlyFile(destination, null);
             }
             catch (UnauthorizedAccessException ex)
             {
@@ -111,6 +112,15 @@ namespace EsmTspiot.ServiceProvisioner
                     ex);
             }
             RequireProtectedPath(destination, cloneRoot);
+        }
+
+        private void RequireSafePath(string path, string root)
+        {
+            ValidationResult validation = _pathSafety.Validate(path, root);
+            if (!validation.IsValid)
+            {
+                throw new InvalidDataException(validation.JoinMessages());
+            }
         }
 
         private void RequireProtectedPath(string path, string root)

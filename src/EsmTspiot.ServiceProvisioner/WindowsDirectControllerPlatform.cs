@@ -156,7 +156,11 @@ namespace EsmTspiot.ServiceProvisioner
                     }
                     else
                     {
-                        EnsureClone(service, manifest, initiatingSid);
+                        EnsureClone(
+                            service,
+                            manifest,
+                            initiatingSid,
+                            existing != null);
                     }
                     LmReadinessResult ready = _readiness.WaitUntilReady(
                         item.Ordinal,
@@ -273,7 +277,9 @@ namespace EsmTspiot.ServiceProvisioner
                         }
                     }
                     _services.Delete(manifest.ServiceName);
-                    if (_services.Query(manifest.ServiceName) != null)
+                    if (!WaitUntilServiceDeleted(
+                            manifest.ServiceName,
+                            StopTimeoutMilliseconds))
                     {
                         throw new InvalidOperationException(
                             "Служба прямого контроллера помечена на удаление, но ещё существует.");
@@ -288,6 +294,20 @@ namespace EsmTspiot.ServiceProvisioner
                     LmServiceProvisioningStatus.RemovedLocalArtifactsBindingRetained,
                     "Служба и профиль контроллера удалены; привязка ЕСМ сохранена.");
             }
+        }
+
+        private bool WaitUntilServiceDeleted(
+            string serviceName,
+            int timeoutMilliseconds)
+        {
+            DateTime deadline = DateTime.UtcNow.AddMilliseconds(timeoutMilliseconds);
+            do
+            {
+                if (_services.Query(serviceName) == null) return true;
+                Thread.Sleep(250);
+            }
+            while (DateTime.UtcNow < deadline);
+            return _services.Query(serviceName) == null;
         }
 
         private void EnsureOfficialBase(
@@ -308,12 +328,26 @@ namespace EsmTspiot.ServiceProvisioner
         private void EnsureClone(
             WindowsServiceRecord service,
             DirectControllerManifest manifest,
-            string initiatingSid)
+            string initiatingSid,
+            bool hasOwnedManifest)
         {
             WindowsServiceDefinition definition = _definitions.Create(
                 manifest.Ordinal,
                 manifest.ProfileEnvironmentRoot,
                 initiatingSid);
+            if (service != null && hasOwnedManifest &&
+                MatchesInterruptedCloneCreation(definition, service))
+            {
+                _services.Delete(manifest.ServiceName);
+                if (!WaitUntilServiceDeleted(
+                        manifest.ServiceName,
+                        StopTimeoutMilliseconds))
+                {
+                    throw new InvalidOperationException(
+                        "Частично созданная служба контроллера ещё ожидает удаления SCM.");
+                }
+                service = null;
+            }
             WindowsServiceRecord official = _services.Query("esm-lm-controller");
             if (official == null || !MatchesOfficialBase(official) ||
                 official.RecoveryPolicy == null)
@@ -367,6 +401,26 @@ namespace EsmTspiot.ServiceProvisioner
             {
                 _services.Start(manifest.ServiceName);
             }
+        }
+
+        private static bool MatchesInterruptedCloneCreation(
+            WindowsServiceDefinition expected,
+            WindowsServiceRecord actual)
+        {
+            return expected != null && actual != null &&
+                actual.State == WindowsServiceState.Stopped &&
+                actual.ProcessId == 0 &&
+                string.Equals(actual.ServiceName, expected.ServiceName, StringComparison.Ordinal) &&
+                string.Equals(actual.DisplayName, expected.DisplayName, StringComparison.Ordinal) &&
+                string.Equals(actual.ImagePath, expected.ImagePath, StringComparison.Ordinal) &&
+                string.Equals(actual.Description, expected.Description, StringComparison.Ordinal) &&
+                string.Equals(actual.AccountName, expected.AccountName, StringComparison.Ordinal) &&
+                actual.Dependencies != null && actual.Dependencies.Count == 0 &&
+                actual.StartMode == expected.StartMode &&
+                actual.ErrorControl == expected.ErrorControl &&
+                actual.ServiceSidType == expected.ServiceSidType &&
+                (actual.EnvironmentVariables == null ||
+                 actual.EnvironmentVariables.Count == 0);
         }
 
         private bool MatchesOfficialBase(WindowsServiceRecord service)

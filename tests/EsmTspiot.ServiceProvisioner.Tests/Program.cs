@@ -21,8 +21,22 @@ namespace EsmTspiot.ServiceProvisioner.Tests
         private static int _failures;
         private static int _testCount;
 
-        private static int Main()
+        private static int Main(string[] args)
         {
+            if (args != null && args.Length == 1 &&
+                string.Equals(
+                    args[0],
+                    "--direct-controller-sandbox",
+                    StringComparison.Ordinal))
+            {
+                return RunDirectControllerProductionSandbox();
+            }
+            if (args != null && args.Length != 0)
+            {
+                Console.Error.WriteLine("Unknown test mode.");
+                return 2;
+            }
+
             Run("Provisioning protocol accepts bounded ensure batch", ProvisioningProtocolAcceptsBoundedEnsureBatch);
             Run("Provisioning protocol rejects oversized or duplicate batch", ProvisioningProtocolRejectsOversizedOrDuplicateBatch);
             Run("Provisioning protocol rejects unknown schema or operation", ProvisioningProtocolRejectsUnknownSchemaOrOperation);
@@ -166,6 +180,243 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
             Console.WriteLine(_failures.ToString() + " provisioner test(s) failed.");
             return 1;
+        }
+
+        private static int RunDirectControllerProductionSandbox()
+        {
+            WindowsIdentity identity = WindowsIdentity.GetCurrent();
+            WindowsPrincipal principal = new WindowsPrincipal(identity);
+            if (!principal.IsInRole(WindowsBuiltInRole.Administrator))
+            {
+                Console.Error.WriteLine(
+                    "The production direct-controller sandbox requires elevation.");
+                return 1;
+            }
+
+            string initiatingSid = identity.User == null
+                ? null
+                : identity.User.Value;
+            if (string.IsNullOrWhiteSpace(initiatingSid))
+            {
+                Console.Error.WriteLine("The elevated caller SID is unavailable.");
+                return 1;
+            }
+
+            DirectControllerProvisioningItemRequest[] items =
+            {
+                new DirectControllerProvisioningItemRequest
+                {
+                    KktSerial = "99000000000031",
+                    Inn = "9900000031",
+                    Ordinal = 31
+                },
+                new DirectControllerProvisioningItemRequest
+                {
+                    KktSerial = "99000000000032",
+                    Inn = "9900000032",
+                    Ordinal = 32
+                }
+            };
+            PathSafety pathSafety = new PathSafety();
+            DirectControllerManifestStore manifests =
+                DirectControllerManifestStore.CreateMachineStore(
+                    pathSafety,
+                    initiatingSid);
+            WindowsServiceApi services = new WindowsServiceApi();
+            WindowsDirectControllerPlatform platform = null;
+            List<int> processIds = new List<int>();
+            string failure = null;
+
+            try
+            {
+                platform = WindowsDirectControllerPlatform.Create(initiatingSid);
+                for (int index = items.Length - 1; index >= 0; index--)
+                {
+                    RemoveOwnedSandboxAssignmentIfPresent(
+                        platform,
+                        manifests,
+                        items[index],
+                        initiatingSid);
+                }
+                for (int index = 0; index < items.Length; index++)
+                {
+                    string serviceName = DirectControllerIdentity.ServiceNameForOrdinal(
+                        items[index].Ordinal);
+                    if (services.Query(serviceName) != null)
+                    {
+                        throw new InvalidOperationException(
+                            "Sandbox service name is occupied without our sandbox manifest: " +
+                            serviceName + ".");
+                    }
+
+                    LmServiceProvisioningItemResult result = platform.Ensure(
+                        items[index],
+                        Guid.NewGuid().ToString("N"),
+                        initiatingSid);
+                    if (result.Status != LmServiceProvisioningStatus.Succeeded)
+                    {
+                        throw new InvalidOperationException(
+                            "Production Ensure did not succeed: " + result.FormatLogLine());
+                    }
+
+                    WindowsServiceRecord service = services.Query(serviceName);
+                    if (service == null || service.ProcessId <= 0 ||
+                        service.State != WindowsServiceState.Running)
+                    {
+                        throw new InvalidOperationException(
+                            "Production Ensure did not leave a running SCM service: " +
+                            serviceName + ".");
+                    }
+                    if (processIds.Contains(service.ProcessId))
+                    {
+                        throw new InvalidOperationException(
+                            "Two controller services share one vendor process.");
+                    }
+                    processIds.Add(service.ProcessId);
+
+                    string profile = Path.Combine(
+                        manifests.GetProfileEnvironmentRoot(items[index].Ordinal),
+                        "ESP",
+                        "lmcontroller");
+                    RequireSandboxFile(Path.Combine(profile, "config.yml"));
+                    RequireSandboxFile(Path.Combine(profile, "ca.crt"));
+                    RequireSandboxFile(Path.Combine(profile, "ca.pem"));
+                    RequireSandboxFile(Path.Combine(profile, "server.crt"));
+                    RequireSandboxFile(Path.Combine(profile, "server.pem"));
+                }
+            }
+            catch (Exception exception)
+            {
+                failure = exception.ToString();
+            }
+            finally
+            {
+                if (platform != null)
+                {
+                    for (int index = items.Length - 1; index >= 0; index--)
+                    {
+                        try
+                        {
+                            RemoveOwnedSandboxAssignmentIfPresent(
+                                platform,
+                                manifests,
+                                items[index],
+                                initiatingSid);
+                        }
+                        catch (Exception cleanupException)
+                        {
+                            failure = AppendFailure(
+                                failure,
+                                "Cleanup failed for ordinal " +
+                                items[index].Ordinal.ToString() + ": " +
+                                cleanupException.ToString());
+                        }
+                    }
+                }
+
+                for (int index = 0; index < items.Length; index++)
+                {
+                    try
+                    {
+                        string serviceName = DirectControllerIdentity.ServiceNameForOrdinal(
+                            items[index].Ordinal);
+                        if (services.Query(serviceName) != null)
+                        {
+                            failure = AppendFailure(
+                                failure,
+                                "Cleanup left the SCM service " + serviceName + ".");
+                        }
+                        if (manifests.Read(items[index].KktSerial) != null)
+                        {
+                            failure = AppendFailure(
+                                failure,
+                                "Cleanup left the sandbox manifest for " +
+                                items[index].KktSerial + ".");
+                        }
+                        if (Directory.Exists(
+                                manifests.GetProfileEnvironmentRoot(items[index].Ordinal)))
+                        {
+                            failure = AppendFailure(
+                                failure,
+                                "Cleanup left the sandbox profile for ordinal " +
+                                items[index].Ordinal.ToString() + ".");
+                        }
+                    }
+                    catch (Exception verificationException)
+                    {
+                        failure = AppendFailure(
+                            failure,
+                            "Cleanup verification failed: " +
+                            verificationException.ToString());
+                    }
+                }
+            }
+
+            if (!string.IsNullOrEmpty(failure))
+            {
+                Console.Error.WriteLine(failure);
+                return 1;
+            }
+
+            Console.WriteLine("DIRECT_CONTROLLER_PRODUCTION_SANDBOX_OK");
+            Console.WriteLine(
+                "ProductionPlatform=WindowsDirectControllerPlatform; PIDs=" +
+                string.Join(",", processIds.ToArray()) + "; ordinals=31,32");
+            return 0;
+        }
+
+        private static void RemoveOwnedSandboxAssignmentIfPresent(
+            WindowsDirectControllerPlatform platform,
+            DirectControllerManifestStore manifests,
+            DirectControllerProvisioningItemRequest item,
+            string initiatingSid)
+        {
+            DirectControllerManifest manifest = manifests.Read(item.KktSerial);
+            if (manifest == null) return;
+            LmServiceProvisioningItemResult ensured = platform.Ensure(
+                item,
+                Guid.NewGuid().ToString("N"),
+                initiatingSid);
+            if (ensured.Status != LmServiceProvisioningStatus.Succeeded)
+            {
+                throw new InvalidOperationException(
+                    "Production recovery Ensure did not complete: " +
+                    ensured.FormatLogLine());
+            }
+            manifest = manifests.Read(item.KktSerial);
+            if (manifest == null)
+            {
+                throw new InvalidOperationException(
+                    "Production recovery Ensure removed its manifest unexpectedly.");
+            }
+            item.ExpectedManifestSha256 = manifests.ComputeFingerprint(manifest);
+            LmServiceProvisioningItemResult result = platform.Remove(
+                item,
+                Guid.NewGuid().ToString("N"),
+                initiatingSid);
+            if (result.Status !=
+                LmServiceProvisioningStatus.RemovedLocalArtifactsBindingRetained)
+            {
+                throw new InvalidOperationException(
+                    "Production Remove did not complete: " + result.FormatLogLine());
+            }
+            item.ExpectedManifestSha256 = null;
+        }
+
+        private static void RequireSandboxFile(string path)
+        {
+            if (!File.Exists(path) || new FileInfo(path).Length <= 0)
+            {
+                throw new InvalidOperationException(
+                    "Production controller profile file is missing: " + path + ".");
+            }
+        }
+
+        private static string AppendFailure(string current, string next)
+        {
+            return string.IsNullOrEmpty(current)
+                ? next
+                : current + Environment.NewLine + next;
         }
 
         private static void ProvisioningProtocolAcceptsBoundedEnsureBatch()
@@ -4249,10 +4500,11 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 File.WriteAllText(Path.Combine(officialRoot, "config.yml"), "must-not-copy",
                     Encoding.ASCII);
 
+                FakePathSafety paths = new FakePathSafety(true);
                 new DirectControllerCaStager(
                     ControllerCapabilityProfile.SupportedVersion1640(),
                     new AtomicFileWriter(),
-                    new FakePathSafety(true),
+                    paths,
                     officialRoot).Stage(cloneRoot);
 
                 string[] files = Directory.GetFiles(cloneRoot, "*", SearchOption.AllDirectories);
@@ -4266,6 +4518,9 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                             File.Exists(Path.Combine(cloneRoot, "server.pem")) ||
                             File.Exists(Path.Combine(cloneRoot, "config.yml")),
                     "Per-instance server identity and config must be generated independently.");
+                AssertTrue(paths.WasProtectedReadOnly(Path.Combine(cloneRoot, "ca.crt")) &&
+                            paths.WasProtectedReadOnly(Path.Combine(cloneRoot, "ca.pem")),
+                    "The staged CA pair must be hardened before final validation.");
             }
             finally
             {
@@ -4459,6 +4714,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 AssertEqual(DirectControllerLifecycleState.Ready, manifest.State,
                     "Only a ready clone may be projected as ready in inventory.");
                 item.ExpectedManifestSha256 = manifests.ComputeFingerprint(manifest);
+                services.DeleteVisibilityQueries = 2;
 
                 LmServiceProvisioningItemResult removed = platform.Remove(
                     item,
@@ -6429,6 +6685,21 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 return false;
             }
 
+            internal bool WasProtectedReadOnly(string path)
+            {
+                for (int index = 0; index < _fileCalls.Count; index++)
+                {
+                    if (string.Equals(
+                            Path.GetFullPath(_fileCalls[index].Path),
+                            Path.GetFullPath(path),
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
             public ValidationResult Validate(string path, string requiredRoot)
             {
                 ValidationResult result = new ValidationResult();
@@ -6583,8 +6854,11 @@ namespace EsmTspiot.ServiceProvisioner.Tests
         {
             private readonly Dictionary<string, WindowsServiceRecord> _records =
                 new Dictionary<string, WindowsServiceRecord>(StringComparer.Ordinal);
+            private readonly Dictionary<string, int> _deleteQueriesRemaining =
+                new Dictionary<string, int>(StringComparer.Ordinal);
 
             internal WindowsServiceDefinition LastDefinition { get; private set; }
+            internal int DeleteVisibilityQueries { get; set; }
 
             internal void SetRecord(WindowsServiceRecord record)
             {
@@ -6594,6 +6868,17 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             public WindowsServiceRecord Query(string serviceName)
             {
                 WindowsServiceRecord record;
+                int remaining;
+                if (_deleteQueriesRemaining.TryGetValue(serviceName, out remaining))
+                {
+                    if (remaining <= 0)
+                    {
+                        _deleteQueriesRemaining.Remove(serviceName);
+                        _records.Remove(serviceName);
+                        return null;
+                    }
+                    _deleteQueriesRemaining[serviceName] = remaining - 1;
+                }
                 return _records.TryGetValue(serviceName, out record) ? record : null;
             }
 
@@ -6631,7 +6916,14 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             public void Delete(string serviceName)
             {
                 EnsureExact(serviceName);
-                _records.Remove(serviceName);
+                if (DeleteVisibilityQueries > 0)
+                {
+                    _deleteQueriesRemaining[serviceName] = DeleteVisibilityQueries;
+                }
+                else
+                {
+                    _records.Remove(serviceName);
+                }
             }
 
             private void EnsureExact(string serviceName)
