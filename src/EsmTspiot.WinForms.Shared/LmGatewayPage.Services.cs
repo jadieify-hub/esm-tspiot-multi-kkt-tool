@@ -76,7 +76,7 @@ namespace EsmTspiot.WinForms.Shared
         {
             GroupBox group = new GroupBox
             {
-                Text = "Официальные пакеты",
+                Text = "Независимые контроллеры ЕСМ 1.6.4.0",
                 Dock = DockStyle.Fill,
                 AutoSize = true,
                 Margin = new Padding(0, 0, 0, 6)
@@ -86,78 +86,32 @@ namespace EsmTspiot.WinForms.Shared
                 Dock = DockStyle.Fill,
                 AutoSize = true,
                 Padding = new Padding(6, 3, 6, 5),
-                ColumnCount = 4,
-                RowCount = 6
+                ColumnCount = 2,
+                RowCount = 2
             };
-            table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 360F));
             table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-            Label controllerInstallerLabel = new Label
+            Label description = new Label
             {
-                Text = "Установщик контроллера ЛМ ЧЗ",
-                AutoSize = true,
-                Anchor = AnchorStyles.Left,
-                Margin = new Padding(0, 6, 8, 3)
-            };
-            Label localModuleInstallerLabel = new Label
-            {
-                Text = "MSI локального модуля ЧЗ",
-                AutoSize = true,
-                Anchor = AnchorStyles.Left,
-                Margin = new Padding(0, 6, 8, 3)
-            };
-            Label kitDefinitionLabel = new Label
-            {
-                Text = "Комплект = контроллер ККТ + ЛМ ЧЗ для её ИНН; " +
-                    "ККТ одного ИНН используют общий ЛМ.",
+                Text = "Используется установленный официальный контроллер 1.6.4.0. " +
+                    "Для каждой ККТ создаётся отдельная служба; ЛМ ЧЗ можно установить и инициализировать позже.",
                 AutoSize = true,
                 Anchor = AnchorStyles.Left,
                 Margin = new Padding(0, 6, 0, 5)
             };
-            _installerPathTextBox.Dock = DockStyle.Fill;
-            _installerPathTextBox.ReadOnly = true;
-            _installerPathTextBox.Tag = "Выберите esm-lm-controller_*-windows-setup.exe";
-            ConfigureButton(_selectInstallerButton, "Выбрать…");
-            ConfigureButton(_installControllerButton, "Создать / обновить комплекты");
+            ConfigureButton(_installControllerButton, "Создать / обновить контроллеры");
             _installControllerButton.Tag = "AutomaticSetup";
-            _selectInstallerButton.Click += delegate { SelectInstaller(); };
             _installControllerButton.Click += async delegate { await StartAutomaticSetupAsync(); };
-            _installerStatusLabel.AutoSize = true;
-            _installerStatusLabel.AutoEllipsis = true;
-            _installerStatusLabel.Text = "Установщик не выбран.";
-            _localModuleInstallerPathTextBox.Dock = DockStyle.Fill;
-            _localModuleInstallerPathTextBox.ReadOnly = true;
-            _localModuleInstallerPathTextBox.Tag =
-                "Выберите regime-2.6.1-7.msi";
-            ConfigureButton(_selectLocalModuleInstallerButton, "Выбрать…");
-            _selectLocalModuleInstallerButton.Click +=
-                delegate { SelectLocalModuleInstaller(this); };
-            _localModuleInstallerStatusLabel.AutoSize = true;
-            _localModuleInstallerStatusLabel.AutoEllipsis = true;
-            _localModuleInstallerStatusLabel.Text =
-                "MSI ЛМ ЧЗ не выбран.";
             _setupActionHintLabel.AutoSize = false;
             _setupActionHintLabel.Dock = DockStyle.Fill;
             _setupActionHintLabel.MinimumSize = new Size(0, 32);
             _setupActionHintLabel.TextAlign = ContentAlignment.MiddleLeft;
             _setupActionHintLabel.AutoEllipsis = true;
             _setupActionHintLabel.Margin = new Padding(8, 0, 0, 4);
-            table.Controls.Add(controllerInstallerLabel, 0, 0);
-            table.Controls.Add(_installerPathTextBox, 1, 0);
-            table.Controls.Add(_selectInstallerButton, 2, 0);
-            table.Controls.Add(_installerStatusLabel, 1, 1);
-            table.SetColumnSpan(_installerStatusLabel, 3);
-            table.Controls.Add(localModuleInstallerLabel, 0, 2);
-            table.Controls.Add(_localModuleInstallerPathTextBox, 1, 2);
-            table.Controls.Add(_selectLocalModuleInstallerButton, 2, 2);
-            table.Controls.Add(_localModuleInstallerStatusLabel, 1, 3);
-            table.SetColumnSpan(_localModuleInstallerStatusLabel, 3);
-            table.Controls.Add(kitDefinitionLabel, 0, 4);
-            table.SetColumnSpan(kitDefinitionLabel, 4);
-            table.Controls.Add(_installControllerButton, 0, 5);
-            table.Controls.Add(_setupActionHintLabel, 1, 5);
-            table.SetColumnSpan(_setupActionHintLabel, 3);
+            table.Controls.Add(description, 0, 0);
+            table.SetColumnSpan(description, 2);
+            table.Controls.Add(_installControllerButton, 0, 1);
+            table.Controls.Add(_setupActionHintLabel, 1, 1);
             group.Controls.Add(table);
             return group;
         }
@@ -265,12 +219,6 @@ namespace EsmTspiot.WinForms.Shared
 
         private async Task StartAutomaticSetupAsync()
         {
-            if (!HasRequiredInstallerSelections &&
-                !SelectRequiredInstallers(this))
-            {
-                return;
-            }
-
             await RunOperationAsync(
                 async delegate(CancellationToken token)
                 {
@@ -282,15 +230,9 @@ namespace EsmTspiot.WinForms.Shared
                         throw new InvalidOperationException(
                             "В ЕСМ нет зарегистрированных ККТ для полной настройки.");
                     }
-                    await ExecuteCompleteAutomaticSetupAsync(
-                        kkts,
-                        delegate(string serial, CancellationToken ignored)
-                        {
-                            return Task.FromResult(true);
-                        },
-                        token);
+                    await RunDirectControllerSetupFromHostAsync(kkts, token);
                 },
-                "Подготовка полного плана ККТ, контроллеров и ЛМ ЧЗ...");
+                "Подготовка независимых контроллеров ЕСМ 1.6.4.0...");
         }
 
         public async Task<IList<LmGatewayKkt>>
@@ -1789,30 +1731,22 @@ namespace EsmTspiot.WinForms.Shared
             LmServiceInventoryItem selected = GetSelectedInventoryItem();
             bool managed = selected != null && selected.Role == LmServiceRole.Managed;
             LmGatewayBindingSessionRow selectedSession = GetSelectedSessionRow();
-            _selectInstallerButton.Enabled = idle;
-            _selectLocalModuleInstallerButton.Enabled = idle;
-            _installControllerButton.Enabled = idle && _installerSelection != null &&
-                _localModuleInstallerSelection != null &&
-                _helperAvailable && hasKkts;
+            _selectInstallerButton.Enabled = false;
+            _selectLocalModuleInstallerButton.Enabled = false;
+            _installControllerButton.Enabled = idle && _helperAvailable && hasKkts;
             _bindButton.Enabled = idle && selectedSession != null && managed &&
                 selected.IsRunning && selected.IsReady;
             _removeServiceButton.Enabled = idle && managed && _helperAvailable &&
                 selected.Status != LmServiceProvisioningStatus.CleanupPending;
             _removeAllServicesButton.Enabled = idle && _helperAvailable &&
-                GetRemovableManagedItems(
-                    _serviceInventory,
-                    _managedLocalModuleInventory).Count > 0;
+                HasDirectControllersForRemoval();
             _cleanupButton.Enabled = idle && managed && _helperAvailable &&
                 selected.Status == LmServiceProvisioningStatus.CleanupPending;
             string setupReason = !_helperAvailable
                 ? _helperUnavailableReason
-                : _installerSelection == null
-                    ? "Выберите установщик контроллера ЛМ ЧЗ."
-                    : _localModuleInstallerSelection == null
-                        ? "Выберите MSI ЛМ ЧЗ."
-                    : !hasKkts
-                        ? "В таблице нет зарегистрированных ККТ."
-                        : "Создать или обновить локальные контроллеры и ЛМ ЧЗ для всех ККТ.";
+                : !hasKkts
+                    ? "В таблице нет зарегистрированных ККТ."
+                    : "Создать или обновить независимый контроллер для каждой ККТ.";
             _setupActionHintLabel.Text = setupReason;
             _serviceToolTip.SetToolTip(_installControllerButton, setupReason);
             _serviceToolTip.SetToolTip(_bindButton,
@@ -1825,7 +1759,7 @@ namespace EsmTspiot.WinForms.Shared
                 _helperAvailable ? "Удалить выбранный комплект ККТ, контроллер и неиспользуемый ЛМ." : _helperUnavailableReason);
             _serviceToolTip.SetToolTip(_removeAllServicesButton,
                 _helperAvailable
-                    ? "Удалить все службы, профили и копии ЛМ, созданные этой программой."
+                    ? "Удалить созданные клоны и восстановить конфигурации ЕСМ."
                     : _helperUnavailableReason);
 
             if (!idle)

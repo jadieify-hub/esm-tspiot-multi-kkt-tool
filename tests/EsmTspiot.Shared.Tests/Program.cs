@@ -104,6 +104,7 @@ namespace EsmTspiot.Shared.Tests
             Run("Direct controller planner preserves stable saved ordinal", DirectControllerPlannerPreservesStableSavedOrdinal);
             Run("Direct controller planner skips foreign names and ports", DirectControllerPlannerSkipsForeignNamesAndPorts);
             Run("Direct controller planner reports ordinal exhaustion", DirectControllerPlannerReportsOrdinalExhaustion);
+            Run("Direct controller setup defers LM readiness without failing controllers", DirectControllerSetupDefersLmReadinessWithoutFailingControllers);
             Run("LM gateway planner never adopts official base service", LmGatewayPlannerNeverAdoptsOfficialBaseService);
             Run("LM gateway planner allocates sequential local ports", LmGatewayPlannerAllocatesSequentialLocalPorts);
             Run("LM gateway planner keeps owned and skips foreign listener", LmGatewayPlannerKeepsOwnedAndSkipsForeignListener);
@@ -1773,6 +1774,28 @@ namespace EsmTspiot.Shared.Tests
             AssertEqual(1, plan.Assignments.Count,
                 "Only the KKT assigned before exhaustion may remain in the plan.");
             AssertContains(string.Join("; ", plan.ValidationMessages), "32");
+        }
+
+        private static void DirectControllerSetupDefersLmReadinessWithoutFailingControllers()
+        {
+            AssertTrue(
+                DirectControllerSetupPolicy.IsDeferredLocalModuleWarning(
+                    "error 2025: ЛМ контроллер не найден"),
+                "A missing LM must be a warning after the controller is ready.");
+            AssertTrue(
+                DirectControllerSetupPolicy.IsDeferredLocalModuleWarning(
+                    "error 2055: версия ЛМ ЧЗ пока не определена"),
+                "A not-yet-initialized LM must be a warning.");
+            AssertFalse(
+                DirectControllerSetupPolicy.IsDeferredLocalModuleWarning(
+                    "HTTP 500: access denied"),
+                "An unrelated binding failure must remain actionable.");
+            AssertTrue(
+                DirectControllerSetupPolicy.IsComplete(1, 1, 0, false),
+                "The one-KKT controller flow must complete without a special branch.");
+            AssertFalse(
+                DirectControllerSetupPolicy.IsComplete(2, 1, 1, false),
+                "One controller failure must not be reported as a complete batch.");
         }
 
         private static void LmGatewayPlannerNeverAdoptsOfficialBaseService()

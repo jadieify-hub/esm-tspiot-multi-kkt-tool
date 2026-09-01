@@ -25,6 +25,7 @@
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayPage.Layout.cs" Link="LmGatewayPage.Layout.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayPage.Services.cs" Link="LmGatewayPage.Services.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayPage.Binding.cs" Link="LmGatewayPage.Binding.cs" />
+    <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayPage.DirectControllers.cs" Link="LmGatewayPage.DirectControllers.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayCredentialDefaults.cs" Link="LmGatewayCredentialDefaults.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayBindingDialog.cs" Link="LmGatewayBindingDialog.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmAutomaticSetupDialog.cs" Link="LmAutomaticSetupDialog.cs" />
@@ -37,6 +38,7 @@
     <Compile Include="..\EsmTspiot.WinForms.Shared\AtolVcomEnumerator.cs" Link="AtolVcomEnumerator.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\AtolFptrConnectionProvider.cs" Link="AtolFptrConnectionProvider.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmServiceInventoryReader.cs" Link="LmServiceInventoryReader.cs" />
+    <Compile Include="..\EsmTspiot.WinForms.Shared\DirectControllerOperatorInventoryReader.cs" Link="DirectControllerOperatorInventoryReader.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\ManagedLocalModuleInventoryReader.cs" Link="ManagedLocalModuleInventoryReader.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayProbe.cs" Link="LmGatewayProbe.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\ProvisionerProcessLauncher.cs" Link="ProvisionerProcessLauncher.cs" />

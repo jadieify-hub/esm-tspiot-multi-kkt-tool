@@ -15,7 +15,8 @@ namespace EsmTspiot.WinForms.Shared
 {
     internal sealed class LmServiceProvisionerClient : ILmServiceProvisioner
     {
-        private const int SchemaVersion = 1;
+        private const int LegacySchemaVersion = 1;
+        private const int DirectSchemaVersion = 2;
         private const int MaximumMessageBytes = 1024 * 1024;
         private readonly ProvisionerProcessLauncher _launcher;
 
@@ -65,6 +66,50 @@ namespace EsmTspiot.WinForms.Shared
                 }
             }
             return InvokeAsync<LmServiceProvisioningBatchResult>(request, cancellation);
+        }
+
+        internal Task<LmServiceProvisioningBatchResult> EnsureDirectControllersAsync(
+            IList<DirectControllerProvisioningItemRequest> items,
+            string operationId,
+            CancellationToken cancellation)
+        {
+            LmServiceProvisioningBatchRequest request = CreateRequest(
+                LmServiceOperation.EnsureDirectControllers,
+                operationId,
+                string.Empty);
+            if (items != null)
+            {
+                for (int index = 0; index < items.Count; index++)
+                {
+                    request.DirectControllers.Add(items[index]);
+                }
+            }
+            request.PlanHash = CanonicalLmPlanHasher.Compute(request);
+            return InvokeAsync<LmServiceProvisioningBatchResult>(
+                request,
+                cancellation);
+        }
+
+        internal Task<LmServiceProvisioningBatchResult> RemoveAllDirectControllersAsync(
+            IList<DirectControllerProvisioningItemRequest> items,
+            string operationId,
+            CancellationToken cancellation)
+        {
+            LmServiceProvisioningBatchRequest request = CreateRequest(
+                LmServiceOperation.RemoveAllDirectControllers,
+                operationId,
+                string.Empty);
+            if (items != null)
+            {
+                for (int index = 0; index < items.Count; index++)
+                {
+                    request.DirectControllers.Add(items[index]);
+                }
+            }
+            request.PlanHash = CanonicalLmPlanHasher.Compute(request);
+            return InvokeAsync<LmServiceProvisioningBatchResult>(
+                request,
+                cancellation);
         }
 
         public async Task<LmServiceProvisioningItemResult> RemoveAsync(
@@ -156,7 +201,7 @@ namespace EsmTspiot.WinForms.Shared
                                     pipe,
                                     new LmProvisioningControlMessage
                                     {
-                                        SchemaVersion = SchemaVersion,
+                                        SchemaVersion = request.SchemaVersion,
                                         OperationId = request.OperationId,
                                         Sequence = Interlocked.Increment(ref sequence),
                                         Kind = LmProvisioningControlKind.CancelAfterCurrentItem
@@ -228,7 +273,9 @@ namespace EsmTspiot.WinForms.Shared
         {
             return new LmServiceProvisioningBatchRequest
             {
-                SchemaVersion = SchemaVersion,
+                SchemaVersion = IsDirectControllerOperation(operation)
+                    ? DirectSchemaVersion
+                    : LegacySchemaVersion,
                 Operation = operation,
                 OperationId = operationId,
                 InitiatingSid = WindowsIdentity.GetCurrent().User.Value,
@@ -410,7 +457,7 @@ namespace EsmTspiot.WinForms.Shared
                 result as LmServiceProvisioningBatchResult;
             if (batch != null)
             {
-                if (batch.SchemaVersion != SchemaVersion)
+                if (batch.SchemaVersion != request.SchemaVersion)
                 {
                     throw new InvalidDataException("Helper вернул неизвестную версию схемы.");
                 }
@@ -455,6 +502,15 @@ namespace EsmTspiot.WinForms.Shared
             Guid parsed;
             return value != null && value.Length == 32 &&
                 Guid.TryParseExact(value, "N", out parsed);
+        }
+
+
+        private static bool IsDirectControllerOperation(LmServiceOperation operation)
+        {
+            return operation == LmServiceOperation.EnsureDirectControllers ||
+                operation == LmServiceOperation.RestartDirectController ||
+                operation == LmServiceOperation.RemoveDirectController ||
+                operation == LmServiceOperation.RemoveAllDirectControllers;
         }
     }
 }

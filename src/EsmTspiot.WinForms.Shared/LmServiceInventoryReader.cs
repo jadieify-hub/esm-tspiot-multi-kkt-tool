@@ -634,7 +634,7 @@ namespace EsmTspiot.WinForms.Shared
     internal static class LmControllerFileIdentity
     {
         private const string ExpectedSha256 =
-            "9ce34999ea965e01d8328895bb1776e7b44edabf72fc51bee121ec5091746214";
+            "0a25b29a39b100fe461eb3ffa06a6b18f2b474f337efdba9f7a9ca89740ffd0a";
 
         internal static string GetOfficialControllerPath()
         {
@@ -651,7 +651,7 @@ namespace EsmTspiot.WinForms.Shared
             try
             {
                 FileInfo file = new FileInfo(path);
-                return file.Exists && file.Length == 14647536 &&
+                return file.Exists && file.Length == 14668016 &&
                     (file.Attributes & FileAttributes.ReparsePoint) == 0 &&
                     FixedTimeEquals(LmServiceInventoryReader.ComputeSha256(path), ExpectedSha256);
             }
