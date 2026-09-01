@@ -103,6 +103,10 @@ function Test-AllowedForbiddenHit {
     if ($relative -eq "src/EsmTspiot.WinForms.Shared/MainForm.cs") {
         return $Hit.Text -match '^\s*startInfo\.FileName = "powershell\.exe";\s*$'
     }
+    if ($relative -eq "src/EsmTspiot.ServiceProvisioner/LegacyOwnedProcessTerminator.cs") {
+        return $Hit.Text -match '^\s*if \(!TerminateProcess\(process, 0x4B52534C\)\)\s*$' -or
+            $Hit.Text -match '^\s*private static extern bool TerminateProcess\(IntPtr process, uint exitCode\);\s*$'
+    }
     return $false
 }
 

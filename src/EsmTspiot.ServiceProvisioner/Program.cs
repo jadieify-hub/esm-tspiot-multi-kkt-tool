@@ -62,6 +62,21 @@ namespace EsmTspiot.ServiceProvisioner
                                     channel,
                                     request.OperationId))
                             {
+                                LegacyManagedStateMigrationResult migration =
+                                    WindowsLegacyManagedStateCleanup.CreateWorkflow()
+                                        .Execute(
+                                            request.OperationId,
+                                            request.InitiatingSid,
+                                            cancellation);
+                                if (!migration.IsComplete)
+                                {
+                                    LmServiceProvisioningBatchResult blocked =
+                                        CreateDirectMigrationBlockedResult(
+                                            request,
+                                            migration);
+                                    channel.WriteMessage(blocked);
+                                    return ToExitCode(blocked.Status);
+                                }
                                 IDirectControllerProvisioner direct =
                                     new DirectControllerProvisioner(
                                         WindowsDirectControllerPlatform.Create(
@@ -496,6 +511,42 @@ namespace EsmTspiot.ServiceProvisioner
                 operation == LmServiceOperation.RestartDirectController ||
                 operation == LmServiceOperation.RemoveDirectController ||
                 operation == LmServiceOperation.RemoveAllDirectControllers;
+        }
+
+        private static LmServiceProvisioningBatchResult
+            CreateDirectMigrationBlockedResult(
+                LmServiceProvisioningBatchRequest request,
+                LegacyManagedStateMigrationResult migration)
+        {
+            LmServiceProvisioningStatus status = migration.IsCancelled
+                ? LmServiceProvisioningStatus.Cancelled
+                : LmServiceProvisioningStatus.Failed;
+            string details = migration.DescribeFailures();
+            string message = migration.IsCancelled
+                ? "Операция отменена во время очистки старой управляемой схемы."
+                : "Старая управляемая схема очищена не полностью.";
+            if (!string.IsNullOrWhiteSpace(details))
+            {
+                message += " " + details.Replace(Environment.NewLine, " | ");
+            }
+            LmServiceProvisioningBatchResult result =
+                new LmServiceProvisioningBatchResult
+                {
+                    SchemaVersion = request.SchemaVersion,
+                    OperationId = request.OperationId,
+                    PlanHash = request.PlanHash,
+                    Status = status
+                };
+            for (int index = 0; index < request.DirectControllers.Count; index++)
+            {
+                result.Items.Add(new LmServiceProvisioningItemResult
+                {
+                    KktSerial = request.DirectControllers[index].KktSerial,
+                    Status = status,
+                    Message = message
+                });
+            }
+            return result;
         }
 
         private static LmServiceProvisioningBatchResult CreateUnsupportedResult(

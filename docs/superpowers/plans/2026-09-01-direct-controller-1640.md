@@ -45,10 +45,10 @@
 
 ### Task 4: Legacy migration without persistent KRS processes
 
-- [ ] Add failing tests for complete ownership proof, PID reuse, foreign-process refusal, cancellation, partial failure, and cleanup retry.
-- [ ] Implement graceful service cleanup plus `VerifiedLegacyProcessIdentity` and the isolated native terminator.
-- [ ] Narrowly allowlist only that terminator in `verify_lm_safety.ps1`; keep all other termination patterns forbidden.
-- [ ] Prove no app-owned supervisor/Erlang processes or locked runtime directories remain; commit.
+- [x] Add failing tests for complete ownership proof, PID reuse, foreign-process refusal, cancellation, partial failure, and cleanup retry.
+- [x] Implement graceful service cleanup plus `VerifiedLegacyProcessIdentity` and the isolated native terminator.
+- [x] Narrowly allowlist only that terminator in `verify_lm_safety.ps1`; keep all other termination patterns forbidden.
+- [x] Prove no app-owned supervisor/Erlang processes or locked runtime directories remain; commit.
 
 ### Task 5: Per-instance ESM configuration and secret handling
 
