@@ -204,6 +204,22 @@ namespace EsmTspiot.ServiceProvisioner
                 observed);
         }
 
+        internal bool IsManagedDefinition(
+            string kktSerial,
+            WindowsServiceRecord observed)
+        {
+            if (observed == null) return false;
+            WindowsServiceDefinition expected = BuildDefinition(kktSerial, null);
+            return string.Equals(
+                    observed.ServiceName,
+                    expected.ServiceName,
+                    StringComparison.Ordinal) &&
+                string.Equals(
+                    observed.ImagePath,
+                    expected.ImagePath,
+                    StringComparison.Ordinal);
+        }
+
         internal static int RunServiceMode(string serviceName)
         {
             string serial;

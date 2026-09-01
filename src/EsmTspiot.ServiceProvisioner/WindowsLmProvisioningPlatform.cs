@@ -443,10 +443,7 @@ namespace EsmTspiot.ServiceProvisioner
             {
                 return LmRemovalOwnershipState.MarkerMismatch;
             }
-            string operatorSid = service.SecurityDescriptor == null
-                ? null
-                : service.SecurityDescriptor.OperatorSid;
-            if (!_supervisor.IsExactDefinition(kktSerial, operatorSid, service))
+            if (!_supervisor.IsManagedDefinition(kktSerial, service))
             {
                 return LmRemovalOwnershipState.ImageMismatch;
             }

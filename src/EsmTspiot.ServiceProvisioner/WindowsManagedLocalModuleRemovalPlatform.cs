@@ -253,6 +253,7 @@ namespace EsmTspiot.ServiceProvisioner
                 LocalModuleManifestStore.CreateMachineStore(
                     pathSafety,
                     request.InitiatingSid);
+            manifests.RepairOperatorInventoryAccess();
             ManagedLocalModuleRemovalJournalStore removal =
                 new ManagedLocalModuleRemovalJournalStore(
                     manifests.MachineRoot,

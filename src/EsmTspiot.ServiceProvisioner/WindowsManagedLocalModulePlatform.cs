@@ -130,6 +130,7 @@ namespace EsmTspiot.ServiceProvisioner
                     LocalModuleManifestStore.CreateMachineStore(
                         pathSafety,
                         request.InitiatingSid);
+                manifests.RepairOperatorInventoryAccess();
                 PreparedCompleteStackResources prepared =
                     new PreparedCompleteStackResources(
                         request,
@@ -251,8 +252,17 @@ namespace EsmTspiot.ServiceProvisioner
                 instance.DatabaseServiceName);
             WindowsServiceRecord api = _services.Query(instance.ApiServiceName);
             bool exactDefinitions = DefinitionsMatch(instance, database, api);
+            bool managedDefinitions = ManagedDefinitionsMatch(
+                instance,
+                database,
+                api);
             bool stoppedOrAbsent = IsStoppedOrAbsent(database) &&
                 IsStoppedOrAbsent(api);
+            bool managedPairCanBeStopped = managedDefinitions &&
+                IsStableCompletePair(database, api);
+            bool managedPairCanBeRewritten =
+                (stoppedOrAbsent && managedDefinitions) ||
+                managedPairCanBeStopped;
             bool planMatches = InstanceMatchesItem(instance, item);
             ValidationResult profile = _profiles.ValidateConfiguration(
                 instanceRuntime,
@@ -260,13 +270,13 @@ namespace EsmTspiot.ServiceProvisioner
                 instance);
             if (!planMatches || !profile.IsValid)
             {
-                return stoppedOrAbsent && exactDefinitions
+                return managedPairCanBeRewritten
                     ? ManagedLocalModuleObservedState.OwnedMismatch
                     : ManagedLocalModuleObservedState.Foreign;
             }
             if (!exactDefinitions)
             {
-                return database == null && api == null
+                return managedPairCanBeRewritten
                     ? ManagedLocalModuleObservedState.OwnedMismatch
                     : ManagedLocalModuleObservedState.Foreign;
             }
@@ -336,6 +346,7 @@ namespace EsmTspiot.ServiceProvisioner
         {
             ValidateContext(context);
             WorkState state = GetOrCreateState(item, context, operationId);
+            StopExactOwnedPairForRewrite(state.Instance);
             EnsureServicesStopped(state.Instance);
             DisposeReservation(state);
             state.PortReservation = _ports.Acquire(item);
@@ -618,6 +629,41 @@ namespace EsmTspiot.ServiceProvisioner
                     api);
         }
 
+        private bool ManagedDefinitionsMatch(
+            LocalModuleInstanceManifest instance,
+            WindowsServiceRecord database,
+            WindowsServiceRecord api)
+        {
+            return ManagedDefinitionMatches(
+                    instance,
+                    LocalModuleProcessRole.Database,
+                    database) &&
+                ManagedDefinitionMatches(
+                    instance,
+                    LocalModuleProcessRole.Api,
+                    api);
+        }
+
+        private bool ManagedDefinitionMatches(
+            LocalModuleInstanceManifest instance,
+            LocalModuleProcessRole role,
+            WindowsServiceRecord service)
+        {
+            if (service == null) return true;
+            WindowsServiceDefinition expected = _servicePair.BuildDefinition(
+                instance,
+                role,
+                null);
+            return string.Equals(
+                    service.ServiceName,
+                    expected.ServiceName,
+                    StringComparison.Ordinal) &&
+                string.Equals(
+                    service.ImagePath,
+                    expected.ImagePath,
+                    StringComparison.Ordinal);
+        }
+
         private static bool InstanceMatchesItem(
             LocalModuleInstanceManifest instance,
             ManagedLocalModuleProvisioningItemRequest item)
@@ -632,6 +678,39 @@ namespace EsmTspiot.ServiceProvisioner
         private static bool IsStoppedOrAbsent(WindowsServiceRecord service)
         {
             return service == null || service.State == WindowsServiceState.Stopped;
+        }
+
+        private static bool IsStableCompletePair(
+            WindowsServiceRecord database,
+            WindowsServiceRecord api)
+        {
+            return database != null && api != null &&
+                (database.State == WindowsServiceState.Stopped ||
+                 database.State == WindowsServiceState.Running) &&
+                (api.State == WindowsServiceState.Stopped ||
+                 api.State == WindowsServiceState.Running);
+        }
+
+        private void StopExactOwnedPairForRewrite(
+            LocalModuleInstanceManifest instance)
+        {
+            if (instance == null) return;
+            WindowsServiceRecord database = _services.Query(
+                instance.DatabaseServiceName);
+            WindowsServiceRecord api = _services.Query(instance.ApiServiceName);
+            if (IsStoppedOrAbsent(database) && IsStoppedOrAbsent(api)) return;
+            if (!IsStableCompletePair(database, api) ||
+                !ManagedDefinitionsMatch(instance, database, api))
+            {
+                throw new InvalidOperationException(
+                    "Only an exact manifest-owned service pair may be stopped for profile recovery.");
+            }
+            if (_lifecycle.Stop(instance) !=
+                LocalModuleServicePairStopOutcome.Stopped)
+            {
+                throw new InvalidOperationException(
+                    "Owned local-module processes did not stop cleanly for profile recovery.");
+            }
         }
 
         private void EnsureServicesStopped(LocalModuleInstanceManifest instance)

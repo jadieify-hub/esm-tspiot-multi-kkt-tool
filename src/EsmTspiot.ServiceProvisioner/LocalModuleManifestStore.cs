@@ -208,15 +208,7 @@ namespace EsmTspiot.ServiceProvisioner
                 previousRuntimeId = existing.RuntimeId;
             }
             AtomicJsonFile.Write(path, AtomicJsonFile.Serialize(manifest));
-            List<string> readers = new List<string>();
-            if (!string.IsNullOrEmpty(_initiatingSid))
-            {
-                readers.Add(_initiatingSid);
-            }
-            readers.Add(RestrictedServiceSid.Derive(
-                manifest.DatabaseServiceName));
-            readers.Add(RestrictedServiceSid.Derive(manifest.ApiServiceName));
-            _pathSafety.EnsureProtectedReadOnlyFile(path, readers);
+            ProtectInstanceManifest(path, manifest);
             EnsureMachineSafe(path);
             RefreshRuntimeReferenceCount(manifest.RuntimeId);
             if (!string.IsNullOrEmpty(previousRuntimeId) &&
@@ -302,6 +294,48 @@ namespace EsmTspiot.ServiceProvisioner
             return manifest != null;
         }
 
+        internal void RepairOperatorInventoryAccess()
+        {
+            if (string.IsNullOrEmpty(_initiatingSid)) return;
+
+            if (Directory.Exists(_instancesRoot))
+            {
+                EnsureMachineSafe(_instancesRoot);
+                string[] directories = Directory.GetDirectories(_instancesRoot);
+                for (int index = 0; index < directories.Length; index++)
+                {
+                    string instanceId = Path.GetFileName(directories[index]);
+                    ValidateInstanceId(instanceId);
+                    string path = GetInstanceManifestPath(instanceId);
+                    LocalModuleInstanceManifest instance = ReadInstance(instanceId);
+                    EnsureInventoryPath(path);
+                    ProtectInstanceManifest(path, instance);
+                }
+            }
+
+            if (Directory.Exists(_stacksRoot))
+            {
+                EnsureMachineSafe(_stacksRoot);
+                string[] directories = Directory.GetDirectories(_stacksRoot);
+                for (int index = 0; index < directories.Length; index++)
+                {
+                    string path = Path.Combine(directories[index], "manifest.json");
+                    EnsureMachineSafe(path);
+                    ManagedKktStackManifest stack =
+                        ReadJson<ManagedKktStackManifest>(path);
+                    ValidateStack(stack);
+                    if (!PathEquals(path, GetStackManifestPath(stack.KktSerial)))
+                    {
+                        throw new InvalidDataException(
+                            "Managed KKT stack path does not match its identity.");
+                    }
+                    ReadStack(stack.KktSerial);
+                    EnsureInventoryPath(path);
+                    ProtectStackManifest(path);
+                }
+            }
+        }
+
         internal void DeleteInstance(string instanceId, string ownershipNonce)
         {
             LocalModuleInstanceManifest manifest = ReadInstance(instanceId);
@@ -346,7 +380,31 @@ namespace EsmTspiot.ServiceProvisioner
                 ValidateStackTransition(existing, manifest);
             }
             AtomicJsonFile.Write(path, AtomicJsonFile.Serialize(manifest));
+            ProtectStackManifest(path);
             EnsureMachineSafe(path);
+        }
+
+        private void ProtectInstanceManifest(
+            string path,
+            LocalModuleInstanceManifest manifest)
+        {
+            List<string> readers = new List<string>();
+            if (!string.IsNullOrEmpty(_initiatingSid))
+            {
+                readers.Add(_initiatingSid);
+            }
+            readers.Add(RestrictedServiceSid.Derive(
+                manifest.DatabaseServiceName));
+            readers.Add(RestrictedServiceSid.Derive(manifest.ApiServiceName));
+            _pathSafety.EnsureProtectedReadOnlyFile(path, readers);
+        }
+
+        private void ProtectStackManifest(string path)
+        {
+            IList<string> readers = string.IsNullOrEmpty(_initiatingSid)
+                ? null
+                : new[] { _initiatingSid };
+            _pathSafety.EnsureProtectedReadOnlyFile(path, readers);
         }
 
         internal ManagedKktStackManifest ReadStack(string kktSerial)

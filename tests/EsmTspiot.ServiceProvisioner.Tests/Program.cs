@@ -52,6 +52,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Administrative MSI extraction uses native command syntax", AdministrativeMsiExtractionUsesNativeCommandSyntax);
             Run("Local module manifests enforce three ownership levels", LocalModuleManifestsEnforceThreeOwnershipLevels);
             Run("Local module inventory keeps operator read only access", LocalModuleInventoryKeepsOperatorReadOnlyAccess);
+            Run("Local module inventory repairs legacy operator read only access", LocalModuleInventoryRepairsLegacyOperatorReadOnlyAccess);
             Run("Local module runtime deletion requires zero references", LocalModuleRuntimeDeletionRequiresZeroReferences);
             Run("Existing local module runtime verifies without MSI extraction", ExistingLocalModuleRuntimeVerifiesWithoutMsiExtraction);
             Run("Local module runtime recovers every mutation boundary", LocalModuleRuntimeRecoversEveryMutationBoundary);
@@ -88,7 +89,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Managed local module profile writes protected six-file contract", ManagedLocalModuleProfileWritesProtectedSixFileContract);
             Run("Managed local module lifecycle journal resumes pre-profile identity", ManagedLocalModuleLifecycleJournalResumesPreProfileIdentity);
             Run("Local module readiness requires owned descendant listener", LocalModuleReadinessRequiresOwnedDescendantListener);
-            Run("Windows managed platform persists profile and exact service pair", WindowsManagedPlatformPersistsProfileAndExactServicePair);
+            Run("Windows managed platform persists and repairs exact owned pair", WindowsManagedPlatformPersistsProfileAndExactServicePair);
             Run("Complete stack canary failure stops remaining groups", CompleteStackCanaryFailureStopsRemainingGroups);
             Run("Complete stack provisions every KKT of shared INN", CompleteStackProvisionsEveryKktOfSharedInn);
             Run("Complete stack skips a later unregistered KKT", CompleteStackSkipsLaterUnregisteredKkt);
@@ -1849,6 +1850,19 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     " --supervise krs-esm-lm-00105700000001",
                 api.LastDefinition.ImagePath,
                 "CreateService must receive the exact verified provisioner image.");
+            WindowsServiceRecord legacyManaged = api.Query(
+                "krs-esm-lm-00105700000001");
+            legacyManaged.DisplayName = "KRS: legacy controller";
+            legacyManaged.StartMode = WindowsServiceStartMode.DemandStart;
+            AssertTrue(service.IsManagedDefinition(
+                    "00105700000001",
+                    legacyManaged),
+                "A controller still targeting the exact KRS supervisor may be reclaimed and updated.");
+            legacyManaged.ImagePath = @"C:\Windows\System32\foreign-service.exe";
+            AssertFalse(service.IsManagedDefinition(
+                    "00105700000001",
+                    legacyManaged),
+                "A controller redirected outside the exact KRS supervisor must remain blocked.");
             AssertEqual(@"""C:\tail\\""", WindowsCommandLine.QuoteArgument(@"C:\tail\"),
                 "Windows quoting must preserve a trailing backslash before the closing quote.");
         }
@@ -2729,7 +2743,12 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                         new FakeProcessParentReader(6001, 5001),
                         1,
                         delegate { });
-                FakeEpmdCommandRunner epmd = new FakeEpmdCommandRunner();
+                FakeEpmdCommandRunner epmd = new FakeEpmdCommandRunner(
+                    new EpmdCommandResult(
+                        0,
+                        "epmd: up and running\n",
+                        string.Empty),
+                    new EpmdCommandResult(0, "Killed\n", string.Empty));
                 LocalModuleServicePairLifecycle lifecycle =
                     new LocalModuleServicePairLifecycle(
                         services,
@@ -2803,6 +2822,38 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 AssertTrue(journals.TryRead(item.Inn, out durable) &&
                            durable.Stage == ManagedLocalModuleProvisioningStage.ProfileReady,
                     "The last completed mutation boundary must be durable before service start.");
+
+                services.Start(instance.DatabaseServiceName);
+                services.Start(instance.ApiServiceName);
+                services.Query(instance.DatabaseServiceName).DisplayName =
+                    "KRS: legacy managed LM database";
+                services.Query(instance.ApiServiceName).StartMode =
+                    WindowsServiceStartMode.DemandStart;
+                File.WriteAllText(
+                    Path.Combine(instance.ConfigRoot, "regime-local.ini"),
+                    "corrupted owned profile",
+                    new UTF8Encoding(false));
+                platform.Reconcile(item, operationId);
+
+                AssertEqual(ManagedLocalModuleObservedState.OwnedMismatch,
+                    platform.Inspect(item, context),
+                    "A running exact manifest-owned pair with an incomplete profile must be repairable.");
+
+                platform.PrepareProfile(item, context, operationId);
+
+                AssertEqual(WindowsServiceState.Stopped,
+                    services.Query(instance.DatabaseServiceName).State,
+                    "Profile recovery must stop the exact owned database service first.");
+                AssertEqual(WindowsServiceState.Stopped,
+                    services.Query(instance.ApiServiceName).State,
+                    "Profile recovery must stop the exact owned API service first.");
+
+                services.Query(instance.DatabaseServiceName).ImagePath =
+                    @"C:\Windows\System32\foreign-service.exe";
+                platform.Reconcile(item, operationId);
+                AssertEqual(ManagedLocalModuleObservedState.Foreign,
+                    platform.Inspect(item, context),
+                    "A service redirected outside the verified KRS supervisor must remain blocked.");
             }
             finally
             {
@@ -3127,6 +3178,55 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                         manifests.GetInstanceManifestPath(instance.InstanceId),
                         operatorSid),
                     "Writing an LM instance manifest must preserve operator read access.");
+            }
+            finally
+            {
+                DeleteTestTreeWithReadOnlyFiles(root);
+            }
+        }
+
+        private static void LocalModuleInventoryRepairsLegacyOperatorReadOnlyAccess()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                const string operatorSid = "S-1-5-21-111-222-333-1001";
+                LocalModuleManifestStore legacyStore;
+                LocalModuleRuntimeManifest runtime;
+                LocalModuleInstanceManifest instance;
+                CreateTestManagedLocalModuleOwnership(
+                    root,
+                    new FakePathSafety(true),
+                    null,
+                    out legacyStore,
+                    out runtime,
+                    out instance);
+                ManagedKktStackManifest stack = ManagedKktStackManifest.Create(
+                    CreateManagedLocalModuleRequest(1).ManagedLocalModules[0],
+                    instance.InstanceId,
+                    string.Empty,
+                    "89898989898989898989898989898989",
+                    "cccccccccccccccccccccccccccccccc");
+                legacyStore.WriteStack(stack);
+
+                FakePathSafety repairedAcl = new FakePathSafety(true);
+                LocalModuleManifestStore currentStore =
+                    new LocalModuleManifestStore(
+                        legacyStore.MachineRoot,
+                        legacyStore.RuntimeContainerRoot,
+                        repairedAcl,
+                        operatorSid);
+
+                currentStore.RepairOperatorInventoryAccess();
+
+                AssertTrue(repairedAcl.HasReadOnlyFileAccess(
+                        currentStore.GetInstanceManifestPath(instance.InstanceId),
+                        operatorSid),
+                    "A validated legacy LM manifest must become readable by the initiating operator.");
+                AssertTrue(repairedAcl.HasReadOnlyFileAccess(
+                        currentStore.GetStackManifestPath(stack.KktSerial),
+                        operatorSid),
+                    "A validated legacy KKT stack must become readable by the initiating operator.");
             }
             finally
             {
