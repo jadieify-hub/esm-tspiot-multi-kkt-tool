@@ -104,10 +104,7 @@ namespace EsmTspiot.ServiceProvisioner
             {
                 return false;
             }
-            string operatorSid = service.SecurityDescriptor == null
-                ? null
-                : service.SecurityDescriptor.OperatorSid;
-            return _supervisor.IsExactDefinition(kktSerial, operatorSid, service);
+            return _supervisor.IsManagedDefinition(kktSerial, service);
         }
 
         private static bool ManifestMatchesController(
