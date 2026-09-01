@@ -11,6 +11,7 @@ namespace EsmTspiot.Shared.Models
             Items = new List<LmServiceProvisioningItemRequest>();
             RemovalConfirmations = new List<LmRemovalConfirmation>();
             ManagedLocalModules = new List<ManagedLocalModuleProvisioningItemRequest>();
+            DirectControllers = new List<DirectControllerProvisioningItemRequest>();
         }
 
         [DataMember(Order = 1)]
@@ -48,5 +49,8 @@ namespace EsmTspiot.Shared.Models
 
         [DataMember(Order = 12, EmitDefaultValue = false)]
         public IList<ManagedLocalModuleProvisioningItemRequest> ManagedLocalModules { get; private set; }
+
+        [DataMember(Order = 13, EmitDefaultValue = false)]
+        public IList<DirectControllerProvisioningItemRequest> DirectControllers { get; private set; }
     }
 }

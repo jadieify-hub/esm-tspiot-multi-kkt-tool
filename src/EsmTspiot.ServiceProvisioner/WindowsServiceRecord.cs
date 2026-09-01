@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 
 namespace EsmTspiot.ServiceProvisioner
 {
@@ -37,6 +38,12 @@ namespace EsmTspiot.ServiceProvisioner
         Restricted = 3
     }
 
+    internal enum WindowsServiceDefinitionKind
+    {
+        LegacyManaged = 0,
+        DirectController = 1
+    }
+
     internal sealed class WindowsServiceRecoveryPolicy
     {
         internal WindowsServiceRecoveryPolicy(
@@ -69,12 +76,15 @@ namespace EsmTspiot.ServiceProvisioner
 
     internal sealed class WindowsServiceDefinition
     {
+        internal WindowsServiceDefinitionKind Kind { get; set; }
+        internal string VerifiedDirectImagePath { get; set; }
         internal string ServiceName { get; set; }
         internal string DisplayName { get; set; }
         internal string ImagePath { get; set; }
         internal string Description { get; set; }
         internal string AccountName { get; set; }
         internal IList<string> Dependencies { get; set; }
+        internal IDictionary<string, string> EnvironmentVariables { get; set; }
         internal WindowsServiceStartMode StartMode { get; set; }
         internal WindowsServiceErrorControl ErrorControl { get; set; }
         internal WindowsServiceSidType ServiceSidType { get; set; }
@@ -83,6 +93,11 @@ namespace EsmTspiot.ServiceProvisioner
 
         internal void Validate()
         {
+            if (Kind == WindowsServiceDefinitionKind.DirectController)
+            {
+                ValidateDirectController();
+                return;
+            }
             string serial;
             bool controllerName =
                 EsmTspiot.Shared.Services.LmServiceIdentity.TryParseName(
@@ -131,6 +146,43 @@ namespace EsmTspiot.ServiceProvisioner
                     "Controller service dependency is not part of the exact profile.");
             }
         }
+
+        private void ValidateDirectController()
+        {
+            int ordinal;
+            bool validName = EsmTspiot.Shared.Services.DirectControllerIdentity
+                .TryParseServiceName(ServiceName, out ordinal);
+            string expectedImage = string.IsNullOrWhiteSpace(VerifiedDirectImagePath)
+                ? string.Empty
+                : WindowsCommandLine.QuoteArgument(VerifiedDirectImagePath);
+            if (!validName ||
+                string.IsNullOrWhiteSpace(DisplayName) ||
+                string.IsNullOrWhiteSpace(Description) ||
+                string.IsNullOrWhiteSpace(expectedImage) ||
+                !string.Equals(ImagePath, expectedImage, StringComparison.Ordinal) ||
+                !string.Equals(AccountName, "LocalSystem", StringComparison.Ordinal) ||
+                Dependencies == null || Dependencies.Count != 0 ||
+                !HasExactProgramDataEnvironment(EnvironmentVariables) ||
+                StartMode != WindowsServiceStartMode.AutoStart ||
+                ErrorControl != WindowsServiceErrorControl.Ignore ||
+                ServiceSidType != WindowsServiceSidType.None ||
+                RecoveryPolicy == null || SecurityDescriptor == null ||
+                !SecurityDescriptor.IsRestrictive)
+            {
+                throw new InvalidOperationException(
+                    "Direct controller Windows service definition is invalid.");
+            }
+        }
+
+        private static bool HasExactProgramDataEnvironment(
+            IDictionary<string, string> environment)
+        {
+            string value;
+            return environment != null && environment.Count == 1 &&
+                environment.TryGetValue("ProgramData", out value) &&
+                !string.IsNullOrWhiteSpace(value) && Path.IsPathRooted(value);
+        }
+
     }
 
     internal sealed class WindowsServiceRecord
@@ -141,6 +193,7 @@ namespace EsmTspiot.ServiceProvisioner
         internal string Description { get; set; }
         internal string AccountName { get; set; }
         internal IList<string> Dependencies { get; set; }
+        internal IDictionary<string, string> EnvironmentVariables { get; set; }
         internal WindowsServiceStartMode StartMode { get; set; }
         internal WindowsServiceErrorControl ErrorControl { get; set; }
         internal WindowsServiceSidType ServiceSidType { get; set; }
@@ -160,6 +213,10 @@ namespace EsmTspiot.ServiceProvisioner
                 Description = definition.Description,
                 AccountName = definition.AccountName,
                 Dependencies = new List<string>(definition.Dependencies),
+                EnvironmentVariables = definition.EnvironmentVariables == null
+                    ? null
+                    : new Dictionary<string, string>(definition.EnvironmentVariables,
+                        StringComparer.OrdinalIgnoreCase),
                 StartMode = definition.StartMode,
                 ErrorControl = definition.ErrorControl,
                 ServiceSidType = definition.ServiceSidType,
@@ -210,6 +267,12 @@ namespace EsmTspiot.ServiceProvisioner
                     return false;
                 }
             }
+            if (!DictionaryEquals(
+                    expected.EnvironmentVariables,
+                    actual.EnvironmentVariables))
+            {
+                return false;
+            }
             if (actual.RecoveryPolicy == null || expected.RecoveryPolicy == null ||
                 actual.RecoveryPolicy.ResetPeriodSeconds !=
                     expected.RecoveryPolicy.ResetPeriodSeconds ||
@@ -224,6 +287,30 @@ namespace EsmTspiot.ServiceProvisioner
             {
                 if (actual.RecoveryPolicy.RestartDelaysMilliseconds[index] !=
                     expected.RecoveryPolicy.RestartDelaysMilliseconds[index])
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private static bool DictionaryEquals(
+            IDictionary<string, string> expected,
+            IDictionary<string, string> actual)
+        {
+            if (expected == null || expected.Count == 0)
+            {
+                return actual == null || actual.Count == 0;
+            }
+            if (actual == null || expected.Count != actual.Count)
+            {
+                return false;
+            }
+            foreach (KeyValuePair<string, string> item in expected)
+            {
+                string value;
+                if (!actual.TryGetValue(item.Key, out value) ||
+                    !string.Equals(item.Value, value, StringComparison.Ordinal))
                 {
                     return false;
                 }

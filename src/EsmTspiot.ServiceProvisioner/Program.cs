@@ -55,6 +55,23 @@ namespace EsmTspiot.ServiceProvisioner
 
                     try
                     {
+                        if (IsDirectControllerOperation(request.Operation))
+                        {
+                            using (PipeProvisioningCancellation cancellation =
+                                new PipeProvisioningCancellation(
+                                    channel,
+                                    request.OperationId))
+                            {
+                                IDirectControllerProvisioner direct =
+                                    new DirectControllerProvisioner(
+                                        WindowsDirectControllerPlatform.Create(
+                                            request.InitiatingSid));
+                                LmServiceProvisioningBatchResult directResult =
+                                    direct.Execute(request, cancellation);
+                                channel.WriteMessage(directResult);
+                                return ToExitCode(directResult.Status);
+                            }
+                        }
                         if (request.Operation ==
                             LmServiceOperation.EnsureManagedLocalModules)
                         {
@@ -214,7 +231,7 @@ namespace EsmTspiot.ServiceProvisioner
 
             LmServiceProvisioningBatchResult result = new LmServiceProvisioningBatchResult
             {
-                SchemaVersion = ProvisioningRequestValidator.CurrentSchemaVersion,
+                SchemaVersion = request.SchemaVersion,
                 OperationId = request.OperationId,
                 PlanHash = request.PlanHash,
                 Status = status
@@ -247,6 +264,21 @@ namespace EsmTspiot.ServiceProvisioner
                         KktSerial = item == null
                             ? string.Empty
                             : item.KktSerial,
+                        Status = status,
+                        Message = message
+                    });
+                }
+            }
+            else if (request.DirectControllers != null &&
+                request.DirectControllers.Count > 0)
+            {
+                for (int index = 0; index < request.DirectControllers.Count; index++)
+                {
+                    DirectControllerProvisioningItemRequest item =
+                        request.DirectControllers[index];
+                    result.Items.Add(new LmServiceProvisioningItemResult
+                    {
+                        KktSerial = item == null ? string.Empty : item.KktSerial,
                         Status = status,
                         Message = message
                     });
@@ -456,6 +488,14 @@ namespace EsmTspiot.ServiceProvisioner
             };
             result.Items.Add(item);
             return result;
+        }
+
+        private static bool IsDirectControllerOperation(LmServiceOperation operation)
+        {
+            return operation == LmServiceOperation.EnsureDirectControllers ||
+                operation == LmServiceOperation.RestartDirectController ||
+                operation == LmServiceOperation.RemoveDirectController ||
+                operation == LmServiceOperation.RemoveAllDirectControllers;
         }
 
         private static LmServiceProvisioningBatchResult CreateUnsupportedResult(

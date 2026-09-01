@@ -30,6 +30,14 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Provisioning pipe authenticates exact protected peer images", ProvisioningPipeAuthenticatesExactProtectedPeerImages);
             Run("Provisioning pipe accepts protected main images independently of filename", ProvisioningPipeAcceptsProtectedMainImageIndependentlyOfFilename);
             Run("Provisioning protocol rejects plan hash mismatch", ProvisioningProtocolRejectsPlanHashMismatch);
+            Run("Direct controller protocol v2 accepts canonical batch", DirectControllerProtocolV2AcceptsCanonicalBatch);
+            Run("Direct controller protocol v2 rejects stale schema and duplicates", DirectControllerProtocolV2RejectsStaleSchemaAndDuplicates);
+            Run("Direct controller protocol exposes no paths commands or secrets", DirectControllerProtocolExposesNoPathsCommandsOrSecrets);
+            Run("Direct controller SCM definition uses only verified vendor binary", DirectControllerScmDefinitionUsesOnlyVerifiedVendorBinary);
+            Run("Direct controller SCM definition rejects supervisor rules", DirectControllerScmDefinitionRejectsSupervisorRules);
+            Run("Direct controller manifest is credential free and hash guarded", DirectControllerManifestIsCredentialFreeAndHashGuarded);
+            Run("Direct controller provisioner continues independent KKT failures", DirectControllerProvisionerContinuesIndependentKktFailures);
+            Run("Direct controller readiness requires listeners owned by service PID", DirectControllerReadinessRequiresListenersOwnedByServicePid);
             Run("Remove-all protocol accepts only a confirmed managed batch", RemoveAllProtocolAcceptsOnlyConfirmedManagedBatch);
             Run("Managed stack removal accepts its displayed fingerprint without controller ports", ManagedStackRemovalAcceptsDisplayedFingerprintWithoutControllerPorts);
             Run("Managed cleanup accepts only its displayed managed-state fingerprint", ManagedCleanupAcceptsOnlyDisplayedManagedStateFingerprint);
@@ -111,6 +119,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("LM profile adapter never clones official profile", LmProfileAdapterNeverClonesOfficialProfile);
             Run("Direct controller profile stages only official CA pair", DirectControllerProfileStagesOnlyOfficialCaPair);
             Run("Direct controller profile atomically replaces read only CA", DirectControllerProfileAtomicallyReplacesReadOnlyCa);
+            Run("Direct controller profile writes isolated ports without credentials", DirectControllerProfileWritesIsolatedPortsWithoutCredentials);
+            Run("Windows direct controller platform creates and removes exact clone", WindowsDirectControllerPlatformCreatesAndRemovesExactClone);
             Run("LM profile adapter detects unsupported controller version", LmProfileAdapterDetectsUnsupportedControllerVersion);
             Run("Ensure creates profile service and listeners in order", EnsureCreatesProfileServiceAndListenersInOrder);
             Run("Ensure is no op for matching ready service", EnsureIsNoOpForMatchingReadyService);
@@ -1568,6 +1578,238 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             }
         }
 
+        private static void DirectControllerScmDefinitionUsesOnlyVerifiedVendorBinary()
+        {
+            ControllerCapabilityProfile profile = ControllerCapabilityProfile.SupportedVersion1640();
+            VerifiedControllerBinary binary = new VerifiedControllerBinary
+            {
+                FullPath = @"C:\Program Files\ESP\LMController\bin\lmcontroller.exe",
+                Version = "1.6.4.0",
+                Sha256 = profile.ControllerBinary.Sha256,
+                SignerThumbprint = profile.ControllerBinary.SignerThumbprint,
+                Machine = PeMachine.Amd64
+            };
+            DirectControllerServiceDefinitionFactory factory =
+                new DirectControllerServiceDefinitionFactory(profile, binary);
+
+            WindowsServiceDefinition definition = factory.Create(
+                2,
+                @"C:\ProgramData\KRS\MultiKKT\DirectControllers\Profiles\controller-2",
+                "S-1-5-21-111-222-333-1001");
+
+            definition.Validate();
+            AssertEqual(WindowsServiceDefinitionKind.DirectController, definition.Kind,
+                "The direct controller must use its own strict definition contract.");
+            AssertEqual("esm-lm-controller-2", definition.ServiceName,
+                "Ordinal 2 must map to the exact clone service name.");
+            AssertEqual("\"C:\\Program Files\\ESP\\LMController\\bin\\lmcontroller.exe\"", definition.ImagePath,
+                "SCM must start the verified vendor binary directly without helper arguments.");
+            AssertEqual(WindowsServiceSidType.None, definition.ServiceSidType,
+                "Vendor controller clones must copy the official SERVICE_SID_TYPE_NONE setting.");
+            AssertEqual(WindowsServiceStartMode.AutoStart, definition.StartMode,
+                "Direct clones must start automatically.");
+            AssertEqual(WindowsServiceErrorControl.Ignore, definition.ErrorControl,
+                "Direct clones must copy the official error-control setting.");
+            AssertEqual(0, definition.Dependencies.Count,
+                "Direct clones must not acquire application-owned dependencies.");
+            AssertEqual(1, definition.EnvironmentVariables.Count,
+                "The clone must receive exactly one isolated environment override.");
+            AssertEqual(
+                @"C:\ProgramData\KRS\MultiKKT\DirectControllers\Profiles\controller-2",
+                definition.EnvironmentVariables["ProgramData"],
+                "The vendor controller must receive only its derived ProgramData root.");
+        }
+
+        private static void DirectControllerScmDefinitionRejectsSupervisorRules()
+        {
+            ControllerCapabilityProfile profile = ControllerCapabilityProfile.SupportedVersion1640();
+            DirectControllerServiceDefinitionFactory factory =
+                new DirectControllerServiceDefinitionFactory(
+                    profile,
+                    new VerifiedControllerBinary
+                    {
+                        FullPath = @"C:\Program Files\ESP\LMController\bin\lmcontroller.exe",
+                        Version = "1.6.4.0",
+                        Sha256 = profile.ControllerBinary.Sha256,
+                        SignerThumbprint = profile.ControllerBinary.SignerThumbprint,
+                        Machine = PeMachine.Amd64
+                    });
+            WindowsServiceDefinition definition = factory.Create(
+                2,
+                @"C:\ProgramData\KRS\MultiKKT\DirectControllers\Profiles\controller-2",
+                null);
+
+            definition.ServiceSidType = WindowsServiceSidType.Restricted;
+            AssertThrows<InvalidOperationException>(delegate { definition.Validate(); },
+                "A direct vendor service must reject the legacy supervisor SID policy.");
+            definition.ServiceSidType = WindowsServiceSidType.None;
+            definition.ImagePath += " --supervise foreign";
+            AssertThrows<InvalidOperationException>(delegate { definition.Validate(); },
+                "A direct vendor service must reject helper arguments in ImagePath.");
+        }
+
+        private static void DirectControllerManifestIsCredentialFreeAndHashGuarded()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                DirectControllerManifestStore store = new DirectControllerManifestStore(
+                    root,
+                    new FakePathSafety(true),
+                    "S-1-5-21-111-222-333-1001");
+                DirectControllerManifest manifest = DirectControllerManifest.Create(
+                    "00105700000001",
+                    "7701234567",
+                    2,
+                    "1.6.4.0",
+                    new string('a', 64),
+                    Path.Combine(root, "Profiles", "controller-2"),
+                    Guid.NewGuid().ToString("N"),
+                    DirectControllerLifecycleState.Ready);
+
+                store.Write(manifest);
+                string fingerprint = store.ComputeFingerprint(manifest);
+                DirectControllerManifest observed = store.Read("00105700000001");
+                AssertEqual(fingerprint, store.ComputeFingerprint(observed),
+                    "A persisted direct-controller identity must retain its removal fingerprint.");
+
+                string allJson = string.Join(
+                    "\n",
+                    Array.ConvertAll(
+                        Directory.GetFiles(root, "*.json", SearchOption.AllDirectories),
+                        File.ReadAllText));
+                AssertFalse(allJson.IndexOf("admin", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    allJson.IndexOf("password", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    allJson.IndexOf("newPassword", StringComparison.OrdinalIgnoreCase) >= 0,
+                    "Direct manifests and inventory must contain no controller credentials.");
+
+                AssertThrows<InvalidDataException>(delegate {
+                    store.Delete("00105700000001", new string('f', 64));
+                }, "Removal must reject a stale or substituted displayed fingerprint.");
+                AssertTrue(store.Read("00105700000001") != null,
+                    "A rejected deletion must leave the owned manifest intact.");
+                store.Delete("00105700000001", fingerprint);
+                AssertTrue(store.Read("00105700000001") == null,
+                    "A matching displayed fingerprint must remove owned metadata.");
+            }
+            finally
+            {
+                DeleteTestTreeWithReadOnlyFiles(root);
+            }
+        }
+
+        private static void DirectControllerProvisionerContinuesIndependentKktFailures()
+        {
+            LmServiceProvisioningBatchRequest request =
+                CreateDirectControllerRequest(3, LmServiceOperation.EnsureDirectControllers);
+            FakeDirectControllerPlatform platform = new FakeDirectControllerPlatform
+            {
+                FailSerial = request.DirectControllers[1].KktSerial
+            };
+            IDirectControllerProvisioner provisioner =
+                new DirectControllerProvisioner(platform);
+
+            LmServiceProvisioningBatchResult result = provisioner.Execute(
+                request,
+                NeverCancelLmProvisioning.Instance);
+
+            AssertEqual(3, platform.EnsuredSerials.Count,
+                "A controller failure must not retain the old canary dependency between KKT rows.");
+            AssertEqual(LmServiceProvisioningStatus.Succeeded, result.Items[0].Status,
+                "The first independent controller must succeed.");
+            AssertEqual(LmServiceProvisioningStatus.Failed, result.Items[1].Status,
+                "Only the injected controller must fail.");
+            AssertEqual(LmServiceProvisioningStatus.Succeeded, result.Items[2].Status,
+                "A later independent controller must still be attempted.");
+            AssertEqual(2, result.SchemaVersion,
+                "Direct-controller results must retain protocol schema v2.");
+        }
+
+        private static void DirectControllerReadinessRequiresListenersOwnedByServicePid()
+        {
+            FakeWindowsServiceApi services = new FakeWindowsServiceApi();
+            services.SetRecord(new WindowsServiceRecord
+            {
+                ServiceName = "esm-lm-controller-2",
+                State = WindowsServiceState.Running,
+                ProcessId = 4242
+            });
+            FakeDirectTcpListenerOwnerReader listeners = new FakeDirectTcpListenerOwnerReader();
+            listeners.SetOwners(50064, 4242);
+            listeners.SetOwners(5064, 4242);
+            DirectControllerReadinessProbe probe = new DirectControllerReadinessProbe(
+                services,
+                listeners);
+
+            AssertTrue(probe.Probe(2).IsReady,
+                "Both direct-controller listeners owned by the SCM service PID are ready.");
+            listeners.SetOwners(5064, 9999);
+            AssertFalse(probe.Probe(2).IsReady,
+                "A listener owned by any foreign PID must fail readiness.");
+        }
+
+        private static void DirectControllerProtocolV2AcceptsCanonicalBatch()
+        {
+            LmServiceProvisioningBatchRequest request =
+                CreateDirectControllerRequest(3, LmServiceOperation.EnsureDirectControllers);
+
+            ValidationResult validation = ProvisioningRequestValidator.Validate(request);
+
+            AssertTrue(validation.IsValid, validation.JoinMessages());
+            AssertEqual(2, request.SchemaVersion,
+                "Direct controller mutations require the new protocol schema.");
+            string original = request.PlanHash;
+            request.DirectControllers[1].Ordinal = 7;
+            AssertFalse(CanonicalLmPlanHasher.FixedTimeEqualsHex(
+                    original,
+                    CanonicalLmPlanHasher.Compute(request)),
+                "Every direct assignment field must participate in the canonical hash.");
+        }
+
+        private static void DirectControllerProtocolV2RejectsStaleSchemaAndDuplicates()
+        {
+            LmServiceProvisioningBatchRequest stale =
+                CreateDirectControllerRequest(1, LmServiceOperation.EnsureDirectControllers);
+            stale.SchemaVersion = 1;
+            stale.PlanHash = CanonicalLmPlanHasher.Compute(stale);
+            AssertFalse(ProvisioningRequestValidator.Validate(stale).IsValid,
+                "An old helper schema must reject a direct-controller request.");
+
+            LmServiceProvisioningBatchRequest duplicate =
+                CreateDirectControllerRequest(2, LmServiceOperation.EnsureDirectControllers);
+            duplicate.DirectControllers[1].KktSerial =
+                duplicate.DirectControllers[0].KktSerial;
+            duplicate.PlanHash = CanonicalLmPlanHasher.Compute(duplicate);
+            ValidationResult validation = ProvisioningRequestValidator.Validate(duplicate);
+            AssertFalse(validation.IsValid,
+                "A KKT or ordinal may appear only once in the direct plan.");
+            AssertContains(validation.JoinMessages(), "повтор");
+        }
+
+        private static void DirectControllerProtocolExposesNoPathsCommandsOrSecrets()
+        {
+            Type[] protocolTypes =
+            {
+                typeof(DirectControllerProvisioningItemRequest),
+                typeof(LmServiceProvisioningBatchRequest)
+            };
+            for (int typeIndex = 0; typeIndex < protocolTypes.Length; typeIndex++)
+            {
+                PropertyInfo[] properties = protocolTypes[typeIndex].GetProperties();
+                for (int propertyIndex = 0; propertyIndex < properties.Length; propertyIndex++)
+                {
+                    string name = properties[propertyIndex].Name;
+                    AssertFalse(name.IndexOf("Path", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                name.IndexOf("Command", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                name.IndexOf("Argument", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                name.IndexOf("Password", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                name.IndexOf("Token", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                name.IndexOf("Secret", StringComparison.OrdinalIgnoreCase) >= 0,
+                        "Direct protocol must contain identity and ordinals only.");
+                }
+            }
+        }
+
         private static void OfficialControllerLocatorRequiresInstalledProductRegistration()
         {
             string root = CreateTemporaryDirectory();
@@ -1636,7 +1878,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             AssertEqual(14668016L, profile.ControllerBinary.ByteLength,
                 "The installed AMD64 controller binary length must be pinned exactly.");
             AssertEqual(
-                "0a25b29a39b100fe461eb3ffa06a6b18f2b474f337efdb9f7a9ca89740ffd0a",
+                "0a25b29a39b100fe461eb3ffa06a6b18f2b474f337efdba9f7a9ca89740ffd0a",
                 profile.ControllerBinary.Sha256,
                 "The installed AMD64 controller binary hash must be pinned exactly.");
             AssertFalse(string.Equals(
@@ -3829,6 +4071,166 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             }
         }
 
+        private static void DirectControllerProfileWritesIsolatedPortsWithoutCredentials()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                string officialRoot = Path.Combine(root, "official");
+                Directory.CreateDirectory(officialRoot);
+                File.WriteAllText(Path.Combine(officialRoot, "ca.crt"),
+                    "-----BEGIN CERTIFICATE-----\nfield-ca\n-----END CERTIFICATE-----\n",
+                    Encoding.ASCII);
+                File.WriteAllText(Path.Combine(officialRoot, "ca.pem"),
+                    "-----BEGIN PRIVATE KEY-----\nfield-key\n-----END PRIVATE KEY-----\n",
+                    Encoding.ASCII);
+                FakePathSafety paths = new FakePathSafety(true);
+                DirectControllerManifestStore manifests = new DirectControllerManifestStore(
+                    Path.Combine(root, "DirectControllers"),
+                    paths,
+                    null);
+                string environmentRoot = manifests.GetProfileEnvironmentRoot(2);
+                DirectControllerManifest manifest = DirectControllerManifest.Create(
+                    "00105700000001",
+                    "7701234567",
+                    2,
+                    "1.6.4.0",
+                    new string('a', 64),
+                    environmentRoot,
+                    Guid.NewGuid().ToString("N"),
+                    DirectControllerLifecycleState.Preparing);
+                DirectControllerProfileStore store = new DirectControllerProfileStore(
+                    ControllerCapabilityProfile.SupportedVersion1640(),
+                    manifests,
+                    new DirectControllerCaStager(
+                        ControllerCapabilityProfile.SupportedVersion1640(),
+                        new AtomicFileWriter(),
+                        paths,
+                        officialRoot),
+                    new AtomicFileWriter(),
+                    paths);
+
+                string configPath = store.PrepareClone(manifest);
+                string yaml = File.ReadAllText(configPath, Encoding.UTF8);
+
+                AssertContains(yaml, "gRPCPort: 50064");
+                AssertContains(yaml, "RESTPort: 5064");
+                AssertContains(yaml, "port: 6995");
+                AssertFalse(yaml.IndexOf("admin", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            yaml.IndexOf("password", StringComparison.OrdinalIgnoreCase) >= 0,
+                    "The local controller profile must not persist ESM binding credentials.");
+                string vendorRoot = Path.GetDirectoryName(configPath);
+                AssertTrue(File.Exists(Path.Combine(vendorRoot, "ca.crt")) &&
+                           File.Exists(Path.Combine(vendorRoot, "ca.pem")),
+                    "The isolated profile must receive the trusted CA pair.");
+                AssertFalse(File.Exists(Path.Combine(vendorRoot, "server.crt")) ||
+                            File.Exists(Path.Combine(vendorRoot, "server.pem")),
+                    "The vendor process must generate its own server identity on first start.");
+            }
+            finally
+            {
+                DeleteTestTreeWithReadOnlyFiles(root);
+            }
+        }
+
+        private static void WindowsDirectControllerPlatformCreatesAndRemovesExactClone()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                string officialRoot = Path.Combine(root, "official");
+                Directory.CreateDirectory(officialRoot);
+                File.WriteAllText(Path.Combine(officialRoot, "ca.crt"),
+                    "-----BEGIN CERTIFICATE-----\nfield-ca\n-----END CERTIFICATE-----\n",
+                    Encoding.ASCII);
+                File.WriteAllText(Path.Combine(officialRoot, "ca.pem"),
+                    "-----BEGIN PRIVATE KEY-----\nfield-key\n-----END PRIVATE KEY-----\n",
+                    Encoding.ASCII);
+                FakePathSafety paths = new FakePathSafety(true);
+                DirectControllerManifestStore manifests = new DirectControllerManifestStore(
+                    Path.Combine(root, "DirectControllers"),
+                    paths,
+                    null,
+                    Path.Combine(root, "ProgramData"));
+                ControllerCapabilityProfile profile =
+                    ControllerCapabilityProfile.SupportedVersion1640();
+                DirectControllerProfileStore profiles = new DirectControllerProfileStore(
+                    profile,
+                    manifests,
+                    new DirectControllerCaStager(
+                        profile,
+                        new AtomicFileWriter(),
+                        paths,
+                        officialRoot),
+                    new AtomicFileWriter(),
+                    paths);
+                FakeWindowsServiceApi services = new FakeWindowsServiceApi();
+                services.SetRecord(new WindowsServiceRecord
+                {
+                    ServiceName = "esm-lm-controller",
+                    ImagePath = "\"C:\\Program Files\\ESP\\LMController\\bin\\lmcontroller.exe\"",
+                    AccountName = "LocalSystem",
+                    Dependencies = new List<string>(),
+                    StartMode = WindowsServiceStartMode.AutoStart,
+                    ErrorControl = WindowsServiceErrorControl.Ignore,
+                    ServiceSidType = WindowsServiceSidType.None,
+                    RecoveryPolicy = new WindowsServiceRecoveryPolicy(0, new int[0]),
+                    State = WindowsServiceState.Running,
+                    ProcessId = 100
+                });
+                WindowsDirectControllerPlatform platform = new WindowsDirectControllerPlatform(
+                    profile,
+                    new VerifiedControllerBinary
+                    {
+                        FullPath = @"C:\Program Files\ESP\LMController\bin\lmcontroller.exe",
+                        Version = profile.Version,
+                        Sha256 = profile.ControllerBinary.Sha256,
+                        SignerThumbprint = profile.ControllerBinary.SignerThumbprint,
+                        Machine = profile.ControllerBinary.Machine
+                    },
+                    manifests,
+                    profiles,
+                    services,
+                    new FakeDirectControllerReadiness(true));
+                DirectControllerProvisioningItemRequest item =
+                    CreateDirectControllerRequest(
+                        2,
+                        LmServiceOperation.EnsureDirectControllers).DirectControllers[1];
+                string operationId = Guid.NewGuid().ToString("N");
+
+                LmServiceProvisioningItemResult ensured = platform.Ensure(
+                    item,
+                    operationId,
+                    "S-1-5-21-111-222-333-1001");
+
+                AssertEqual(LmServiceProvisioningStatus.Succeeded, ensured.Status,
+                    "The exact direct clone must become ready.");
+                AssertEqual("esm-lm-controller-2", services.LastDefinition.ServiceName,
+                    "SCM must receive the derived clone identity.");
+                DirectControllerManifest manifest = manifests.Read(item.KktSerial);
+                AssertEqual(DirectControllerLifecycleState.Ready, manifest.State,
+                    "Only a ready clone may be projected as ready in inventory.");
+                item.ExpectedManifestSha256 = manifests.ComputeFingerprint(manifest);
+
+                LmServiceProvisioningItemResult removed = platform.Remove(
+                    item,
+                    Guid.NewGuid().ToString("N"),
+                    "S-1-5-21-111-222-333-1001");
+
+                AssertEqual(LmServiceProvisioningStatus.RemovedLocalArtifactsBindingRetained,
+                    removed.Status,
+                    "Controller cleanup must explicitly retain the ESM binding for caller cleanup.");
+                AssertTrue(services.Query("esm-lm-controller-2") == null,
+                    "The owned clone service must be absent after confirmed removal.");
+                AssertTrue(manifests.Read(item.KktSerial) == null,
+                    "The owned manifest must be removed only after SCM absence.");
+            }
+            finally
+            {
+                DeleteTestTreeWithReadOnlyFiles(root);
+            }
+        }
+
         private static void LmProfileAdapterDetectsUnsupportedControllerVersion()
         {
             string root = CreateTemporaryDirectory();
@@ -4596,6 +4998,34 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             return request;
         }
 
+        private static LmServiceProvisioningBatchRequest CreateDirectControllerRequest(
+            int count,
+            LmServiceOperation operation)
+        {
+            LmServiceProvisioningBatchRequest request = new LmServiceProvisioningBatchRequest
+            {
+                SchemaVersion = 2,
+                Operation = operation,
+                OperationId = Guid.NewGuid().ToString("N"),
+                InitiatingSid = "S-1-5-21-111-222-333-1001"
+            };
+            for (int index = 0; index < count; index++)
+            {
+                request.DirectControllers.Add(new DirectControllerProvisioningItemRequest
+                {
+                    KktSerial = (105700000001L + index).ToString("00000000000000"),
+                    Inn = (1000000002L + (index * 1000000001L)).ToString("0000000000"),
+                    Ordinal = index + 1,
+                    ExpectedManifestSha256 = operation ==
+                        LmServiceOperation.EnsureDirectControllers
+                        ? null
+                        : new string((char)('a' + index), 64)
+                });
+            }
+            request.PlanHash = CanonicalLmPlanHasher.Compute(request);
+            return request;
+        }
+
         private static LmServiceProvisioningBatchRequest CreateInstallerRequest()
         {
             LmServiceProvisioningBatchRequest request = CreateRequest(LmServiceOperation.InstallControllerVersion);
@@ -5248,6 +5678,58 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             }
         }
 
+        private sealed class FakeDirectControllerPlatform : IDirectControllerPlatform
+        {
+            internal FakeDirectControllerPlatform()
+            {
+                EnsuredSerials = new List<string>();
+            }
+
+            internal IList<string> EnsuredSerials { get; private set; }
+            internal string FailSerial { get; set; }
+
+            public LmServiceProvisioningItemResult Ensure(
+                DirectControllerProvisioningItemRequest item,
+                string operationId,
+                string initiatingSid)
+            {
+                EnsuredSerials.Add(item.KktSerial);
+                if (string.Equals(item.KktSerial, FailSerial, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException("injected direct controller failure");
+                }
+                return Success(item, "Контроллер запущен.");
+            }
+
+            public LmServiceProvisioningItemResult Restart(
+                DirectControllerProvisioningItemRequest item,
+                string operationId,
+                string initiatingSid)
+            {
+                return Success(item, "Контроллер перезапущен.");
+            }
+
+            public LmServiceProvisioningItemResult Remove(
+                DirectControllerProvisioningItemRequest item,
+                string operationId,
+                string initiatingSid)
+            {
+                return Success(item, "Контроллер удалён.");
+            }
+
+            private static LmServiceProvisioningItemResult Success(
+                DirectControllerProvisioningItemRequest item,
+                string message)
+            {
+                return new LmServiceProvisioningItemResult
+                {
+                    KktSerial = item.KktSerial,
+                    Status = LmServiceProvisioningStatus.Succeeded,
+                    Message = message
+                };
+            }
+        }
+
         private sealed class FakeLmRemovalPlatform : ILmServiceRemovalPlatform
         {
             internal FakeLmRemovalPlatform()
@@ -5851,57 +6333,105 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
         private sealed class FakeWindowsServiceApi : IWindowsServiceApi
         {
-            private WindowsServiceRecord _record;
+            private readonly Dictionary<string, WindowsServiceRecord> _records =
+                new Dictionary<string, WindowsServiceRecord>(StringComparer.Ordinal);
 
             internal WindowsServiceDefinition LastDefinition { get; private set; }
 
+            internal void SetRecord(WindowsServiceRecord record)
+            {
+                _records[record.ServiceName] = record;
+            }
+
             public WindowsServiceRecord Query(string serviceName)
             {
-                if (_record == null ||
-                    !string.Equals(_record.ServiceName, serviceName, StringComparison.Ordinal))
-                {
-                    return null;
-                }
-                return _record;
+                WindowsServiceRecord record;
+                return _records.TryGetValue(serviceName, out record) ? record : null;
             }
 
             public void Create(WindowsServiceDefinition definition)
             {
                 LastDefinition = definition;
-                _record = WindowsServiceRecord.FromDefinition(definition);
+                _records[definition.ServiceName] =
+                    WindowsServiceRecord.FromDefinition(definition);
             }
 
             public void Update(WindowsServiceDefinition definition)
             {
                 LastDefinition = definition;
-                _record = WindowsServiceRecord.FromDefinition(definition);
+                _records[definition.ServiceName] =
+                    WindowsServiceRecord.FromDefinition(definition);
             }
 
             public void Start(string serviceName)
             {
                 EnsureExact(serviceName);
-                _record.State = WindowsServiceState.Running;
+                _records[serviceName].State = WindowsServiceState.Running;
             }
 
             public void RequestStop(string serviceName)
             {
                 EnsureExact(serviceName);
-                _record.State = WindowsServiceState.Stopped;
+                _records[serviceName].State = WindowsServiceState.Stopped;
+                _records[serviceName].ProcessId = 0;
             }
 
             public void Delete(string serviceName)
             {
                 EnsureExact(serviceName);
-                _record = null;
+                _records.Remove(serviceName);
             }
 
             private void EnsureExact(string serviceName)
             {
-                if (_record == null ||
-                    !string.Equals(_record.ServiceName, serviceName, StringComparison.Ordinal))
+                if (!_records.ContainsKey(serviceName))
                 {
                     throw new InvalidOperationException("unexpected service identity");
                 }
+            }
+        }
+
+        private sealed class FakeDirectTcpListenerOwnerReader : ITcpListenerOwnerReader
+        {
+            private readonly Dictionary<int, IList<int>> _owners =
+                new Dictionary<int, IList<int>>();
+
+            internal void SetOwners(int port, params int[] processIds)
+            {
+                _owners[port] = new List<int>(processIds);
+            }
+
+            public IList<int> FindListenerProcessIds(int port)
+            {
+                IList<int> result;
+                return _owners.TryGetValue(port, out result)
+                    ? new List<int>(result)
+                    : new List<int>();
+            }
+        }
+
+        private sealed class FakeDirectControllerReadiness :
+            IDirectControllerReadinessProbe
+        {
+            private readonly bool _ready;
+
+            internal FakeDirectControllerReadiness(bool ready)
+            {
+                _ready = ready;
+            }
+
+            public LmReadinessResult WaitUntilReady(
+                int ordinal,
+                int timeoutMilliseconds)
+            {
+                return _ready
+                    ? LmReadinessResult.Ready()
+                    : LmReadinessResult.Failed("injected readiness failure");
+            }
+
+            public bool WaitUntilStopped(int ordinal, int timeoutMilliseconds)
+            {
+                return true;
             }
         }
 

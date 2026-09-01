@@ -79,6 +79,27 @@ namespace EsmTspiot.Shared.Services
                 }
                 Append(canonical, "license-notice", LocalModuleLicenseNotice);
             }
+            else if (IsDirectControllerOperation(request.Operation))
+            {
+                int count = request.DirectControllers == null
+                    ? 0
+                    : request.DirectControllers.Count;
+                Append(canonical, "direct-count", count.ToString(CultureInfo.InvariantCulture));
+                for (int index = 0; index < count; index++)
+                {
+                    DirectControllerProvisioningItemRequest item =
+                        request.DirectControllers[index];
+                    Append(canonical, "direct-index", index.ToString(CultureInfo.InvariantCulture));
+                    Append(canonical, "direct-kkt", item == null ? null : item.KktSerial);
+                    Append(canonical, "direct-inn", item == null ? null : item.Inn);
+                    Append(canonical, "direct-ordinal", item == null
+                        ? null
+                        : item.Ordinal.ToString(CultureInfo.InvariantCulture));
+                    Append(canonical, "direct-manifest", item == null
+                        ? null
+                        : item.ExpectedManifestSha256);
+                }
+            }
 
             using (SHA256 algorithm = SHA256.Create())
             {
@@ -246,6 +267,14 @@ namespace EsmTspiot.Shared.Services
             {
                 return "<invalid>";
             }
+        }
+
+        private static bool IsDirectControllerOperation(LmServiceOperation operation)
+        {
+            return operation == LmServiceOperation.EnsureDirectControllers ||
+                operation == LmServiceOperation.RestartDirectController ||
+                operation == LmServiceOperation.RemoveDirectController ||
+                operation == LmServiceOperation.RemoveAllDirectControllers;
         }
 
         private static void Append(StringBuilder canonical, string key, string value)

@@ -22,7 +22,9 @@ namespace EsmTspiot.ServiceProvisioner
                 return result;
             }
 
-            if (request.SchemaVersion != CurrentSchemaVersion)
+            bool directOperation = IsDirectControllerOperation(request.Operation);
+            int expectedSchemaVersion = directOperation ? 2 : CurrentSchemaVersion;
+            if (request.SchemaVersion != expectedSchemaVersion)
             {
                 result.Add("Версия схемы запроса не поддерживается.");
             }
@@ -63,6 +65,10 @@ namespace EsmTspiot.ServiceProvisioner
             {
                 ValidateManagedLocalModules(request, result);
             }
+            else if (directOperation)
+            {
+                ValidateDirectControllers(request, result);
+            }
             else
             {
                 result.Add("Операция помощника не поддерживается.");
@@ -77,7 +83,85 @@ namespace EsmTspiot.ServiceProvisioner
                 }
             }
 
+            if (!directOperation && HasDirectControllerPayload(request))
+            {
+                result.Add("Операция старой схемы не принимает план прямых контроллеров.");
+            }
+
             return result;
+        }
+
+        private static void ValidateDirectControllers(
+            LmServiceProvisioningBatchRequest request,
+            ValidationResult result)
+        {
+            if (HasItems(request) || request.InstallerSelection != null ||
+                request.RemovalConfirmation != null || request.CleanupConfirmation != null ||
+                HasRemovalConfirmations(request) || HasLocalModulePayload(request))
+            {
+                result.Add("Операция прямых контроллеров не принимает payload старой схемы.");
+            }
+
+            int count = request.DirectControllers == null
+                ? 0
+                : request.DirectControllers.Count;
+            bool single = request.Operation == LmServiceOperation.RestartDirectController ||
+                request.Operation == LmServiceOperation.RemoveDirectController;
+            if ((single && count != 1) || (!single && (count < 1 || count > MaximumBatchSize)))
+            {
+                result.Add(single
+                    ? "Операция должна содержать ровно один прямой контроллер."
+                    : "План прямых контроллеров должен содержать от 1 до 32 ККТ.");
+                return;
+            }
+
+            HashSet<string> serials = new HashSet<string>(StringComparer.Ordinal);
+            HashSet<int> ordinals = new HashSet<int>();
+            int previousOrdinal = 0;
+            for (int index = 0; index < count; index++)
+            {
+                DirectControllerProvisioningItemRequest item =
+                    request.DirectControllers[index];
+                if (item == null)
+                {
+                    result.Add("Строка прямого контроллера не задана.");
+                    continue;
+                }
+                if (!IsAsciiDigits(item.KktSerial, 14))
+                {
+                    result.Add("Серийный номер ККТ прямого контроллера неверен.");
+                }
+                if (!serials.Add(item.KktSerial ?? string.Empty))
+                {
+                    result.Add("ККТ повторяется в плане прямых контроллеров.");
+                }
+                if (!IsAsciiDigits(item.Inn, 10) && !IsAsciiDigits(item.Inn, 12))
+                {
+                    result.Add("ИНН прямого контроллера должен содержать 10 или 12 ASCII-цифр.");
+                }
+                ValidateOrdinal(item.Ordinal, "контроллера", ordinals, result);
+                if (!single && item.Ordinal <= previousOrdinal)
+                {
+                    result.Add("Прямые контроллеры должны быть отсортированы по номеру.");
+                }
+                previousOrdinal = item.Ordinal;
+
+                bool ensure = request.Operation == LmServiceOperation.EnsureDirectControllers;
+                if (ensure && !string.IsNullOrEmpty(item.ExpectedManifestSha256))
+                {
+                    result.Add("Создание прямого контроллера не принимает отпечаток старого манифеста.");
+                }
+                if (!ensure && !IsHex(item.ExpectedManifestSha256, 64))
+                {
+                    result.Add("Для изменения прямого контроллера нужен отпечаток показанного манифеста.");
+                }
+            }
+            if (request.Operation == LmServiceOperation.EnsureDirectControllers &&
+                count > 0 && request.DirectControllers[0] != null &&
+                request.DirectControllers[0].Ordinal != 1)
+            {
+                result.Add("Полный план прямых контроллеров должен начинаться со штатной службы.");
+            }
         }
 
         internal static ValidationResult ValidateInstallerSelection(
@@ -695,6 +779,20 @@ namespace EsmTspiot.ServiceProvisioner
         {
             return request.LocalModuleInstallerSelection != null ||
                 (request.ManagedLocalModules != null && request.ManagedLocalModules.Count > 0);
+        }
+
+        private static bool HasDirectControllerPayload(
+            LmServiceProvisioningBatchRequest request)
+        {
+            return request.DirectControllers != null && request.DirectControllers.Count > 0;
+        }
+
+        private static bool IsDirectControllerOperation(LmServiceOperation operation)
+        {
+            return operation == LmServiceOperation.EnsureDirectControllers ||
+                operation == LmServiceOperation.RestartDirectController ||
+                operation == LmServiceOperation.RemoveDirectController ||
+                operation == LmServiceOperation.RemoveAllDirectControllers;
         }
 
         private static bool IsKnownSessionKind(ManagedProvisioningSessionKind kind)

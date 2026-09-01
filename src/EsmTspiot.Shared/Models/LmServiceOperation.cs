@@ -18,6 +18,14 @@ namespace EsmTspiot.Shared.Models
         [EnumMember]
         RemoveAllManaged = 5,
         [EnumMember]
-        EnsureManagedLocalModules = 6
+        EnsureManagedLocalModules = 6,
+        [EnumMember]
+        EnsureDirectControllers = 7,
+        [EnumMember]
+        RestartDirectController = 8,
+        [EnumMember]
+        RemoveDirectController = 9,
+        [EnumMember]
+        RemoveAllDirectControllers = 10
     }
 }

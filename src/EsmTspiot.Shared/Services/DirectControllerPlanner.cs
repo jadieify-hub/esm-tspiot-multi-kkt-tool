@@ -6,8 +6,6 @@ namespace EsmTspiot.Shared.Services
 {
     public static class DirectControllerPlanner
     {
-        private const int MaximumOrdinal = 32;
-
         public static DirectControllerPlan Build(
             IList<LmGatewayKkt> kkts,
             IList<DirectControllerAssignment> savedAssignments,
@@ -202,18 +200,18 @@ namespace EsmTspiot.Shared.Services
         {
             if (item == null || !IsAsciiDigits(Trim(item.KktSerial), 14) ||
                 !IsInn(Trim(item.KktInn)) || item.Ordinal < 1 ||
-                item.Ordinal > MaximumOrdinal)
+                item.Ordinal > DirectControllerIdentity.MaximumOrdinal)
             {
                 return false;
             }
-            return item.Role == RoleForOrdinal(item.Ordinal) &&
+            return item.Role == DirectControllerIdentity.RoleForOrdinal(item.Ordinal) &&
                 string.Equals(
                     Trim(item.ServiceName),
-                    ServiceNameForOrdinal(item.Ordinal),
+                    DirectControllerIdentity.ServiceNameForOrdinal(item.Ordinal),
                     StringComparison.Ordinal) &&
-                item.GrpcPort == GrpcPortForOrdinal(item.Ordinal) &&
-                item.RestPort == RestPortForOrdinal(item.Ordinal) &&
-                item.FutureLocalModulePort == FutureLmPortForOrdinal(item.Ordinal);
+                item.GrpcPort == DirectControllerIdentity.GrpcPortForOrdinal(item.Ordinal) &&
+                item.RestPort == DirectControllerIdentity.RestPortForOrdinal(item.Ordinal) &&
+                item.FutureLocalModulePort == DirectControllerIdentity.FutureLmPortForOrdinal(item.Ordinal);
         }
 
         private static bool HasVerifiedOfficialService(
@@ -304,7 +302,7 @@ namespace EsmTspiot.Shared.Services
             IList<DirectControllerServiceInventoryItem> services,
             IList<TcpListenerSnapshotItem> listeners)
         {
-            for (int ordinal = 1; ordinal <= MaximumOrdinal; ordinal++)
+            for (int ordinal = 1; ordinal <= DirectControllerIdentity.MaximumOrdinal; ordinal++)
             {
                 if (reservedOrdinals.Contains(ordinal) ||
                     HasServiceNameConflict(ordinal, services) ||
@@ -321,7 +319,7 @@ namespace EsmTspiot.Shared.Services
             int ordinal,
             IList<DirectControllerServiceInventoryItem> services)
         {
-            string expected = ServiceNameForOrdinal(ordinal);
+            string expected = DirectControllerIdentity.ServiceNameForOrdinal(ordinal);
             int matches = 0;
             for (int index = 0; index < services.Count; index++)
             {
@@ -346,9 +344,9 @@ namespace EsmTspiot.Shared.Services
             int ordinal,
             IList<TcpListenerSnapshotItem> listeners)
         {
-            int grpc = GrpcPortForOrdinal(ordinal);
-            int rest = RestPortForOrdinal(ordinal);
-            int futureLm = FutureLmPortForOrdinal(ordinal);
+            int grpc = DirectControllerIdentity.GrpcPortForOrdinal(ordinal);
+            int rest = DirectControllerIdentity.RestPortForOrdinal(ordinal);
+            int futureLm = DirectControllerIdentity.FutureLmPortForOrdinal(ordinal);
             for (int index = 0; index < listeners.Count; index++)
             {
                 TcpListenerSnapshotItem listener = listeners[index];
@@ -371,11 +369,11 @@ namespace EsmTspiot.Shared.Services
                 KktSerial = kkt.KktSerial,
                 KktInn = kkt.KktInn,
                 Ordinal = ordinal,
-                Role = RoleForOrdinal(ordinal),
-                ServiceName = ServiceNameForOrdinal(ordinal),
-                GrpcPort = GrpcPortForOrdinal(ordinal),
-                RestPort = RestPortForOrdinal(ordinal),
-                FutureLocalModulePort = FutureLmPortForOrdinal(ordinal)
+                Role = DirectControllerIdentity.RoleForOrdinal(ordinal),
+                ServiceName = DirectControllerIdentity.ServiceNameForOrdinal(ordinal),
+                GrpcPort = DirectControllerIdentity.GrpcPortForOrdinal(ordinal),
+                RestPort = DirectControllerIdentity.RestPortForOrdinal(ordinal),
+                FutureLocalModulePort = DirectControllerIdentity.FutureLmPortForOrdinal(ordinal)
             };
         }
 
@@ -428,35 +426,6 @@ namespace EsmTspiot.Shared.Services
         {
             return assignment.GrpcPort == port || assignment.RestPort == port ||
                 assignment.FutureLocalModulePort == port;
-        }
-
-        private static DirectControllerRole RoleForOrdinal(int ordinal)
-        {
-            return ordinal == 1
-                ? DirectControllerRole.OfficialBase
-                : DirectControllerRole.DirectClone;
-        }
-
-        private static string ServiceNameForOrdinal(int ordinal)
-        {
-            return ordinal == 1
-                ? "esm-lm-controller"
-                : "esm-lm-controller-" + ordinal.ToString();
-        }
-
-        private static int GrpcPortForOrdinal(int ordinal)
-        {
-            return 50062 + ordinal;
-        }
-
-        private static int RestPortForOrdinal(int ordinal)
-        {
-            return 5062 + ordinal;
-        }
-
-        private static int FutureLmPortForOrdinal(int ordinal)
-        {
-            return 4995 + (1000 * ordinal);
         }
 
         private static bool IsInn(string value)
