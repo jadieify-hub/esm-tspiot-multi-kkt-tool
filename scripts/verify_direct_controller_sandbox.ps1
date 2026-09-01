@@ -2,6 +2,20 @@
 param()
 
 $ErrorActionPreference = 'Stop'
+$repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$gateLogPath = Join-Path $repositoryRoot 'artifacts\release\direct-controller-sandbox.log'
+trap {
+    $failure = "DIRECT_CONTROLLER_SANDBOX_FAILED`r`n" +
+        [DateTime]::UtcNow.ToString('o') + "`r`n" +
+        $_.Exception.ToString() + "`r`n"
+    [IO.Directory]::CreateDirectory((Split-Path -Parent $gateLogPath)) | Out-Null
+    [IO.File]::WriteAllText(
+        $gateLogPath,
+        $failure,
+        [Text.UTF8Encoding]::new($true))
+    Write-Error $_.Exception.Message
+    exit 1
+}
 $expectedLength = 14668016
 $expectedSha256 = '0A25B29A39B100FE461EB3FFA06A6B18F2B474F337EFDBA9F7A9CA89740FFD0A'
 $expectedThumbprint = '1CD26372850FE30F1559821CF5D318591695271A'
@@ -65,21 +79,61 @@ settings:
     [IO.File]::WriteAllText($Path, $content, [Text.UTF8Encoding]::new($false))
 }
 
+function Remove-VerifiedStaleSandboxService {
+    param([string]$Name, [int]$Ordinal, [string]$ExpectedBinary)
+    $record = Get-CimInstance Win32_Service -Filter "Name='$Name'"
+    if ($null -eq $record) { return }
+    $expectedDisplay = "MultiKKT sandbox controller $Ordinal"
+    $serviceKey = "HKLM:\SYSTEM\CurrentControlSet\Services\$Name"
+    $environment = @((Get-ItemProperty -LiteralPath $serviceKey -Name Environment -ErrorAction Stop).Environment)
+    $programDataEntry = @($environment | Where-Object { $_ -like 'ProgramData=*' })
+    if ($record.DisplayName -ne $expectedDisplay -or
+        [IO.Path]::GetFullPath(([string]$record.PathName).Trim('"')) -ne $ExpectedBinary -or
+        $programDataEntry.Count -ne 1) {
+        throw "Sandbox service name is occupied by an unrecognized service: $Name"
+    }
+    $environmentRoot = [IO.Path]::GetFullPath($programDataEntry[0].Substring('ProgramData='.Length))
+    $expectedPrefix = $sandboxBase.TrimEnd('\') + '\'
+    if (-not $environmentRoot.StartsWith($expectedPrefix, [StringComparison]::OrdinalIgnoreCase) -or
+        [IO.Path]::GetFileName($environmentRoot) -ne "slot-$Ordinal") {
+        throw "Sandbox service has an unrecognized profile root: $Name"
+    }
+    & "$env:SystemRoot\System32\sc.exe" stop $Name 2>&1 | Out-Null
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    do {
+        Start-Sleep -Milliseconds 250
+        $record = Get-CimInstance Win32_Service -Filter "Name='$Name'" -ErrorAction SilentlyContinue
+    } while ($null -ne $record -and [int]$record.ProcessId -ne 0 -and [DateTime]::UtcNow -lt $deadline)
+    if ($null -ne $record -and [int]$record.ProcessId -ne 0) {
+        throw "Stale sandbox service did not stop: $Name"
+    }
+    Invoke-Sc @('delete', $Name) | Out-Null
+    $deleteDeadline = [DateTime]::UtcNow.AddSeconds(15)
+    do {
+        Start-Sleep -Milliseconds 250
+        $record = Get-CimInstance Win32_Service -Filter "Name='$Name'" -ErrorAction SilentlyContinue
+    } while ($null -ne $record -and [DateTime]::UtcNow -lt $deleteDeadline)
+    if ($null -ne $record) { throw "Stale sandbox service remains registered: $Name" }
+    if (Test-Path -LiteralPath $environmentRoot) {
+        Remove-Item -LiteralPath $environmentRoot -Recurse -Force
+    }
+}
+
 function Wait-CloneReady {
     param([string]$Name, [int]$Ordinal, [string]$Profile)
     $deadline = [DateTime]::UtcNow.AddSeconds(45)
     do {
         Start-Sleep -Milliseconds 500
         $record = Get-CimInstance Win32_Service -Filter "Name='$Name'"
-        $pid = if ($null -eq $record) { 0 } else { [int]$record.ProcessId }
+        $servicePid = if ($null -eq $record) { 0 } else { [int]$record.ProcessId }
         $grpc = 50062 + $Ordinal
         $rest = 5062 + $Ordinal
         $listeners = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
-            Where-Object { $_.LocalPort -in @($grpc, $rest) -and $_.OwningProcess -eq $pid })
+            Where-Object { $_.LocalPort -in @($grpc, $rest) -and $_.OwningProcess -eq $servicePid })
         $certificatesReady = (Test-Path -LiteralPath (Join-Path $Profile 'server.crt') -PathType Leaf) -and
             (Test-Path -LiteralPath (Join-Path $Profile 'server.pem') -PathType Leaf)
-        if ($pid -gt 0 -and $listeners.Count -eq 2 -and $certificatesReady) {
-            return $pid
+        if ($servicePid -gt 0 -and $listeners.Count -eq 2 -and $certificatesReady) {
+            return $servicePid
         }
     } while ([DateTime]::UtcNow -lt $deadline)
     throw "Sandbox controller did not become ready: $Name"
@@ -109,9 +163,7 @@ foreach ($caName in @('ca.crt', 'ca.pem')) {
 }
 foreach ($ordinal in $ordinals) {
     $name = "esm-lm-controller-$ordinal"
-    if ($null -ne (Get-Service -Name $name -ErrorAction SilentlyContinue)) {
-        throw "Sandbox service name is already occupied: $name"
-    }
+    Remove-VerifiedStaleSandboxService -Name $name -Ordinal $ordinal -ExpectedBinary $binary
 }
 
 try {
@@ -136,10 +188,19 @@ try {
     if ($pids.Count -ne 2 -or $pids[0] -eq $pids[1]) {
         throw 'Sandbox controllers do not have distinct vendor processes.'
     }
-    Write-Host "DIRECT_CONTROLLER_SANDBOX_OK PIDs=$($pids -join ',') ordinals=$($ordinals -join ',')"
+    $success = "DIRECT_CONTROLLER_SANDBOX_OK`r`n" +
+        [DateTime]::UtcNow.ToString('o') + "`r`n" +
+        "PIDs=$($pids -join ',') ordinals=$($ordinals -join ',')`r`n"
+    [IO.Directory]::CreateDirectory((Split-Path -Parent $gateLogPath)) | Out-Null
+    [IO.File]::WriteAllText(
+        $gateLogPath,
+        $success,
+        [Text.UTF8Encoding]::new($true))
+    Write-Host $success.Trim()
 }
 finally {
-    foreach ($name in @($createdServices | Select-Object -Reverse)) {
+    for ($createdIndex = $createdServices.Count - 1; $createdIndex -ge 0; $createdIndex--) {
+        $name = $createdServices[$createdIndex]
         & "$env:SystemRoot\System32\sc.exe" stop $name 2>&1 | Out-Null
         $deadline = [DateTime]::UtcNow.AddSeconds(30)
         do {
@@ -155,5 +216,15 @@ finally {
             throw "Refusing to remove unexpected sandbox path: $resolved"
         }
         Remove-Item -LiteralPath $resolved -Recurse -Force
+    }
+    if (Test-Path -LiteralPath $sandboxBase) {
+        foreach ($emptyRunRoot in @(Get-ChildItem -LiteralPath $sandboxBase -Directory -Force)) {
+            if (@(Get-ChildItem -LiteralPath $emptyRunRoot.FullName -Force).Count -eq 0) {
+                Remove-Item -LiteralPath $emptyRunRoot.FullName -Force
+            }
+        }
+        if (@(Get-ChildItem -LiteralPath $sandboxBase -Force).Count -eq 0) {
+            Remove-Item -LiteralPath $sandboxBase -Force
+        }
     }
 }
