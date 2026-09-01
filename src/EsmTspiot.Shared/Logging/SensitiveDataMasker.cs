@@ -30,11 +30,107 @@ namespace EsmTspiot.Shared.Logging
                 return text ?? string.Empty;
             }
 
-            string masked = MaskJsonValues(text);
+            string masked = MaskYamlValues(text);
+            masked = MaskJsonValues(masked);
             return SensitiveKeyValuePattern.Replace(masked, delegate(Match match)
             {
                 return match.Groups["prefix"].Value + "***";
             });
+        }
+
+        private static string MaskYamlValues(string text)
+        {
+            string newline = text.IndexOf("\r\n", StringComparison.Ordinal) >= 0
+                ? "\r\n"
+                : "\n";
+            string normalized = text.Replace("\r\n", "\n");
+            string[] lines = normalized.Split(new[] { '\n' });
+            StringBuilder builder = new StringBuilder(text.Length);
+            int secretBlockIndent = -1;
+            for (int index = 0; index < lines.Length; index++)
+            {
+                string line = lines[index];
+                int indent = CountLeadingSpaces(line);
+                string trimmed = line.Trim();
+                if (secretBlockIndent >= 0)
+                {
+                    if (trimmed.Length == 0 || indent > secretBlockIndent)
+                    {
+                        if (index + 1 < lines.Length) builder.Append(newline);
+                        continue;
+                    }
+                    secretBlockIndent = -1;
+                }
+
+                string maskedLine;
+                bool startsBlock;
+                if (TryMaskYamlLine(line, out maskedLine, out startsBlock))
+                {
+                    builder.Append(maskedLine);
+                    if (startsBlock) secretBlockIndent = indent;
+                }
+                else
+                {
+                    builder.Append(line);
+                }
+                if (index + 1 < lines.Length) builder.Append(newline);
+            }
+            return builder.ToString();
+        }
+
+        private static bool TryMaskYamlLine(
+            string line,
+            out string masked,
+            out bool startsBlock)
+        {
+            masked = line;
+            startsBlock = false;
+            int indent = CountLeadingSpaces(line);
+            string content = line.Substring(indent);
+            if (content.Length == 0 || content[0] == '#' || content[0] == '-' ||
+                content[0] == '"' || content[0] == '\'')
+            {
+                return false;
+            }
+            int colon = content.IndexOf(':');
+            if (colon <= 0) return false;
+            string key = content.Substring(0, colon).Trim();
+            if (!IsSensitiveKey(key)) return false;
+            string value = content.Substring(colon + 1).TrimStart();
+            int comment = FindYamlComment(value);
+            string scalar = comment < 0 ? value : value.Substring(0, comment).TrimEnd();
+            string suffix = comment < 0
+                ? string.Empty
+                : " " + value.Substring(comment).TrimStart();
+            startsBlock = scalar == "|" || scalar == ">" ||
+                scalar.StartsWith("|-", StringComparison.Ordinal) ||
+                scalar.StartsWith("|+", StringComparison.Ordinal) ||
+                scalar.StartsWith(">-", StringComparison.Ordinal) ||
+                scalar.StartsWith(">+", StringComparison.Ordinal);
+            masked = new string(' ', indent) + content.Substring(0, colon + 1) +
+                " ***" + suffix;
+            return true;
+        }
+
+        private static int CountLeadingSpaces(string value)
+        {
+            int count = 0;
+            while (count < value.Length && value[count] == ' ') count++;
+            return count;
+        }
+
+        private static int FindYamlComment(string value)
+        {
+            bool single = false;
+            bool doubleQuoted = false;
+            for (int index = 0; index < value.Length; index++)
+            {
+                char current = value[index];
+                if (current == '\'' && !doubleQuoted) single = !single;
+                else if (current == '"' && !single) doubleQuoted = !doubleQuoted;
+                else if (current == '#' && !single && !doubleQuoted) return index;
+            }
+            return -1;
         }
 
         private static string MaskJsonValues(string text)
