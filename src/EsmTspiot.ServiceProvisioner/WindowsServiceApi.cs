@@ -77,7 +77,8 @@ namespace EsmTspiot.ServiceProvisioner
         {
             definition.Validate();
             string dependencies = ToMultiString(definition.Dependencies);
-            uint access = ServiceChangeConfig | ReadControl | WriteDac;
+            uint access = ServiceChangeConfig | ServiceStart | DeleteAccess |
+                ReadControl | WriteDac;
             using (SafeServiceHandle manager = OpenManager(ScManagerConnect | ScManagerCreateService))
             using (SafeServiceHandle service = CreateServiceW(
                 manager,
@@ -95,14 +96,32 @@ namespace EsmTspiot.ServiceProvisioner
                 null))
             {
                 ThrowIfInvalid(service);
-                ApplyAuxiliaryConfiguration(service, definition);
+                try
+                {
+                    ApplyAuxiliaryConfiguration(service, definition);
+                }
+                catch (Exception configurationException)
+                {
+                    if (!DeleteService(service))
+                    {
+                        Exception cleanupException = new Win32Exception(
+                            Marshal.GetLastWin32Error(),
+                            "Failed to roll back a partially configured service.");
+                        throw new InvalidOperationException(
+                            "Service creation failed and its partial SCM record could not be removed.",
+                            new AggregateException(
+                                configurationException,
+                                cleanupException));
+                    }
+                    throw;
+                }
             }
         }
 
         public void Update(WindowsServiceDefinition definition)
         {
             definition.Validate();
-            uint access = ServiceChangeConfig | ReadControl | WriteDac;
+            uint access = ServiceChangeConfig | ServiceStart | ReadControl | WriteDac;
             using (SafeServiceHandle manager = OpenManager(ScManagerConnect))
             using (SafeServiceHandle service = OpenRequiredService(manager, definition.ServiceName, access))
             {
