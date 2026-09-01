@@ -31,7 +31,7 @@ namespace EsmTspiot.WinForms.Shared
             _bindButton.Tag = "BindSelectedEsm";
             ConfigureButton(_removeServiceButton, "Удалить выбранный комплект");
             ConfigureButton(_removeAllServicesButton, "Удалить все контроллеры");
-            _removeAllServicesButton.Tag = "RemoveAllManaged";
+            _removeAllServicesButton.Tag = "RemoveAllDirectControllers";
             ConfigureButton(_cleanupButton, "Завершить очистку");
             ConfigureButton(_cancelButton, "Остановить");
             _refreshButton.Click += async delegate { await RefreshAsync(); };

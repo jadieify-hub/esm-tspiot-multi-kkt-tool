@@ -129,8 +129,8 @@ namespace EsmTspiot.WinForms.Shared
             _officialControllerStatusLabel.AutoSize = true;
             _officialControllerStatusLabel.Dock = DockStyle.Fill;
             _officialControllerStatusLabel.Text =
-                "Не найден. Для управляемых комплектов не используется; " +
-                "выберите официальный установщик выше.";
+                "Состояние установленного официального контроллера 1.6.4.0 " +
+                "будет проверено при обновлении.";
             group.Controls.Add(_officialControllerStatusLabel);
             return group;
         }
@@ -1068,23 +1068,24 @@ namespace EsmTspiot.WinForms.Shared
             if (!string.IsNullOrEmpty(_serviceInventoryWarning))
             {
                 _officialControllerStatusLabel.Text =
-                    "Состояние штатного контроллера прочитать не удалось. " +
-                    "Для управляемых комплектов он не используется.";
+                    "Предварительное состояние контроллера 1.6.4.0 прочитать не удалось. " +
+                    "Разовый helper повторит проверку перед настройкой.";
                 return;
             }
             LmServiceInventoryDisplay display = LmServiceInventoryDisplay.Create(_serviceInventory);
             if (display.OfficialControllers.Count == 0)
             {
                 _officialControllerStatusLabel.Text =
-                    "Не найден. Для управляемых комплектов не используется; " +
-                    "выберите официальный установщик выше.";
+                    "Официальный контроллер 1.6.4.0 не найден. " +
+                    "Установите его штатным пакетом поставщика.";
                 return;
             }
 
             LmServiceInventoryItem official = display.OfficialControllers[0];
             _officialControllerStatusLabel.Text =
-                "Установлен, состояние: " + GetServiceStatusText(official) + "." +
-                " Для управляемых комплектов эта служба не используется." +
+                "Официальный контроллер 1.6.4.0 установлен, состояние: " +
+                GetServiceStatusText(official) + "." +
+                " Для первой ККТ используется эта штатная служба." +
                 (display.OfficialControllers.Count > 1
                     ? " Внимание: найдено несколько штатных контроллеров."
                     : string.Empty);

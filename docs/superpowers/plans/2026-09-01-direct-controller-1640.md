@@ -65,7 +65,7 @@
 
 ### Task 7: Integration, documentation, and release
 
-- [ ] Add an elevated sandbox gate that creates two high-ordinal direct clones, verifies distinct vendor PIDs/listeners and generated `server.*`, then restores a clean baseline in `finally`.
-- [ ] Update README and field acceptance for ESM/controller 1.6.4.0 and future LM ports `5995+`.
-- [ ] Run the complete release matrix, LM/UI/security gates, Modern build, compact package, and seven-file content verification.
-- [ ] Produce the unpacked field folder, ZIP, and SHA-256 values; review the branch without pushing.
+- [x] Add an elevated sandbox gate that creates two high-ordinal direct clones, verifies distinct vendor PIDs/listeners and generated `server.*`, then restores a clean baseline in `finally`.
+- [x] Update README and field acceptance for ESM/controller 1.6.4.0 and future LM ports `5995+`.
+- [x] Run the complete release matrix, LM/UI/security gates, Modern build, compact package, and seven-file content verification.
+- [x] Produce the unpacked field folder, ZIP, and SHA-256 values; review the branch without pushing.

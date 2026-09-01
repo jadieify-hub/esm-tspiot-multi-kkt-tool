@@ -245,40 +245,56 @@ try {
     if ($copyLinkButtons.Count -ne 1) {
         throw "The support dialog must expose one Copy Link button."
     }
-    $clipboardBefore = [System.Windows.Forms.Clipboard]::GetDataObject()
-    try {
-        Invoke-ClipboardWriteWithRetry -Description "Before copy-link test." -Operation {
-            [System.Windows.Forms.Clipboard]::Clear()
+    $clipboardBefore = $null
+    $clipboardAvailable = $false
+    for ($clipboardReadAttempt = 1; $clipboardReadAttempt -le 10; $clipboardReadAttempt++) {
+        try {
+            $clipboardBefore = [System.Windows.Forms.Clipboard]::GetDataObject()
+            $clipboardAvailable = $true
+            break
         }
-        $copied = $false
-        for ($attempt = 1; $attempt -le 10; $attempt++) {
-            $copyLinkButtons[0].PerformClick()
-            try {
-                if ([System.Windows.Forms.Clipboard]::GetText() -eq $supportUrl) {
-                    $copied = $true
-                    break
-                }
-            }
-            catch [System.Runtime.InteropServices.ExternalException] {
-            }
+        catch [System.Runtime.InteropServices.ExternalException] {
             Start-Sleep -Milliseconds 50
         }
-        if (-not $copied) {
-            throw "Copy Link must place the exact donation URL on the clipboard."
-        }
     }
-    finally {
-        if ($null -ne $clipboardBefore) {
-            Invoke-ClipboardWriteWithRetry -Description "After copy-link test." -Operation {
-                [System.Windows.Forms.Clipboard]::SetDataObject(
-                    $clipboardBefore, $true)
-            }
-        }
-        else {
-            Invoke-ClipboardWriteWithRetry -Description "After copy-link test." -Operation {
+    if ($clipboardAvailable) {
+        try {
+            Invoke-ClipboardWriteWithRetry -Description "Before copy-link test." -Operation {
                 [System.Windows.Forms.Clipboard]::Clear()
             }
+            $copied = $false
+            for ($attempt = 1; $attempt -le 10; $attempt++) {
+                $copyLinkButtons[0].PerformClick()
+                try {
+                    if ([System.Windows.Forms.Clipboard]::GetText() -eq $supportUrl) {
+                        $copied = $true
+                        break
+                    }
+                }
+                catch [System.Runtime.InteropServices.ExternalException] {
+                }
+                Start-Sleep -Milliseconds 50
+            }
+            if (-not $copied) {
+                throw "Copy Link must place the exact donation URL on the clipboard."
+            }
         }
+        finally {
+            if ($null -ne $clipboardBefore) {
+                Invoke-ClipboardWriteWithRetry -Description "After copy-link test." -Operation {
+                    [System.Windows.Forms.Clipboard]::SetDataObject(
+                        $clipboardBefore, $true)
+                }
+            }
+            else {
+                Invoke-ClipboardWriteWithRetry -Description "After copy-link test." -Operation {
+                    [System.Windows.Forms.Clipboard]::Clear()
+                }
+            }
+        }
+    }
+    else {
+        Write-Warning "Clipboard is owned by another desktop process; copy-link interaction was skipped."
     }
     $offlineNotice = Get-Utf8Text(
         "0J7RgtGB0LrQsNC90LjRgNGD0LnRgtC1INC60L7QtCDRgtC10LvQtdGE0L7QvdC+0LwuINCf0YDQvtCz0YDQsNC80LzQsCDQv9GA0Lgg0Y3RgtC+0Lwg0L3QuNC60YPQtNCwINC90LUg0L7QsdGA0LDRidCw0LXRgtGB0Y8g0Lgg0L3QuNGH0LXQs9C+INC90LUg0L/QtdGA0LXQtNCw0ZHRgi4=")
@@ -374,7 +390,7 @@ try {
     }
     $manualNextStep = $manualNextStepField.GetValue($form)
     $expectedManualNextStep = Get-Utf8Text(
-        "0J/QvtGB0LvQtSDRiNCw0LPQsCAzINC/0LXRgNC10LnQtNC40YLQtSDQvdCwINCy0LrQu9Cw0LTQutGDIMKr0JvQnCDQp9CXwrsg4oCUINGC0LDQvCDRgdC+0LfQtNCw0Y7RgtGB0Y8g0LrQvtC90YLRgNC+0LvQu9C10YAg0Lgg0LvQvtC60LDQu9GM0L3Ri9C5INC80L7QtNGD0LvRjC4=")
+        "0J/QvtGB0LvQtSDRiNCw0LPQsCAzINC/0LXRgNC10LnQtNC40YLQtSDQvdCwINCy0LrQu9Cw0LTQutGDIMKr0JvQnCDQp9CXwrsg4oCUINGC0LDQvCDRgdC+0LfQtNCw0Y7RgtGB0Y8g0L3QtdC30LDQstC40YHQuNC80YvQtSDQutC+0L3RgtGA0L7Qu9C70LXRgNGLLiDQm9CcINCn0Jcg0YPRgdGC0LDQvdCw0LLQu9C40LLQsNC10YLRgdGPINC/0L7Qt9C20LUu")
     if ($manualNextStep.Text -ne $expectedManualNextStep) {
         throw "The manual flow does not explain the next LM setup step."
     }
@@ -411,29 +427,22 @@ try {
         throw "The visible execution log must be read-only."
     }
     $expectedAutomaticStatus = Get-Utf8Text(
-        "0KHRgtCw0YLRg9GBOiDQvdGD0LbQvdGLINC+0LHQsCDQv9Cw0LrQtdGC0LA=")
+        "0KHRgtCw0YLRg9GBOiDQs9C+0YLQvtCy0L4g0Log0YDQtdCz0LjRgdGC0YDQsNGG0LjQuA==")
     if ($automaticStatus.Text -ne $expectedAutomaticStatus) {
-        throw "Automatic mode must initially state that both official packages are required. Observed: '$($automaticStatus.Text)'."
+        throw "Automatic mode must initially be ready for registration without package selection. Observed: '$($automaticStatus.Text)'."
     }
-    $unusedByManagedText = Get-Utf8Text(
-        "0L3QtSDQuNGB0L/QvtC70YzQt9GD0LXRgtGB0Y8=")
-    if (-not $officialControllerStatus.Text.Contains($unusedByManagedText)) {
-        throw "The base controller status must explain that managed kits do not reuse it."
+    if (-not $officialControllerStatus.Text.Contains("1.6.4.0")) {
+        throw "The base controller status must describe the supported installed controller 1.6.4.0."
     }
 
-    $expectedPackageLabels = @(
-        (Get-Utf8Text(
-            "0KPRgdGC0LDQvdC+0LLRidC40Log0LrQvtC90YLRgNC+0LvQu9C10YDQsCDQm9CcINCn0Jc=")),
-        (Get-Utf8Text(
-            "TVNJINC70L7QutCw0LvRjNC90L7Qs9C+INC80L7QtNGD0LvRjyDQp9CX")),
-        (Get-Utf8Text(
-            "0JrQvtC80L/Qu9C10LrRgiA9INC60L7QvdGC0YDQvtC70LvQtdGAINCa0JrQoiArINCb0Jwg0KfQlyDQtNC70Y8g0LXRkSDQmNCd0J07INCa0JrQoiDQvtC00L3QvtCz0L4g0JjQndCdINC40YHQv9C+0LvRjNC30YPRjtGCINC+0LHRidC40Lkg0JvQnC4=")))
+    $expectedPackageLabels = @((Get-Utf8Text(
+        "0JjRgdC/0L7Qu9GM0LfRg9C10YLRgdGPINGD0YHRgtCw0L3QvtCy0LvQtdC90L3Ri9C5INC+0YTQuNGG0LjQsNC70YzQvdGL0Lkg0LrQvtC90YLRgNC+0LvQu9C10YAgMS42LjQuMC4g0JTQu9GPINC60LDQttC00L7QuSDQmtCa0KIg0YHQvtC30LTQsNGR0YLRgdGPINC+0YLQtNC10LvRjNC90LDRjyDRgdC70YPQttCx0LA7INCb0Jwg0KfQlyDQvNC+0LbQvdC+INGD0YHRgtCw0L3QvtCy0LjRgtGMINC4INC40L3QuNGG0LjQsNC70LjQt9C40YDQvtCy0LDRgtGMINC/0L7Qt9C20LUu")))
     $lmPageLabelTexts = @(Get-DescendantControls -Root $page |
         Where-Object { $_ -is [System.Windows.Forms.Label] } |
         ForEach-Object { $_.Text })
     foreach ($expectedPackageLabel in $expectedPackageLabels) {
         if ($expectedPackageLabel -notin $lmPageLabelTexts) {
-            throw "The LM package panel is missing a permanent operator label."
+            throw "The direct-controller panel is missing its permanent operator explanation."
         }
     }
     $setupHintField = $page.GetType().GetField(
@@ -1020,15 +1029,18 @@ try {
         throw "The installer action must expose the single automatic setup command."
     }
     $expectedCreateKitsText = Get-Utf8Text(
-        "0KHQvtC30LTQsNGC0YwgLyDQvtCx0L3QvtCy0LjRgtGMINC60L7QvNC/0LvQtdC60YLRiw==")
+        "0KHQvtC30LTQsNGC0YwgLyDQvtCx0L3QvtCy0LjRgtGMINC60L7QvdGC0YDQvtC70LvQtdGA0Ys=")
     if ($installButton.Text -ne $expectedCreateKitsText) {
-        throw "The LM-tab action must explain that existing kits are updated safely."
+        throw "The LM-tab action must create or update direct controllers."
     }
-    if ($removeAllButton.Tag -ne "RemoveAllManaged") {
-        throw "The LM controller page must expose the protected remove-all command."
+    if ($removeAllButton.Tag -ne "RemoveAllDirectControllers" -or
+        $removeAllButton.Text -ne (Get-Utf8Text(
+            "0KPQtNCw0LvQuNGC0Ywg0LLRgdC1INC60L7QvdGC0YDQvtC70LvQtdGA0Ys="))) {
+        throw "The controller page must expose the protected direct-controller remove-all command."
     }
-    if ($automaticInstallerButton.Tag -ne "ControllerInstallerPicker") {
-        throw "Automatic mode must expose controller installer selection before start."
+    if ($null -ne $automaticInstallerButton.Parent -or
+        $null -ne $automaticInstallerPath.Parent) {
+        throw "Automatic registration must not expose obsolete installer selection controls."
     }
     if ($automaticSetupButton.Tag -ne "EndToEndAutomaticSetup") {
         throw "Automatic mode must expose the end-to-end setup command."
@@ -1046,12 +1058,6 @@ try {
     $automaticCommands = $automaticGroup.Controls[0]
     $automaticCommands.PerformLayout()
     [System.Windows.Forms.Application]::DoEvents()
-    if ($automaticInstallerButton.Right -gt $automaticCommands.ClientSize.Width) {
-        throw "Automatic-mode installer controls overflow the normal page width."
-    }
-    if ($automaticInstallerPath.Width -lt 150) {
-        throw "Automatic-mode installer path is too narrow: $($automaticInstallerPath.Width)px."
-    }
     if ($automaticSetupButton.Right -gt $automaticCommands.ClientSize.Width) {
         throw "Automatic-mode setup button overflows the normal page width."
     }
@@ -1059,20 +1065,10 @@ try {
         throw "Automatic-mode stop button overflows the normal page width."
     }
 
-    $pathToSelectGap = $selectButton.Left - $pathBox.Right
-    $localPathToSelectGap = $selectLocalModuleButton.Left - $localModulePathBox.Right
-
-    if ($pathBox.Width -gt 400) {
-        throw "Installer path field is too wide at 1450px page width: $($pathBox.Width)px (maximum 400px)."
-    }
-    if ($pathToSelectGap -lt 0 -or $pathToSelectGap -gt 12) {
-        throw "Unexpected gap between installer path and Select button: ${pathToSelectGap}px."
-    }
-    if ($localModulePathBox.Width -gt 400) {
-        throw "Local-module MSI path field is too wide: $($localModulePathBox.Width)px."
-    }
-    if ($localPathToSelectGap -lt 0 -or $localPathToSelectGap -gt 12) {
-        throw "Unexpected gap between local-module path and Select button: ${localPathToSelectGap}px."
+    if ($null -ne $pathBox.Parent -or $null -ne $selectButton.Parent -or
+        $null -ne $localModulePathBox.Parent -or
+        $null -ne $selectLocalModuleButton.Parent) {
+        throw "The controller page must not expose obsolete vendor-package selectors."
     }
 
     $page.Size = [System.Drawing.Size]::new(748, 512)
@@ -1126,22 +1122,27 @@ try {
         (Join-Path $repoRoot "src\EsmTspiot.WinForms.Shared\LmGatewayPage.cs"))
     $pageServicesSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot "src\EsmTspiot.WinForms.Shared\LmGatewayPage.Services.cs"))
+    $directControllersSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot "src\EsmTspiot.WinForms.Shared\LmGatewayPage.DirectControllers.cs"))
     if ($mainFormSource -notmatch 'InstructionFileSelector\.SelectAvailable') {
         throw "Help must use the packaged Markdown field guide when no PDF exists."
     }
     if ([regex]::Matches(
             $mainFormSource,
-            'MessageBoxButtons\.YesNo,\s*MessageBoxIcon\.Warning,\s*MessageBoxDefaultButton\.Button2').Count -ne 3) {
+            'MessageBoxButtons\.YesNo,\s*MessageBoxIcon\.Warning,\s*MessageBoxDefaultButton\.Button2').Count -ne 4) {
         throw "Every destructive or warning Yes/No prompt must default to No."
     }
-    if ($pageServicesSource -notmatch '(?s)_completeStackProvisioner\.RunAsync.*?async delegate\(\s*int index,\s*LmServiceProvisioningItemResult item,.*?ExecuteCompleteAutomaticBindingAsync.*?LmGatewayCredentialDefaults\.Create') {
-        throw "Each prepared KKT, including the canary, must be bound before the complete automatic workflow advances."
+    if ($directControllersSource -notmatch '(?s)EnsureDirectControllersAsync\(.*?for \(int index = 0; index < provisioned\.Items\.Count; index\+\+\).*?ready\[item\.KktSerial\] = assignment' -or
+        $directControllersSource -notmatch 'DirectControllerSetupPolicy\.IsDeferredLocalModuleWarning') {
+        throw "Direct controller setup must process every KKT independently and defer LM 2025/2055 failures."
     }
-    if ($pageServicesSource -notmatch '(?s)await RefreshCoreAsync\(CancellationToken\.None\).*?_session\.ApplyOutcomeFallback\(automaticBindingOutcome\).*?FillRows\(null\).*?AreCompleteAutomaticBindingRowsSuccessful') {
-        throw "Automatic binding outcomes must remain visible after the final ESM readback refresh."
+    if ($mainFormSource -notmatch '(?s)DiscoverRegisteredKktsForAutomaticPlanAsync.*?MessageBoxButtons\.YesNo.*?RunDirectControllerSetupFromHostAsync' -or
+        $mainFormSource -notmatch 'controllersDeferred \|\| controllersComplete') {
+        throw "Registration must finish before an independently deferrable direct-controller phase."
     }
-    if ($pageServicesSource -notmatch '(?s)bool finalRefreshSucceeded\s*=\s*false.*?finalRefreshSucceeded\s*=\s*true.*?if \(finalRefreshSucceeded\).*?AreCompleteAutomaticBindingRowsSuccessful') {
-        throw "A best-effort final refresh must refine success only when the readback itself completed."
+    if ($directControllersSource -notmatch 'RemoveAllDirectControllersAsync' -or
+        $directControllersSource -notmatch 'esm-lm-controller') {
+        throw "Direct cleanup must preserve the official base controller service."
     }
     if ($mainFormSource -notmatch 'AutomaticRegistrationModeSelector\.Select' -or
         $mainFormSource -notmatch 'new AtolFptrConnectionProvider\(' -or
@@ -1172,10 +1173,9 @@ try {
     }
 
     Write-Host (
-        ("UI layout OK: wide path={0}px, path/select gap={1}px; " +
-        "normal button right={2}/{3}px; automatic path={4}px.") -f
-        $pathBox.Width, $pathToSelectGap,
-        $installButton.Right, $page.ClientSize.Width, $automaticInstallerPath.Width)
+        ("UI layout OK: direct-controller action right={0}/{1}px; " +
+        "obsolete package selectors are absent.") -f
+        $installButton.Right, $page.ClientSize.Width)
 }
 finally {
     if ($null -ne $supportDialogCloseTimer) {

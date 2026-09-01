@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [string]$Configuration = "Release",
-    [switch]$SkipPackage
+    [switch]$SkipPackage,
+    [switch]$RunElevatedSandbox
 )
 
 $ErrorActionPreference = "Stop"
@@ -99,6 +100,13 @@ try {
             "src\EsmTspiot.Modern.WinForms\EsmTspiot.Modern.WinForms.csproj",
             "-c", $Configuration
         ) "Modern build failed."
+
+        if ($RunElevatedSandbox) {
+            Invoke-Checked "powershell.exe" @(
+                "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                "scripts\verify_direct_controller_sandbox.ps1"
+            ) "Direct-controller elevated sandbox gate failed."
+        }
 
         if (-not $SkipPackage) {
             Invoke-Checked "powershell.exe" @(
