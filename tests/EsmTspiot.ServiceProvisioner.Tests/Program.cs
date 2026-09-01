@@ -59,6 +59,9 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Local module runtime deletion recovers every mutation boundary", LocalModuleRuntimeDeletionRecoversEveryMutationBoundary);
             Run("Official controller locator enforces protected allowed root", OfficialControllerLocatorEnforcesProtectedAllowedRoot);
             Run("Official controller locator enforces full product trust", OfficialControllerLocatorEnforcesFullProductTrust);
+            Run("Official controller locator requires installed product registration", OfficialControllerLocatorRequiresInstalledProductRegistration);
+            Run("Installed controller product requires exact registry values", InstalledControllerProductRequiresExactRegistryValues);
+            Run("Supported controller profile pins version 1.6.4.0", SupportedControllerProfilePinsVersion1640);
             Run("Official installer verifier locks verifies and stages atomically", OfficialInstallerVerifierLocksVerifiesAndStagesAtomically);
             Run("Official installer verifier rejects filename signer version or hash mismatch", OfficialInstallerVerifierRejectsFilenameSignerVersionOrHashMismatch);
             Run("Supported installer uses the fixed NSIS silent switch", SupportedInstallerUsesFixedNsisSilentSwitch);
@@ -1502,7 +1505,11 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 FakePathSafety safePaths = new FakePathSafety(true);
                 FakeFileTrustVerifier trust = new FakeFileTrustVerifier(profile.ControllerBinary, true);
 
-                OfficialControllerLocator locator = new OfficialControllerLocator(profile, trust, safePaths);
+                OfficialControllerLocator locator = new OfficialControllerLocator(
+                    profile,
+                    trust,
+                    safePaths,
+                    new FakeInstalledControllerProductVerifier(true));
                 VerifiedControllerBinaryResult result = locator.ResolveVerifiedBinary();
 
                 AssertTrue(result.IsSuccess, result.ErrorMessage);
@@ -1511,7 +1518,11 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
                 profile.ControllerRelativePath = @"..\outside\lmcontroller.exe";
                 VerifiedControllerBinaryResult escaped =
-                    new OfficialControllerLocator(profile, trust, safePaths).ResolveVerifiedBinary();
+                    new OfficialControllerLocator(
+                        profile,
+                        trust,
+                        safePaths,
+                        new FakeInstalledControllerProductVerifier(true)).ResolveVerifiedBinary();
                 AssertFalse(escaped.IsSuccess, "A relative path escaping the allowed root must fail closed.");
             }
             finally
@@ -1537,7 +1548,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 VerifiedControllerBinaryResult rejected = new OfficialControllerLocator(
                     profile,
                     rejectedTrust,
-                    new FakePathSafety(true)).ResolveVerifiedBinary();
+                    new FakePathSafety(true),
+                    new FakeInstalledControllerProductVerifier(true)).ResolveVerifiedBinary();
 
                 AssertFalse(rejected.IsSuccess, "A path match without full product trust must be rejected.");
                 AssertContains(rejected.ErrorMessage, "signer mismatch");
@@ -1552,6 +1564,114 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             {
                 Directory.Delete(root, true);
             }
+        }
+
+        private static void OfficialControllerLocatorRequiresInstalledProductRegistration()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                string binaryPath = Path.Combine(root, "bin", "lmcontroller.exe");
+                Directory.CreateDirectory(Path.GetDirectoryName(binaryPath));
+                File.WriteAllBytes(binaryPath, Encoding.ASCII.GetBytes("trusted-controller"));
+                ControllerCapabilityProfile profile = CreateTestCapabilityProfile(root, binaryPath, null);
+
+                VerifiedControllerBinaryResult result = new OfficialControllerLocator(
+                    profile,
+                    new FakeFileTrustVerifier(profile.ControllerBinary, true),
+                    new FakePathSafety(true)).ResolveVerifiedBinary();
+
+                AssertFalse(result.IsSuccess,
+                    "A trusted file without an exact installed-product record must fail closed.");
+                AssertContains(result.ErrorMessage, "installed product");
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        }
+
+        private static void InstalledControllerProductRequiresExactRegistryValues()
+        {
+            MethodInfo matches = typeof(WindowsInstalledControllerProductVerifier).GetMethod(
+                "MatchesProductValues",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            AssertTrue(matches != null,
+                "Registry value matching must be isolated for deterministic verification.");
+
+            ControllerCapabilityProfile profile =
+                ControllerCapabilityProfile.SupportedVersion1640();
+            object[] exact =
+            {
+                profile,
+                "ЕСП Контроллер ЛМ ЧЗ",
+                "1.6.4.0",
+                profile.InstallRoot + Path.DirectorySeparatorChar
+            };
+            AssertTrue((bool)matches.Invoke(null, exact),
+                "The exact installed-product tuple must be accepted.");
+
+            object[][] mismatches =
+            {
+                new object[] { profile, "Another product", "1.6.4.0", profile.InstallRoot },
+                new object[] { profile, "ЕСП Контроллер ЛМ ЧЗ", "1.6.3.2", profile.InstallRoot },
+                new object[] { profile, "ЕСП Контроллер ЛМ ЧЗ", "1.6.4.0", profile.InstallRoot + "-other" }
+            };
+            for (int index = 0; index < mismatches.Length; index++)
+            {
+                AssertFalse((bool)matches.Invoke(null, mismatches[index]),
+                    "Every installed-product value is part of the trust boundary.");
+            }
+        }
+
+        private static void SupportedControllerProfilePinsVersion1640()
+        {
+            ControllerCapabilityProfile profile =
+                ControllerCapabilityProfile.SupportedVersion1640();
+
+            AssertEqual("1.6.4.0", profile.Version,
+                "Only the characterized controller release may be selected.");
+            AssertEqual(14668016L, profile.ControllerBinary.ByteLength,
+                "The installed AMD64 controller binary length must be pinned exactly.");
+            AssertEqual(
+                "0a25b29a39b100fe461eb3ffa06a6b18f2b474f337efdb9f7a9ca89740ffd0a",
+                profile.ControllerBinary.Sha256,
+                "The installed AMD64 controller binary hash must be pinned exactly.");
+            AssertFalse(string.Equals(
+                    profile.ControllerBinary.Sha256,
+                    "9ce34999ea965e01d8328895bb1776e7b44edabf72fc51bee121ec5091746214",
+                    StringComparison.OrdinalIgnoreCase),
+                "The old 1.6.3.2 binary must be rejected even at the official path.");
+            AssertEqual(PeMachine.Amd64, profile.ControllerBinary.Machine,
+                "The installed controller is AMD64 even though the NSIS installer is I386.");
+            AssertEqual(string.Empty, profile.ControllerBinary.FileVersion,
+                "The installed controller binary intentionally has no file version metadata.");
+            AssertEqual(string.Empty, profile.ControllerBinary.ProductName,
+                "The installed controller binary intentionally has no product name metadata.");
+            AssertEqual("1CD26372850FE30F1559821CF5D318591695271A",
+                profile.ControllerBinary.SignerThumbprint,
+                "The existing JSC ESP code-signing identity must remain pinned.");
+            PropertyInfo serviceSidType = typeof(ControllerCapabilityProfile).GetProperty(
+                "ServiceSidType",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            AssertTrue(serviceSidType != null,
+                "The characterized official service SID type must be explicit in the profile.");
+            AssertEqual(
+                WindowsServiceSidType.None,
+                (WindowsServiceSidType)serviceSidType.GetValue(profile, null),
+                "The official 1.6.4.0 service has no SERVICE_SID_INFO value.");
+            AssertEqual("esm-lm-controller_1.6.4.0-windows-setup.exe", profile.Installer.FileName,
+                "The exact official 1.6.4.0 installer filename must be pinned.");
+            AssertEqual(11088544L, profile.Installer.ByteLength,
+                "The official 1.6.4.0 installer length must be pinned exactly.");
+            AssertEqual(
+                "2f97da8b93b6f7bc820385f5b70feab0ce7cbe2c6dbc25c0bca2348928bb3192",
+                profile.Installer.Sha256,
+                "The official 1.6.4.0 installer hash must be pinned exactly.");
+            AssertEqual("1.6.4.0", profile.Installer.FileVersion,
+                "The official package file version must identify release 1.6.4.0.");
+            AssertEqual(PeMachine.I386, profile.Installer.Machine,
+                "The characterized NSIS bootstrap executable is I386.");
         }
 
         private static void OfficialInstallerVerifierLocksVerifiesAndStagesAtomically()
@@ -1656,7 +1776,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
         private static void SupportedInstallerUsesFixedNsisSilentSwitch()
         {
             ControllerCapabilityProfile profile =
-                ControllerCapabilityProfile.SupportedVersion1632();
+                ControllerCapabilityProfile.SupportedVersion1640();
 
             AssertEqual("/S", profile.InstallerArguments,
                 "The verified NSIS package must use its case-sensitive silent switch.");
@@ -1840,7 +1960,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             string expectedPath = @"C:\Program Files\KRS\MultiKKT\Provisioner\EsmTspiot.ServiceProvisioner.exe";
             LmGatewaySupervisorService service = new LmGatewaySupervisorService(
                 api,
-                ControllerCapabilityProfile.SupportedVersion1632(),
+                ControllerCapabilityProfile.SupportedVersion1640(),
                 VerifiedProvisionerBinary.CreateForTesting(expectedPath));
 
             service.EnsureConfigured("00105700000001");
@@ -3653,7 +3773,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             FakeWindowsServiceApi serviceApi = null)
         {
             return new OfficialLmProfileAdapter(
-                ControllerCapabilityProfile.SupportedVersion1632(),
+                ControllerCapabilityProfile.SupportedVersion1640(),
                 new ManagedServiceManifestStore(
                     root,
                     new FakePathSafety(true),
@@ -4346,7 +4466,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
         {
             return new LmGatewaySupervisorService(
                 api,
-                ControllerCapabilityProfile.SupportedVersion1632(),
+                ControllerCapabilityProfile.SupportedVersion1640(),
                 VerifiedProvisionerBinary.CreateForTesting(
                     @"C:\Program Files\KRS\MultiKKT\Provisioner\EsmTspiot.ServiceProvisioner.exe"));
         }
@@ -4356,11 +4476,11 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             FakeControllerChildRuntime runtime)
         {
             return new LmControllerChildProcess(
-                ControllerCapabilityProfile.SupportedVersion1632(),
+                ControllerCapabilityProfile.SupportedVersion1640(),
                 new VerifiedControllerBinary
                 {
                     FullPath = @"C:\Program Files\ESP\LMController\bin\lmcontroller.exe",
-                    Version = "1.6.3.2",
+                    Version = "1.6.4.0",
                     Sha256 = new string('a', 64),
                     SignerThumbprint = "1CD26372850FE30F1559821CF5D318591695271A",
                     Machine = PeMachine.Amd64
@@ -5757,6 +5877,27 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 return _trusted
                     ? FileTrustResult.Trusted(path, _observed)
                     : FileTrustResult.Rejected(_error ?? "trust rejected");
+            }
+        }
+
+        private sealed class FakeInstalledControllerProductVerifier :
+            IInstalledControllerProductVerifier
+        {
+            private readonly bool _matches;
+
+            internal FakeInstalledControllerProductVerifier(bool matches)
+            {
+                _matches = matches;
+            }
+
+            public ValidationResult Verify(ControllerCapabilityProfile profile)
+            {
+                ValidationResult result = new ValidationResult();
+                if (!_matches)
+                {
+                    result.Add("Official controller installed product does not match.");
+                }
+                return result;
             }
         }
 

@@ -25,18 +25,35 @@ namespace EsmTspiot.ServiceProvisioner
         private readonly ControllerCapabilityProfile _profile;
         private readonly IFileTrustVerifier _trustVerifier;
         private readonly IPathSafety _pathSafety;
+        private readonly IInstalledControllerProductVerifier _installedProductVerifier;
 
         internal OfficialControllerLocator(
             ControllerCapabilityProfile profile,
             IFileTrustVerifier trustVerifier,
             IPathSafety pathSafety)
+            : this(
+                profile,
+                trustVerifier,
+                pathSafety,
+                new WindowsInstalledControllerProductVerifier())
+        {
+        }
+
+        internal OfficialControllerLocator(
+            ControllerCapabilityProfile profile,
+            IFileTrustVerifier trustVerifier,
+            IPathSafety pathSafety,
+            IInstalledControllerProductVerifier installedProductVerifier)
         {
             if (profile == null) throw new ArgumentNullException("profile");
             if (trustVerifier == null) throw new ArgumentNullException("trustVerifier");
             if (pathSafety == null) throw new ArgumentNullException("pathSafety");
+            if (installedProductVerifier == null)
+                throw new ArgumentNullException("installedProductVerifier");
             _profile = profile;
             _trustVerifier = trustVerifier;
             _pathSafety = pathSafety;
+            _installedProductVerifier = installedProductVerifier;
         }
 
         internal VerifiedControllerBinaryResult ResolveVerifiedBinary()
@@ -64,6 +81,12 @@ namespace EsmTspiot.ServiceProvisioner
             if (!pathValidation.IsValid)
             {
                 return Failure(pathValidation.JoinMessages());
+            }
+
+            ValidationResult installedProduct = _installedProductVerifier.Verify(_profile);
+            if (!installedProduct.IsValid)
+            {
+                return Failure(installedProduct.JoinMessages());
             }
 
             FileTrustResult trust = _trustVerifier.Verify(candidate, _profile.ControllerBinary);

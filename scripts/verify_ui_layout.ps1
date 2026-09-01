@@ -106,6 +106,22 @@ $supportDialogCloseTimer = $null
 try {
     $form = [Activator]::CreateInstance($formType)
     $page = Get-PrivateFieldValue -Instance $form -Name "_lmGatewayPage"
+    foreach ($clearMethodName in @(
+            "ClearInstallerSelection",
+            "ClearLocalModuleInstallerSelection")) {
+        $clearMethod = $page.GetType().GetMethod($clearMethodName, $flags)
+        if ($null -eq $clearMethod) {
+            throw "Private method not found: $clearMethodName"
+        }
+        $clearMethod.Invoke($page, @()) | Out-Null
+    }
+    $updateAutomaticSelection = $formType.GetMethod(
+        "UpdateAutomaticInstallerSelection",
+        $flags)
+    if ($null -eq $updateAutomaticSelection) {
+        throw "Private method not found: UpdateAutomaticInstallerSelection"
+    }
+    $updateAutomaticSelection.Invoke($form, @()) | Out-Null
     $workspaceTabs = Get-PrivateFieldValue -Instance $form -Name "_workspaceTabs"
     $automationTab = Get-PrivateFieldValue -Instance $form -Name "_automationTab"
     $manualKktTab = Get-PrivateFieldValue -Instance $form -Name "_manualKktTab"
@@ -397,7 +413,7 @@ try {
     $expectedAutomaticStatus = Get-Utf8Text(
         "0KHRgtCw0YLRg9GBOiDQvdGD0LbQvdGLINC+0LHQsCDQv9Cw0LrQtdGC0LA=")
     if ($automaticStatus.Text -ne $expectedAutomaticStatus) {
-        throw "Automatic mode must initially state that both official packages are required."
+        throw "Automatic mode must initially state that both official packages are required. Observed: '$($automaticStatus.Text)'."
     }
     $unusedByManagedText = Get-Utf8Text(
         "0L3QtSDQuNGB0L/QvtC70YzQt9GD0LXRgtGB0Y8=")
