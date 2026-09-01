@@ -88,8 +88,30 @@ namespace EsmTspiot.ServiceProvisioner
             byte[] patched = StrictUtf8.GetBytes(patchedText);
             string currentHash = Sha256(original);
             string appliedHash = Sha256(patched);
+            if (!string.IsNullOrEmpty(manifest.EsmConfigAppliedSha256) &&
+                !string.Equals(
+                    currentHash,
+                    manifest.EsmConfigAppliedSha256,
+                    StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(
+                    currentHash,
+                    manifest.EsmConfigOriginalSha256,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidDataException(
+                    "Конфигурация ЕСМ изменена после нашей последней операции; автоматическая перезапись запрещена.");
+            }
             if (string.Equals(currentHash, appliedHash, StringComparison.OrdinalIgnoreCase))
             {
+                if (!string.IsNullOrEmpty(manifest.EsmConfigAppliedSha256) &&
+                    !string.Equals(
+                        currentHash,
+                        manifest.EsmConfigAppliedSha256,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidDataException(
+                        "Хэш применённой конфигурации ЕСМ не совпадает с манифестом.");
+                }
                 return EsmInstanceConfigApplyState.AlreadyApplied;
             }
 

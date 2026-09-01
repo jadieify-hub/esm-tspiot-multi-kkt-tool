@@ -380,7 +380,7 @@ namespace EsmTspiot.WinForms.Shared
             _manualNextStepLabel.Margin = new Padding(0, 6, 0, 2);
             _manualNextStepLabel.Text =
                 "После шага 3 перейдите на вкладку «ЛМ ЧЗ» — там создаются " +
-                "контроллер и локальный модуль.";
+                "независимые контроллеры. ЛМ ЧЗ устанавливается позже.";
             panel.Controls.Add(_manualNextStepLabel, 0, 1);
             panel.SetColumnSpan(_manualNextStepLabel, 3);
 
@@ -531,49 +531,21 @@ namespace EsmTspiot.WinForms.Shared
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
 
-            GroupBox group = CreateGroup("Полная автоматическая настройка");
+            GroupBox group = CreateGroup("Регистрация ККТ и независимые контроллеры");
             TableLayoutPanel commands = new TableLayoutPanel();
             commands.Dock = DockStyle.Fill;
             commands.AutoSize = true;
             commands.ColumnCount = 3;
-            commands.RowCount = 4;
+            commands.RowCount = 2;
             commands.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             commands.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
             commands.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             commands.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             commands.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            commands.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            commands.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-
-            Label installerLabel = new Label();
-            installerLabel.Text = "Установщик контроллера ЛМ ЧЗ";
-            installerLabel.AutoSize = true;
-            installerLabel.Anchor = AnchorStyles.Left;
-            installerLabel.Margin = new Padding(0, 5, 8, 3);
-
-            _automaticInstallerTextBox.ReadOnly = true;
-            _automaticInstallerTextBox.Dock = DockStyle.Fill;
-            _automaticInstallerTextBox.Margin = new Padding(0, 2, 6, 4);
-            _automaticInstallerTextBox.Text = "Не выбран";
-            _automaticLmInstallerTextBox.ReadOnly = true;
-            _automaticLmInstallerTextBox.Dock = DockStyle.Fill;
-            _automaticLmInstallerTextBox.Margin = new Padding(0, 2, 6, 4);
-            _automaticLmInstallerTextBox.Text = "Не выбран";
-            ConfigureButton(
-                _automaticSelectInstallerButton,
-                "Выбрать оба…",
-                SelectAutomaticInstallerAsync);
-            _automaticSelectInstallerButton.Tag = "ControllerInstallerPicker";
-
-            Label localModuleInstallerLabel = new Label();
-            localModuleInstallerLabel.Text = "MSI локального модуля ЧЗ";
-            localModuleInstallerLabel.AutoSize = true;
-            localModuleInstallerLabel.Anchor = AnchorStyles.Left;
-            localModuleInstallerLabel.Margin = new Padding(0, 5, 8, 3);
 
             ConfigureButton(
                 _bulkRegisterButton,
-                "Настроить всё автоматически",
+                "Зарегистрировать и настроить",
                 ConfigureAllKktsAutomaticallyAsync);
             _bulkRegisterButton.Tag = "EndToEndAutomaticSetup";
             _bulkRegisterButton.MinimumSize = new Size(235, 36);
@@ -595,7 +567,7 @@ namespace EsmTspiot.WinForms.Shared
 
             _automationStatusLabel.AutoSize = true;
             _automationStatusLabel.Anchor = AnchorStyles.Left;
-            _automationStatusLabel.Text = "Статус: нужны оба пакета";
+            _automationStatusLabel.Text = "Статус: готово к регистрации";
             _automationStatusLabel.Margin = new Padding(8, 6, 0, 3);
 
             Label hint = new Label();
@@ -605,19 +577,15 @@ namespace EsmTspiot.WinForms.Shared
             hint.Text =
                 "Программа найдёт USB/VCOM ККТ через установленный драйвер АТОЛ, " +
                 "поочерёдно зарегистрирует ККТ в ЕСМ, закроет связь после каждой регистрации, " +
-                "создаст контроллеры и ЛМ ЧЗ, затем привяжет их к своим ККТ. " +
+                "затем предложит создать независимые контроллеры 1.6.4.0 и привязать их к ЕСМ. " +
+                "Установку и инициализацию ЛМ ЧЗ можно выполнить позже. " +
                 "Если кассы удерживает Frontol/«Тест драйвера», программа попросит закрыть его и повторить.";
             hint.Margin = new Padding(0, 5, 0, 0);
 
-            commands.Controls.Add(installerLabel, 0, 0);
-            commands.Controls.Add(_automaticInstallerTextBox, 1, 0);
-            commands.Controls.Add(_automaticSelectInstallerButton, 2, 0);
-            commands.Controls.Add(localModuleInstallerLabel, 0, 1);
-            commands.Controls.Add(_automaticLmInstallerTextBox, 1, 1);
-            commands.Controls.Add(_bulkRegisterButton, 0, 2);
-            commands.Controls.Add(_automationStatusLabel, 1, 2);
-            commands.Controls.Add(_automaticStopButton, 2, 2);
-            commands.Controls.Add(hint, 0, 3);
+            commands.Controls.Add(_bulkRegisterButton, 0, 0);
+            commands.Controls.Add(_automationStatusLabel, 1, 0);
+            commands.Controls.Add(_automaticStopButton, 2, 0);
+            commands.Controls.Add(hint, 0, 1);
             commands.SetColumnSpan(hint, 3);
             group.Controls.Add(commands);
             root.Controls.Add(group, 0, 0);
@@ -1139,8 +1107,8 @@ namespace EsmTspiot.WinForms.Shared
             bool selected = _lmGatewayPage.SelectRequiredInstallers(this);
             UpdateAutomaticInstallerSelection();
             _automationStatusLabel.Text = selected
-                ? "Статус: готово к автоматической настройке"
-                : "Статус: нужны оба пакета";
+                ? "Статус: пакеты выбраны для старого ручного режима"
+                : "Статус: готово к регистрации";
             return Task.FromResult(0);
         }
 
@@ -1163,9 +1131,7 @@ namespace EsmTspiot.WinForms.Shared
             _automaticToolTip.SetToolTip(_automaticLmInstallerTextBox, lmPath);
             if (!_busy)
             {
-                _automationStatusLabel.Text = _lmGatewayPage.HasRequiredInstallerSelections
-                    ? "Статус: готово к автоматической настройке"
-                    : "Статус: нужны оба пакета";
+                _automationStatusLabel.Text = "Статус: готово к регистрации";
             }
         }
 
@@ -1180,23 +1146,12 @@ namespace EsmTspiot.WinForms.Shared
                 return;
             }
 
-            if (!_lmGatewayPage.HasRequiredInstallerSelections)
-            {
-                bool selected = _lmGatewayPage.SelectRequiredInstallers(this);
-                UpdateAutomaticInstallerSelection();
-                if (!selected)
-                {
-                    _automationStatusLabel.Text = "Статус: выбор установщика отменён";
-                    return;
-                }
-            }
-
             _automaticCancellation = new System.Threading.CancellationTokenSource();
             _automaticStopButton.Enabled = true;
             try
             {
                 AppendLog(
-                    "=== Полная автоматическая настройка ККТ, контроллеров и ЛМ ЧЗ ===\r\n");
+                    "=== Автоматическая регистрация ККТ и прямые контроллеры 1.6.4.0 ===\r\n");
                 System.Threading.CancellationToken token =
                     _automaticCancellation.Token;
                 _automationStatusLabel.Text =
@@ -1282,135 +1237,100 @@ namespace EsmTspiot.WinForms.Shared
 
                 HashSet<string> attempted =
                     new HashSet<string>(StringComparer.Ordinal);
-                string stopReason = string.Empty;
-                _automationStatusLabel.Text =
-                    "Статус: проверьте готовые адреса и порты...";
-                bool complete = await _lmGatewayPage
-                    .RunCompleteAutomaticSetupFromHostAsync(
-                        candidates,
-                        async delegate(
-                            string serial,
-                            System.Threading.CancellationToken itemToken)
+                for (int index = 0; index < candidates.Count; index++)
+                {
+                    token.ThrowIfCancellationRequested();
+                    string serial = candidates[index].KktSerial;
+                    BulkRegistrationWorkItem work;
+                    if (!workBySerial.TryGetValue(serial, out work))
+                    {
+                        continue;
+                    }
+                    attempted.Add(serial);
+                    _automationStatusLabel.Text =
+                        "Статус: регистрация ККТ " + serial + "...";
+                    BulkKktRegistrationResult itemResult;
+                    try
+                    {
+                        if (sequentialCoordinator != null)
                         {
-                            BulkRegistrationWorkItem work;
-                            if (!workBySerial.TryGetValue(serial, out work))
+                            SequentialKktRegistrationTarget target =
+                                sequentialDiscovery.FindBySerial(serial);
+                            if (target == null)
                             {
-                                return true;
+                                throw new InvalidOperationException(
+                                    "Для ККТ " + serial +
+                                    " не найден ранее проверенный VCOM.");
                             }
-                            attempted.Add(serial);
-                            _automationStatusLabel.Text =
-                                "Статус: регистрация ККТ " + serial + "...";
-                            BulkKktRegistrationResult itemResult;
-                            try
-                            {
-                                if (sequentialCoordinator != null)
-                                {
-                                    SequentialKktRegistrationTarget target =
-                                        sequentialDiscovery.FindBySerial(serial);
-                                    if (target == null)
+                            itemResult = await sequentialCoordinator
+                                .ExecuteWithTargetAsync(
+                                    baseUrl,
+                                    target,
+                                    delegate(
+                                        System.Threading.CancellationToken
+                                            registrationToken)
                                     {
-                                        throw new InvalidOperationException(
-                                            "Для ККТ " + serial +
-                                            " не найден ранее проверенный VCOM.");
-                                    }
-                                    itemResult = await sequentialCoordinator
-                                        .ExecuteWithTargetAsync(
-                                            baseUrl,
-                                            target,
-                                            delegate(
-                                                System.Threading.CancellationToken
-                                                    registrationToken)
-                                            {
-                                                return _bulkWorkflow
-                                                    .ExecuteItemAsync(
-                                                        work,
-                                                        workOrdinalBySerial[serial],
-                                                        discovery.Items.Count,
-                                                        HandleBulkProgress,
-                                                        registrationToken);
-                                            },
-                                            HandleBulkProgress,
-                                            itemToken);
-                                }
-                                else
-                                {
-                                    itemResult = await _bulkWorkflow
-                                        .ExecuteItemAsync(
+                                        return _bulkWorkflow.ExecuteItemAsync(
                                             work,
                                             workOrdinalBySerial[serial],
                                             discovery.Items.Count,
                                             HandleBulkProgress,
-                                            itemToken);
-                                }
-                            }
-                            catch (OperationCanceledException)
-                            {
-                                registrationOutcome.Cancelled = true;
-                                itemResult = new BulkKktRegistrationResult
-                                {
-                                    KktSerial = serial,
-                                    Status = BulkKktRegistrationStatus.Cancelled,
-                                    Details =
-                                        "операция остановлена; проверьте фактическое состояние ККТ"
-                                };
-                                registrationOutcome.Results.Add(itemResult);
-                                AppendBulkResult(itemResult);
-                                throw;
-                            }
-                            catch (Exception ex)
-                            {
-                                itemResult = new BulkKktRegistrationResult
-                                {
-                                    KktSerial = serial,
-                                    Status =
-                                        BulkKktRegistrationStatus.InspectionFailed,
-                                    Details = SensitiveDataMasker.Mask(ex.Message)
-                                };
-                            }
-                            registrationOutcome.Results.Add(itemResult);
-                            AppendBulkResult(itemResult);
-                            bool successful = IsSuccessfulBulkRegistration(
-                                itemResult.Status);
-                            if (!successful &&
-                                string.IsNullOrWhiteSpace(stopReason))
-                            {
-                                stopReason =
-                                    "регистрация контрольной ККТ " + serial +
-                                    " остановлена: " + itemResult.Details;
-                            }
-                            return successful;
-                        },
-                        token);
-                if (!complete &&
-                    _lmGatewayPage.AutomaticSetupCancelledBeforeMutation)
-                {
-                    _automationStatusLabel.Text =
-                        "Статус: запуск отменён до изменений";
-                    AppendLog(
-                        "Автоматическая настройка отменена до изменения ЕСМ и Windows.\r\n\r\n");
-                    return;
+                                            registrationToken);
+                                    },
+                                    HandleBulkProgress,
+                                    token);
+                        }
+                        else
+                        {
+                            itemResult = await _bulkWorkflow.ExecuteItemAsync(
+                                work,
+                                workOrdinalBySerial[serial],
+                                discovery.Items.Count,
+                                HandleBulkProgress,
+                                token);
+                        }
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        registrationOutcome.Cancelled = true;
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        itemResult = new BulkKktRegistrationResult
+                        {
+                            KktSerial = serial,
+                            Status = BulkKktRegistrationStatus.InspectionFailed,
+                            Details = SensitiveDataMasker.Mask(ex.Message)
+                        };
+                    }
+                    registrationOutcome.Results.Add(itemResult);
+                    AppendBulkResult(itemResult);
                 }
-                _automaticCancellation.Token.ThrowIfCancellationRequested();
+                AddUnattemptedBulkResults(
+                    discovery,
+                    workBySerial,
+                    attempted,
+                    registrationOutcome.Results,
+                    "операция не была начата");
 
                 string finalVcomError = string.Empty;
-                if (complete && sequentialCoordinator != null)
+                if (sequentialCoordinator != null)
                 {
                     _automationStatusLabel.Text =
                         "Статус: итоговая проверка всех VCOM ККТ...";
                     try
                     {
-                        bool allVisible = await sequentialCoordinator
-                            .VerifyAllAsync(
-                                baseUrl,
-                                sequentialDiscovery,
-                                HandleBulkProgress,
-                                token);
+                        bool allVisible = await sequentialCoordinator.VerifyAllAsync(
+                            baseUrl,
+                            sequentialDiscovery,
+                            HandleBulkProgress,
+                            token);
                         if (!allVisible)
                         {
-                            complete = false;
                             finalVcomError =
-                                "Итоговая проверка не увидела в dkktList " +
-                                "все ранее сопоставленные ККТ.";
+                                "Итоговая проверка не увидела в dkktList все сопоставленные ККТ.";
+                            AppendLog(finalVcomError + "\r\n");
                         }
                     }
                     catch (OperationCanceledException)
@@ -1419,55 +1339,72 @@ namespace EsmTspiot.WinForms.Shared
                     }
                     catch (Exception ex)
                     {
-                        complete = false;
                         finalVcomError =
                             "Итоговая VCOM-проверка не завершена: " +
                             SensitiveDataMasker.Mask(ex.Message);
-                    }
-                    if (!string.IsNullOrWhiteSpace(finalVcomError))
-                    {
                         AppendLog(finalVcomError + "\r\n");
                     }
                 }
 
-                if (!complete && string.IsNullOrWhiteSpace(stopReason))
+                IList<LmGatewayKkt> registeredAfter =
+                    await _lmGatewayPage
+                        .DiscoverRegisteredKktsForAutomaticPlanAsync(
+                            baseUrl,
+                            token);
+                DirectControllerSetupOutcome controllerOutcome = null;
+                bool controllersDeferred = true;
+                if (registeredAfter.Count > 0)
                 {
-                    stopReason = string.IsNullOrWhiteSpace(
-                        _lmGatewayPage.AutomaticSetupStopReason)
-                        ? "остановлен контрольный локальный комплект"
-                        : _lmGatewayPage.AutomaticSetupStopReason;
+                    DialogResult controllerChoice = MessageBox.Show(
+                        this,
+                        "Регистрация ККТ завершена. Следующая фаза кратковременно " +
+                            "перезапустит службы экземпляров ЕСМ:\r\n\r\n" +
+                            "Настроить независимые контроллеры сейчас?\r\n\r\n" +
+                            "Нажмите «Нет», чтобы отложить без отката регистрации.",
+                        "Настройка контроллеров",
+                        MessageBoxButtons.YesNo,
+                        MessageBoxIcon.Warning,
+                        MessageBoxDefaultButton.Button2);
+                    controllersDeferred = controllerChoice != DialogResult.Yes;
+                    if (!controllersDeferred)
+                    {
+                        _workspaceTabs.SelectedTab = _lmGatewayTab;
+                        controllerOutcome = await _lmGatewayPage
+                            .RunDirectControllerSetupFromHostAsync(
+                                registeredAfter,
+                                token);
+                    }
+                }
+                if (controllersDeferred)
+                {
+                    AppendLog(
+                        "Фаза прямых контроллеров отложена оператором; регистрация ККТ сохранена.\r\n");
                 }
 
-                AddUnattemptedBulkResults(
-                    discovery,
-                    workBySerial,
-                    attempted,
-                    registrationOutcome.Results,
-                    stopReason);
-                AppendBulkResults(registrationOutcome.Results);
-
-                _workspaceTabs.SelectedTab = _lmGatewayTab;
-                bool registrationHasFailures =
-                    registrationOutcome.Cancelled ||
-                    HasBulkFailures(registrationOutcome.Results);
-                _automationStatusLabel.Text = complete &&
-                    !registrationHasFailures
-                    ? "Статус: полная автоматическая настройка завершена"
+                bool registrationHasFailures = registrationOutcome.Cancelled ||
+                    HasBulkFailures(registrationOutcome.Results) ||
+                    !string.IsNullOrWhiteSpace(finalVcomError);
+                bool controllersComplete = controllerOutcome != null &&
+                    controllerOutcome.Complete;
+                _automationStatusLabel.Text = !registrationHasFailures &&
+                    (controllersDeferred || controllersComplete)
+                    ? "Статус: регистрация завершена"
                     : "Статус: завершено, требуется внимание";
-
-                string stackSummary = complete
-                    ? "Контроллеры и ЛМ ЧЗ запущены; ЕСМ принял настройки связи. " +
-                        "ЛМ готовы к бизнес-инициализации ЕСМ или сторонней утилитой."
-                    : (!string.IsNullOrWhiteSpace(finalVcomError)
-                        ? finalVcomError
-                        : _lmGatewayPage.AutomaticSetupStatus);
-                bool fullySuccessful = complete && !registrationHasFailures;
+                string stackSummary = controllersDeferred
+                    ? "Регистрация завершена; настройка контроллеров отложена."
+                    : controllerOutcome.FormatSummary();
+                if (!string.IsNullOrWhiteSpace(finalVcomError))
+                {
+                    stackSummary += " " + finalVcomError;
+                }
+                bool fullySuccessful = !registrationHasFailures &&
+                    (controllersDeferred || controllersComplete);
                 MessageBox.Show(
                     this,
                     BuildAutomaticSetupCompletionMessage(
                         registrationOutcome,
                         stackSummary,
-                        complete,
+                        controllersDeferred || controllersComplete,
                         registrationHasFailures),
                     "Автоматическая настройка",
                     MessageBoxButtons.OK,
@@ -2117,7 +2054,7 @@ namespace EsmTspiot.WinForms.Shared
             message.Append("\r\n\r\n");
             message.Append(stackSummary);
             message.Append(
-                "\r\n\r\nАдреса ЛМ и порты кассового ПО показаны " +
+                "\r\n\r\nКонтроллеры и порты кассового ПО показаны " +
                 "на вкладке «ЛМ ЧЗ».");
             if (complete && !registrationHasFailures)
             {

@@ -244,7 +244,9 @@ namespace EsmTspiot.ServiceProvisioner
                 _esmConfigs.RestoreAndRestart(manifest);
                 if (manifest.Ordinal == 1)
                 {
-                    _manifests.Delete(item.KktSerial, item.ExpectedManifestSha256);
+                    _manifests.Delete(
+                        item.KktSerial,
+                        _manifests.ComputeFingerprint(manifest));
                     return Result(
                         item,
                         LmServiceProvisioningStatus.RemovedLocalArtifactsBindingRetained,
@@ -278,7 +280,9 @@ namespace EsmTspiot.ServiceProvisioner
                     }
                 }
                 _manifests.DeleteCloneProfileEnvironmentRoot(manifest.Ordinal);
-                _manifests.Delete(item.KktSerial, item.ExpectedManifestSha256);
+                _manifests.Delete(
+                    item.KktSerial,
+                    _manifests.ComputeFingerprint(manifest));
                 return Result(
                     item,
                     LmServiceProvisioningStatus.RemovedLocalArtifactsBindingRetained,

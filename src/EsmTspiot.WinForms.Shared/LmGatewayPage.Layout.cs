@@ -30,22 +30,22 @@ namespace EsmTspiot.WinForms.Shared
             ConfigureButton(_bindButton, "Привязать к ЕСМ");
             _bindButton.Tag = "BindSelectedEsm";
             ConfigureButton(_removeServiceButton, "Удалить выбранный комплект");
-            ConfigureButton(_removeAllServicesButton, "Удалить всё созданное");
+            ConfigureButton(_removeAllServicesButton, "Удалить все контроллеры");
             _removeAllServicesButton.Tag = "RemoveAllManaged";
             ConfigureButton(_cleanupButton, "Завершить очистку");
             ConfigureButton(_cancelButton, "Остановить");
             _refreshButton.Click += async delegate { await RefreshAsync(); };
             _bindButton.Click += async delegate { await BindSelectedAsync(); };
             _removeServiceButton.Click += async delegate { await ConfirmAndRemoveServiceAsync(); };
-            _removeAllServicesButton.Click += async delegate { await ConfirmAndRemoveAllServicesAsync(); };
+            _removeAllServicesButton.Click += async delegate
+            {
+                await ConfirmAndRemoveAllDirectControllersAsync();
+            };
             _cleanupButton.Click += async delegate { await ConfirmAndCleanupServiceAsync(); };
             _cancelButton.Click += delegate { CancelCurrentOperation(); };
             _cancelButton.Visible = false;
             toolbar.Controls.Add(_refreshButton);
-            toolbar.Controls.Add(_bindButton);
-            toolbar.Controls.Add(_removeServiceButton);
             toolbar.Controls.Add(_removeAllServicesButton);
-            toolbar.Controls.Add(_cleanupButton);
             toolbar.Controls.Add(_cancelButton);
 
             _statusLabel.AutoSize = false;

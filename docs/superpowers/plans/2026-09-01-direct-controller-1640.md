@@ -59,9 +59,9 @@
 
 ### Task 6: Independent automatic flow and UI
 
-- [ ] Add failing tests for one-KKT regression, multi-INN registration, controller deferral, per-KKT failure continuation, and 2025/2055 warning semantics.
-- [ ] Split automatic setup into registration then controller phases and bind ESM to controller gRPC ports `50063+` with transient admin/admin credentials and omitted empty `newPassword`.
-- [ ] Replace the LM-complete-stack UI with controller inventory/actions and honest cleanup wording; commit.
+- [x] Add failing tests for one-KKT regression, multi-INN registration, controller deferral, per-KKT failure continuation, and 2025/2055 warning semantics.
+- [x] Split automatic setup into registration then controller phases and bind ESM to controller gRPC ports `50063+` with transient admin/admin credentials and omitted empty `newPassword`.
+- [x] Replace the LM-complete-stack UI with controller inventory/actions and honest cleanup wording; commit.
 
 ### Task 7: Integration, documentation, and release
 
