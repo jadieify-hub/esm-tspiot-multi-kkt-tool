@@ -112,7 +112,7 @@ namespace EsmTspiot.ServiceProvisioner
                 {
                     FileName = "lmcontroller.exe",
                     ByteLength = 14668016,
-                    Sha256 = "0a25b29a39b100fe461eb3ffa06a6b18f2b474f337efdb9f7a9ca89740ffd0a",
+                    Sha256 = "0a25b29a39b100fe461eb3ffa06a6b18f2b474f337efdba9f7a9ca89740ffd0a",
                     FileVersion = string.Empty,
                     ProductVersion = string.Empty,
                     ProductName = string.Empty,

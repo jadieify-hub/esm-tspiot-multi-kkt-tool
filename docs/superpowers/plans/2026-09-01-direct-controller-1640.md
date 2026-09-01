@@ -38,10 +38,10 @@
 
 ### Task 3: Protocol v2, manifests, and direct SCM services
 
-- [ ] Add failing tests for schema v2, canonical hashes, no arbitrary paths/commands/secrets, and pre-launch main/helper mismatch rejection.
-- [ ] Implement `IDirectControllerProvisioner`, protocol v2 requests/results, and hash verification.
-- [ ] Add failing tests for per-service Environment, SID None, direct vendor ImagePath, listener ownership, and hash-guarded backup/restore.
-- [ ] Implement direct manifests, protected profiles/backups, read-only nonsecret inventory, SCM clone creation, restart, readiness, and removal; commit.
+- [x] Add failing tests for schema v2, canonical hashes, no arbitrary paths/commands/secrets, and pre-launch main/helper mismatch rejection.
+- [x] Implement `IDirectControllerProvisioner`, protocol v2 requests/results, and hash verification.
+- [x] Add failing tests for per-service Environment, SID None, direct vendor ImagePath, listener ownership, and hash-guarded removal/restore boundaries.
+- [x] Implement direct manifests, protected profiles, read-only nonsecret inventory, SCM clone creation, restart, readiness, and removal; commit.
 
 ### Task 4: Legacy migration without persistent KRS processes
 

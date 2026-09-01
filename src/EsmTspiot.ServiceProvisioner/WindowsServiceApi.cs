@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Security.AccessControl;
+using Microsoft.Win32;
 
 namespace EsmTspiot.ServiceProvisioner
 {
@@ -59,6 +61,7 @@ namespace EsmTspiot.ServiceProvisioner
                     Description = ReadDescription(service),
                     AccountName = config.ServiceStartName,
                     Dependencies = config.Dependencies,
+                    EnvironmentVariables = ReadEnvironment(serviceName),
                     StartMode = (WindowsServiceStartMode)config.StartType,
                     ErrorControl = (WindowsServiceErrorControl)config.ErrorControl,
                     ServiceSidType = ReadServiceSidType(service),
@@ -196,6 +199,10 @@ namespace EsmTspiot.ServiceProvisioner
             SetRecoveryPolicy(service, definition.RecoveryPolicy);
             SetServiceSidType(service, definition.ServiceSidType);
             SetSecurityDescriptor(service, definition.SecurityDescriptor);
+            if (definition.Kind == WindowsServiceDefinitionKind.DirectController)
+            {
+                WriteEnvironment(definition.ServiceName, definition.EnvironmentVariables);
+            }
             ServiceSecurityDescriptor observed = ReadSecurityDescriptor(service);
             if (!observed.IsRestrictive ||
                 !string.Equals(
@@ -517,6 +524,88 @@ namespace EsmTspiot.ServiceProvisioner
             return pointer == IntPtr.Zero ? string.Empty : Marshal.PtrToStringUni(pointer);
         }
 
+        private static IDictionary<string, string> ReadEnvironment(string serviceName)
+        {
+            Dictionary<string, string> result = new Dictionary<string, string>(
+                StringComparer.OrdinalIgnoreCase);
+            using (RegistryKey machine = RegistryKey.OpenBaseKey(
+                RegistryHive.LocalMachine,
+                RegistryView.Registry64))
+            using (RegistryKey service = machine.OpenSubKey(
+                @"SYSTEM\CurrentControlSet\Services\" + serviceName,
+                false))
+            {
+                string[] values = service == null
+                    ? null
+                    : service.GetValue(
+                        "Environment",
+                        null,
+                        RegistryValueOptions.DoNotExpandEnvironmentNames) as string[];
+                if (values == null)
+                {
+                    return result;
+                }
+                for (int index = 0; index < values.Length; index++)
+                {
+                    string value = values[index] ?? string.Empty;
+                    int separator = value.IndexOf('=');
+                    if (separator <= 0 || separator == value.Length - 1)
+                    {
+                        throw new InvalidDataException(
+                            "Service Environment registry value is malformed.");
+                    }
+                    string key = value.Substring(0, separator);
+                    if (result.ContainsKey(key))
+                    {
+                        throw new InvalidDataException(
+                            "Service Environment registry value contains duplicate keys.");
+                    }
+                    result.Add(key, value.Substring(separator + 1));
+                }
+            }
+            return result;
+        }
+
+        private static void WriteEnvironment(
+            string serviceName,
+            IDictionary<string, string> environment)
+        {
+            string programData;
+            if (environment == null || environment.Count != 1 ||
+                !environment.TryGetValue("ProgramData", out programData) ||
+                string.IsNullOrWhiteSpace(programData) || !Path.IsPathRooted(programData))
+            {
+                throw new InvalidOperationException(
+                    "Direct controller service Environment is invalid.");
+            }
+            using (RegistryKey machine = RegistryKey.OpenBaseKey(
+                RegistryHive.LocalMachine,
+                RegistryView.Registry64))
+            using (RegistryKey service = machine.OpenSubKey(
+                @"SYSTEM\CurrentControlSet\Services\" + serviceName,
+                true))
+            {
+                if (service == null)
+                {
+                    throw new InvalidOperationException(
+                        "Direct controller service registry key is unavailable.");
+                }
+                service.SetValue(
+                    "Environment",
+                    new[] { "ProgramData=" + programData },
+                    RegistryValueKind.MultiString);
+            }
+            IDictionary<string, string> observed = ReadEnvironment(serviceName);
+            string observedProgramData;
+            if (observed.Count != 1 ||
+                !observed.TryGetValue("ProgramData", out observedProgramData) ||
+                !string.Equals(programData, observedProgramData, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "Direct controller service Environment verification failed.");
+            }
+        }
+
         private static void ValidateExactName(string serviceName)
         {
             string serial;
@@ -525,7 +614,15 @@ namespace EsmTspiot.ServiceProvisioner
                     out serial) &&
                 !LocalModuleServiceIdentity.IsManagedName(serviceName))
             {
-                throw new ArgumentException("Managed service name is invalid.", "serviceName");
+                int directOrdinal;
+                if (!EsmTspiot.Shared.Services.DirectControllerIdentity.TryParseServiceName(
+                        serviceName,
+                        out directOrdinal))
+                {
+                    throw new ArgumentException(
+                        "Managed service name is invalid.",
+                        "serviceName");
+                }
             }
         }
 
