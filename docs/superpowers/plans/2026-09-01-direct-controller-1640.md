@@ -52,10 +52,10 @@
 
 ### Task 5: Per-instance ESM configuration and secret handling
 
-- [ ] Add failing tests for structural discovery of the unique `settings.ldbControl` node, indentation/order variations, duplicate/anchor rejection, and absent instance config deferral.
-- [ ] Add failing tests for YAML password masking, protected backup ACLs, no YAML content in logs/manifests/diagnostics, and package exclusions.
-- [ ] Implement polling after registration, atomic per-instance patching, sequential service restart, rollback, and hash-guarded restore without touching the orchestrator or dkkt port.
-- [ ] Extend masking for YAML scalar/block values and keep backups SYSTEM/Administrators-only; commit.
+- [x] Add failing tests for structural discovery of the unique `settings.ldbControl` node, indentation/order variations, duplicate/anchor rejection, and absent instance config deferral.
+- [x] Add failing tests for YAML password masking, protected backup ACLs, no YAML content in logs/manifests/diagnostics, and package exclusions.
+- [x] Implement polling after registration, atomic per-instance patching, sequential service restart, rollback, and hash-guarded restore without touching the orchestrator or dkkt port.
+- [x] Extend masking for YAML scalar/block values and keep backups SYSTEM/Administrators-only; commit.
 
 ### Task 6: Independent automatic flow and UI
 

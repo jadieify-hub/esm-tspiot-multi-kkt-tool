@@ -84,6 +84,9 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("SCM adapter never force kills process", ScmAdapterNeverForceKillsProcess);
             Run("Legacy terminator rejects PID reuse and foreign identity", LegacyTerminatorRejectsPidReuseAndForeignIdentity);
             Run("Legacy migration retries partial cleanup and honors cancellation", LegacyMigrationRetriesPartialCleanupAndHonorsCancellation);
+            Run("ESM instance YAML patches unique structural ldbControl", EsmInstanceYamlPatchesUniqueStructuralLdbControl);
+            Run("ESM instance YAML rejects duplicate anchors and aliases", EsmInstanceYamlRejectsDuplicateAnchorsAndAliases);
+            Run("ESM instance config transaction backs up restores and defers", EsmInstanceConfigTransactionBacksUpRestoresAndDefers);
             Run("SCM handles are disposed on every failure", ScmHandlesAreDisposedOnEveryFailure);
             Run("SCM configures restricted service SID", ScmConfiguresRestrictedServiceSid);
             Run("SCM image path targets only protected supervisor mode", ScmImagePathTargetsOnlyProtectedSupervisorMode);
@@ -4087,6 +4090,143 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 "Cancelled migration must not mutate any legacy service.");
         }
 
+        private static void EsmInstanceYamlPatchesUniqueStructuralLdbControl()
+        {
+            string source =
+                "settings:\r\n" +
+                "  common:\r\n" +
+                "    mode: prod\r\n" +
+                "  ldbControl:\r\n" +
+                "      password: admin # must stay untouched\r\n" +
+                "      RESTPort: 5063\r\n" +
+                "      url: 0.0.0.0\r\n" +
+                "      gRPCPort: 50063 # vendor default\r\n" +
+                "dkkt:\r\n" +
+                "  port: 4042\r\n";
+            string patched = EsmInstanceControllerConfigPatcher.Patch(
+                source,
+                50064,
+                5064);
+            AssertContains(patched, "gRPCPort: 50064 # vendor default");
+            AssertContains(patched, "RESTPort: 5064");
+            AssertContains(patched, "url: 127.0.0.1");
+            AssertContains(patched, "password: admin # must stay untouched");
+            AssertContains(patched, "dkkt:\r\n  port: 4042");
+            AssertEqual(patched, EsmInstanceControllerConfigPatcher.Patch(
+                patched,
+                50064,
+                5064), "Patching the exact ESM target must be idempotent.");
+        }
+
+        private static void EsmInstanceYamlRejectsDuplicateAnchorsAndAliases()
+        {
+            AssertThrows<InvalidDataException>(delegate
+            {
+                EsmInstanceControllerConfigPatcher.Patch(
+                    "settings:\n  ldbControl:\n    gRPCPort: 1\n    gRPCPort: 2\n    RESTPort: 3\n    url: x\n",
+                    50063,
+                    5063);
+            }, "Duplicate target keys must be rejected.");
+            AssertThrows<InvalidDataException>(delegate
+            {
+                EsmInstanceControllerConfigPatcher.Patch(
+                    "settings: &base\n  ldbControl:\n    gRPCPort: 1\n    RESTPort: 2\n    url: x\n",
+                    50063,
+                    5063);
+            }, "YAML anchors must be rejected.");
+            AssertThrows<InvalidDataException>(delegate
+            {
+                EsmInstanceControllerConfigPatcher.Patch(
+                    "settings:\n  ldbControl:\n    <<: *defaults\n    gRPCPort: 1\n    RESTPort: 2\n    url: x\n",
+                    50063,
+                    5063);
+            }, "YAML aliases and merge keys must be rejected.");
+        }
+
+        private static void EsmInstanceConfigTransactionBacksUpRestoresAndDefers()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                string esmRoot = Path.Combine(root, "ESP", "ESM", "um");
+                Directory.CreateDirectory(esmRoot);
+                string serial = "00105700000001";
+                string configPath = Path.Combine(esmRoot, "config_" + serial + ".yml");
+                string original =
+                    "settings:\n  ldbControl:\n    password: admin\n" +
+                    "    gRPCPort: 50063\n    RESTPort: 5063\n    url: 127.0.0.1\n" +
+                    "dkkt:\n  port: 4042\n";
+                File.WriteAllText(configPath, original, new UTF8Encoding(false));
+                string orchestrator = Path.Combine(esmRoot, "config-orchestrator.yml");
+                File.WriteAllText(orchestrator, "vendor-template", Encoding.UTF8);
+                DirectControllerManifestStore manifests =
+                    new DirectControllerManifestStore(
+                        Path.Combine(root, "DirectControllers"),
+                        new FakePathSafety(true),
+                        null,
+                        Path.Combine(root, "ProgramData"));
+                DirectControllerManifest manifest = DirectControllerManifest.Create(
+                    serial,
+                    "7701234567",
+                    2,
+                    "1.6.4.0",
+                    new string('a', 64),
+                    manifests.GetProfileEnvironmentRoot(2),
+                    Guid.NewGuid().ToString("N"),
+                    DirectControllerLifecycleState.Preparing);
+                manifests.Write(manifest);
+                FakeWindowsServiceApi services = new FakeWindowsServiceApi();
+                services.SetRecord(new WindowsServiceRecord
+                {
+                    ServiceName = "esm-cm-" + serial,
+                    State = WindowsServiceState.Running,
+                    ProcessId = 777
+                });
+                EsmInstanceConfigManager manager = new EsmInstanceConfigManager(
+                    esmRoot,
+                    manifests,
+                    services,
+                    new AtomicFileWriter(),
+                    delegate { });
+
+                AssertEqual(
+                    EsmInstanceConfigApplyState.Applied,
+                    manager.ApplyAndRestart(manifest),
+                    "The instance config must be applied transactionally.");
+                AssertContains(File.ReadAllText(configPath), "gRPCPort: 50064");
+                AssertTrue(File.Exists(manifests.GetEsmConfigBackupPath(serial)),
+                    "The protected original config must exist until removal.");
+                AssertEqual("vendor-template", File.ReadAllText(orchestrator, Encoding.UTF8),
+                    "The orchestrator template must never be touched.");
+                DirectControllerManifest applied = manifests.Read(serial);
+                AssertTrue(manager.RestoreAndRestart(applied),
+                    "Hash-matching managed config must be restored.");
+                AssertEqual(original, File.ReadAllText(configPath, Encoding.UTF8),
+                    "Removal must restore the byte-equivalent source text.");
+                AssertFalse(File.Exists(manifests.GetEsmConfigBackupPath(serial)),
+                    "A completed restore must remove the secret-bearing backup.");
+
+                DirectControllerManifest absent = DirectControllerManifest.Create(
+                    "00105700000002",
+                    "7701234567",
+                    3,
+                    "1.6.4.0",
+                    new string('b', 64),
+                    manifests.GetProfileEnvironmentRoot(3),
+                    Guid.NewGuid().ToString("N"),
+                    DirectControllerLifecycleState.Preparing);
+                manifests.Write(absent);
+                AssertEqual(
+                    EsmInstanceConfigApplyState.Deferred,
+                    manager.ApplyAndRestart(absent),
+                    "An instance config that is not created yet must defer without mutation.");
+            }
+            finally
+            {
+                DeleteTestTreeWithReadOnlyFiles(root);
+            }
+        }
+
         private static void DirectControllerProfileStagesOnlyOfficialCaPair()
         {
             string root = CreateTemporaryDirectory();
@@ -6475,6 +6615,10 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             {
                 EnsureExact(serviceName);
                 _records[serviceName].State = WindowsServiceState.Running;
+                if (_records[serviceName].ProcessId == 0)
+                {
+                    _records[serviceName].ProcessId = 1234;
+                }
             }
 
             public void RequestStop(string serviceName)

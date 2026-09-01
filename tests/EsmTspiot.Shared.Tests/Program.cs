@@ -188,6 +188,7 @@ namespace EsmTspiot.Shared.Tests
             Run("Sensitive masker redacts derived token fields", SensitiveMaskerRedactsDerivedTokenFields);
             Run("Sensitive masker redacts LM info pass", SensitiveMaskerRedactsLmInfoPass);
             Run("Sensitive masker redacts key value credentials", SensitiveMaskerRedactsKeyValueCredentials);
+            Run("Sensitive masker redacts YAML scalar and block credentials", SensitiveMaskerRedactsYamlScalarAndBlockCredentials);
             Run("Log formatter never persists reflected password", LogFormatterNeverPersistsReflectedPassword);
             Run("Sensitive masker preserves ordinary fields", SensitiveMaskerPreservesOrdinaryFields);
             Run("Display log trimmer preserves the newest half", DisplayLogTrimmerPreservesNewestHalf);
@@ -4365,6 +4366,30 @@ namespace EsmTspiot.Shared.Tests
                 "password=***&authorization=***&status=ready",
                 masked,
                 "Expected password and the complete authorization value to be masked.");
+        }
+
+        private static void SensitiveMaskerRedactsYamlScalarAndBlockCredentials()
+        {
+            string source =
+                "settings:\n" +
+                "  ldbControl:\n" +
+                "    login: admin\n" +
+                "    password: admin # local credential\n" +
+                "    newPassword: \"changed\"\n" +
+                "    token: |\n" +
+                "      first-line\n" +
+                "      second-line\n" +
+                "    gRPCPort: 50063\n";
+            string masked = SensitiveDataMasker.Mask(source);
+            AssertContains(masked, "password: *** # local credential");
+            AssertContains(masked, "newPassword: ***");
+            AssertContains(masked, "token: ***");
+            AssertFalse(masked.IndexOf("first-line", StringComparison.Ordinal) >= 0,
+                "YAML block secret body must be removed.");
+            AssertFalse(masked.IndexOf("second-line", StringComparison.Ordinal) >= 0,
+                "Every YAML block secret line must be removed.");
+            AssertContains(masked, "login: admin");
+            AssertContains(masked, "gRPCPort: 50063");
         }
 
         private static void LogFormatterNeverPersistsReflectedPassword()

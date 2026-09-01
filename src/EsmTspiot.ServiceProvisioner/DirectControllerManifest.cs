@@ -39,6 +39,10 @@ namespace EsmTspiot.ServiceProvisioner
         [DataMember(Order = 13)] internal string OperationId { get; set; }
         [DataMember(Order = 14)] internal DirectControllerLifecycleState State { get; set; }
         [DataMember(Order = 15)] internal string UpdatedUtc { get; set; }
+        [DataMember(Order = 16, EmitDefaultValue = false)]
+        internal string EsmConfigOriginalSha256 { get; set; }
+        [DataMember(Order = 17, EmitDefaultValue = false)]
+        internal string EsmConfigAppliedSha256 { get; set; }
 
         internal static DirectControllerManifest Create(
             string kktSerial,

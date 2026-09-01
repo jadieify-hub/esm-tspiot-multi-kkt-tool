@@ -18,6 +18,7 @@ namespace EsmTspiot.ServiceProvisioner
         private readonly IWindowsServiceApi _services;
         private readonly IDirectControllerReadinessProbe _readiness;
         private readonly DirectControllerServiceDefinitionFactory _definitions;
+        private readonly IEsmInstanceConfigManager _esmConfigs;
 
         internal WindowsDirectControllerPlatform(
             ControllerCapabilityProfile profile,
@@ -26,6 +27,25 @@ namespace EsmTspiot.ServiceProvisioner
             IDirectControllerProfileStore profiles,
             IWindowsServiceApi services,
             IDirectControllerReadinessProbe readiness)
+            : this(
+                profile,
+                binary,
+                manifests,
+                profiles,
+                services,
+                readiness,
+                DeferredEsmInstanceConfigManager.Instance)
+        {
+        }
+
+        internal WindowsDirectControllerPlatform(
+            ControllerCapabilityProfile profile,
+            VerifiedControllerBinary binary,
+            DirectControllerManifestStore manifests,
+            IDirectControllerProfileStore profiles,
+            IWindowsServiceApi services,
+            IDirectControllerReadinessProbe readiness,
+            IEsmInstanceConfigManager esmConfigs)
         {
             if (profile == null) throw new ArgumentNullException("profile");
             if (binary == null) throw new ArgumentNullException("binary");
@@ -33,6 +53,7 @@ namespace EsmTspiot.ServiceProvisioner
             if (profiles == null) throw new ArgumentNullException("profiles");
             if (services == null) throw new ArgumentNullException("services");
             if (readiness == null) throw new ArgumentNullException("readiness");
+            if (esmConfigs == null) throw new ArgumentNullException("esmConfigs");
             _profile = profile;
             _binary = binary;
             _manifests = manifests;
@@ -40,6 +61,7 @@ namespace EsmTspiot.ServiceProvisioner
             _services = services;
             _readiness = readiness;
             _definitions = new DirectControllerServiceDefinitionFactory(profile, binary);
+            _esmConfigs = esmConfigs;
         }
 
         internal static WindowsDirectControllerPlatform Create(string initiatingSid)
@@ -77,13 +99,24 @@ namespace EsmTspiot.ServiceProvisioner
                 new DirectControllerReadinessProbe(
                     services,
                     new TcpListenerOwnerReader());
+            EsmInstanceConfigManager esmConfigs = new EsmInstanceConfigManager(
+                Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                    "ESP",
+                    "ESM",
+                    "um"),
+                manifests,
+                services,
+                new AtomicFileWriter(),
+                delegate { Thread.Sleep(250); });
             return new WindowsDirectControllerPlatform(
                 profile,
                 resolved.Binary,
                 manifests,
                 profiles,
                 services,
-                readiness);
+                readiness,
+                esmConfigs);
         }
 
         public LmServiceProvisioningItemResult Ensure(
@@ -101,6 +134,10 @@ namespace EsmTspiot.ServiceProvisioner
                 if (existing != null)
                 {
                     RequireSameAssignment(existing, item);
+                    manifest.EsmConfigOriginalSha256 =
+                        existing.EsmConfigOriginalSha256;
+                    manifest.EsmConfigAppliedSha256 =
+                        existing.EsmConfigAppliedSha256;
                 }
                 string serviceName = DirectControllerIdentity.ServiceNameForOrdinal(item.Ordinal);
                 WindowsServiceRecord service = _services.Query(serviceName);
@@ -128,15 +165,20 @@ namespace EsmTspiot.ServiceProvisioner
                     {
                         throw new InvalidOperationException(ready.Message);
                     }
+                    EsmInstanceConfigApplyState configState =
+                        _esmConfigs.ApplyAndRestart(manifest);
                     manifest.State = DirectControllerLifecycleState.Ready;
                     manifest.UpdatedUtc = DateTime.UtcNow.ToString("o");
                     _manifests.Write(manifest);
                     return Result(
                         item,
                         LmServiceProvisioningStatus.Succeeded,
-                        item.Ordinal == 1
+                        (item.Ordinal == 1
                             ? "Штатный контроллер подтверждён и запущен."
-                            : "Независимый контроллер создан и запущен.");
+                            : "Независимый контроллер создан и запущен.") +
+                        (configState == EsmInstanceConfigApplyState.Deferred
+                            ? " Конфигурация экземпляра ЕСМ ещё не создана; настройка отложена до следующего запуска."
+                            : " Экземпляр ЕСМ направлен на этот контроллер."));
                 }
                 catch
                 {
@@ -199,6 +241,7 @@ namespace EsmTspiot.ServiceProvisioner
             using (AcquireMutationLock())
             {
                 DirectControllerManifest manifest = RequireCurrentManifest(item);
+                _esmConfigs.RestoreAndRestart(manifest);
                 if (manifest.Ordinal == 1)
                 {
                     _manifests.Delete(item.KktSerial, item.ExpectedManifestSha256);

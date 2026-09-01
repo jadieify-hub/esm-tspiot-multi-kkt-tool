@@ -73,6 +73,18 @@ namespace EsmTspiot.ServiceProvisioner
             return Path.Combine(_profilesRoot, "controller-" + ordinal.ToString());
         }
 
+        internal string GetEsmConfigBackupPath(string kktSerial)
+        {
+            return Path.Combine(GetOwnedItemRoot(kktSerial), "esm-config-original.yml");
+        }
+
+        internal void ProtectOwnedFile(string path)
+        {
+            RequireProtected(path);
+            _pathSafety.EnsureProtectedRuntimeFile(path);
+            RequireProtected(path);
+        }
+
         internal string EnsureProfileEnvironmentRoot(int ordinal)
         {
             if (ordinal == 1)
@@ -220,7 +232,9 @@ namespace EsmTspiot.ServiceProvisioner
                 manifest.FutureLocalModulePort.ToString(),
                 manifest.ControllerVersion,
                 manifest.ControllerBinarySha256.ToLowerInvariant(),
-                Path.GetFullPath(manifest.ProfileEnvironmentRoot)
+                Path.GetFullPath(manifest.ProfileEnvironmentRoot),
+                manifest.EsmConfigOriginalSha256 ?? string.Empty,
+                manifest.EsmConfigAppliedSha256 ?? string.Empty
             });
             using (SHA256 hash = SHA256.Create())
             {
@@ -270,6 +284,9 @@ namespace EsmTspiot.ServiceProvisioner
                     DirectControllerIdentity.FutureLmPortForOrdinal(manifest.Ordinal) ||
                 !string.Equals(manifest.ControllerVersion, "1.6.4.0", StringComparison.Ordinal) ||
                 !IsHex(manifest.ControllerBinarySha256, 64) ||
+                !ValidOptionalHashPair(
+                    manifest.EsmConfigOriginalSha256,
+                    manifest.EsmConfigAppliedSha256) ||
                 !ProvisionerCommandLine.IsGuidN(manifest.OperationId) ||
                 string.IsNullOrWhiteSpace(manifest.UpdatedUtc))
             {
@@ -383,6 +400,13 @@ namespace EsmTspiot.ServiceProvisioner
                 }
             }
             return true;
+        }
+
+
+        private static bool ValidOptionalHashPair(string first, string second)
+        {
+            bool bothEmpty = string.IsNullOrEmpty(first) && string.IsNullOrEmpty(second);
+            return bothEmpty || (IsHex(first, 64) && IsHex(second, 64));
         }
 
         private static string ToHex(byte[] value)
