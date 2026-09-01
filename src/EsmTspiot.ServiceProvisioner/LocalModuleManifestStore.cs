@@ -442,6 +442,31 @@ namespace EsmTspiot.ServiceProvisioner
             return true;
         }
 
+        internal IList<string> ReadStackSerials()
+        {
+            List<string> serials = new List<string>();
+            if (!Directory.Exists(_stacksRoot))
+            {
+                return serials;
+            }
+            EnsureMachineSafe(_stacksRoot);
+            string[] directories = Directory.GetDirectories(_stacksRoot);
+            for (int index = 0; index < directories.Length; index++)
+            {
+                string stackId = Path.GetFileName(directories[index]);
+                if (!LocalModuleManagedIdentity.IsStackId(stackId))
+                {
+                    throw new InvalidDataException(
+                        "Managed KKT inventory contains an unknown directory.");
+                }
+                string serial = stackId.Substring(4);
+                ReadStack(serial);
+                serials.Add(serial);
+            }
+            serials.Sort(StringComparer.Ordinal);
+            return serials;
+        }
+
         internal bool TryComputeStackFingerprint(
             string kktSerial,
             out string fingerprint)

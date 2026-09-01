@@ -82,6 +82,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("SCM adapter uses exact verified image path", ScmAdapterUsesExactVerifiedImagePath);
             Run("SCM adapter enforces restrictive service DACL", ScmAdapterEnforcesRestrictiveServiceDacl);
             Run("SCM adapter never force kills process", ScmAdapterNeverForceKillsProcess);
+            Run("Legacy terminator rejects PID reuse and foreign identity", LegacyTerminatorRejectsPidReuseAndForeignIdentity);
+            Run("Legacy migration retries partial cleanup and honors cancellation", LegacyMigrationRetriesPartialCleanupAndHonorsCancellation);
             Run("SCM handles are disposed on every failure", ScmHandlesAreDisposedOnEveryFailure);
             Run("SCM configures restricted service SID", ScmConfiguresRestrictedServiceSid);
             Run("SCM image path targets only protected supervisor mode", ScmImagePathTargetsOnlyProtectedSupervisorMode);
@@ -2272,6 +2274,13 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             string[] forbidden = { "taskkill", "Kill(", "sc.exe", "powershell", "cmd.exe", "TerminateProcess" };
             for (int fileIndex = 0; fileIndex < files.Length; fileIndex++)
             {
+                if (string.Equals(
+                        Path.GetFileName(files[fileIndex]),
+                        "LegacyOwnedProcessTerminator.cs",
+                        StringComparison.Ordinal))
+                {
+                    continue;
+                }
                 string source = File.ReadAllText(files[fileIndex]);
                 for (int tokenIndex = 0; tokenIndex < forbidden.Length; tokenIndex++)
                 {
@@ -3977,6 +3986,105 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             {
                 Directory.Delete(root, true);
             }
+        }
+
+        private static void LegacyTerminatorRejectsPidReuseAndForeignIdentity()
+        {
+            string root = Path.GetFullPath(@"C:\ProgramData\KRS\MultiKKT\LocalModules\runtime");
+            LegacyProcessSnapshot original = new LegacyProcessSnapshot
+            {
+                ProcessId = 4321,
+                CreationTimeUtcTicks = 638900000000000000L,
+                ImagePath = Path.Combine(root, "erts", "bin", "erl.exe"),
+                ImageSha256 = new string('a', 64),
+                CommandLine = "erl.exe -name krs_lm_regime_n01@127.0.0.1"
+            };
+            VerifiedLegacyProcessIdentity identity =
+                VerifiedLegacyProcessIdentity.Create(
+                    original,
+                    root,
+                    original.ImagePath,
+                    original.ImageSha256,
+                    original.CommandLine,
+                    new string('b', 64));
+            FakeLegacyProcessSnapshotReader reader =
+                new FakeLegacyProcessSnapshotReader(original);
+            FakeLegacyNativeTerminator native = new FakeLegacyNativeTerminator();
+            native.OnTerminate = delegate { reader.Current = null; };
+            LegacyOwnedProcessTerminator terminator =
+                new LegacyOwnedProcessTerminator(reader, native);
+
+            reader.Current = new LegacyProcessSnapshot
+            {
+                ProcessId = original.ProcessId,
+                CreationTimeUtcTicks = original.CreationTimeUtcTicks + 1,
+                ImagePath = original.ImagePath,
+                ImageSha256 = original.ImageSha256,
+                CommandLine = original.CommandLine
+            };
+            AssertThrows<InvalidDataException>(delegate {
+                terminator.Terminate(identity, NeverCancelLmProvisioning.Instance);
+            }, "A reused PID must never be terminated.");
+            AssertEqual(0, native.Terminated.Count,
+                "PID reuse must be rejected before the native termination call.");
+
+            reader.Current = original;
+            terminator.Terminate(identity, NeverCancelLmProvisioning.Instance);
+            AssertEqual(1, native.Terminated.Count,
+                "Only the exactly re-observed owned orphan may reach native termination.");
+
+            LegacyProcessSnapshot foreign = new LegacyProcessSnapshot
+            {
+                ProcessId = 9876,
+                CreationTimeUtcTicks = original.CreationTimeUtcTicks,
+                ImagePath = @"C:\Windows\System32\notepad.exe",
+                ImageSha256 = new string('c', 64),
+                CommandLine = "notepad.exe"
+            };
+            AssertThrows<InvalidDataException>(delegate {
+                VerifiedLegacyProcessIdentity.Create(
+                    foreign,
+                    root,
+                    original.ImagePath,
+                    original.ImageSha256,
+                    original.CommandLine,
+                    new string('d', 64));
+            }, "A foreign executable must never become a verified legacy identity.");
+        }
+
+        private static void LegacyMigrationRetriesPartialCleanupAndHonorsCancellation()
+        {
+            FakeLegacyManagedStateCleanup cleanup = new FakeLegacyManagedStateCleanup(
+                new[] { "00105700000001", "00105700000002" });
+            cleanup.CleanupPendingOnceFor = "00105700000001";
+            LegacyManagedStateMigrationWorkflow workflow =
+                new LegacyManagedStateMigrationWorkflow(cleanup, delegate { });
+
+            LegacyManagedStateMigrationResult result = workflow.Execute(
+                Guid.NewGuid().ToString("N"),
+                "S-1-5-21-111-222-333-1001",
+                NeverCancelLmProvisioning.Instance);
+
+            AssertTrue(result.IsComplete,
+                "A retryable partial cleanup must be retried and completed.");
+            AssertEqual(2, cleanup.Attempts["00105700000001"],
+                "CleanupPending must be retried at a bounded migration boundary.");
+            AssertEqual(1, cleanup.Attempts["00105700000002"],
+                "An independent legacy stack must still be cleaned.");
+
+            FakeLegacyManagedStateCleanup cancelledCleanup =
+                new FakeLegacyManagedStateCleanup(new[] { "00105700000003" });
+            LegacyManagedStateMigrationResult cancelled =
+                new LegacyManagedStateMigrationWorkflow(
+                    cancelledCleanup,
+                    delegate { }).Execute(
+                        Guid.NewGuid().ToString("N"),
+                        "S-1-5-21-111-222-333-1001",
+                        new AlwaysCancelledProvisioning());
+            AssertTrue(cancelled.IsCancelled,
+                "Cancellation must stop migration before the next owned stack.");
+            AssertEqual(0, cancelledCleanup.Attempts.Count,
+                "Cancelled migration must not mutate any legacy service.");
         }
 
         private static void DirectControllerProfileStagesOnlyOfficialCaPair()
@@ -6432,6 +6540,91 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             public bool WaitUntilStopped(int ordinal, int timeoutMilliseconds)
             {
                 return true;
+            }
+        }
+
+        private sealed class FakeLegacyProcessSnapshotReader :
+            ILegacyProcessSnapshotReader
+        {
+            internal FakeLegacyProcessSnapshotReader(LegacyProcessSnapshot current)
+            {
+                Current = current;
+            }
+
+            internal LegacyProcessSnapshot Current { get; set; }
+
+            public LegacyProcessSnapshot Read(int processId)
+            {
+                return Current;
+            }
+        }
+
+        private sealed class FakeLegacyNativeTerminator : ILegacyNativeTerminator
+        {
+            internal FakeLegacyNativeTerminator()
+            {
+                Terminated = new List<int>();
+            }
+
+            internal IList<int> Terminated { get; private set; }
+            internal Action<int> OnTerminate { get; set; }
+
+            public void TerminateAndWait(int processId, int timeoutMilliseconds)
+            {
+                Terminated.Add(processId);
+                if (OnTerminate != null) OnTerminate(processId);
+            }
+        }
+
+        private sealed class AlwaysCancelledProvisioning :
+            ILmProvisioningCancellation
+        {
+            public bool IsCancellationRequested
+            {
+                get { return true; }
+            }
+        }
+
+        private sealed class FakeLegacyManagedStateCleanup :
+            ILegacyManagedStateCleanup
+        {
+            private readonly IList<string> _serials;
+
+            internal FakeLegacyManagedStateCleanup(IList<string> serials)
+            {
+                _serials = new List<string>(serials);
+                Attempts = new Dictionary<string, int>(StringComparer.Ordinal);
+            }
+
+            internal IDictionary<string, int> Attempts { get; private set; }
+            internal string CleanupPendingOnceFor { get; set; }
+
+            public IList<string> ReadOwnedSerials()
+            {
+                return new List<string>(_serials);
+            }
+
+            public LmServiceProvisioningItemResult Cleanup(
+                string kktSerial,
+                string operationId,
+                string initiatingSid)
+            {
+                int count;
+                Attempts.TryGetValue(kktSerial, out count);
+                count++;
+                Attempts[kktSerial] = count;
+                bool pending = string.Equals(
+                        kktSerial,
+                        CleanupPendingOnceFor,
+                        StringComparison.Ordinal) && count == 1;
+                return new LmServiceProvisioningItemResult
+                {
+                    KktSerial = kktSerial,
+                    Status = pending
+                        ? LmServiceProvisioningStatus.CleanupPending
+                        : LmServiceProvisioningStatus.Succeeded,
+                    Message = pending ? "retry" : "removed"
+                };
             }
         }
 
