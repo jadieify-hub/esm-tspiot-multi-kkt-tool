@@ -71,13 +71,13 @@ $sourceMain = Join-Path $legacyOutput "EsmTspiot.Legacy.WinForms.exe"
 $sourceShared = Join-Path $legacyOutput "EsmTspiot.Shared.dll"
 $sourceHelper = Join-Path $helperOutput "EsmTspiot.ServiceProvisioner.exe"
 $sourceHelperShared = Join-Path $helperOutput "EsmTspiot.Shared.dll"
-$fieldGuide = Join-Path $repositoryRoot "docs\testing\2026-08-29-field-acceptance-1.6.3.2.md"
+$fieldGuide = Join-Path $repositoryRoot "docs\testing\2026-09-01-field-acceptance-1.6.4.0.md"
 $stagedMain = Join-Path $stageRoot "MultiKKT-ESM-TSPioT.exe"
 $stagedHelper = Join-Path $stageRoot "Provisioner\EsmTspiot.ServiceProvisioner.exe"
 
 Copy-RequiredFile $sourceMain $stagedMain
 Copy-RequiredFile $sourceShared (Join-Path $stageRoot "EsmTspiot.Shared.dll")
-Copy-RequiredFile $fieldGuide (Join-Path $stageRoot "FIELD_TEST_1.6.3.2.md")
+Copy-RequiredFile $fieldGuide (Join-Path $stageRoot "FIELD_TEST_1.6.4.0.md")
 
 $helperClosure = @(
     Get-Item -LiteralPath $sourceHelper
@@ -111,10 +111,10 @@ Author: Ruslan Kerusov
    C:\Program Files\KRS\MultiKKT
    Inherited ACLs must not grant ordinary users write access.
 3. From Downloads, Desktop or another user-writable directory, the application deliberately blocks Windows-service mutations.
-4. The official vendor packages are not included. Supply the supported esm-lm-controller_1.6.3.2-windows-setup.exe and regime-2.6.1-7.msi files yourself, then select both in the application.
-5. This archive contains no vendor binaries, extracted runtime, credentials or managed profiles.
-6. Before a real installation, follow FIELD_TEST_1.6.3.2.md.
-7. Full automatic setup also binds every ready controller to its KKT in ESM. If a final binding needs attention, select that KKT on the LM CHZ tab and retry the binding. Credentials are used for that operation only and are not saved.
+4. Install the official ESM LM Controller 1.6.4.0 before controller setup. Its vendor binary is discovered and verified in the installed location; it is not included in this archive.
+5. This archive contains no vendor binaries, extracted runtime, credentials, LM CHZ database or managed Erlang runtime.
+6. Before a real installation, follow FIELD_TEST_1.6.4.0.md.
+7. Registration and controller setup are independent. A controller or binding failure never rolls back a KKT that ESM has already registered. LM CHZ installation and initialization are intentionally deferred to a later supported workflow.
 
 Run: MultiKKT-ESM-TSPioT.exe
 "@
@@ -131,7 +131,7 @@ if ($forbiddenStage.Count -gt 0) {
 
 $expectedExact = @(
     "EsmTspiot.Shared.dll",
-    "FIELD_TEST_1.6.3.2.md",
+    "FIELD_TEST_1.6.4.0.md",
     "MultiKKT-ESM-TSPioT.exe",
     "README.txt"
 )
