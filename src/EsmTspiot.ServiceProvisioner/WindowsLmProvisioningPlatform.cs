@@ -68,7 +68,7 @@ namespace EsmTspiot.ServiceProvisioner
             string operationId)
         {
             ControllerCapabilityProfile profile =
-                ControllerCapabilityProfile.SupportedVersion1632();
+                ControllerCapabilityProfile.SupportedVersion1640();
             PathSafety pathSafety = new PathSafety();
             WinTrustVerifier trustVerifier = new WinTrustVerifier();
             WindowsServiceApi serviceApi = new WindowsServiceApi();

@@ -51,6 +51,7 @@ namespace EsmTspiot.ServiceProvisioner
         }
 
         internal string Version { get; private set; }
+        internal string InstalledProductName { get; private set; }
         internal string InstallRoot { get; private set; }
         internal string ControllerRelativePath { get; set; }
         internal TrustedFileExpectation ControllerBinary { get; private set; }
@@ -63,6 +64,7 @@ namespace EsmTspiot.ServiceProvisioner
         internal IList<string> ServiceDependencies { get; private set; }
         internal WindowsServiceStartMode ServiceStartMode { get; private set; }
         internal WindowsServiceErrorControl ServiceErrorControl { get; private set; }
+        internal WindowsServiceSidType ServiceSidType { get; private set; }
         internal WindowsServiceRecoveryPolicy ServiceRecoveryPolicy { get; private set; }
         internal string TerminalArguments { get; private set; }
         internal int GracefulStopTimeoutMilliseconds { get; private set; }
@@ -70,7 +72,7 @@ namespace EsmTspiot.ServiceProvisioner
         internal bool ListenerUsesDualStackIpv6Wildcard { get; private set; }
         internal IDictionary<string, CapabilityFactProvenance> Provenance { get; private set; }
 
-        internal static ControllerCapabilityProfile SupportedVersion1632()
+        internal static ControllerCapabilityProfile SupportedVersion1640()
         {
             string programFiles64 = Environment.GetEnvironmentVariable("ProgramW6432");
             if (string.IsNullOrWhiteSpace(programFiles64))
@@ -80,7 +82,8 @@ namespace EsmTspiot.ServiceProvisioner
 
             ControllerCapabilityProfile profile = new ControllerCapabilityProfile
             {
-                Version = "1.6.3.2",
+                Version = "1.6.4.0",
+                InstalledProductName = "ЕСП Контроллер ЛМ ЧЗ",
                 InstallRoot = Path.Combine(programFiles64, "ESP", "LMController"),
                 ControllerRelativePath = Path.Combine("bin", "lmcontroller.exe"),
                 ProfileEnvironmentKey = "ProgramData",
@@ -90,6 +93,7 @@ namespace EsmTspiot.ServiceProvisioner
                 ServiceDependencies = new List<string>(),
                 ServiceStartMode = WindowsServiceStartMode.AutoStart,
                 ServiceErrorControl = WindowsServiceErrorControl.Ignore,
+                ServiceSidType = WindowsServiceSidType.None,
                 ServiceRecoveryPolicy = new WindowsServiceRecoveryPolicy(
                     60,
                     new[] { 30000, 60000, 60000 }),
@@ -107,8 +111,8 @@ namespace EsmTspiot.ServiceProvisioner
                 ControllerBinary = new TrustedFileExpectation
                 {
                     FileName = "lmcontroller.exe",
-                    ByteLength = 14647536,
-                    Sha256 = "9ce34999ea965e01d8328895bb1776e7b44edabf72fc51bee121ec5091746214",
+                    ByteLength = 14668016,
+                    Sha256 = "0a25b29a39b100fe461eb3ffa06a6b18f2b474f337efdb9f7a9ca89740ffd0a",
                     FileVersion = string.Empty,
                     ProductVersion = string.Empty,
                     ProductName = string.Empty,
@@ -120,10 +124,10 @@ namespace EsmTspiot.ServiceProvisioner
                 },
                 Installer = new TrustedFileExpectation
                 {
-                    FileName = "esm-lm-controller_1.6.3.2-windows-setup.exe",
-                    ByteLength = 11094696,
-                    Sha256 = "822e047dbef62cbdbe2cf1ae22c457f43930c574fbcf265170987b9c7eae91e7",
-                    FileVersion = "1.6.3.2",
+                    FileName = "esm-lm-controller_1.6.4.0-windows-setup.exe",
+                    ByteLength = 11088544,
+                    Sha256 = "2f97da8b93b6f7bc820385f5b70feab0ce7cbe2c6dbc25c0bca2348928bb3192",
+                    FileVersion = "1.6.4.0",
                     ProductVersion = string.Empty,
                     ProductName = "ЕСП Контроллер ЛМ ЧЗ",
                     CompanyName = "ЕСП",
@@ -148,6 +152,7 @@ namespace EsmTspiot.ServiceProvisioner
             ControllerCapabilityProfile profile = new ControllerCapabilityProfile
             {
                 Version = version,
+                InstalledProductName = "ЕСП Контроллер ЛМ ЧЗ",
                 InstallRoot = Path.GetFullPath(installRoot),
                 ControllerRelativePath = controllerRelativePath,
                 ControllerBinary = controllerBinary.Clone(),
@@ -159,6 +164,7 @@ namespace EsmTspiot.ServiceProvisioner
                 ServiceDependencies = new List<string>(),
                 ServiceStartMode = WindowsServiceStartMode.AutoStart,
                 ServiceErrorControl = WindowsServiceErrorControl.Ignore,
+                ServiceSidType = WindowsServiceSidType.None,
                 ServiceRecoveryPolicy = new WindowsServiceRecoveryPolicy(
                     60,
                     new[] { 30000, 60000, 60000 }),
@@ -181,6 +187,7 @@ namespace EsmTspiot.ServiceProvisioner
         private void TagProductionFacts()
         {
             Provenance["Version"] = CapabilityFactProvenance.OfficialPackage;
+            Provenance["InstalledProductName"] = CapabilityFactProvenance.PrivateBlackBox;
             Provenance["InstallRoot"] = CapabilityFactProvenance.PrivateBlackBox;
             Provenance["ControllerRelativePath"] = CapabilityFactProvenance.PrivateBlackBox;
             Provenance["ControllerBinary"] = CapabilityFactProvenance.PrivateBlackBox;
@@ -194,6 +201,7 @@ namespace EsmTspiot.ServiceProvisioner
             Provenance["ServiceDependencies"] = CapabilityFactProvenance.PrivateBlackBox;
             Provenance["ServiceStartMode"] = CapabilityFactProvenance.PrivateBlackBox;
             Provenance["ServiceErrorControl"] = CapabilityFactProvenance.PrivateBlackBox;
+            Provenance["ServiceSidType"] = CapabilityFactProvenance.PrivateBlackBox;
             Provenance["ServiceRecoveryPolicy"] = CapabilityFactProvenance.PrivateBlackBox;
             Provenance["GeneratedArtifactFileNames"] = CapabilityFactProvenance.PrivateBlackBox;
             Provenance["ListenerUsesDualStackIpv6Wildcard"] = CapabilityFactProvenance.PrivateBlackBox;

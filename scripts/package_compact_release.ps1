@@ -11,6 +11,7 @@ $stageRoot = [IO.Path]::GetFullPath((Join-Path $releaseRoot "MultiKKT-ESM-TSPioT
 $zipPath = Join-Path $releaseRoot "MultiKKT-ESM-TSPioT-compact.zip"
 $outerSumsPath = Join-Path $releaseRoot "SHA256SUMS-MultiKKT-compact.txt"
 $fixedTimestamp = [DateTimeOffset]::new(2026, 1, 1, 0, 0, 0, [TimeSpan]::Zero)
+. (Join-Path $scriptRoot "build_tools.ps1")
 
 function Assert-ChildPath {
     param([string]$Parent, [string]$Child)
@@ -20,21 +21,6 @@ function Assert-ChildPath {
     if (-not $childFull.StartsWith($parentFull, [StringComparison]::OrdinalIgnoreCase)) {
         throw "Unsafe output path outside expected parent: $childFull"
     }
-}
-
-function Find-MSBuild {
-    $command = Get-Command msbuild.exe -ErrorAction SilentlyContinue
-    if ($command) {
-        return $command.Source
-    }
-    $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
-    if (Test-Path -LiteralPath $vswhere) {
-        $found = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find "MSBuild\**\Bin\MSBuild.exe" | Select-Object -First 1
-        if ($found) {
-            return $found
-        }
-    }
-    throw "MSBuild was not found. Install Visual Studio Build Tools with the .NET Framework 4.8 targeting pack."
 }
 
 function Copy-RequiredFile {
@@ -72,7 +58,7 @@ if (Test-Path -LiteralPath $stageRoot) {
 }
 [IO.Directory]::CreateDirectory($stageRoot) | Out-Null
 
-$msbuild = Find-MSBuild
+$msbuild = Get-KrsMSBuildPath
 $legacyProject = Join-Path $repositoryRoot "src\EsmTspiot.Legacy.WinForms\EsmTspiot.Legacy.WinForms.csproj"
 & $msbuild $legacyProject /restore /t:Rebuild "/p:Configuration=$Configuration" /p:LangVersion=5 /m /v:minimal
 if ($LASTEXITCODE -ne 0) {

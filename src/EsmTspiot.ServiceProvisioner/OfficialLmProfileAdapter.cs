@@ -30,7 +30,7 @@ namespace EsmTspiot.ServiceProvisioner
             _manifestStore = manifestStore;
             _writer = writer;
             _serviceApi = serviceApi;
-            if (!string.Equals(_profile.Version, "1.6.3.2", StringComparison.Ordinal) ||
+            if (!string.Equals(_profile.Version, "1.6.4.0", StringComparison.Ordinal) ||
                 !string.Equals(_profile.ProfileEnvironmentKey, "ProgramData", StringComparison.Ordinal) ||
                 !string.Equals(
                     _profile.VendorProfileRelativePath,
@@ -177,7 +177,7 @@ namespace EsmTspiot.ServiceProvisioner
             {
                 throw new InvalidDataException("Managed LM spec identity is invalid.");
             }
-            LmProfileConfiguration.FromSpec("1.6.3.2", spec);
+            LmProfileConfiguration.FromSpec("1.6.4.0", spec);
         }
 
         private static string ToTargetUrl(string targetAddress)
