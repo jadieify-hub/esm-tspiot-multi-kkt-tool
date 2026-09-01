@@ -109,6 +109,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("LM profile adapter preserves unknown nonsecret fields", LmProfileAdapterPreservesUnknownNonsecretFields);
             Run("LM profile adapter writes atomically", LmProfileAdapterWritesAtomically);
             Run("LM profile adapter never clones official profile", LmProfileAdapterNeverClonesOfficialProfile);
+            Run("Direct controller profile stages only official CA pair", DirectControllerProfileStagesOnlyOfficialCaPair);
+            Run("Direct controller profile atomically replaces read only CA", DirectControllerProfileAtomicallyReplacesReadOnlyCa);
             Run("LM profile adapter detects unsupported controller version", LmProfileAdapterDetectsUnsupportedControllerVersion);
             Run("Ensure creates profile service and listeners in order", EnsureCreatesProfileServiceAndListenersInOrder);
             Run("Ensure is no op for matching ready service", EnsureIsNoOpForMatchingReadyService);
@@ -3732,6 +3734,98 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             finally
             {
                 Directory.Delete(root, true);
+            }
+        }
+
+        private static void DirectControllerProfileStagesOnlyOfficialCaPair()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                string officialRoot = Path.Combine(root, "official");
+                string cloneRoot = Path.Combine(root, "clone");
+                Directory.CreateDirectory(officialRoot);
+                Directory.CreateDirectory(cloneRoot);
+                File.WriteAllText(Path.Combine(officialRoot, "ca.crt"),
+                    "-----BEGIN CERTIFICATE-----\nfield-ca\n-----END CERTIFICATE-----\n",
+                    Encoding.ASCII);
+                File.WriteAllText(Path.Combine(officialRoot, "ca.pem"),
+                    "-----BEGIN PRIVATE KEY-----\nfield-key\n-----END PRIVATE KEY-----\n",
+                    Encoding.ASCII);
+                File.WriteAllText(Path.Combine(officialRoot, "server.crt"), "must-not-copy",
+                    Encoding.ASCII);
+                File.WriteAllText(Path.Combine(officialRoot, "server.pem"), "must-not-copy",
+                    Encoding.ASCII);
+                File.WriteAllText(Path.Combine(officialRoot, "config.yml"), "must-not-copy",
+                    Encoding.ASCII);
+
+                new DirectControllerCaStager(
+                    ControllerCapabilityProfile.SupportedVersion1640(),
+                    new AtomicFileWriter(),
+                    new FakePathSafety(true),
+                    officialRoot).Stage(cloneRoot);
+
+                string[] files = Directory.GetFiles(cloneRoot, "*", SearchOption.AllDirectories);
+                AssertEqual(2, files.Length,
+                    "Only the shared CA certificate and key may be staged before first start.");
+                AssertContains(File.ReadAllText(Path.Combine(cloneRoot, "ca.crt"), Encoding.ASCII),
+                    "field-ca");
+                AssertContains(File.ReadAllText(Path.Combine(cloneRoot, "ca.pem"), Encoding.ASCII),
+                    "field-key");
+                AssertFalse(File.Exists(Path.Combine(cloneRoot, "server.crt")) ||
+                            File.Exists(Path.Combine(cloneRoot, "server.pem")) ||
+                            File.Exists(Path.Combine(cloneRoot, "config.yml")),
+                    "Per-instance server identity and config must be generated independently.");
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        }
+
+        private static void DirectControllerProfileAtomicallyReplacesReadOnlyCa()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                string officialRoot = Path.Combine(root, "official");
+                string cloneRoot = Path.Combine(root, "clone");
+                Directory.CreateDirectory(officialRoot);
+                Directory.CreateDirectory(cloneRoot);
+                File.WriteAllText(Path.Combine(officialRoot, "ca.crt"),
+                    "-----BEGIN CERTIFICATE-----\nreplacement-ca\n-----END CERTIFICATE-----\n",
+                    Encoding.ASCII);
+                File.WriteAllText(Path.Combine(officialRoot, "ca.pem"),
+                    "-----BEGIN RSA PRIVATE KEY-----\nreplacement-key\n-----END RSA PRIVATE KEY-----\n",
+                    Encoding.ASCII);
+                string cloneCertificate = Path.Combine(cloneRoot, "ca.crt");
+                string cloneKey = Path.Combine(cloneRoot, "ca.pem");
+                File.WriteAllText(cloneCertificate,
+                    "-----BEGIN CERTIFICATE-----\nold-ca\n-----END CERTIFICATE-----\n",
+                    Encoding.ASCII);
+                File.WriteAllText(cloneKey,
+                    "-----BEGIN PRIVATE KEY-----\nold-key\n-----END PRIVATE KEY-----\n",
+                    Encoding.ASCII);
+                File.SetAttributes(cloneCertificate, FileAttributes.ReadOnly);
+                File.SetAttributes(cloneKey, FileAttributes.ReadOnly);
+
+                new DirectControllerCaStager(
+                    ControllerCapabilityProfile.SupportedVersion1640(),
+                    new AtomicFileWriter(),
+                    new FakePathSafety(true),
+                    officialRoot).Stage(cloneRoot);
+
+                AssertContains(File.ReadAllText(cloneCertificate, Encoding.ASCII), "replacement-ca");
+                AssertContains(File.ReadAllText(cloneKey, Encoding.ASCII), "replacement-key");
+                AssertEqual(0, Directory.GetFiles(cloneRoot, "*.tmp").Length,
+                    "Atomic replacement must not leave temporary CA files.");
+                AssertFalse((File.GetAttributes(cloneCertificate) & FileAttributes.ReadOnly) != 0 ||
+                            (File.GetAttributes(cloneKey) & FileAttributes.ReadOnly) != 0,
+                    "Repaired CA files must remain writable by the privileged one-shot helper.");
+            }
+            finally
+            {
+                DeleteTestTreeWithReadOnlyFiles(root);
             }
         }
 

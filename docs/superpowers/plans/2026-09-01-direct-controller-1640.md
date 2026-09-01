@@ -31,10 +31,10 @@
 
 ### Task 2: Direct assignments, profiles, and CA
 
-- [ ] Add failing tests for stable assignments, first/base role, foreign service/port conflicts, ordinal gaps, and exhaustion.
-- [ ] Implement the direct-controller models and planner.
-- [ ] Add failing tests that copy only `ca.crt`/`ca.pem`, replace owned read-only CA atomically, and never clone `server.*` or the official config.
-- [ ] Port only the trusted-CA behavior from `b3c07c7`/`66f3ef2`, capability-driven for 1.6.4.0; commit.
+- [x] Add failing tests for stable assignments, first/base role, foreign service/port conflicts, ordinal gaps, and exhaustion.
+- [x] Implement the direct-controller models and planner.
+- [x] Add failing tests that copy only `ca.crt`/`ca.pem`, replace owned read-only CA atomically, and never clone `server.*` or the official config.
+- [x] Port only the trusted-CA behavior from `b3c07c7`/`66f3ef2`, capability-driven for 1.6.4.0; commit.
 
 ### Task 3: Protocol v2, manifests, and direct SCM services
 
