@@ -100,6 +100,10 @@ namespace EsmTspiot.Shared.Tests
             Run("LM binding plan cannot contain credentials", LmBindingPlanCannotContainCredentials);
             Run("LM service identity is deterministic and independent", LmServiceIdentityIsDeterministicAndIndependent);
             Run("LM service identity rejects unsafe serial", LmServiceIdentityRejectsUnsafeSerial);
+            Run("Direct controller planner assigns official base then clones", DirectControllerPlannerAssignsOfficialBaseThenClones);
+            Run("Direct controller planner preserves stable saved ordinal", DirectControllerPlannerPreservesStableSavedOrdinal);
+            Run("Direct controller planner skips foreign names and ports", DirectControllerPlannerSkipsForeignNamesAndPorts);
+            Run("Direct controller planner reports ordinal exhaustion", DirectControllerPlannerReportsOrdinalExhaustion);
             Run("LM gateway planner never adopts official base service", LmGatewayPlannerNeverAdoptsOfficialBaseService);
             Run("LM gateway planner allocates sequential local ports", LmGatewayPlannerAllocatesSequentialLocalPorts);
             Run("LM gateway planner keeps owned and skips foreign listener", LmGatewayPlannerKeepsOwnedAndSkipsForeignListener);
@@ -1615,6 +1619,159 @@ namespace EsmTspiot.Shared.Tests
 
                 AssertTrue(rejected, "Unsafe KKT serial must be rejected.");
             }
+        }
+
+        private static void DirectControllerPlannerAssignsOfficialBaseThenClones()
+        {
+            DirectControllerPlan plan = DirectControllerPlanner.Build(
+                new List<LmGatewayKkt>
+                {
+                    CreateLmKkt("00105700000002", "7707083893"),
+                    CreateLmKkt("00105700000001", "1234567894")
+                },
+                new List<DirectControllerAssignment>(),
+                new List<DirectControllerServiceInventoryItem>
+                {
+                    new DirectControllerServiceInventoryItem
+                    {
+                        ServiceName = "esm-lm-controller",
+                        IsVerifiedOfficial = true
+                    }
+                },
+                new List<TcpListenerSnapshotItem>());
+
+            AssertTrue(plan.IsValid, string.Join("; ", plan.ValidationMessages));
+            AssertEqual(2, plan.Assignments.Count, "Expected one controller per registered KKT.");
+            AssertEqual("00105700000001", plan.Assignments[0].KktSerial,
+                "The first stable KKT gets the official base service.");
+            AssertEqual(DirectControllerRole.OfficialBase, plan.Assignments[0].Role,
+                "Ordinal one must be the verified official service.");
+            AssertEqual("esm-lm-controller", plan.Assignments[0].ServiceName,
+                "The base service name is vendor-owned and fixed.");
+            AssertEqual(50063, plan.Assignments[0].GrpcPort, "Unexpected base gRPC port.");
+            AssertEqual(5063, plan.Assignments[0].RestPort, "Unexpected base REST port.");
+            AssertEqual(5995, plan.Assignments[0].FutureLocalModulePort,
+                "The future LM port must remain compatible with field binding.");
+            AssertEqual(DirectControllerRole.DirectClone, plan.Assignments[1].Role,
+                "Every later KKT uses a direct clone.");
+            AssertEqual("esm-lm-controller-2", plan.Assignments[1].ServiceName,
+                "Clone identity must be derived from the stable ordinal.");
+            AssertEqual(50064, plan.Assignments[1].GrpcPort, "Unexpected clone gRPC port.");
+            AssertEqual(5064, plan.Assignments[1].RestPort, "Unexpected clone REST port.");
+            AssertEqual(6995, plan.Assignments[1].FutureLocalModulePort,
+                "Unexpected future LM port for ordinal two.");
+        }
+
+        private static void DirectControllerPlannerPreservesStableSavedOrdinal()
+        {
+            DirectControllerAssignment saved = new DirectControllerAssignment
+            {
+                KktSerial = "00105700000002",
+                KktInn = "7707083893",
+                Ordinal = 4,
+                Role = DirectControllerRole.DirectClone,
+                ServiceName = "esm-lm-controller-4",
+                GrpcPort = 50066,
+                RestPort = 5066,
+                FutureLocalModulePort = 8995
+            };
+            DirectControllerPlan plan = DirectControllerPlanner.Build(
+                new List<LmGatewayKkt>
+                {
+                    CreateLmKkt("00105700000002", "7707083893"),
+                    CreateLmKkt("00105700000001", "1234567894")
+                },
+                new List<DirectControllerAssignment> { saved },
+                new List<DirectControllerServiceInventoryItem>
+                {
+                    new DirectControllerServiceInventoryItem
+                    {
+                        ServiceName = "esm-lm-controller",
+                        IsVerifiedOfficial = true
+                    }
+                },
+                new List<TcpListenerSnapshotItem>());
+
+            AssertTrue(plan.IsValid, string.Join("; ", plan.ValidationMessages));
+            DirectControllerAssignment preserved = plan.FindBySerial("00105700000002");
+            AssertEqual(4, preserved.Ordinal,
+                "A matching saved assignment must never be compacted into an ordinal gap.");
+            AssertEqual("esm-lm-controller-4", preserved.ServiceName,
+                "Stable service identity follows the preserved ordinal.");
+            AssertEqual(1, plan.FindBySerial("00105700000001").Ordinal,
+                "The free official base remains available to a new KKT.");
+        }
+
+        private static void DirectControllerPlannerSkipsForeignNamesAndPorts()
+        {
+            DirectControllerPlan plan = DirectControllerPlanner.Build(
+                new List<LmGatewayKkt>
+                {
+                    CreateLmKkt("00105700000001", "1234567894"),
+                    CreateLmKkt("00105700000002", "7707083893")
+                },
+                new List<DirectControllerAssignment>(),
+                new List<DirectControllerServiceInventoryItem>
+                {
+                    new DirectControllerServiceInventoryItem
+                    {
+                        ServiceName = "esm-lm-controller",
+                        IsVerifiedOfficial = true
+                    },
+                    new DirectControllerServiceInventoryItem
+                    {
+                        ServiceName = "esm-lm-controller-2",
+                        IsOwned = false,
+                        IsVerifiedOfficial = false
+                    }
+                },
+                new List<TcpListenerSnapshotItem>
+                {
+                    new TcpListenerSnapshotItem(50065, "foreign-controller", false)
+                });
+
+            AssertTrue(plan.IsValid, string.Join("; ", plan.ValidationMessages));
+            DirectControllerAssignment second = plan.FindBySerial("00105700000002");
+            AssertEqual(4, second.Ordinal,
+                "Ordinal two is blocked by a foreign name and ordinal three by a foreign port.");
+            AssertEqual("esm-lm-controller-4", second.ServiceName,
+                "A foreign RollingPin-style service must never be adopted or overwritten.");
+        }
+
+        private static void DirectControllerPlannerReportsOrdinalExhaustion()
+        {
+            List<DirectControllerServiceInventoryItem> services =
+                new List<DirectControllerServiceInventoryItem>
+                {
+                    new DirectControllerServiceInventoryItem
+                    {
+                        ServiceName = "esm-lm-controller",
+                        IsVerifiedOfficial = true
+                    }
+                };
+            for (int ordinal = 2; ordinal <= 32; ordinal++)
+            {
+                services.Add(new DirectControllerServiceInventoryItem
+                {
+                    ServiceName = "esm-lm-controller-" + ordinal.ToString(),
+                    IsOwned = false
+                });
+            }
+
+            DirectControllerPlan plan = DirectControllerPlanner.Build(
+                new List<LmGatewayKkt>
+                {
+                    CreateLmKkt("00105700000001", "1234567894"),
+                    CreateLmKkt("00105700000002", "7707083893")
+                },
+                new List<DirectControllerAssignment>(),
+                services,
+                new List<TcpListenerSnapshotItem>());
+
+            AssertFalse(plan.IsValid, "Exhaustion must be explicit rather than dropping a KKT.");
+            AssertEqual(1, plan.Assignments.Count,
+                "Only the KKT assigned before exhaustion may remain in the plan.");
+            AssertContains(string.Join("; ", plan.ValidationMessages), "32");
         }
 
         private static void LmGatewayPlannerNeverAdoptsOfficialBaseService()
