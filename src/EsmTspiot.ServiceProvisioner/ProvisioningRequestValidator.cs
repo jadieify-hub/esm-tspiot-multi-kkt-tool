@@ -117,6 +117,10 @@ namespace EsmTspiot.ServiceProvisioner
 
             HashSet<string> serials = new HashSet<string>(StringComparer.Ordinal);
             HashSet<int> ordinals = new HashSet<int>();
+            Dictionary<string, int> targetPortsByInn =
+                new Dictionary<string, int>(StringComparer.Ordinal);
+            Dictionary<int, string> targetInnsByPort =
+                new Dictionary<int, string>();
             int previousOrdinal = 0;
             for (int index = 0; index < count; index++)
             {
@@ -138,6 +142,36 @@ namespace EsmTspiot.ServiceProvisioner
                 if (!IsAsciiDigits(item.Inn, 10) && !IsAsciiDigits(item.Inn, 12))
                 {
                     result.Add("ИНН прямого контроллера должен содержать 10 или 12 ASCII-цифр.");
+                }
+                if (item.TargetLocalModulePort < 1024 ||
+                    item.TargetLocalModulePort > 65535 ||
+                    DirectControllerIdentity.IsControllerPort(
+                        item.TargetLocalModulePort))
+                {
+                    result.Add("Целевой порт ЛМ прямого контроллера недействителен.");
+                }
+                else if (IsAsciiDigits(item.Inn, 10) ||
+                    IsAsciiDigits(item.Inn, 12))
+                {
+                    int existingPort;
+                    string existingInn;
+                    if (targetPortsByInn.TryGetValue(item.Inn, out existingPort) &&
+                        existingPort != item.TargetLocalModulePort)
+                    {
+                        result.Add("Контроллеры одного ИНН направлены на разные ЛМ.");
+                    }
+                    else if (targetInnsByPort.TryGetValue(
+                            item.TargetLocalModulePort,
+                            out existingInn) &&
+                        !string.Equals(existingInn, item.Inn, StringComparison.Ordinal))
+                    {
+                        result.Add("Разные ИНН не могут использовать один целевой порт ЛМ.");
+                    }
+                    else
+                    {
+                        targetPortsByInn[item.Inn] = item.TargetLocalModulePort;
+                        targetInnsByPort[item.TargetLocalModulePort] = item.Inn;
+                    }
                 }
                 ValidateOrdinal(item.Ordinal, "контроллера", ordinals, result);
                 if (!single && item.Ordinal <= previousOrdinal)

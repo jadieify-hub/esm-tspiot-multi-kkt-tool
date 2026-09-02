@@ -177,6 +177,7 @@ namespace EsmTspiot.ServiceProvisioner
             }
             RequireProtected(path);
             DirectControllerManifest manifest = Deserialize<DirectControllerManifest>(path);
+            NormalizeLegacyManifest(manifest);
             ValidateManifest(manifest);
             if (!string.Equals(manifest.KktSerial, kktSerial, StringComparison.Ordinal))
             {
@@ -229,7 +230,7 @@ namespace EsmTspiot.ServiceProvisioner
                 manifest.ServiceName,
                 manifest.GrpcPort.ToString(),
                 manifest.RestPort.ToString(),
-                manifest.FutureLocalModulePort.ToString(),
+                manifest.TargetLocalModulePort.ToString(),
                 manifest.ControllerVersion,
                 manifest.ControllerBinarySha256.ToLowerInvariant(),
                 Path.GetFullPath(manifest.ProfileEnvironmentRoot),
@@ -253,7 +254,7 @@ namespace EsmTspiot.ServiceProvisioner
                 ServiceName = manifest.ServiceName,
                 GrpcPort = manifest.GrpcPort,
                 RestPort = manifest.RestPort,
-                FutureLocalModulePort = manifest.FutureLocalModulePort,
+                TargetLocalModulePort = manifest.TargetLocalModulePort,
                 ControllerVersion = manifest.ControllerVersion,
                 State = manifest.State,
                 RemovalFingerprint = ComputeFingerprint(manifest)
@@ -280,8 +281,11 @@ namespace EsmTspiot.ServiceProvisioner
                     StringComparison.Ordinal) ||
                 manifest.GrpcPort != DirectControllerIdentity.GrpcPortForOrdinal(manifest.Ordinal) ||
                 manifest.RestPort != DirectControllerIdentity.RestPortForOrdinal(manifest.Ordinal) ||
-                manifest.FutureLocalModulePort !=
-                    DirectControllerIdentity.FutureLmPortForOrdinal(manifest.Ordinal) ||
+                manifest.LegacyFutureLocalModulePort != 0 ||
+                manifest.TargetLocalModulePort < 1024 ||
+                manifest.TargetLocalModulePort > 65535 ||
+                DirectControllerIdentity.IsControllerPort(
+                    manifest.TargetLocalModulePort) ||
                 !string.Equals(manifest.ControllerVersion, "1.6.4.0", StringComparison.Ordinal) ||
                 !IsHex(manifest.ControllerBinarySha256, 64) ||
                 !ValidOptionalHashPair(
@@ -300,6 +304,30 @@ namespace EsmTspiot.ServiceProvisioner
             {
                 throw new InvalidDataException("Direct controller profile identity is invalid.");
             }
+        }
+
+        private static void NormalizeLegacyManifest(DirectControllerManifest manifest)
+        {
+            if (manifest == null || manifest.SchemaVersion != 1)
+            {
+                return;
+            }
+            if (!string.Equals(
+                    manifest.OwnershipMarker,
+                    DirectControllerManifest.ExpectedOwnershipMarker,
+                    StringComparison.Ordinal) ||
+                manifest.Ordinal < 1 ||
+                manifest.Ordinal > DirectControllerIdentity.MaximumOrdinal ||
+                manifest.TargetLocalModulePort != 0 ||
+                manifest.LegacyFutureLocalModulePort !=
+                    DirectControllerIdentity.FutureLmPortForOrdinal(manifest.Ordinal))
+            {
+                throw new InvalidDataException(
+                    "Legacy direct controller manifest target is invalid.");
+            }
+            manifest.TargetLocalModulePort = manifest.LegacyFutureLocalModulePort;
+            manifest.LegacyFutureLocalModulePort = 0;
+            manifest.SchemaVersion = DirectControllerManifest.CurrentSchemaVersion;
         }
 
         private void EnsureProtectedContainer(string path)

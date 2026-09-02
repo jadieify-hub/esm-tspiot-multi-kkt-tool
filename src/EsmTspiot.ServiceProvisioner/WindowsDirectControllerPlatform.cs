@@ -133,7 +133,7 @@ namespace EsmTspiot.ServiceProvisioner
                 DirectControllerManifest existing = _manifests.Read(item.KktSerial);
                 if (existing != null)
                 {
-                    RequireSameAssignment(existing, item);
+                    RequireSameControllerIdentity(existing, item);
                     manifest.EsmConfigOriginalSha256 =
                         existing.EsmConfigOriginalSha256;
                     manifest.EsmConfigAppliedSha256 =
@@ -497,6 +497,7 @@ namespace EsmTspiot.ServiceProvisioner
                 item.KktSerial,
                 item.Inn,
                 item.Ordinal,
+                item.TargetLocalModulePort,
                 _binary.Version,
                 _binary.Sha256,
                 _manifests.GetProfileEnvironmentRoot(item.Ordinal),
@@ -505,6 +506,18 @@ namespace EsmTspiot.ServiceProvisioner
         }
 
         private static void RequireSameAssignment(
+            DirectControllerManifest manifest,
+            DirectControllerProvisioningItemRequest item)
+        {
+            RequireSameControllerIdentity(manifest, item);
+            if (manifest.TargetLocalModulePort != item.TargetLocalModulePort)
+            {
+                throw new InvalidDataException(
+                    "Сохранённое назначение прямого контроллера не совпадает с планом.");
+            }
+        }
+
+        private static void RequireSameControllerIdentity(
             DirectControllerManifest manifest,
             DirectControllerProvisioningItemRequest item)
         {

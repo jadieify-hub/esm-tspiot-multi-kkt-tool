@@ -76,7 +76,8 @@ namespace EsmTspiot.WinForms.Shared
                 {
                     KktSerial = assignment.KktSerial,
                     Inn = assignment.KktInn,
-                    Ordinal = assignment.Ordinal
+                    Ordinal = assignment.Ordinal,
+                    TargetLocalModulePort = assignment.TargetLocalModulePort
                 });
                 Log(
                     "ККТ " + assignment.KktSerial +

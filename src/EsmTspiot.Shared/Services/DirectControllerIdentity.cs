@@ -41,6 +41,19 @@ namespace EsmTspiot.Shared.Services
             return 4995 + (1000 * ordinal);
         }
 
+        public static bool IsControllerPort(int port)
+        {
+            for (int ordinal = 1; ordinal <= MaximumOrdinal; ordinal++)
+            {
+                if (port == GrpcPortForOrdinal(ordinal) ||
+                    port == RestPortForOrdinal(ordinal))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         public static bool TryParseServiceName(string serviceName, out int ordinal)
         {
             ordinal = 0;

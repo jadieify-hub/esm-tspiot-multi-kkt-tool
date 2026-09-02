@@ -95,6 +95,10 @@ namespace EsmTspiot.Shared.Services
                     Append(canonical, "direct-ordinal", item == null
                         ? null
                         : item.Ordinal.ToString(CultureInfo.InvariantCulture));
+                    Append(canonical, "direct-target-lm-port", item == null
+                        ? null
+                        : item.TargetLocalModulePort.ToString(
+                            CultureInfo.InvariantCulture));
                     Append(canonical, "direct-manifest", item == null
                         ? null
                         : item.ExpectedManifestSha256);

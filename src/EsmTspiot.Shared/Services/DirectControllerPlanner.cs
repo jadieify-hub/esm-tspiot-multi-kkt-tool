@@ -12,12 +12,36 @@ namespace EsmTspiot.Shared.Services
             IList<DirectControllerServiceInventoryItem> services,
             IList<TcpListenerSnapshotItem> listeners)
         {
+            return Build(
+                kkts,
+                savedAssignments,
+                services,
+                listeners,
+                CreateLegacyTargetMap(kkts, savedAssignments));
+        }
+
+        public static DirectControllerPlan Build(
+            IList<LmGatewayKkt> kkts,
+            IList<DirectControllerAssignment> savedAssignments,
+            IList<DirectControllerServiceInventoryItem> services,
+            IList<TcpListenerSnapshotItem> listeners,
+            IDictionary<string, int> targetLmPortsByInn)
+        {
             DirectControllerPlan plan = new DirectControllerPlan();
             List<LmGatewayKkt> current = NormalizeAndSortKkts(kkts, plan);
             IList<DirectControllerServiceInventoryItem> safeServices =
                 services ?? new List<DirectControllerServiceInventoryItem>();
             IList<TcpListenerSnapshotItem> safeListeners =
                 listeners ?? new List<TcpListenerSnapshotItem>();
+
+            Dictionary<string, int> safeTargets = ValidateTargetMap(
+                current,
+                targetLmPortsByInn,
+                plan);
+            if (!plan.IsValid)
+            {
+                return plan;
+            }
 
             if (current.Count > 0 && !HasVerifiedOfficialService(safeServices))
             {
@@ -36,6 +60,7 @@ namespace EsmTspiot.Shared.Services
                 currentBySerial,
                 savedBySerial,
                 reservedOrdinals,
+                safeTargets,
                 plan);
 
             for (int index = 0; index < current.Count; index++)
@@ -77,7 +102,10 @@ namespace EsmTspiot.Shared.Services
                     continue;
                 }
 
-                DirectControllerAssignment assignment = CreateAssignment(kkt, ordinal);
+                DirectControllerAssignment assignment = CreateAssignment(
+                    kkt,
+                    ordinal,
+                    safeTargets[kkt.KktInn]);
                 reservedOrdinals.Add(ordinal);
                 plan.Assignments.Add(assignment);
             }
@@ -89,6 +117,89 @@ namespace EsmTspiot.Shared.Services
                     "Ни одна текущая ККТ не закреплена за штатным контроллером.");
             }
             return plan;
+        }
+
+        private static Dictionary<string, int> ValidateTargetMap(
+            IList<LmGatewayKkt> current,
+            IDictionary<string, int> source,
+            DirectControllerPlan plan)
+        {
+            Dictionary<string, int> result =
+                new Dictionary<string, int>(StringComparer.Ordinal);
+            HashSet<int> ports = new HashSet<int>();
+            if (source != null)
+            {
+                foreach (KeyValuePair<string, int> pair in source)
+                {
+                    string inn = Trim(pair.Key);
+                    if (!IsInn(inn) || pair.Value < 1024 || pair.Value > 65535 ||
+                        DirectControllerIdentity.IsControllerPort(pair.Value) ||
+                        result.ContainsKey(inn) || !ports.Add(pair.Value))
+                    {
+                        plan.ValidationMessages.Add(
+                            "Карта ИНН и портов ЛМ имеет недопустимый или повторный элемент.");
+                        continue;
+                    }
+                    result.Add(inn, pair.Value);
+                }
+            }
+            for (int index = 0; index < current.Count; index++)
+            {
+                if (!result.ContainsKey(current[index].KktInn))
+                {
+                    plan.ValidationMessages.Add(
+                        "Для ИНН " + current[index].KktInn +
+                        " не назначен целевой порт ЛМ.");
+                }
+            }
+            return result;
+        }
+
+        private static IDictionary<string, int> CreateLegacyTargetMap(
+            IList<LmGatewayKkt> kkts,
+            IList<DirectControllerAssignment> savedAssignments)
+        {
+            Dictionary<string, int> result =
+                new Dictionary<string, int>(StringComparer.Ordinal);
+            if (savedAssignments != null)
+            {
+                for (int index = 0; index < savedAssignments.Count; index++)
+                {
+                    DirectControllerAssignment saved = savedAssignments[index];
+                    string inn = Trim(saved == null ? null : saved.KktInn);
+                    if (IsInn(inn) && !result.ContainsKey(inn) &&
+                        saved.TargetLocalModulePort >= 1024 &&
+                        saved.TargetLocalModulePort <= 65535)
+                    {
+                        result.Add(inn, saved.TargetLocalModulePort);
+                    }
+                }
+            }
+            List<LmGatewayKkt> sorted = new List<LmGatewayKkt>();
+            if (kkts != null)
+            {
+                for (int index = 0; index < kkts.Count; index++)
+                {
+                    if (kkts[index] != null) sorted.Add(kkts[index]);
+                }
+            }
+            sorted.Sort(delegate(LmGatewayKkt left, LmGatewayKkt right)
+            {
+                return string.CompareOrdinal(
+                    Trim(left.KktSerial),
+                    Trim(right.KktSerial));
+            });
+            for (int index = 0; index < sorted.Count; index++)
+            {
+                string inn = Trim(sorted[index].KktInn);
+                if (IsInn(inn) && !result.ContainsKey(inn))
+                {
+                    result.Add(
+                        inn,
+                        DirectControllerIdentity.FutureLmPortForOrdinal(index + 1));
+                }
+            }
+            return result;
         }
 
         private static List<LmGatewayKkt> NormalizeAndSortKkts(
@@ -153,6 +264,7 @@ namespace EsmTspiot.Shared.Services
             IDictionary<string, LmGatewayKkt> currentBySerial,
             IDictionary<string, DirectControllerAssignment> savedBySerial,
             HashSet<int> reservedOrdinals,
+            IDictionary<string, int> targetLmPortsByInn,
             DirectControllerPlan plan)
         {
             if (saved == null)
@@ -162,7 +274,7 @@ namespace EsmTspiot.Shared.Services
             for (int index = 0; index < saved.Count; index++)
             {
                 DirectControllerAssignment item = saved[index];
-                if (!IsCanonical(item))
+                if (!IsCanonical(item, targetLmPortsByInn))
                 {
                     plan.ValidationMessages.Add(
                         "Сохранённое назначение контроллера имеет недопустимый формат.");
@@ -196,7 +308,9 @@ namespace EsmTspiot.Shared.Services
             }
         }
 
-        private static bool IsCanonical(DirectControllerAssignment item)
+        private static bool IsCanonical(
+            DirectControllerAssignment item,
+            IDictionary<string, int> targetLmPortsByInn)
         {
             if (item == null || !IsAsciiDigits(Trim(item.KktSerial), 14) ||
                 !IsInn(Trim(item.KktInn)) || item.Ordinal < 1 ||
@@ -211,7 +325,8 @@ namespace EsmTspiot.Shared.Services
                     StringComparison.Ordinal) &&
                 item.GrpcPort == DirectControllerIdentity.GrpcPortForOrdinal(item.Ordinal) &&
                 item.RestPort == DirectControllerIdentity.RestPortForOrdinal(item.Ordinal) &&
-                item.FutureLocalModulePort == DirectControllerIdentity.FutureLmPortForOrdinal(item.Ordinal);
+                targetLmPortsByInn.ContainsKey(Trim(item.KktInn)) &&
+                item.TargetLocalModulePort == targetLmPortsByInn[Trim(item.KktInn)];
         }
 
         private static bool HasVerifiedOfficialService(
@@ -346,13 +461,11 @@ namespace EsmTspiot.Shared.Services
         {
             int grpc = DirectControllerIdentity.GrpcPortForOrdinal(ordinal);
             int rest = DirectControllerIdentity.RestPortForOrdinal(ordinal);
-            int futureLm = DirectControllerIdentity.FutureLmPortForOrdinal(ordinal);
             for (int index = 0; index < listeners.Count; index++)
             {
                 TcpListenerSnapshotItem listener = listeners[index];
                 if (listener != null &&
-                    (listener.Port == grpc || listener.Port == rest ||
-                     listener.Port == futureLm))
+                    (listener.Port == grpc || listener.Port == rest))
                 {
                     return true;
                 }
@@ -362,7 +475,8 @@ namespace EsmTspiot.Shared.Services
 
         private static DirectControllerAssignment CreateAssignment(
             LmGatewayKkt kkt,
-            int ordinal)
+            int ordinal,
+            int targetLocalModulePort)
         {
             return new DirectControllerAssignment
             {
@@ -373,7 +487,7 @@ namespace EsmTspiot.Shared.Services
                 ServiceName = DirectControllerIdentity.ServiceNameForOrdinal(ordinal),
                 GrpcPort = DirectControllerIdentity.GrpcPortForOrdinal(ordinal),
                 RestPort = DirectControllerIdentity.RestPortForOrdinal(ordinal),
-                FutureLocalModulePort = DirectControllerIdentity.FutureLmPortForOrdinal(ordinal)
+                TargetLocalModulePort = targetLocalModulePort
             };
         }
 
@@ -388,7 +502,7 @@ namespace EsmTspiot.Shared.Services
                 ServiceName = Trim(source.ServiceName),
                 GrpcPort = source.GrpcPort,
                 RestPort = source.RestPort,
-                FutureLocalModulePort = source.FutureLocalModulePort
+                TargetLocalModulePort = source.TargetLocalModulePort
             };
         }
 
@@ -424,8 +538,7 @@ namespace EsmTspiot.Shared.Services
 
         private static bool UsesPort(DirectControllerAssignment assignment, int port)
         {
-            return assignment.GrpcPort == port || assignment.RestPort == port ||
-                assignment.FutureLocalModulePort == port;
+            return assignment.GrpcPort == port || assignment.RestPort == port;
         }
 
         private static bool IsInn(string value)

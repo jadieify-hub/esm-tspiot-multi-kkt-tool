@@ -16,5 +16,8 @@ namespace EsmTspiot.Shared.Models
 
         [DataMember(Order = 4, EmitDefaultValue = false)]
         public string ExpectedManifestSha256 { get; set; }
+
+        [DataMember(Order = 5)]
+        public int TargetLocalModulePort { get; set; }
     }
 }

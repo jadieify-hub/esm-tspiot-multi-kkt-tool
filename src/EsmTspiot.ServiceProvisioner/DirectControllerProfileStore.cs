@@ -126,7 +126,7 @@ namespace EsmTspiot.ServiceProvisioner
             yaml.Append("            updCount: 10").Append(newline);
             yaml.Append("    lmConfig:").Append(newline);
             yaml.Append("        url: 'http://127.0.0.1'").Append(newline);
-            yaml.Append("        port: ").Append(manifest.FutureLocalModulePort).Append(newline);
+            yaml.Append("        port: ").Append(manifest.TargetLocalModulePort).Append(newline);
             yaml.Append("        version: not defined").Append(newline);
             yaml.Append("        dbVersion: ''").Append(newline);
             yaml.Append("    certificate:").Append(newline);
@@ -221,7 +221,7 @@ namespace EsmTspiot.ServiceProvisioner
             Replace(lines, targets[required[0]], "gRPCPort", manifest.GrpcPort.ToString());
             Replace(lines, targets[required[1]], "RESTPort", manifest.RestPort.ToString());
             Replace(lines, targets[required[2]], "url", "'http://127.0.0.1'");
-            Replace(lines, targets[required[3]], "port", manifest.FutureLocalModulePort.ToString());
+            Replace(lines, targets[required[3]], "port", manifest.TargetLocalModulePort.ToString());
             return string.Join(newline, lines);
         }
 
