@@ -24,6 +24,14 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
         private static int Main(string[] args)
         {
+            if (args != null && args.Length == 2 &&
+                string.Equals(
+                    args[0],
+                    "--verify-local-module-msi",
+                    StringComparison.Ordinal))
+            {
+                return VerifyLocalModuleMsiReadOnly(args[1]);
+            }
             if (args != null && args.Length == 1 &&
                 string.Equals(
                     args[0],
@@ -64,6 +72,10 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Local module verifier accepts safe pinned signer identity", LocalModuleVerifierAcceptsSafePinnedSignerIdentity);
             Run("WinTrust matches safe local module identity only with pinned thumbprint", WinTrustMatchesSafeLocalModuleIdentityOnlyWithPinnedThumbprint);
             Run("Local module verifier rejects package identity or signer mismatch", LocalModuleVerifierRejectsPackageIdentityOrSignerMismatch);
+            Run("Local module MSI profile accepts exact sanitized snapshot", LocalModuleMsiProfileAcceptsExactSanitizedSnapshot);
+            Run("Local module MSI profile reports every structural mismatch safely", LocalModuleMsiProfileReportsEveryStructuralMismatchSafely);
+            Run("Local module MSI registry rejects unknown exact identity", LocalModuleMsiRegistryRejectsUnknownExactIdentity);
+            Run("Local module MSI structure is read only after trust", LocalModuleMsiStructureIsReadOnlyAfterTrust);
             Run("Managed local module protocol accepts consistent shared INN rows", ManagedLocalModuleProtocolAcceptsConsistentSharedInnRows);
             Run("Managed provisioning session accepts only known monotonic messages", ManagedProvisioningSessionAcceptsOnlyKnownMonotonicMessages);
             Run("Managed session server interleaves caller and helper per KKT", ManagedSessionServerInterleavesCallerAndHelperPerKkt);
@@ -183,6 +195,31 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
             Console.WriteLine(_failures.ToString() + " provisioner test(s) failed.");
             return 1;
+        }
+
+        private static int VerifyLocalModuleMsiReadOnly(string sourcePath)
+        {
+            try
+            {
+                LocalModuleInstallerSelection selection =
+                    LocalModulePackageVerifier.CreateSupportedIdentity();
+                selection.SourcePath = sourcePath;
+                using (VerifiedLocalModulePackage package =
+                    LocalModulePackageVerifier.SupportedVersion2617()
+                        .VerifyAndLock(selection))
+                {
+                    Console.WriteLine(
+                        "LOCAL_MODULE_MSI_PROFILE_OK " +
+                        package.Metadata.ProductVersion + " " +
+                        package.Metadata.PackageCode);
+                }
+                return 0;
+            }
+            catch (Exception exception)
+            {
+                Console.Error.WriteLine(exception.Message);
+                return 1;
+            }
         }
 
         private static void DtfDependencyClosureIsExactAndVendorFree()
@@ -903,7 +940,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 FakeFileTrustVerifier trust = new FakeFileTrustVerifier(
                     CreateLocalModuleTrustExpectation(selection),
                     true);
-                LocalModulePackageVerifier verifier = new LocalModulePackageVerifier(
+                LocalModulePackageVerifier verifier = CreateTestLocalModulePackageVerifier(
                     selection,
                     reader,
                     trust,
@@ -956,7 +993,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     ", C=RU";
 
                 using (VerifiedLocalModulePackage package =
-                    new LocalModulePackageVerifier(
+                    CreateTestLocalModulePackageVerifier(
                         selection,
                         new FakeWindowsInstallerPackageReader(
                             CreateLocalModulePackageMetadata()),
@@ -1040,7 +1077,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 WindowsInstallerPackageMetadata wrongProduct = CreateLocalModulePackageMetadata();
                 wrongProduct.ProductCode = "{00000000-0000-0000-0000-000000000000}";
                 AssertThrows<InvalidDataException>(delegate {
-                    new LocalModulePackageVerifier(
+                    CreateTestLocalModulePackageVerifier(
                         selection,
                         new FakeWindowsInstallerPackageReader(wrongProduct),
                         new FakeFileTrustVerifier(CreateLocalModuleTrustExpectation(selection), true),
@@ -1050,7 +1087,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 WindowsInstallerPackageMetadata wrongVersion = CreateLocalModulePackageMetadata();
                 wrongVersion.ProductVersion = "2.6.2";
                 AssertThrows<InvalidDataException>(delegate {
-                    new LocalModulePackageVerifier(
+                    CreateTestLocalModulePackageVerifier(
                         selection,
                         new FakeWindowsInstallerPackageReader(wrongVersion),
                         new FakeFileTrustVerifier(CreateLocalModuleTrustExpectation(selection), true),
@@ -1060,7 +1097,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 TrustedFileExpectation wrongSigner = CreateLocalModuleTrustExpectation(selection);
                 wrongSigner.SignerSubject = "CN=Unexpected Signer";
                 AssertThrows<InvalidDataException>(delegate {
-                    new LocalModulePackageVerifier(
+                    CreateTestLocalModulePackageVerifier(
                         selection,
                         new FakeWindowsInstallerPackageReader(CreateLocalModulePackageMetadata()),
                         new FakeFileTrustVerifier(wrongSigner, true),
@@ -1071,7 +1108,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     CreateLocalModuleTrustExpectation(selection);
                 substitutedFile.Sha256 = new string('c', 64);
                 AssertThrows<InvalidDataException>(delegate {
-                    new LocalModulePackageVerifier(
+                    CreateTestLocalModulePackageVerifier(
                         selection,
                         new FakeWindowsInstallerPackageReader(CreateLocalModulePackageMetadata()),
                         new FakeFileTrustVerifier(substitutedFile, true),
@@ -1081,7 +1118,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 LocalModuleInstallerSelection staleSelection = CloneLocalModuleInstallerSelection(selection);
                 staleSelection.Sha256 = new string('b', 64);
                 AssertThrows<InvalidDataException>(delegate {
-                    new LocalModulePackageVerifier(
+                    CreateTestLocalModulePackageVerifier(
                         selection,
                         new FakeWindowsInstallerPackageReader(CreateLocalModulePackageMetadata()),
                         new FakeFileTrustVerifier(CreateLocalModuleTrustExpectation(selection), true),
@@ -1092,6 +1129,258 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             {
                 Directory.Delete(directory, true);
             }
+        }
+
+        private static void LocalModuleMsiProfileAcceptsExactSanitizedSnapshot()
+        {
+            LocalModuleMsiCapabilityProfile profile =
+                LoadLocalModuleMsiCapabilityFixture();
+            LocalModuleMsiDatabaseSnapshot snapshot =
+                CreateLocalModuleMsiSnapshot(profile);
+
+            AssertEqual(0, snapshot.Compare(profile).Count,
+                "The exact sanitized MSI profile must match without diagnostics.");
+            AssertEqual(5, CountMsiProfileRows(profile, "File"),
+                "The profile must pin exactly five generated configuration files.");
+            AssertTrue(CountMsiProfileRows(profile, "CustomAction") >= 18,
+                "The profile must pin every quoted service action and StopEPMD.");
+        }
+
+        private static void LocalModuleMsiProfileReportsEveryStructuralMismatchSafely()
+        {
+            LocalModuleMsiCapabilityProfile profile =
+                LoadLocalModuleMsiCapabilityFixture();
+            AssertMsiProfileMismatch(profile, delegate(LocalModuleMsiDatabaseSnapshot value) {
+                value.FileRowCount--;
+            }, "File:row-count");
+            AssertMsiProfileMismatch(profile, delegate(LocalModuleMsiDatabaseSnapshot value) {
+                value.MsiFileHashRowCount--;
+            }, "MsiFileHash:row-count");
+            AssertMsiProfileMismatch(profile, delegate(LocalModuleMsiDatabaseSnapshot value) {
+                value.Media[0].Cabinet = "#unexpected.cab";
+            }, "Media:#media1.cab");
+            AssertMsiProfileMismatch(profile, delegate(LocalModuleMsiDatabaseSnapshot value) {
+                value.Media[1].LastSequence--;
+            }, "Media:#Disk1.cab");
+            AssertMsiProfileRowMismatch(profile, "Directory", "APPLICATIONFOLDER");
+            AssertMsiProfileRowMismatch(profile, "Registry", "RegimeInstallDir");
+            AssertMsiProfileRowMismatch(
+                profile,
+                "RegLocator",
+                "RegimeInstallDirRegistry");
+            AssertMsiProfileRowMismatch(
+                profile,
+                "AppSearch",
+                "APPLICATIONFOLDER|RegimeInstallDirRegistry");
+            AssertMsiProfileRowMismatch(
+                profile,
+                "File",
+                "fil4D9BD38000F7BBE9FA37B3949730CD45");
+            AssertMsiProfileRowMismatch(
+                profile,
+                "CustomAction",
+                "SetInstallRegimeService");
+            AssertMsiProfileRowMismatch(
+                profile,
+                "InstallExecuteSequence",
+                "InstallAutoApdater");
+            AssertMsiProfileRowMismatch(
+                profile,
+                "CustomAction",
+                "SetStopEPMD");
+        }
+
+        private static void LocalModuleMsiRegistryRejectsUnknownExactIdentity()
+        {
+            LocalModuleMsiCapabilityProfile fixture =
+                LoadLocalModuleMsiCapabilityFixture();
+            LocalModuleMsiCapabilityRegistry registry =
+                new LocalModuleMsiCapabilityRegistry();
+            WindowsInstallerPackageMetadata metadata =
+                CreateLocalModulePackageMetadata();
+            metadata.PackageCode = fixture.PackageCode;
+            TrustedFileExpectation trust = new TrustedFileExpectation
+            {
+                FileName = fixture.FileName,
+                ByteLength = fixture.ByteLength,
+                Sha256 = fixture.Sha256,
+                SignerThumbprint = fixture.SignerThumbprint,
+                RequireCodeSigningEku = true
+            };
+
+            LocalModuleMsiCapabilityProfile supported =
+                registry.FindExact(metadata, trust);
+            AssertEqual(fixture.PackageCode, supported.PackageCode,
+                "The known exact PackageCode must resolve its capability profile.");
+
+            string[] identityNames = { "ProductCode", "PackageCode", "UpgradeCode" };
+            for (int index = 0; index < identityNames.Length; index++)
+            {
+                WindowsInstallerPackageMetadata unknown = metadata.Clone();
+                if (identityNames[index] == "ProductCode")
+                {
+                    unknown.ProductCode = "{00000000-0000-0000-0000-000000000001}";
+                }
+                else if (identityNames[index] == "PackageCode")
+                {
+                    unknown.PackageCode = "{00000000-0000-0000-0000-000000000002}";
+                }
+                else
+                {
+                    unknown.UpgradeCode = "{00000000-0000-0000-0000-000000000003}";
+                }
+                InvalidDataException error = CaptureException<InvalidDataException>(delegate {
+                    registry.FindExact(unknown, trust);
+                });
+                AssertContains(error.Message, "unsupported-profile");
+                AssertFalse(error.Message.IndexOf("00000000", StringComparison.Ordinal) >= 0,
+                    "Unsupported-profile diagnostics must not echo unknown identities.");
+            }
+        }
+
+        private static void LocalModuleMsiStructureIsReadOnlyAfterTrust()
+        {
+            string directory = CreateTemporaryDirectory();
+            try
+            {
+                string path = Path.Combine(directory, "regime-test.msi");
+                byte[] content = Encoding.ASCII.GetBytes("locked-msi-profile-order");
+                File.WriteAllBytes(path, content);
+                LocalModuleInstallerSelection selection =
+                    CreateLocalModuleInstallerSelection(path, content);
+                LocalModuleMsiCapabilityProfile profile =
+                    LoadLocalModuleMsiCapabilityFixture();
+                FakeLocalModuleMsiProfileReader structuralReader =
+                    new FakeLocalModuleMsiProfileReader(
+                        CreateLocalModuleMsiSnapshot(profile));
+                LocalModulePackageVerifier verifier = new LocalModulePackageVerifier(
+                    selection,
+                    new FakeWindowsInstallerPackageReader(
+                        CreateLocalModulePackageMetadata()),
+                    new FakeFileTrustVerifier(
+                        CreateLocalModuleTrustExpectation(selection),
+                        false),
+                    new FakePathSafety(true),
+                    new FakeLocalModuleMsiCapabilityRegistry(profile),
+                    structuralReader);
+
+                AssertThrows<InvalidDataException>(delegate {
+                    verifier.VerifyAndLock(selection).Dispose();
+                }, "Untrusted MSI input must be rejected.");
+                AssertEqual(0, structuralReader.ReadCount,
+                    "Structural DTF reads must not occur before trust succeeds.");
+            }
+            finally
+            {
+                Directory.Delete(directory, true);
+            }
+        }
+
+        private static LocalModuleMsiCapabilityProfile
+            LoadLocalModuleMsiCapabilityFixture()
+        {
+            string path = Path.Combine(
+                AppDomain.CurrentDomain.BaseDirectory,
+                "Fixtures",
+                "local-module-msi-2.6.1-7-profile.json");
+            using (FileStream stream = File.OpenRead(path))
+            {
+                return (LocalModuleMsiCapabilityProfile)
+                    new DataContractJsonSerializer(
+                        typeof(LocalModuleMsiCapabilityProfile)).ReadObject(stream);
+            }
+        }
+
+        private static LocalModuleMsiDatabaseSnapshot CreateLocalModuleMsiSnapshot(
+            LocalModuleMsiCapabilityProfile profile)
+        {
+            LocalModuleMsiDatabaseSnapshot result =
+                new LocalModuleMsiDatabaseSnapshot
+                {
+                    FileRowCount = profile.FileRowCount,
+                    MsiFileHashRowCount = profile.MsiFileHashRowCount
+                };
+            for (int index = 0; index < profile.Media.Count; index++)
+            {
+                MsiMediaSnapshot source = profile.Media[index];
+                result.Media.Add(new MsiMediaSnapshot
+                {
+                    DiskId = source.DiskId,
+                    LastSequence = source.LastSequence,
+                    Cabinet = source.Cabinet
+                });
+            }
+            for (int index = 0; index < profile.Rows.Count; index++)
+            {
+                MsiProfileRow source = profile.Rows[index];
+                result.Rows.Add(new MsiProfileRow
+                {
+                    Table = source.Table,
+                    Key = source.Key,
+                    Columns = new List<string>(source.Columns),
+                    Values = new List<string>(source.Values)
+                });
+            }
+            return result;
+        }
+
+        private static int CountMsiProfileRows(
+            LocalModuleMsiCapabilityProfile profile,
+            string table)
+        {
+            int count = 0;
+            for (int index = 0; index < profile.Rows.Count; index++)
+            {
+                if (string.Equals(
+                        profile.Rows[index].Table,
+                        table,
+                        StringComparison.Ordinal))
+                {
+                    count++;
+                }
+            }
+            return count;
+        }
+
+        private static void AssertMsiProfileRowMismatch(
+            LocalModuleMsiCapabilityProfile profile,
+            string table,
+            string key)
+        {
+            AssertMsiProfileMismatch(profile, delegate(LocalModuleMsiDatabaseSnapshot value) {
+                for (int index = 0; index < value.Rows.Count; index++)
+                {
+                    MsiProfileRow row = value.Rows[index];
+                    if (string.Equals(row.Table, table, StringComparison.Ordinal) &&
+                        string.Equals(row.Key, key, StringComparison.Ordinal))
+                    {
+                        row.Values[0] =
+                            @"C:\Users\secret\ADMINPASSWORD=hunter2";
+                        return;
+                    }
+                }
+                throw new InvalidOperationException("Fixture row was not found.");
+            }, table + ":" + key);
+        }
+
+        private static void AssertMsiProfileMismatch(
+            LocalModuleMsiCapabilityProfile profile,
+            Action<LocalModuleMsiDatabaseSnapshot> mutate,
+            string expectedSafeKey)
+        {
+            LocalModuleMsiDatabaseSnapshot snapshot =
+                CreateLocalModuleMsiSnapshot(profile);
+            mutate(snapshot);
+            IList<MsiProfileMismatch> mismatches = snapshot.Compare(profile);
+            AssertTrue(mismatches.Count > 0,
+                "A structural MSI mutation must be rejected.");
+            string diagnostic = mismatches[0].ToString();
+            AssertContains(diagnostic, expectedSafeKey);
+            AssertFalse(
+                diagnostic.IndexOf(@"C:\Users", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                diagnostic.IndexOf("hunter2", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                diagnostic.IndexOf("ADMINPASSWORD", StringComparison.OrdinalIgnoreCase) >= 0,
+                "MSI mismatch diagnostics must not echo paths or secret values.");
         }
 
         private static void ManagedLocalModuleProtocolAcceptsConsistentSharedInnRows()
@@ -5898,8 +6187,27 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 ProductName = "Локальный модуль Честный Знак",
                 ProductVersion = "2.6.1",
                 ProductCode = "{556FD8AD-43A3-4645-BC54-EBF3043ADF82}",
-                UpgradeCode = "{9449123B-61C4-40DE-AA6C-1BB9AA02EB67}"
+                UpgradeCode = "{9449123B-61C4-40DE-AA6C-1BB9AA02EB67}",
+                PackageCode = "{2308F9F9-DB33-44DA-819D-9A2D553E8309}"
             };
+        }
+
+        private static LocalModulePackageVerifier CreateTestLocalModulePackageVerifier(
+            LocalModuleInstallerSelection expected,
+            IWindowsInstallerPackageReader packageReader,
+            IFileTrustVerifier trustVerifier,
+            IPathSafety pathSafety)
+        {
+            LocalModuleMsiCapabilityProfile profile =
+                LoadLocalModuleMsiCapabilityFixture();
+            return new LocalModulePackageVerifier(
+                expected,
+                packageReader,
+                trustVerifier,
+                pathSafety,
+                new FakeLocalModuleMsiCapabilityRegistry(profile),
+                new FakeLocalModuleMsiProfileReader(
+                    CreateLocalModuleMsiSnapshot(profile)));
         }
 
         private static TrustedFileExpectation CreateLocalModuleTrustExpectation(
@@ -6320,6 +6628,21 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             }
 
             throw new InvalidOperationException(message);
+        }
+
+        private static TException CaptureException<TException>(Action action)
+            where TException : Exception
+        {
+            try
+            {
+                action();
+            }
+            catch (TException exception)
+            {
+                return exception;
+            }
+            throw new InvalidOperationException(
+                "Expected exception was not thrown: " + typeof(TException).Name + ".");
         }
 
         private sealed class CancelAfterCompletedItems : ILmProvisioningCancellation
@@ -7778,8 +8101,48 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     ProductName = _metadata.ProductName,
                     ProductVersion = _metadata.ProductVersion,
                     ProductCode = _metadata.ProductCode,
-                    UpgradeCode = _metadata.UpgradeCode
+                    UpgradeCode = _metadata.UpgradeCode,
+                    PackageCode = _metadata.PackageCode
                 };
+            }
+        }
+
+        private sealed class FakeLocalModuleMsiCapabilityRegistry :
+            ILocalModuleMsiCapabilityRegistry
+        {
+            private readonly LocalModuleMsiCapabilityProfile _profile;
+
+            internal FakeLocalModuleMsiCapabilityRegistry(
+                LocalModuleMsiCapabilityProfile profile)
+            {
+                _profile = profile;
+            }
+
+            public LocalModuleMsiCapabilityProfile FindExact(
+                WindowsInstallerPackageMetadata metadata,
+                TrustedFileExpectation trust)
+            {
+                return _profile;
+            }
+        }
+
+        private sealed class FakeLocalModuleMsiProfileReader :
+            ILocalModuleMsiProfileReader
+        {
+            private readonly LocalModuleMsiDatabaseSnapshot _snapshot;
+
+            internal FakeLocalModuleMsiProfileReader(
+                LocalModuleMsiDatabaseSnapshot snapshot)
+            {
+                _snapshot = snapshot;
+            }
+
+            internal int ReadCount { get; private set; }
+
+            public LocalModuleMsiDatabaseSnapshot Read(string lockedMsiPath)
+            {
+                ReadCount++;
+                return _snapshot;
             }
         }
     }
