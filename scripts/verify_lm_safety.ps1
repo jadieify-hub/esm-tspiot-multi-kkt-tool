@@ -162,7 +162,12 @@ function Test-AllowedSecretHit {
         return $text -match 'credentials\.Password|Password = credentials\.Password|timeout\.Token'
     }
     if ($relative -eq "src/EsmTspiot.WinForms.Shared/LmGatewayCredentialDefaults.cs") {
-        return $text -match '^\s*Password\s*=\s*"admin"\s*$'
+        return $text -match '^\s*Password\s*=\s*SupportedLocalModulePackageIdentity\.ApiPassword\s*$'
+    }
+    if ($relative -eq "src/EsmTspiot.ServiceProvisioner/LocalModuleConfigurationInspector.cs") {
+        # Reviewed: the inspector only checks that the vendor installer wrote
+        # non-empty [api] login/password; values are never logged or copied.
+        return $text -match '"api\.password"|^\s*string password;$|^\s*password\.Length == 0\)$|\[api\] login/password|write \[api\] login and password'
     }
     if ($relative -eq "src/EsmTspiot.Shared/Services/LmGatewayReadbackWorkflow.cs") {
         return $text -match 'timeout\.Token'

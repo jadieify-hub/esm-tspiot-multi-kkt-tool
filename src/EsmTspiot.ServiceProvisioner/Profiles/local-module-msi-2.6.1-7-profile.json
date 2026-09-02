@@ -49,6 +49,12 @@
     { "Table": "InstallExecuteSequence", "Key": "InstallAutoApdater", "Columns": ["Condition", "Sequence"], "Values": ["NOT Installed AND NOT REMOVE", "6601"] },
     { "Table": "InstallExecuteSequence", "Key": "UninstallAutoApdater", "Columns": ["Condition", "Sequence"], "Values": ["Installed AND (REMOVE = \"ALL\")", "6602"] },
     { "Table": "InstallExecuteSequence", "Key": "RemoveAll", "Columns": ["Condition", "Sequence"], "Values": ["Installed AND (REMOVE = \"ALL\") AND NOT UPGRADINGPRODUCTCODE", "6599"] },
-    { "Table": "InstallExecuteSequence", "Key": "StopEPMD", "Columns": ["Condition", "Sequence"], "Values": ["Installed AND (REMOVE = \"ALL\")", "1760"] }
+    { "Table": "InstallExecuteSequence", "Key": "StopEPMD", "Columns": ["Condition", "Sequence"], "Values": ["Installed AND (REMOVE = \"ALL\")", "1760"] },
+    { "Table": "InstallExecuteSequence", "Key": "NotAutoStartlYeniseiService", "Columns": ["Condition", "Sequence"], "Values": ["NOT AUTOSERVICE AND NOT Installed AND NOT REMOVE", "4027"] },
+    { "Table": "InstallExecuteSequence", "Key": "NotAutoStartlRegimeService", "Columns": ["Condition", "Sequence"], "Values": ["NOT AUTOSERVICE AND NOT Installed AND NOT REMOVE", "4029"] },
+    { "Table": "InstallExecuteSequence", "Key": "StartYeniseiService", "Columns": ["Condition", "Sequence"], "Values": ["AUTOSERVICE AND NOT Installed AND NOT REMOVE", "4031"] },
+    { "Table": "InstallExecuteSequence", "Key": "StartRegimeService", "Columns": ["Condition", "Sequence"], "Values": ["AUTOSERVICE AND NOT Installed AND NOT REMOVE", "4033"] },
+    { "Table": "Property", "Key": "MsiHiddenProperties", "Columns": ["Value"], "Values": ["ADMINPASSWORD;ADMINUSER;INSTALLSERVICE;MaybeCopyIniFiles;PROXYPASS;PROXYPORT;PROXYURL;PROXYUSER;RemoveAll;WriteErtsBinPath;WriteIniFiles;WriteValuesToVmArgs"] },
+    { "Table": "Property", "Key": "SERVERURL", "Columns": ["Value"], "Values": ["https://rsapi.crpt.ru"] }
   ]
 }

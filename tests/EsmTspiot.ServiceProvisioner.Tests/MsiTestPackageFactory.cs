@@ -639,6 +639,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
         private static string KeyColumn(string table)
         {
+            if (table == "Property") return "Property";
             if (table == "Directory") return "Directory";
             if (table == "Registry") return "Registry";
             if (table == "RegLocator") return "Signature_";

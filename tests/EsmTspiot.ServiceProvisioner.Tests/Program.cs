@@ -119,6 +119,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Local module MSI profile reports every structural mismatch safely", LocalModuleMsiProfileReportsEveryStructuralMismatchSafely);
             Run("Local module MSI registry rejects unknown exact identity", LocalModuleMsiRegistryRejectsUnknownExactIdentity);
             Run("Local module MSI structure is read only after trust", LocalModuleMsiStructureIsReadOnlyAfterTrust);
+            Run("Local module installer properties are pinned by the vendor profile", LocalModuleInstallerPropertiesArePinnedByVendorProfile);
+            Run("Local module configuration rejects missing API credentials", LocalModuleConfigurationRejectsMissingApiCredentials);
             Run("Local module MSI clone identity is stable except PackageCode", LocalModuleMsiCloneIdentityIsStableExceptPackageCode);
             Run("Local module MSI transformer edits only profiled rows", LocalModuleMsiTransformerEditsOnlyProfiledRows);
             Run("Local module MSI output rejects cabinet and table drift", LocalModuleMsiOutputRejectsCabinetAndTableDrift);
@@ -1652,6 +1654,18 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 "RemoveAll");
             AssertMsiProfileRowMismatch(
                 profile,
+                "InstallExecuteSequence",
+                "StartRegimeService");
+            AssertMsiProfileRowMismatch(
+                profile,
+                "InstallExecuteSequence",
+                "NotAutoStartlYeniseiService");
+            AssertMsiProfileRowMismatch(
+                profile,
+                "Property",
+                "MsiHiddenProperties");
+            AssertMsiProfileRowMismatch(
+                profile,
                 "CustomAction",
                 "SetStopEPMD");
         }
@@ -1739,6 +1753,128 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             finally
             {
                 Directory.Delete(directory, true);
+            }
+        }
+
+        private static void LocalModuleInstallerPropertiesArePinnedByVendorProfile()
+        {
+            LocalModuleMsiCapabilityProfile profile =
+                LoadLocalModuleMsiCapabilityFixture();
+            LocalModuleInstallerProperties.RequireSupportedBy(profile);
+
+            string properties = LocalModuleInstallerProperties.Build(
+                @"C:\Program Files\Regime1\");
+            AssertEqual(
+                "ADMINUSER=admin ADMINPASSWORD=admin AUTOSERVICE=1 " +
+                    "APPLICATIONFOLDER=\"C:\\Program Files\\Regime1\\\"",
+                properties,
+                "Installer properties must use the vendor names and request automatic start.");
+            AssertTrue(
+                properties.IndexOf("ADMINLOGIN", StringComparison.Ordinal) < 0,
+                "The retired ADMINLOGIN name must never reach msiexec.");
+            IList<string> names = LocalModuleInstallerProperties.Names();
+            for (int index = 0; index < names.Count; index++)
+            {
+                AssertTrue(
+                    properties.IndexOf(
+                        names[index] + "=",
+                        StringComparison.Ordinal) >= 0,
+                    "Every declared installer property must be passed: " +
+                        names[index]);
+            }
+            AssertThrows<InvalidDataException>(delegate {
+                LocalModuleInstallerProperties.Build("C:\\Program \"Files\"\\Regime1");
+            }, "A quoted installation root must be rejected.");
+
+            LocalModuleMsiCapabilityProfile renamed =
+                LoadLocalModuleMsiCapabilityFixture();
+            MsiProfileRow hidden = FindLocalModuleProfileRow(
+                renamed,
+                "Property",
+                "MsiHiddenProperties");
+            hidden.Values[0] = hidden.Values[0].Replace("ADMINUSER", "ADMINLOGIN");
+            AssertThrows<InvalidDataException>(delegate {
+                LocalModuleInstallerProperties.RequireSupportedBy(renamed);
+            }, "A renamed hidden credential property must fail before msiexec.");
+
+            LocalModuleMsiCapabilityProfile ungated =
+                LoadLocalModuleMsiCapabilityFixture();
+            MsiProfileRow start = FindLocalModuleProfileRow(
+                ungated,
+                "InstallExecuteSequence",
+                "StartRegimeService");
+            start.Values[0] = "NOT Installed AND NOT REMOVE";
+            AssertThrows<InvalidDataException>(delegate {
+                LocalModuleInstallerProperties.RequireSupportedBy(ungated);
+            }, "Automatic start must be proven by the AUTOSERVICE condition.");
+
+            LocalModuleMsiCapabilityProfile missing =
+                LoadLocalModuleMsiCapabilityFixture();
+            // The deserialized fixture exposes a fixed-size array.
+            missing.Rows = new List<MsiProfileRow>(missing.Rows);
+            missing.Rows.Remove(FindLocalModuleProfileRow(
+                missing,
+                "InstallExecuteSequence",
+                "NotAutoStartlYeniseiService"));
+            AssertThrows<InvalidDataException>(delegate {
+                LocalModuleInstallerProperties.RequireSupportedBy(missing);
+            }, "A profile without the demand-start action cannot prove automatic start.");
+        }
+
+        private static MsiProfileRow FindLocalModuleProfileRow(
+            LocalModuleMsiCapabilityProfile profile,
+            string table,
+            string key)
+        {
+            for (int index = 0; index < profile.Rows.Count; index++)
+            {
+                MsiProfileRow row = profile.Rows[index];
+                if (string.Equals(row.Table, table, StringComparison.Ordinal) &&
+                    string.Equals(row.Key, key, StringComparison.Ordinal))
+                {
+                    return row;
+                }
+            }
+            throw new InvalidOperationException(
+                "Profile fixture lacks " + table + ":" + key + ".");
+        }
+
+        private static void LocalModuleConfigurationRejectsMissingApiCredentials()
+        {
+            string directory = CreateTemporaryDirectory();
+            try
+            {
+                LocalModuleInstalledLayout clone = LocalModuleInstalledLayout.Create(
+                    Path.Combine(directory, "Regime1"),
+                    1,
+                    6995,
+                    7984);
+                WriteInstalledLocalModuleConfiguration(clone, new string('a', 32));
+                LocalModuleConfigurationInspector inspector =
+                    new LocalModuleConfigurationInspector();
+                inspector.Inspect(clone);
+
+                File.WriteAllText(
+                    clone.ApiLocalIniPath,
+                    "[api]\r\nip_address = 0.0.0.0\r\nport = 6995\r\n" +
+                    ";login =\r\n;password =\r\n" +
+                    "[local]\r\ndb_url = http://127.0.0.1:7984\r\n");
+                AssertThrows<InvalidDataException>(delegate {
+                    inspector.Inspect(clone);
+                }, "An installed module without [api] credentials must be rejected.");
+
+                File.WriteAllText(
+                    clone.ApiLocalIniPath,
+                    "[api]\r\nip_address = 0.0.0.0\r\nport = 6995\r\n" +
+                    "login = \r\npassword = \r\n" +
+                    "[local]\r\ndb_url = http://127.0.0.1:7984\r\n");
+                AssertThrows<InvalidDataException>(delegate {
+                    inspector.Inspect(clone);
+                }, "Empty [api] credentials must be rejected like missing ones.");
+            }
+            finally
+            {
+                DeleteTestTreeWithReadOnlyFiles(directory);
             }
         }
 
@@ -2239,7 +2375,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     new FakeWindowsInstallerNative();
                 WindowsInstallerApi api = new WindowsInstallerApi(native);
                 const string hidden =
-                    "ADMINLOGIN=admin ADMINPASSWORD=admin";
+                    "ADMINUSER=admin ADMINPASSWORD=admin AUTOSERVICE=1";
                 AssertEqual((uint)0, api.Install(package, hidden),
                     "Successful MSI result must remain unchanged.");
                 AssertEqual(Path.GetFullPath(package), native.PackagePath,
@@ -2247,7 +2383,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 AssertEqual(hidden, native.CommandLine,
                     "Native MSI install must receive the required credentials.");
                 AssertEqual(
-                    "ADMINLOGIN=<redacted> ADMINPASSWORD=<redacted>",
+                    "ADMINUSER=<redacted> ADMINPASSWORD=<redacted> " +
+                        "AUTOSERVICE=<redacted>",
                     WindowsInstallerApi.RedactInstallProperties(hidden),
                     "Diagnostics must never expose MSI credentials.");
 
@@ -3234,7 +3371,9 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             File.WriteAllText(layout.ApiLocalIniPath,
                 "[api]\r\nip_address = 0.0.0.0\r\nport = " +
                 layout.ApiPort.ToString() +
-                "\r\n[local]\r\ndb_url = http://127.0.0.1:" +
+                "\r\nlogin = DMIYC_synthetic-login\r\n" +
+                "password = DMIYC_synthetic-password\r\n" +
+                "[local]\r\ndb_url = http://127.0.0.1:" +
                 layout.DatabasePort.ToString() + "\r\n");
             File.WriteAllText(layout.DatabaseLocalIniPath,
                 "[chttpd]\r\nbind_address = 127.0.0.1\r\nport = " +
