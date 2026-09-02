@@ -274,7 +274,7 @@ namespace EsmTspiot.ServiceProvisioner
             LmServiceProvisioningBatchResult result =
                 new LmServiceProvisioningBatchResult
                 {
-                    SchemaVersion = ProvisioningRequestValidator.CurrentSchemaVersion,
+                    SchemaVersion = _request.SchemaVersion,
                     OperationId = _request.OperationId,
                     PlanHash = _request.PlanHash,
                     Status = LmServiceProvisioningStatus.ReadyToInitialize

@@ -104,6 +104,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Local module firewall manager owns only an exact API rule", LocalModuleFirewallManagerOwnsOnlyExactApiRule);
             Run("MSI local module ensure is idempotent and recovers cleanup", MsiLocalModuleEnsureIsIdempotentAndRecoversCleanup);
             Run("MSI local module removal preserves base and compensates EPMD", MsiLocalModuleRemovalPreservesBaseAndCompensatesEpmd);
+            Run("MSI local module protocol v3 hashes and validates every item", MsiLocalModuleProtocolV3HashesAndValidatesEveryItem);
+            Run("MSI local module session continues independent INN failures", MsiLocalModuleSessionContinuesIndependentInnFailures);
             Run("Managed local module protocol accepts consistent shared INN rows", ManagedLocalModuleProtocolAcceptsConsistentSharedInnRows);
             Run("Managed provisioning session accepts only known monotonic messages", ManagedProvisioningSessionAcceptsOnlyKnownMonotonicMessages);
             Run("Managed session server interleaves caller and helper per KKT", ManagedSessionServerInterleavesCallerAndHelperPerKkt);
@@ -2569,6 +2571,40 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 allPlatform.Events.IndexOf("uninstall:1234567890") <
                 allPlatform.Events.IndexOf("uninstall:7707083893"),
                 "Remove-all must uninstall clones in reverse order before base.");
+
+            FakeLocalModuleMsiLifecyclePlatform selectivePlatform =
+                new FakeLocalModuleMsiLifecyclePlatform();
+            FakeLocalModuleMsiRepository selectiveRepository =
+                new FakeLocalModuleMsiRepository();
+            LocalModuleMsiProvisioningContext selectiveContext =
+                CreateMsiContext(
+                    selectivePlatform,
+                    selectiveRepository,
+                    new FakeLocalModuleMsiJournalStore());
+            LocalModuleMsiProvisioningItemRequest selectiveBase = MsiRequest(
+                "7707083893", 0, 5995, 5984, null);
+            LocalModuleMsiProvisioningItemRequest selectedClone = MsiRequest(
+                "1234567890", 1, 6995, 7984, null);
+            LocalModuleMsiProvisioningItemRequest unlistedClone = MsiRequest(
+                "123456789012", 2, 7995, 8984, null);
+            selectiveBase.ExpectedManifestSha256 = provisioner.Ensure(
+                selectiveBase, selectiveContext).ManifestSha256;
+            selectedClone.ExpectedManifestSha256 = provisioner.Ensure(
+                selectedClone, selectiveContext).ManifestSha256;
+            unlistedClone.ExpectedManifestSha256 = provisioner.Ensure(
+                unlistedClone, selectiveContext).ManifestSha256;
+            IList<LocalModuleMsiProvisioningItemResult> selectiveResults =
+                removal.RemoveAll(
+                    new[] { selectiveBase, selectedClone },
+                    selectiveContext);
+            AssertEqual(selectiveBase.Inn, selectiveResults[0].Inn,
+                "Remove-all results must retain the confirmed UI order.");
+            AssertEqual(selectedClone.Inn, selectiveResults[1].Inn,
+                "Remove-all results must retain the confirmed UI order.");
+            AssertTrue(selectiveRepository.Read(unlistedClone.Inn) != null,
+                "Remove-all must not adopt a manifest absent from the confirmed request.");
+            AssertTrue(selectivePlatform.State(unlistedClone.Inn).ProductPresent,
+                "An unlisted installed clone must remain untouched.");
         }
 
         private static LocalModuleMsiProvisioningContext CreateMsiContext(
@@ -2582,6 +2618,161 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 repository,
                 journals,
                 delegate { return new string('e', 32); });
+        }
+
+        private static void MsiLocalModuleProtocolV3HashesAndValidatesEveryItem()
+        {
+            LmServiceProvisioningBatchRequest request =
+                CreateMsiProtocolRequest();
+            request.PlanHash = CanonicalLmPlanHasher.Compute(request);
+            ValidationResult valid = ProvisioningRequestValidator.Validate(request);
+            AssertTrue(valid.IsValid, valid.JoinMessages());
+
+            LocalModuleMsiProvisioningItemRequest item =
+                request.LocalModuleMsiItems[1];
+            AssertMsiHashChanges(request, delegate { item.Inn = "500100732259"; },
+                delegate { item.Inn = "123456789012"; }, "INN");
+            AssertMsiHashChanges(request, delegate { item.CloneOrdinal = 2; },
+                delegate { item.CloneOrdinal = 1; }, "ordinal");
+            AssertMsiHashChanges(request, delegate { item.ApiPort = 7995; },
+                delegate { item.ApiPort = 6995; }, "API port");
+            AssertMsiHashChanges(request, delegate { item.DatabasePort = 8984; },
+                delegate { item.DatabasePort = 7984; }, "database port");
+            AssertMsiHashChanges(request, delegate { item.InstallVolumeRoot = @"C:\"; },
+                delegate { item.InstallVolumeRoot = @"D:\"; }, "volume root");
+            AssertMsiHashChanges(request,
+                delegate { item.RemoteAddress = "192.168.10.0/24"; },
+                delegate { item.RemoteAddress = "LocalSubnet"; }, "remote address");
+            AssertMsiHashChanges(request,
+                delegate { item.ExpectedManifestSha256 = new string('d', 64); },
+                delegate { item.ExpectedManifestSha256 = null; }, "manifest fingerprint");
+
+            string[] exactFields =
+            {
+                "Inn", "CloneOrdinal", "ApiPort", "DatabasePort",
+                "InstallVolumeRoot", "RemoteAddress",
+                "ExpectedManifestSha256"
+            };
+            System.Reflection.PropertyInfo[] properties =
+                typeof(LocalModuleMsiProvisioningItemRequest).GetProperties();
+            AssertEqual(exactFields.Length, properties.Length,
+                "The v3 item must not grow an unreviewed path, command or secret field.");
+            for (int index = 0; index < exactFields.Length; index++)
+                AssertTrue(Array.Exists(properties, delegate(
+                    System.Reflection.PropertyInfo property)
+                {
+                    return string.Equals(property.Name, exactFields[index],
+                        StringComparison.Ordinal);
+                }), "Expected reviewed v3 field " + exactFields[index] + ".");
+
+            request.LocalModuleMsiItems[1].Inn =
+                request.LocalModuleMsiItems[0].Inn;
+            request.PlanHash = CanonicalLmPlanHasher.Compute(request);
+            AssertFalse(ProvisioningRequestValidator.Validate(request).IsValid,
+                "Duplicate INN must be rejected before helper mutation.");
+            request = CreateMsiProtocolRequest();
+            request.LocalModuleMsiItems[1].CloneOrdinal = 0;
+            request.PlanHash = CanonicalLmPlanHasher.Compute(request);
+            AssertFalse(ProvisioningRequestValidator.Validate(request).IsValid,
+                "Duplicate ordinal must be rejected before helper mutation.");
+            request = CreateMsiProtocolRequest();
+            request.LocalModuleMsiItems[1].ApiPort =
+                request.LocalModuleMsiItems[0].DatabasePort;
+            request.PlanHash = CanonicalLmPlanHasher.Compute(request);
+            AssertFalse(ProvisioningRequestValidator.Validate(request).IsValid,
+                "A repeated API/database port must be rejected.");
+            request = CreateMsiProtocolRequest();
+            request.LocalModuleMsiItems[1].InstallVolumeRoot =
+                @"D:\Program Files\Regime2";
+            request.PlanHash = CanonicalLmPlanHasher.Compute(request);
+            AssertFalse(ProvisioningRequestValidator.Validate(request).IsValid,
+                "A caller-supplied full install path must be rejected.");
+
+            request = CreateMsiProtocolRequest();
+            request.SchemaVersion = 1;
+            request.PlanHash = CanonicalLmPlanHasher.Compute(request);
+            AssertContains(
+                ProvisioningRequestValidator.Validate(request).JoinMessages(),
+                "Версия схемы");
+            request.SchemaVersion = 2;
+            request.PlanHash = CanonicalLmPlanHasher.Compute(request);
+            AssertContains(
+                ProvisioningRequestValidator.Validate(request).JoinMessages(),
+                "Версия схемы");
+        }
+
+        private static void AssertMsiHashChanges(
+            LmServiceProvisioningBatchRequest request,
+            Action mutate,
+            Action restore,
+            string field)
+        {
+            string before = CanonicalLmPlanHasher.Compute(request);
+            mutate();
+            string after = CanonicalLmPlanHasher.Compute(request);
+            restore();
+            AssertFalse(CanonicalLmPlanHasher.FixedTimeEqualsHex(before, after),
+                "MSI local-module " + field + " must participate in the plan hash.");
+        }
+
+        private static void MsiLocalModuleSessionContinuesIndependentInnFailures()
+        {
+            LmServiceProvisioningBatchRequest request =
+                CreateMsiProtocolRequest();
+            request.PlanHash = CanonicalLmPlanHasher.Compute(request);
+            FakeLocalModuleMsiLifecyclePlatform platform =
+                new FakeLocalModuleMsiLifecyclePlatform();
+            platform.State(request.LocalModuleMsiItems[0].Inn).ProductPresent =
+                true;
+            platform.State(request.LocalModuleMsiItems[0].Inn).ProductMatches =
+                false;
+            LocalModuleMsiProvisioningContext context =
+                new LocalModuleMsiProvisioningContext(
+                    request.OperationId,
+                    platform,
+                    new FakeLocalModuleMsiRepository(),
+                    new FakeLocalModuleMsiJournalStore(),
+                    delegate { return new string('e', 32); });
+            using (LocalModuleMsiProvisioningSession session =
+                new LocalModuleMsiProvisioningSession(
+                    request,
+                    new LocalModuleMsiProvisioner(),
+                    context,
+                    new CallbackDisposable(delegate { })))
+            {
+                AssertEqual(LmServiceProvisioningStatus.Failed,
+                    session.ExecuteItem(0).Status,
+                    "A foreign first INN must fail only that item.");
+                AssertEqual(LmServiceProvisioningStatus.Succeeded,
+                    session.ExecuteItem(1).Status,
+                    "A later independent INN must still be installed.");
+                AssertEqual(2, session.Finish().LocalModuleMsiItems.Count,
+                    "The v3 result must retain one result per INN.");
+            }
+        }
+
+        private static LmServiceProvisioningBatchRequest
+            CreateMsiProtocolRequest()
+        {
+            LocalModuleInstallerSelection installer =
+                LocalModulePackageVerifier.CreateSupportedIdentity();
+            installer.SourcePath = @"D:\regime-2.6.1-7.msi";
+            LmServiceProvisioningBatchRequest request =
+                new LmServiceProvisioningBatchRequest
+                {
+                    SchemaVersion = ProvisioningRequestValidator
+                        .CurrentSchemaVersion,
+                    Operation = LmServiceOperation.EnsureMsiLocalModules,
+                    OperationId =
+                        "40000000000000000000000000000004",
+                    InitiatingSid = "S-1-5-21-1-2-3-1001"
+                };
+            request.LocalModuleInstallerSelection = installer;
+            request.LocalModuleMsiItems.Add(MsiRequest(
+                "1234567890", 0, 5995, 5984, null));
+            request.LocalModuleMsiItems.Add(MsiRequest(
+                "123456789012", 1, 6995, 7984, null));
+            return request;
         }
 
         private static LocalModuleMsiProvisioningItemRequest MsiRequest(
@@ -2833,7 +3024,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                         {
                             new ManagedProvisioningSessionMessage
                             {
-                                SchemaVersion = ProvisioningRequestValidator.CurrentSchemaVersion,
+                                SchemaVersion = request.SchemaVersion,
                                 OperationId = request.OperationId,
                                 Sequence = 2,
                                 Kind = ManagedProvisioningSessionKind.ExecuteItem,
@@ -2842,7 +3033,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                             },
                             new ManagedProvisioningSessionMessage
                             {
-                                SchemaVersion = ProvisioningRequestValidator.CurrentSchemaVersion,
+                                SchemaVersion = request.SchemaVersion,
                                 OperationId = request.OperationId,
                                 Sequence = 4,
                                 Kind = ManagedProvisioningSessionKind.ExecuteItem,
@@ -2852,7 +3043,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                             },
                             new ManagedProvisioningSessionMessage
                             {
-                                SchemaVersion = ProvisioningRequestValidator.CurrentSchemaVersion,
+                                SchemaVersion = request.SchemaVersion,
                                 OperationId = request.OperationId,
                                 Sequence = 6,
                                 Kind = ManagedProvisioningSessionKind.Finish,

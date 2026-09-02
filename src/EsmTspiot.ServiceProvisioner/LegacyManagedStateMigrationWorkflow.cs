@@ -212,7 +212,7 @@ namespace EsmTspiot.ServiceProvisioner
             LmServiceProvisioningBatchRequest request =
                 new LmServiceProvisioningBatchRequest
                 {
-                    SchemaVersion = ProvisioningRequestValidator.CurrentSchemaVersion,
+                    SchemaVersion = ProvisioningRequestValidator.LegacySchemaVersion,
                     Operation = LmServiceOperation.RemoveManaged,
                     OperationId = operationId,
                     InitiatingSid = initiatingSid,

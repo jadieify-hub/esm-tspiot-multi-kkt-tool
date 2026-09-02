@@ -173,6 +173,15 @@ namespace EsmTspiot.WinForms.Shared
             return _launcher.CanLaunch(out reason);
         }
 
+        internal Task<LmServiceProvisioningBatchResult> ExecuteRawBatchAsync(
+            LmServiceProvisioningBatchRequest request,
+            CancellationToken cancellation)
+        {
+            return InvokeAsync<LmServiceProvisioningBatchResult>(
+                request,
+                cancellation);
+        }
+
         private async Task<T> InvokeAsync<T>(
             LmServiceProvisioningBatchRequest request,
             CancellationToken cancellation)

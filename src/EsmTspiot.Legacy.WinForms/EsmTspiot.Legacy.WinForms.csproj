@@ -30,6 +30,7 @@
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmControllerInstallerPicker.cs" Link="LmControllerInstallerPicker.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LocalModuleInstallerPicker.cs" Link="LocalModuleInstallerPicker.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmServiceProvisionerClient.cs" Link="LmServiceProvisionerClient.cs" />
+    <Compile Include="..\EsmTspiot.WinForms.Shared\LocalModuleMsiProvisionerClient.cs" Link="LocalModuleMsiProvisionerClient.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\CompleteStackProvisionerClient.cs" Link="CompleteStackProvisionerClient.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\AtolDriverRuntimeLocator.cs" Link="AtolDriverRuntimeLocator.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\AtolVcomEnumerator.cs" Link="AtolVcomEnumerator.cs" />

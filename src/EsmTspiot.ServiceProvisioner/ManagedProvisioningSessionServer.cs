@@ -97,7 +97,8 @@ namespace EsmTspiot.ServiceProvisioner
                     message,
                     request.OperationId,
                     _lastSequence,
-                    request.ManagedLocalModules.Count);
+                    request.ManagedLocalModules.Count,
+                    request.SchemaVersion);
             if (!validation.IsValid || message.Sequence != _lastSequence + 1)
             {
                 throw new InvalidDataException(
@@ -134,8 +135,7 @@ namespace EsmTspiot.ServiceProvisioner
             _channel.WriteSessionMessage(
                 new ManagedProvisioningSessionMessage
                 {
-                    SchemaVersion =
-                        ProvisioningRequestValidator.CurrentSchemaVersion,
+                    SchemaVersion = request.SchemaVersion,
                     OperationId = request.OperationId,
                     Sequence = _lastSequence,
                     Kind = kind,

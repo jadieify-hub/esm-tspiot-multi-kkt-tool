@@ -10,7 +10,8 @@ namespace EsmTspiot.ServiceProvisioner
 {
     internal static class ProvisioningRequestValidator
     {
-        internal const int CurrentSchemaVersion = 1;
+        internal const int CurrentSchemaVersion = 3;
+        internal const int LegacySchemaVersion = 1;
         internal const int MaximumBatchSize = 32;
 
         internal static ValidationResult Validate(LmServiceProvisioningBatchRequest request)
@@ -23,7 +24,12 @@ namespace EsmTspiot.ServiceProvisioner
             }
 
             bool directOperation = IsDirectControllerOperation(request.Operation);
-            int expectedSchemaVersion = directOperation ? 2 : CurrentSchemaVersion;
+            bool msiOperation = IsMsiLocalModuleOperation(request.Operation);
+            int expectedSchemaVersion = directOperation
+                ? 2
+                : msiOperation
+                    ? CurrentSchemaVersion
+                    : LegacySchemaVersion;
             if (request.SchemaVersion != expectedSchemaVersion)
             {
                 result.Add("Версия схемы запроса не поддерживается.");
@@ -69,6 +75,10 @@ namespace EsmTspiot.ServiceProvisioner
             {
                 ValidateDirectControllers(request, result);
             }
+            else if (msiOperation)
+            {
+                ValidateMsiLocalModules(request, result);
+            }
             else
             {
                 result.Add("Операция помощника не поддерживается.");
@@ -86,6 +96,10 @@ namespace EsmTspiot.ServiceProvisioner
             if (!directOperation && HasDirectControllerPayload(request))
             {
                 result.Add("Операция старой схемы не принимает план прямых контроллеров.");
+            }
+            if (!msiOperation && HasMsiLocalModulePayload(request))
+            {
+                result.Add("Эта операция не принимает план MSI-экземпляров ЛМ.");
             }
 
             return result;
@@ -198,6 +212,87 @@ namespace EsmTspiot.ServiceProvisioner
             }
         }
 
+        private static void ValidateMsiLocalModules(
+            LmServiceProvisioningBatchRequest request,
+            ValidationResult result)
+        {
+            if (HasItems(request) || request.InstallerSelection != null ||
+                request.RemovalConfirmation != null ||
+                request.CleanupConfirmation != null ||
+                HasRemovalConfirmations(request) ||
+                (request.ManagedLocalModules != null &&
+                 request.ManagedLocalModules.Count > 0) ||
+                HasDirectControllerPayload(request))
+            {
+                result.Add(
+                    "Операция MSI ЛМ не принимает payload другой схемы.");
+            }
+
+            bool ensure = request.Operation ==
+                LmServiceOperation.EnsureMsiLocalModules;
+            bool single = request.Operation ==
+                    LmServiceOperation.RestartMsiLocalModule ||
+                request.Operation == LmServiceOperation.RemoveMsiLocalModule;
+            if (ensure)
+                ValidateLocalModuleInstallerShape(
+                    request.LocalModuleInstallerSelection,
+                    result);
+            else if (request.LocalModuleInstallerSelection != null)
+                result.Add(
+                    "Перезапуск и удаление MSI ЛМ не принимают установщик.");
+
+            int count = request.LocalModuleMsiItems == null
+                ? 0
+                : request.LocalModuleMsiItems.Count;
+            if ((single && count != 1) ||
+                (!single && (count < 1 || count > MaximumBatchSize)))
+            {
+                result.Add(single
+                    ? "Операция должна содержать ровно один MSI ЛМ."
+                    : "План MSI ЛМ должен содержать от 1 до 32 ИНН.");
+                return;
+            }
+
+            HashSet<string> inns = new HashSet<string>(StringComparer.Ordinal);
+            HashSet<int> ordinals = new HashSet<int>();
+            HashSet<int> ports = new HashSet<int>();
+            for (int index = 0; index < count; index++)
+            {
+                LocalModuleMsiProvisioningItemRequest item =
+                    request.LocalModuleMsiItems[index];
+                if (item == null)
+                {
+                    result.Add("Строка MSI ЛМ не задана.");
+                    continue;
+                }
+                try
+                {
+                    LocalModuleMsiProvisioningContext.ValidateRequest(item);
+                }
+                catch (Exception exception)
+                {
+                    if (exception is ArgumentException ||
+                        exception is InvalidDataException)
+                        result.Add("Строка MSI ЛМ содержит недопустимые поля.");
+                    else
+                        throw;
+                }
+                if (!inns.Add(item.Inn ?? string.Empty))
+                    result.Add("ИНН повторяется в плане MSI ЛМ.");
+                if (!ordinals.Add(item.CloneOrdinal))
+                    result.Add("Номер экземпляра повторяется в плане MSI ЛМ.");
+                if (!ports.Add(item.ApiPort) || !ports.Add(item.DatabasePort))
+                    result.Add("Порт повторяется в плане MSI ЛМ.");
+                if (!ensure && !IsHex(item.ExpectedManifestSha256, 64))
+                    result.Add(
+                        "Для перезапуска или удаления нужен отпечаток MSI ЛМ.");
+                if (ensure && !string.IsNullOrEmpty(
+                        item.ExpectedManifestSha256) &&
+                    !IsHex(item.ExpectedManifestSha256, 64))
+                    result.Add("Отпечаток MSI ЛМ имеет неверный формат.");
+            }
+        }
+
         internal static ValidationResult ValidateInstallerSelection(
             LmControllerInstallerSelection selected,
             LmControllerInstallerSelection observed)
@@ -272,13 +367,28 @@ namespace EsmTspiot.ServiceProvisioner
             long lastSequence,
             int itemCount)
         {
+            return ValidateSessionMessage(
+                message,
+                expectedOperationId,
+                lastSequence,
+                itemCount,
+                CurrentSchemaVersion);
+        }
+
+        internal static ValidationResult ValidateSessionMessage(
+            ManagedProvisioningSessionMessage message,
+            string expectedOperationId,
+            long lastSequence,
+            int itemCount,
+            int expectedSchemaVersion)
+        {
             ValidationResult result = new ValidationResult();
             if (message == null)
             {
                 result.Add("Сообщение сеанса не задано.");
                 return result;
             }
-            if (message.SchemaVersion != CurrentSchemaVersion)
+            if (message.SchemaVersion != expectedSchemaVersion)
             {
                 result.Add("Версия схемы сообщения сеанса не поддерживается.");
             }
@@ -821,12 +931,28 @@ namespace EsmTspiot.ServiceProvisioner
             return request.DirectControllers != null && request.DirectControllers.Count > 0;
         }
 
+        private static bool HasMsiLocalModulePayload(
+            LmServiceProvisioningBatchRequest request)
+        {
+            return request.LocalModuleMsiItems != null &&
+                request.LocalModuleMsiItems.Count > 0;
+        }
+
         private static bool IsDirectControllerOperation(LmServiceOperation operation)
         {
             return operation == LmServiceOperation.EnsureDirectControllers ||
                 operation == LmServiceOperation.RestartDirectController ||
                 operation == LmServiceOperation.RemoveDirectController ||
                 operation == LmServiceOperation.RemoveAllDirectControllers;
+        }
+
+        private static bool IsMsiLocalModuleOperation(
+            LmServiceOperation operation)
+        {
+            return operation == LmServiceOperation.EnsureMsiLocalModules ||
+                operation == LmServiceOperation.RestartMsiLocalModule ||
+                operation == LmServiceOperation.RemoveMsiLocalModule ||
+                operation == LmServiceOperation.RemoveAllMsiLocalModules;
         }
 
         private static bool IsKnownSessionKind(ManagedProvisioningSessionKind kind)

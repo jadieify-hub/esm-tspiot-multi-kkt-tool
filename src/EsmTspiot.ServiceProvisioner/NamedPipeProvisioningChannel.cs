@@ -123,7 +123,7 @@ namespace EsmTspiot.ServiceProvisioner
             string operationId)
         {
             if (message == null ||
-                message.SchemaVersion != ProvisioningRequestValidator.CurrentSchemaVersion ||
+                message.SchemaVersion != ProvisioningRequestValidator.LegacySchemaVersion ||
                 message.Kind != LmProvisioningControlKind.CancelAfterCurrentItem ||
                 !string.Equals(message.OperationId, operationId, StringComparison.OrdinalIgnoreCase) ||
                 message.Sequence <= _lastControlSequence)
@@ -144,7 +144,8 @@ namespace EsmTspiot.ServiceProvisioner
                 message,
                 operationId,
                 _lastSessionSequence,
-                itemCount);
+                itemCount,
+                ProvisioningRequestValidator.LegacySchemaVersion);
             if (!validation.IsValid)
             {
                 return false;

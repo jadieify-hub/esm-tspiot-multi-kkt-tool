@@ -205,6 +205,7 @@ namespace EsmTspiot.Shared.Tests
             Run("Provisioner can inspect the current administrative token", ProvisionerCanInspectCurrentAdministrativeToken);
             Run("Provisioner client creates a supported protected pipe", ProvisionerClientCreatesSupportedProtectedPipe);
             Run("Provisioner client explains premature helper exit", ProvisionerClientExplainsPrematureHelperExit);
+            Run("MSI provisioner launch verifies helper before process start", MsiProvisionerLaunchVerifiesHelperBeforeProcessStart);
 #endif
             Run("LM provisioner contract exposes no arbitrary command", LmProvisionerContractExposesNoArbitraryCommand);
             Run("LM probe result separates service and listener state", LmProbeResultSeparatesServiceAndListenerState);
@@ -5335,6 +5336,40 @@ namespace EsmTspiot.Shared.Tests
             AssertContains(rejected, "аутентификац");
             AssertContains(rejected, "2");
             AssertContains(failed, "3");
+        }
+
+        private static void MsiProvisionerLaunchVerifiesHelperBeforeProcessStart()
+        {
+            MethodInfo launch = typeof(ProvisionerProcessLauncher).GetMethod(
+                "Launch",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            MethodInfo canLaunch = typeof(ProvisionerProcessLauncher).GetMethod(
+                "CanLaunch",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            FieldInfo launcher = typeof(LocalModuleMsiProvisionerClient).GetField(
+                "_launcher",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            AssertTrue(launch != null && canLaunch != null && launcher != null,
+                "The MSI client must use the reviewed provisioner launcher.");
+            AssertTrue(MethodBodyCalls(launch, canLaunch),
+                "ProvisionerProcessLauncher.Launch must verify helper hash/version before Process.Start.");
+        }
+
+        private static bool MethodBodyCalls(MethodInfo caller, MethodInfo target)
+        {
+            MethodBody body = caller.GetMethodBody();
+            byte[] il = body == null ? null : body.GetILAsByteArray();
+            if (il == null) return false;
+            byte[] token = BitConverter.GetBytes(target.MetadataToken);
+            for (int index = 0; index + token.Length < il.Length; index++)
+            {
+                if (il[index] != 0x28 && il[index] != 0x6f) continue;
+                bool equal = true;
+                for (int offset = 0; offset < token.Length; offset++)
+                    equal &= il[index + 1 + offset] == token[offset];
+                if (equal) return true;
+            }
+            return false;
         }
 #endif
 
