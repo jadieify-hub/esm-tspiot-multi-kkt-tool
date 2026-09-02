@@ -94,6 +94,14 @@ namespace EsmTspiot.ServiceProvisioner
             ReadRows(
                 database,
                 result,
+                "Property",
+                new[] { "Property", "Value" },
+                2,
+                new[] { "MsiHiddenProperties", "SERVERURL" },
+                false);
+            ReadRows(
+                database,
+                result,
                 "Directory",
                 new[] { "Directory", "Directory_Parent", "DefaultDir" },
                 2,
@@ -190,7 +198,11 @@ namespace EsmTspiot.ServiceProvisioner
                     "InstallAutoApdater",
                     "UninstallAutoApdater",
                     "RemoveAll",
-                    "StopEPMD"
+                    "StopEPMD",
+                    "NotAutoStartlYeniseiService",
+                    "NotAutoStartlRegimeService",
+                    "StartYeniseiService",
+                    "StartRegimeService"
                 },
                 false);
         }

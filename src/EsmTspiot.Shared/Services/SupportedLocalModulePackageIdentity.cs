@@ -19,6 +19,8 @@ namespace EsmTspiot.Shared.Services
             "O=ООО ЦЕНТР РАЗВИТИЯ ПЕРСПЕКТИВНЫХ ТЕХНОЛОГИЙ";
         public const string SignerThumbprint =
             "6BA5F6BBE4BE27658253C78889334D0E24858C19";
+        public const string ApiLogin = "admin";
+        public const string ApiPassword = "admin";
 
         public static LocalModuleInstallerSelection Create(
             string sourcePath,

@@ -11,8 +11,6 @@ namespace EsmTspiot.ServiceProvisioner
     internal sealed class WindowsLocalModuleMsiProvisioningPlatform :
         ILocalModuleMsiProvisioningPlatform
     {
-        private const string HiddenInstallerProperties =
-            "ADMINLOGIN=admin ADMINPASSWORD=admin ";
         private readonly VerifiedLocalModulePackage _source;
         private readonly WindowsInstallerPackageMetadata _metadata;
         private readonly string _machineRoot;
@@ -304,6 +302,8 @@ namespace EsmTspiot.ServiceProvisioner
             LocalModuleMsiManifest manifest)
         {
             RequireSource();
+            LocalModuleInstallerProperties.RequireSupportedBy(
+                _source.CapabilityProfile);
             string installRoot = InstallRoot(request);
             if (request.CloneOrdinal == 0)
             {
@@ -699,15 +699,7 @@ namespace EsmTspiot.ServiceProvisioner
 
         private static string InstallProperties(string installRoot)
         {
-            if (installRoot.IndexOf('"') >= 0)
-                throw new InvalidDataException(
-                    "Local-module installation root contains a quote.");
-            string directory = installRoot.TrimEnd(
-                Path.DirectorySeparatorChar,
-                Path.AltDirectorySeparatorChar) +
-                Path.DirectorySeparatorChar;
-            return HiddenInstallerProperties + "APPLICATIONFOLDER=\"" +
-                directory + "\"";
+            return LocalModuleInstallerProperties.Build(installRoot);
         }
 
         private void RequireSource()

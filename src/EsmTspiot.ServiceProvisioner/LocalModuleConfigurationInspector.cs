@@ -28,6 +28,8 @@ namespace EsmTspiot.ServiceProvisioner
                 layout.ApiLocalIniPath,
                 "api.ip_address",
                 "api.port",
+                "api.login",
+                "api.password",
                 "local.db_url");
             IDictionary<string, string> database =
                 ReadIni(
@@ -40,6 +42,7 @@ namespace EsmTspiot.ServiceProvisioner
                 "erlang.Rootdir");
             VmArgs apiVm = ReadVmArgs(layout.ApiVmArgsPath);
             VmArgs databaseVm = ReadVmArgs(layout.DatabaseVmArgsPath);
+            RequireApiCredentials(api);
 
             string apiAddress = Required(api, "api.ip_address");
             int apiPort = RequiredPort(api, "api.port");
@@ -86,6 +89,22 @@ namespace EsmTspiot.ServiceProvisioner
                 DatabaseNodeName = databaseVm.NodeName,
                 CookieDigest = Sha256(apiVm.Cookie)
             };
+        }
+
+        private static void RequireApiCredentials(
+            IDictionary<string, string> api)
+        {
+            // The vendor installer writes [api] login/password from the
+            // ADMINUSER/ADMINPASSWORD properties; values are never logged.
+            string login;
+            string password;
+            if (!api.TryGetValue("api.login", out login) ||
+                login.Length == 0 ||
+                !api.TryGetValue("api.password", out password) ||
+                password.Length == 0)
+                throw new InvalidDataException(
+                    "Installed local-module API credentials are missing: " +
+                    "the installer did not write [api] login and password.");
         }
 
         private static IDictionary<string, string> ReadIni(

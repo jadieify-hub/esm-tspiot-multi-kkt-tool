@@ -1,4 +1,5 @@
 using EsmTspiot.Shared.Models;
+using EsmTspiot.Shared.Services;
 
 namespace EsmTspiot.WinForms.Shared
 {
@@ -8,8 +9,8 @@ namespace EsmTspiot.WinForms.Shared
         {
             return new LmGatewayCredentials
             {
-                Login = "admin",
-                Password = "admin"
+                Login = SupportedLocalModulePackageIdentity.ApiLogin,
+                Password = SupportedLocalModulePackageIdentity.ApiPassword
             };
         }
     }
