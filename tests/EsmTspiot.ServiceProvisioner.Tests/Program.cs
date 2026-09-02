@@ -99,6 +99,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Windows Installer API keeps credentials out of diagnostics", WindowsInstallerApiKeepsCredentialsOutOfDiagnostics);
             Run("Installed local module reader scans both registry views", InstalledLocalModuleReaderScansBothRegistryViews);
             Run("Local module MSI manifests guard ownership and content", LocalModuleMsiManifestsGuardOwnershipAndContent);
+            Run("Installed local module config exposes only a cookie digest", InstalledLocalModuleConfigExposesOnlyCookieDigest);
+            Run("Installed local module services start stop and own listeners", InstalledLocalModuleServicesStartStopAndOwnListeners);
             Run("Managed local module protocol accepts consistent shared INN rows", ManagedLocalModuleProtocolAcceptsConsistentSharedInnRows);
             Run("Managed provisioning session accepts only known monotonic messages", ManagedProvisioningSessionAcceptsOnlyKnownMonotonicMessages);
             Run("Managed session server interleaves caller and helper per KKT", ManagedSessionServerInterleavesCallerAndHelperPerKkt);
@@ -1997,6 +1999,200 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             {
                 DeleteTestTreeWithReadOnlyFiles(directory);
             }
+        }
+
+        private static void InstalledLocalModuleConfigExposesOnlyCookieDigest()
+        {
+            string directory = CreateTemporaryDirectory();
+            try
+            {
+                LocalModuleInstalledLayout first =
+                    LocalModuleInstalledLayout.Create(
+                        Path.Combine(directory, "Regime1"),
+                        1,
+                        6995,
+                        7984);
+                LocalModuleInstalledLayout second =
+                    LocalModuleInstalledLayout.Create(
+                        Path.Combine(directory, "Regime2"),
+                        2,
+                        7995,
+                        8984);
+                LocalModuleInstalledLayout vendorBase =
+                    LocalModuleInstalledLayout.Create(
+                        Path.Combine(directory, "Regime"),
+                        0,
+                        5995,
+                        5984);
+                WriteInstalledLocalModuleConfiguration(
+                    first,
+                    new string('a', 32));
+                WriteInstalledLocalModuleConfiguration(
+                    second,
+                    new string('b', 32));
+                WriteInstalledLocalModuleConfiguration(
+                    vendorBase,
+                    new string('c', 32));
+                File.WriteAllText(
+                    vendorBase.DatabaseLocalIniPath,
+                    "[chttpd]\r\nbind_address = 0.0.0.0\r\nport = 5984\r\n");
+                LocalModuleConfigurationInspector inspector =
+                    new LocalModuleConfigurationInspector();
+                LocalModuleConfigurationObservation observedFirst =
+                    inspector.Inspect(first);
+                LocalModuleConfigurationObservation observedSecond =
+                    inspector.Inspect(second);
+                LocalModuleConfigurationObservation observedBase =
+                    inspector.Inspect(vendorBase);
+                AssertEqual("0.0.0.0", observedFirst.ApiBindAddress,
+                    "LM API must remain reachable from the second KKT.");
+                AssertEqual("127.0.0.1", observedFirst.DatabaseBindAddress,
+                    "LM database must remain loopback-only.");
+                AssertEqual(6995, observedFirst.ApiPort,
+                    "LM API port must match the clone plan.");
+                AssertEqual(7984, observedFirst.DatabasePort,
+                    "LM database port must match the clone plan.");
+                AssertEqual("regime1@127.0.0.1", observedFirst.ApiNodeName,
+                    "LM API node name must be isolated.");
+                AssertEqual("yenisei1@127.0.0.1", observedFirst.DatabaseNodeName,
+                    "LM database node name must be isolated.");
+                AssertFalse(string.Equals(
+                        observedFirst.CookieDigest,
+                        new string('a', 32),
+                        StringComparison.Ordinal),
+                    "Raw cookie must never leave the inspector.");
+                AssertFalse(string.Equals(
+                        observedFirst.CookieDigest,
+                        observedSecond.CookieDigest,
+                        StringComparison.Ordinal),
+                    "Different LM pairs must have different cookie digests.");
+                AssertEqual("0.0.0.0", observedBase.DatabaseBindAddress,
+                    "The pre-existing vendor base must remain usable without rewriting it.");
+
+                File.AppendAllText(
+                    first.ApiLocalIniPath,
+                    "[api]\r\nport = 7000\r\n");
+                AssertThrows<InvalidDataException>(delegate {
+                    inspector.Inspect(first);
+                }, "Duplicate characterized INI keys must be rejected.");
+            }
+            finally
+            {
+                DeleteTestTreeWithReadOnlyFiles(directory);
+            }
+        }
+
+        private static void InstalledLocalModuleServicesStartStopAndOwnListeners()
+        {
+            string root = Path.Combine(
+                Path.GetTempPath(),
+                "krs-lm-layout-" + Guid.NewGuid().ToString("N"));
+            LocalModuleInstalledLayout layout =
+                LocalModuleInstalledLayout.Create(root, 1, 6995, 7984);
+            FakeWindowsServiceApi services = new FakeWindowsServiceApi();
+            services.SetRecord(new WindowsServiceRecord
+            {
+                ServiceName = layout.DatabaseServiceName,
+                ImagePath = "\"" + layout.ServiceImagePath + "\"",
+                State = WindowsServiceState.Running,
+                ProcessId = 5001
+            });
+            services.SetRecord(new WindowsServiceRecord
+            {
+                ServiceName = layout.ApiServiceName,
+                ImagePath = layout.ServiceImagePath,
+                State = WindowsServiceState.Running,
+                ProcessId = 5002
+            });
+            FakeDirectTcpListenerOwnerReader listeners =
+                new FakeDirectTcpListenerOwnerReader();
+            listeners.SetOwners(layout.DatabasePort, 6001);
+            listeners.SetOwners(layout.ApiPort, 6002);
+            FakeProcessTreeReader parents = new FakeProcessTreeReader();
+            parents.SetParent(6001, 5001);
+            parents.SetParent(6002, 5002);
+            LocalModuleMsiReadinessProbe probe =
+                new LocalModuleMsiReadinessProbe(
+                    services,
+                    listeners,
+                    parents,
+                    1,
+                    delegate { });
+            AssertTrue(probe.ProbeOwnedListener(
+                    layout,
+                    LocalModuleProcessRole.Database).IsValid,
+                "Database listener must belong to the exact service tree.");
+            AssertTrue(probe.ProbeOwnedListener(
+                    layout,
+                    LocalModuleProcessRole.Api).IsValid,
+                "API listener must belong to the exact service tree.");
+            services.SetRecord(new WindowsServiceRecord
+            {
+                ServiceName = layout.ApiServiceName,
+                ImagePath = Path.Combine(root, "foreign.exe"),
+                State = WindowsServiceState.Running,
+                ProcessId = 5002
+            });
+            AssertFalse(probe.ProbeOwnedListener(
+                    layout,
+                    LocalModuleProcessRole.Api).IsValid,
+                "A service outside the exact install root must be rejected.");
+
+            FakeWindowsServiceApi orderedServices = new FakeWindowsServiceApi();
+            orderedServices.SetRecord(new WindowsServiceRecord
+            {
+                ServiceName = layout.DatabaseServiceName,
+                ImagePath = layout.ServiceImagePath,
+                State = WindowsServiceState.Stopped
+            });
+            orderedServices.SetRecord(new WindowsServiceRecord
+            {
+                ServiceName = layout.ApiServiceName,
+                ImagePath = layout.ServiceImagePath,
+                State = WindowsServiceState.Stopped
+            });
+            List<string> events = orderedServices.Events;
+            LocalModuleServicePairController controller =
+                new LocalModuleServicePairController(
+                    orderedServices,
+                    new FakeLocalModuleMsiReadiness(events));
+            controller.StartDatabaseThenApi(layout);
+            controller.StopApiThenDatabase(layout);
+            AssertSequence(new[]
+            {
+                "start:yenisei1", "ready:Database",
+                "start:regime1", "ready:Api",
+                "stop:regime1", "stopped:Api",
+                "stop:yenisei1", "stopped:Database"
+            }, events, "LM service pair lifecycle order must be exact.");
+        }
+
+        private static void WriteInstalledLocalModuleConfiguration(
+            LocalModuleInstalledLayout layout,
+            string cookie)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(layout.ApiLocalIniPath));
+            Directory.CreateDirectory(Path.GetDirectoryName(layout.DatabaseLocalIniPath));
+            Directory.CreateDirectory(Path.GetDirectoryName(layout.ErlIniPath));
+            File.WriteAllText(layout.ApiLocalIniPath,
+                "[api]\r\nip_address = 0.0.0.0\r\nport = " +
+                layout.ApiPort.ToString() +
+                "\r\n[local]\r\ndb_url = http://127.0.0.1:" +
+                layout.DatabasePort.ToString() + "\r\n");
+            File.WriteAllText(layout.DatabaseLocalIniPath,
+                "[chttpd]\r\nbind_address = 127.0.0.1\r\nport = " +
+                layout.DatabasePort.ToString() + "\r\n");
+            File.WriteAllText(layout.ApiVmArgsPath,
+                "-name " + layout.ApiNodeName +
+                "\r\n-setcookie " + cookie + "\r\n");
+            File.WriteAllText(layout.DatabaseVmArgsPath,
+                "-name " + layout.DatabaseNodeName +
+                "\r\n-setcookie " + cookie + "\r\n");
+            File.WriteAllText(layout.ErlIniPath,
+                "[erlang]\r\nBindir=" +
+                layout.ErtsBinPath.Replace("\\", "\\\\") +
+                "\r\nProgname=erl\r\nRootdir=" +
+                layout.InstallRoot.Replace("\\", "\\\\") + "\\\\\r\n");
         }
 
         private static LocalModuleMsiDatabaseSnapshot CreateLocalModuleMsiSnapshot(
@@ -8110,8 +8306,14 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             private readonly Dictionary<string, int> _deleteQueriesRemaining =
                 new Dictionary<string, int>(StringComparer.Ordinal);
 
+            internal FakeWindowsServiceApi()
+            {
+                Events = new List<string>();
+            }
+
             internal WindowsServiceDefinition LastDefinition { get; private set; }
             internal int DeleteVisibilityQueries { get; set; }
+            internal List<string> Events { get; private set; }
 
             internal void SetRecord(WindowsServiceRecord record)
             {
@@ -8152,6 +8354,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             public void Start(string serviceName)
             {
                 EnsureExact(serviceName);
+                Events.Add("start:" + serviceName);
                 _records[serviceName].State = WindowsServiceState.Running;
                 if (_records[serviceName].ProcessId == 0)
                 {
@@ -8162,6 +8365,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             public void RequestStop(string serviceName)
             {
                 EnsureExact(serviceName);
+                Events.Add("stop:" + serviceName);
                 _records[serviceName].State = WindowsServiceState.Stopped;
                 _records[serviceName].ProcessId = 0;
             }
@@ -8875,6 +9079,48 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     UpgradeCode = _metadata.UpgradeCode,
                     PackageCode = _metadata.PackageCode
                 };
+            }
+        }
+
+        private sealed class FakeProcessTreeReader : IProcessParentReader
+        {
+            private readonly Dictionary<int, int> _parents =
+                new Dictionary<int, int>();
+
+            internal void SetParent(int processId, int parentProcessId)
+            {
+                _parents[processId] = parentProcessId;
+            }
+
+            public int GetParentProcessId(int processId)
+            {
+                int parent;
+                return _parents.TryGetValue(processId, out parent) ? parent : 0;
+            }
+        }
+
+        private sealed class FakeLocalModuleMsiReadiness :
+            ILocalModuleMsiReadinessProbe
+        {
+            private readonly IList<string> _events;
+
+            internal FakeLocalModuleMsiReadiness(IList<string> events)
+            {
+                _events = events;
+            }
+
+            public void WaitUntilReady(
+                LocalModuleInstalledLayout layout,
+                LocalModuleProcessRole role)
+            {
+                _events.Add("ready:" + role.ToString());
+            }
+
+            public void WaitUntilStopped(
+                LocalModuleInstalledLayout layout,
+                LocalModuleProcessRole role)
+            {
+                _events.Add("stopped:" + role.ToString());
             }
         }
 
