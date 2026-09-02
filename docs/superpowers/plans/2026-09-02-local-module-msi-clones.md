@@ -352,21 +352,21 @@ internal interface ILocalModuleMsiTransformer
 }
 ```
 
-- [ ] **Step 1: Build a minimal synthetic two-CAB MSI fixture and failing transform tests**
+- [x] **Step 1: Build a minimal synthetic two-CAB MSI fixture and failing transform tests**
 
 The factory creates a temporary MSI with the same relevant table shapes, two embedded CAB streams, quoted `"regime"`/`"yenisei"` commands, RegLocator, service names, and five small config files. Tests assert unique ProductCode/UpgradeCode/PackageCode, `RegimeN`, `regimeN`, `yeniseiN`, node names, ports, RegLocator path, disabled updater and clone `StopEPMD`.
 
-- [ ] **Step 2: Run helper tests and observe failure**
+- [x] **Step 2: Run helper tests and observe failure**
 
 Run the Task 1 helper-test command.
 
 Expected: FAIL because transformer and identity factory do not exist.
 
-- [ ] **Step 3: Implement stable IDs and allowlisted table updates**
+- [x] **Step 3: Implement stable IDs and allowlisted table updates**
 
 Use an injected `Func<Guid>` only for PackageCode. Derive ProductCode and UpgradeCode using SHA-256 over fixed namespace bytes plus normalized version/INN, set RFC-4122 variant/version bits, and format uppercase braced GUIDs. Reject any SQL update count different from the exact capability profile. Never perform global string replacement.
 
-- [ ] **Step 4: Run helper tests twice to prove deterministic Product/Upgrade identity and fresh PackageCode**
+- [x] **Step 4: Run helper tests twice to prove deterministic Product/Upgrade identity and fresh PackageCode**
 
 Run the Task 1 helper-test command twice.
 
