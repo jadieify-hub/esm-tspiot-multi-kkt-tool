@@ -679,27 +679,27 @@ internal sealed class LocalModuleMsiProvisioner
 }
 ```
 
-- [ ] **Step 1: Add failing lifecycle state-machine tests**
+- [x] **Step 1: Add failing lifecycle state-machine tests**
 
 Cover new base, pre-existing base, new clone, matching ready no-op, stopped matching restart, foreign ProductCode/service/port/rule conflict, failure after install with cleanup retry, clone removal while base runs, base removal while clone runs (`stop clones → uninstall base → wait EPMD → restart clones`), pre-existing base “remove created” preservation, and full clone-first removal.
 
-- [ ] **Step 2: Run helper tests and observe failure**
+- [x] **Step 2: Run helper tests and observe failure**
 
 Run the Task 1 helper-test command.
 
 Expected: FAIL because the new lifecycle workflows do not exist.
 
-- [ ] **Step 3: Implement the state machine using Tasks 3–9 only**
+- [x] **Step 3: Implement the state machine using Tasks 3–9 only**
 
 The provisioner must not duplicate MSI parsing, firewall logic, SCM logic or path checks. Persist a journal transition before each mutation. On a group failure, return that group’s exact result and continue independent groups; only source-profile/staging-integrity failures are batch-global because the shared source is untrusted.
 
-- [ ] **Step 4: Run helper tests twice to prove idempotence**
+- [x] **Step 4: Run helper tests twice to prove idempotence**
 
 Run the Task 1 helper-test command twice.
 
 Expected: PASS both times; second ensure performs no MSI/service/firewall mutation.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add src/EsmTspiot.ServiceProvisioner tests/EsmTspiot.ServiceProvisioner.Tests/Program.cs

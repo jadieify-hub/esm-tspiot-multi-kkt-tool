@@ -102,6 +102,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Installed local module config exposes only a cookie digest", InstalledLocalModuleConfigExposesOnlyCookieDigest);
             Run("Installed local module services start stop and own listeners", InstalledLocalModuleServicesStartStopAndOwnListeners);
             Run("Local module firewall manager owns only an exact API rule", LocalModuleFirewallManagerOwnsOnlyExactApiRule);
+            Run("MSI local module ensure is idempotent and recovers cleanup", MsiLocalModuleEnsureIsIdempotentAndRecoversCleanup);
+            Run("MSI local module removal preserves base and compensates EPMD", MsiLocalModuleRemovalPreservesBaseAndCompensatesEpmd);
             Run("Managed local module protocol accepts consistent shared INN rows", ManagedLocalModuleProtocolAcceptsConsistentSharedInnRows);
             Run("Managed provisioning session accepts only known monotonic messages", ManagedProvisioningSessionAcceptsOnlyKnownMonotonicMessages);
             Run("Managed session server interleaves caller and helper per KKT", ManagedSessionServerInterleavesCallerAndHelperPerKkt);
@@ -1959,6 +1961,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     LocalModuleMsiManifest.Create(
                         "1234567890",
                         0,
+                        5995,
+                        5984,
                         "{10000000-0000-0000-0000-000000000001}",
                         "{20000000-0000-0000-0000-000000000001}",
                         @"D:\Program Files\Regime",
@@ -1971,6 +1975,30 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 LocalModuleMsiManifest read = store.Read(preExisting.Inn);
                 AssertEqual(preExisting.ProductCode, read.ProductCode,
                     "Manifest read-back must preserve exact product identity.");
+                LocalModuleMsiLifecycleJournal journal =
+                    LocalModuleMsiLifecycleJournal.Create(
+                        "10000000000000000000000000000001",
+                        MsiRequest(preExisting.Inn, 0, 5995, 5984, null),
+                        preExisting.OwnershipNonce,
+                        LocalModuleMsiLifecycleStage.Observing,
+                        string.Empty,
+                        false);
+                store.WriteJournal(journal);
+                AssertEqual(journal.OperationId,
+                    store.ReadJournal(preExisting.Inn).OperationId,
+                    "Lifecycle journal read-back must preserve exact ownership.");
+                AssertThrows<InvalidDataException>(delegate {
+                    store.DeleteJournal(
+                        preExisting.Inn,
+                        "20000000000000000000000000000002",
+                        preExisting.OwnershipNonce);
+                }, "A different operation must not delete the lifecycle journal.");
+                store.DeleteJournal(
+                    preExisting.Inn,
+                    journal.OperationId,
+                    preExisting.OwnershipNonce);
+                AssertEqual(1, store.ReadAll().Count,
+                    "Manifest inventory must return each exact INN once.");
 
                 string path = store.GetManifestPath(preExisting.Inn);
                 string json = File.ReadAllText(path);
@@ -1987,6 +2015,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     LocalModuleMsiManifest.Create(
                         "123456789012",
                         0,
+                        5995,
+                        5984,
                         "{30000000-0000-0000-0000-000000000001}",
                         "{40000000-0000-0000-0000-000000000001}",
                         @"D:\Program Files\Regime",
@@ -2233,6 +2263,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             LocalModuleMsiManifest manifest = LocalModuleMsiManifest.Create(
                 "1234567890",
                 1,
+                6995,
+                7984,
                 "{10000000-0000-0000-0000-000000000001}",
                 "{20000000-0000-0000-0000-000000000001}",
                 layout.InstallRoot,
@@ -2251,6 +2283,324 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 manifest.FirewallRuleHash);
             AssertEqual(2, api.RemoveCount,
                 "Manifest identity must authorize exact owned removal.");
+        }
+
+        private static void MsiLocalModuleEnsureIsIdempotentAndRecoversCleanup()
+        {
+            FakeLocalModuleMsiLifecyclePlatform platform =
+                new FakeLocalModuleMsiLifecyclePlatform();
+            FakeLocalModuleMsiRepository repository =
+                new FakeLocalModuleMsiRepository();
+            FakeLocalModuleMsiJournalStore journals =
+                new FakeLocalModuleMsiJournalStore();
+            LocalModuleMsiProvisioningContext context =
+                CreateMsiContext(platform, repository, journals);
+            LocalModuleMsiProvisioner provisioner =
+                new LocalModuleMsiProvisioner();
+            LocalModuleMsiProvisioningItemRequest clone = MsiRequest(
+                "1234567890", 1, 6995, 7984, null);
+
+            LocalModuleMsiProvisioningItemResult created =
+                provisioner.Ensure(clone, context);
+            AssertEqual(LmServiceProvisioningStatus.Succeeded, created.Status,
+                "A new clone must be installed and started.");
+            AssertSequence(new[]
+            {
+                "install:1234567890", "firewall:1234567890",
+                "start:1234567890"
+            }, platform.Events, "New clone ensure order must be exact.");
+            int mutationCount = platform.Events.Count;
+            clone.ExpectedManifestSha256 = created.ManifestSha256;
+            LocalModuleMsiProvisioningItemResult repeated =
+                provisioner.Ensure(clone, context);
+            AssertEqual(LmServiceProvisioningStatus.Succeeded, repeated.Status,
+                "A matching ready clone must be a successful no-op.");
+            AssertEqual(mutationCount, platform.Events.Count,
+                "A second ensure must perform no mutation.");
+
+            platform.State(clone.Inn).Ready = false;
+            platform.State(clone.Inn).Running = false;
+            provisioner.Ensure(clone, context);
+            AssertEqual("start:1234567890",
+                platform.Events[platform.Events.Count - 1],
+                "A matching stopped clone must only be started.");
+
+            LocalModuleMsiProvisioningItemRequest foreign = MsiRequest(
+                "123456789012", 2, 7995, 8984, null);
+            platform.State(foreign.Inn).ProductPresent = true;
+            platform.State(foreign.Inn).ProductMatches = false;
+            int beforeForeign = platform.Events.Count;
+            LocalModuleMsiProvisioningItemResult rejected =
+                provisioner.Ensure(foreign, context);
+            AssertEqual(LmServiceProvisioningStatus.Failed, rejected.Status,
+                "A foreign product conflict must fail only this INN.");
+            AssertEqual(beforeForeign, platform.Events.Count,
+                "A foreign conflict must not be mutated.");
+
+            LocalModuleMsiProvisioningItemRequest failed = MsiRequest(
+                "7707083893", 3, 8995, 9984, null);
+            platform.FailInstallAfterMutationForInn = failed.Inn;
+            platform.FailUninstallForInn = failed.Inn;
+            LocalModuleMsiProvisioningItemResult pending =
+                provisioner.Ensure(failed, context);
+            AssertEqual(LmServiceProvisioningStatus.CleanupPending,
+                pending.Status,
+                "A failed install with failed rollback must remain cleanup-pending.");
+            AssertTrue(journals.Contains(failed.Inn),
+                "Cleanup-pending state must survive for retry.");
+            platform.FailInstallAfterMutationForInn = null;
+            platform.FailUninstallForInn = null;
+            LocalModuleMsiProvisioningItemResult recovered =
+                provisioner.Ensure(failed, context);
+            AssertEqual(LmServiceProvisioningStatus.Succeeded, recovered.Status,
+                "The next ensure must clean the partial install and retry.");
+            AssertFalse(journals.Contains(failed.Inn),
+                "A successful retry must clear its lifecycle journal.");
+
+            LocalModuleMsiProvisioningItemRequest interrupted = MsiRequest(
+                "500100732259", 4, 9995, 10984, null);
+            string interruptedNonce = new string('f', 32);
+            journals.Write(LocalModuleMsiLifecycleJournal.Create(
+                "20000000000000000000000000000002",
+                interrupted,
+                interruptedNonce,
+                LocalModuleMsiLifecycleStage.CleanupPending,
+                "SimulatedCrash",
+                true));
+            LocalModuleMsiProvisioningContext resumedContext =
+                new LocalModuleMsiProvisioningContext(
+                    "30000000000000000000000000000003",
+                    platform,
+                    repository,
+                    journals,
+                    delegate { return new string('a', 32); });
+            LocalModuleMsiProvisioningItemResult resumed =
+                provisioner.Ensure(interrupted, resumedContext);
+            AssertEqual(LmServiceProvisioningStatus.Succeeded, resumed.Status,
+                "A new operation must recover a manifest-free cleanup journal " +
+                "in one ensure call.");
+            AssertFalse(journals.Contains(interrupted.Inn),
+                "Cross-operation recovery must clear the old journal.");
+
+            LocalModuleMsiProvisioningItemRequest existingBase = MsiRequest(
+                "525700335451", 0, 5995, 5984, null);
+            FakeLocalModuleMsiState existingBaseState =
+                platform.State(existingBase.Inn);
+            existingBaseState.ProductPresent = true;
+            existingBaseState.ProductMatches = true;
+            existingBaseState.ServicesPresent = true;
+            existingBaseState.Running = true;
+            existingBaseState.Ready = false;
+            platform.FailStartForInn = existingBase.Inn;
+            platform.Events.Clear();
+            LocalModuleMsiProvisioningItemResult failedAdoption =
+                provisioner.Ensure(existingBase, context);
+            AssertEqual(LmServiceProvisioningStatus.Failed,
+                failedAdoption.Status,
+                "A failed base adoption must roll back only application state.");
+            AssertFalse(platform.Events.Contains("stop:" + existingBase.Inn),
+                "Rollback must never stop a pre-existing vendor base.");
+            AssertTrue(existingBaseState.Running,
+                "A running pre-existing vendor base must survive rollback.");
+            platform.FailStartForInn = null;
+        }
+
+        private static void MsiLocalModuleRemovalPreservesBaseAndCompensatesEpmd()
+        {
+            FakeLocalModuleMsiLifecyclePlatform platform =
+                new FakeLocalModuleMsiLifecyclePlatform();
+            FakeLocalModuleMsiRepository repository =
+                new FakeLocalModuleMsiRepository();
+            FakeLocalModuleMsiJournalStore journals =
+                new FakeLocalModuleMsiJournalStore();
+            LocalModuleMsiProvisioningContext context =
+                CreateMsiContext(platform, repository, journals);
+            LocalModuleMsiProvisioner provisioner =
+                new LocalModuleMsiProvisioner();
+            LocalModuleMsiRemovalWorkflow removal =
+                new LocalModuleMsiRemovalWorkflow();
+            LocalModuleMsiProvisioningItemRequest baseRequest = MsiRequest(
+                "7707083893", 0, 5995, 5984, null);
+            LocalModuleMsiProvisioningItemRequest cloneRequest = MsiRequest(
+                "1234567890", 1, 6995, 7984, null);
+            LocalModuleMsiProvisioningItemResult baseCreated =
+                provisioner.Ensure(baseRequest, context);
+            LocalModuleMsiProvisioningItemResult cloneCreated =
+                provisioner.Ensure(cloneRequest, context);
+            baseRequest.ExpectedManifestSha256 = baseCreated.ManifestSha256;
+            cloneRequest.ExpectedManifestSha256 = cloneCreated.ManifestSha256;
+            platform.Events.Clear();
+
+            LocalModuleMsiProvisioningItemResult removedBase =
+                removal.Remove(baseRequest, context);
+            AssertEqual(
+                LmServiceProvisioningStatus.RemovedLocalArtifactsBindingRetained,
+                removedBase.Status,
+                "An application-owned base must be removable.");
+            AssertSequence(new[]
+            {
+                "stop:1234567890", "stop:7707083893",
+                "remove-firewall:7707083893", "uninstall:7707083893",
+                "epmd", "start:1234567890"
+            }, platform.Events,
+                "Base removal must compensate every running clone around EPMD.");
+
+            FakeLocalModuleMsiLifecyclePlatform stopFailurePlatform =
+                new FakeLocalModuleMsiLifecyclePlatform();
+            FakeLocalModuleMsiRepository stopFailureRepository =
+                new FakeLocalModuleMsiRepository();
+            FakeLocalModuleMsiJournalStore stopFailureJournals =
+                new FakeLocalModuleMsiJournalStore();
+            LocalModuleMsiProvisioningContext stopFailureContext =
+                CreateMsiContext(stopFailurePlatform, stopFailureRepository,
+                    stopFailureJournals);
+            LocalModuleMsiProvisioningItemRequest stopFailureBase = MsiRequest(
+                "7707083893", 0, 5995, 5984, null);
+            LocalModuleMsiProvisioningItemRequest firstRunningClone = MsiRequest(
+                "1234567890", 1, 6995, 7984, null);
+            LocalModuleMsiProvisioningItemRequest secondRunningClone = MsiRequest(
+                "123456789012", 2, 7995, 8984, null);
+            stopFailureBase.ExpectedManifestSha256 = provisioner.Ensure(
+                stopFailureBase, stopFailureContext).ManifestSha256;
+            provisioner.Ensure(firstRunningClone, stopFailureContext);
+            provisioner.Ensure(secondRunningClone, stopFailureContext);
+            stopFailurePlatform.FailStopForInn = secondRunningClone.Inn;
+            stopFailurePlatform.Events.Clear();
+            removal.Remove(stopFailureBase, stopFailureContext);
+            AssertTrue(stopFailurePlatform.State(firstRunningClone.Inn).Running,
+                "A clone stopped before another clone failure must be restarted.");
+            AssertTrue(stopFailurePlatform.State(stopFailureBase.Inn).ProductPresent,
+                "The base product must remain untouched when clone stop fails.");
+            AssertFalse(stopFailurePlatform.Events.Contains(
+                    "uninstall:" + stopFailureBase.Inn),
+                "Base uninstall must not begin until every running clone stops.");
+
+            LocalModuleMsiProvisioningItemRequest preserved = MsiRequest(
+                "123456789012", 0, 5995, 5984, null);
+            platform.State(preserved.Inn).ProductPresent = true;
+            platform.State(preserved.Inn).ProductMatches = true;
+            LocalModuleMsiProvisioningItemResult adopted =
+                provisioner.Ensure(preserved, context);
+            preserved.ExpectedManifestSha256 = adopted.ManifestSha256;
+            platform.Events.Clear();
+            LocalModuleMsiProvisioningItemResult preservedResult =
+                removal.Remove(preserved, context);
+            AssertEqual(
+                LmServiceProvisioningStatus.RemovedLocalArtifactsBindingRetained,
+                preservedResult.Status,
+                "Remove-created must forget but preserve a pre-existing base.");
+            AssertFalse(platform.Events.Contains("uninstall:" + preserved.Inn),
+                "A pre-existing base must never be uninstalled.");
+            AssertTrue(platform.State(preserved.Inn).ProductPresent,
+                "A pre-existing base product must survive removal.");
+
+            platform.State(preserved.Inn).Ready = false;
+            LocalModuleMsiProvisioningItemResult readopted =
+                provisioner.Ensure(preserved, context);
+            preserved.ExpectedManifestSha256 = readopted.ManifestSha256;
+            platform.Events.Clear();
+            LocalModuleMsiProvisioningItemResult restartedBase =
+                provisioner.Restart(preserved, context);
+            AssertEqual(LmServiceProvisioningStatus.Succeeded,
+                restartedBase.Status,
+                "A confirmed pre-existing base must support an explicit restart.");
+            AssertSequence(new[]
+            {
+                "stop:" + preserved.Inn,
+                "start:" + preserved.Inn
+            }, platform.Events,
+                "Explicit base restart must restart the confirmed service pair.");
+
+            cloneRequest.ExpectedManifestSha256 =
+                repository.Read(cloneRequest.Inn).ManifestSha256;
+            platform.Events.Clear();
+            removal.Remove(cloneRequest, context);
+            AssertFalse(platform.Events.Contains("stop:" + preserved.Inn),
+                "Removing one clone must not stop the base.");
+
+            LocalModuleMsiProvisioningItemRequest interruptedRemoval = MsiRequest(
+                "500100732259", 4, 9995, 10984, null);
+            LocalModuleMsiProvisioningItemResult removalCreated =
+                provisioner.Ensure(interruptedRemoval, context);
+            interruptedRemoval.ExpectedManifestSha256 =
+                removalCreated.ManifestSha256;
+            repository.FailDeleteOnceForInn = interruptedRemoval.Inn;
+            platform.Events.Clear();
+            LocalModuleMsiProvisioningItemResult firstRemoval =
+                removal.Remove(interruptedRemoval, context);
+            AssertEqual(LmServiceProvisioningStatus.CleanupPending,
+                firstRemoval.Status,
+                "A crash boundary after MSI uninstall must remain retryable.");
+            LocalModuleMsiProvisioningItemResult retriedRemoval =
+                removal.Remove(interruptedRemoval, context);
+            AssertEqual(
+                LmServiceProvisioningStatus.RemovedLocalArtifactsBindingRetained,
+                retriedRemoval.Status,
+                "Removal retry must finish after an already completed uninstall.");
+            AssertEqual(1, platform.Events.FindAll(delegate(string value) {
+                return string.Equals(value,
+                    "uninstall:" + interruptedRemoval.Inn,
+                    StringComparison.Ordinal);
+            }).Count,
+                "Removal retry must not invoke MSI uninstall twice.");
+
+            FakeLocalModuleMsiLifecyclePlatform allPlatform =
+                new FakeLocalModuleMsiLifecyclePlatform();
+            FakeLocalModuleMsiRepository allRepository =
+                new FakeLocalModuleMsiRepository();
+            FakeLocalModuleMsiJournalStore allJournals =
+                new FakeLocalModuleMsiJournalStore();
+            LocalModuleMsiProvisioningContext allContext = CreateMsiContext(
+                allPlatform, allRepository, allJournals);
+            provisioner.Ensure(MsiRequest(
+                "7707083893", 0, 5995, 5984, null), allContext);
+            provisioner.Ensure(MsiRequest(
+                "1234567890", 1, 6995, 7984, null), allContext);
+            provisioner.Ensure(MsiRequest(
+                "123456789012", 2, 7995, 8984, null), allContext);
+            allPlatform.Events.Clear();
+            IList<LocalModuleMsiProvisioningItemResult> allResults =
+                removal.RemoveAll(allContext);
+            AssertEqual(3, allResults.Count,
+                "Remove-all must return one result per owned product.");
+            AssertTrue(
+                allPlatform.Events.IndexOf("uninstall:123456789012") <
+                allPlatform.Events.IndexOf("uninstall:1234567890") &&
+                allPlatform.Events.IndexOf("uninstall:1234567890") <
+                allPlatform.Events.IndexOf("uninstall:7707083893"),
+                "Remove-all must uninstall clones in reverse order before base.");
+        }
+
+        private static LocalModuleMsiProvisioningContext CreateMsiContext(
+            FakeLocalModuleMsiLifecyclePlatform platform,
+            FakeLocalModuleMsiRepository repository,
+            FakeLocalModuleMsiJournalStore journals)
+        {
+            return new LocalModuleMsiProvisioningContext(
+                "10000000000000000000000000000001",
+                platform,
+                repository,
+                journals,
+                delegate { return new string('e', 32); });
+        }
+
+        private static LocalModuleMsiProvisioningItemRequest MsiRequest(
+            string inn,
+            int ordinal,
+            int apiPort,
+            int databasePort,
+            string fingerprint)
+        {
+            return new LocalModuleMsiProvisioningItemRequest
+            {
+                Inn = inn,
+                CloneOrdinal = ordinal,
+                ApiPort = apiPort,
+                DatabasePort = databasePort,
+                InstallVolumeRoot = @"D:\",
+                RemoteAddress = "LocalSubnet",
+                ExpectedManifestSha256 = fingerprint
+            };
         }
 
         private static void WriteInstalledLocalModuleConfiguration(
@@ -9240,6 +9590,303 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                         "The fake firewall rule does not exist.");
                 RemoveCount++;
                 Rule = null;
+            }
+        }
+
+        private sealed class FakeLocalModuleMsiLifecyclePlatform :
+            ILocalModuleMsiProvisioningPlatform
+        {
+            private readonly Dictionary<string, FakeLocalModuleMsiState> _states =
+                new Dictionary<string, FakeLocalModuleMsiState>(
+                    StringComparer.Ordinal);
+
+            internal FakeLocalModuleMsiLifecyclePlatform()
+            {
+                Events = new List<string>();
+            }
+
+            internal List<string> Events { get; private set; }
+            internal string FailInstallAfterMutationForInn { get; set; }
+            internal string FailStartForInn { get; set; }
+            internal string FailStopForInn { get; set; }
+            internal string FailUninstallForInn { get; set; }
+
+            internal FakeLocalModuleMsiState State(string inn)
+            {
+                FakeLocalModuleMsiState state;
+                if (!_states.TryGetValue(inn, out state))
+                {
+                    state = new FakeLocalModuleMsiState
+                    {
+                        ProductMatches = true,
+                        ConfigurationMatches = true,
+                        ServicesMatch = true,
+                        FirewallMatches = true
+                    };
+                    _states.Add(inn, state);
+                }
+                return state;
+            }
+
+            public LocalModuleMsiObservedState Observe(
+                LocalModuleMsiProvisioningItemRequest request,
+                LocalModuleMsiManifest manifest)
+            {
+                FakeLocalModuleMsiState state = State(request.Inn);
+                string conflict = string.Empty;
+                if (state.ProductPresent && !state.ProductMatches)
+                    conflict = "Foreign ProductCode conflict.";
+                else if (manifest != null && state.ProductPresent &&
+                    (!state.ConfigurationMatches ||
+                     (state.ServicesPresent && !state.ServicesMatch) ||
+                     (state.FirewallPresent && !state.FirewallMatches)))
+                    conflict = "Foreign service, port, or firewall conflict.";
+                return new LocalModuleMsiObservedState
+                {
+                    ProductPresent = state.ProductPresent,
+                    ProductMatches = state.ProductMatches,
+                    ConfigurationMatches = state.ConfigurationMatches,
+                    ServicesPresent = state.ServicesPresent,
+                    ServicesMatch = state.ServicesMatch,
+                    FirewallPresent = state.FirewallPresent,
+                    FirewallMatches = state.FirewallMatches,
+                    Running = state.Running,
+                    Ready = state.Ready,
+                    ConflictMessage = conflict
+                };
+            }
+
+            public LocalModuleMsiManifest PrepareInstall(
+                LocalModuleMsiProvisioningItemRequest request,
+                string ownershipNonce)
+            {
+                return CreateManifest(request, ownershipNonce, true, false);
+            }
+
+            public void Install(
+                LocalModuleMsiProvisioningItemRequest request,
+                LocalModuleMsiManifest manifest)
+            {
+                Events.Add("install:" + request.Inn);
+                FakeLocalModuleMsiState state = State(request.Inn);
+                state.ProductPresent = true;
+                state.ProductMatches = true;
+                state.Running = false;
+                state.Ready = false;
+                state.ServicesPresent = true;
+                if (string.Equals(
+                        FailInstallAfterMutationForInn,
+                        request.Inn,
+                        StringComparison.Ordinal))
+                    throw new InvalidOperationException(
+                        "Simulated post-install failure.");
+            }
+
+            public LocalModuleMsiManifest AdoptPreExistingBase(
+                LocalModuleMsiProvisioningItemRequest request,
+                string ownershipNonce)
+            {
+                State(request.Inn).ServicesPresent = true;
+                return CreateManifest(request, ownershipNonce, false, true);
+            }
+
+            public LocalModuleFirewallRule EnsureFirewall(
+                LocalModuleMsiProvisioningItemRequest request,
+                LocalModuleMsiManifest manifest)
+            {
+                Events.Add("firewall:" + request.Inn);
+                State(request.Inn).FirewallPresent = true;
+                State(request.Inn).FirewallMatches = true;
+                return LocalModuleFirewallRule.Create(
+                    manifest.OwnershipNonce,
+                    Path.Combine(manifest.InstallRoot,
+                        "erts-13.0.4", "bin", "erl.exe"),
+                    request.ApiPort,
+                    request.RemoteAddress);
+            }
+
+            public void StartAndVerify(
+                LocalModuleMsiProvisioningItemRequest request,
+                LocalModuleMsiManifest manifest)
+            {
+                Events.Add("start:" + request.Inn);
+                if (string.Equals(
+                        FailStartForInn,
+                        request.Inn,
+                        StringComparison.Ordinal))
+                    throw new InvalidOperationException("Simulated start failure.");
+                State(request.Inn).Running = true;
+                State(request.Inn).Ready = true;
+            }
+
+            public void StopAndVerify(
+                LocalModuleMsiProvisioningItemRequest request,
+                LocalModuleMsiManifest manifest)
+            {
+                Events.Add("stop:" + request.Inn);
+                if (string.Equals(
+                        FailStopForInn,
+                        request.Inn,
+                        StringComparison.Ordinal))
+                    throw new InvalidOperationException("Simulated stop failure.");
+                State(request.Inn).Running = false;
+                State(request.Inn).Ready = false;
+            }
+
+            public void RemoveFirewall(LocalModuleMsiManifest manifest)
+            {
+                Events.Add("remove-firewall:" + manifest.Inn);
+                State(manifest.Inn).FirewallPresent = false;
+                State(manifest.Inn).FirewallMatches = false;
+            }
+
+            public void Uninstall(LocalModuleMsiManifest manifest)
+            {
+                Events.Add("uninstall:" + manifest.Inn);
+                if (string.Equals(
+                        FailUninstallForInn,
+                        manifest.Inn,
+                        StringComparison.Ordinal))
+                    throw new InvalidOperationException(
+                        "Simulated uninstall failure.");
+                FakeLocalModuleMsiState state = State(manifest.Inn);
+                state.ProductPresent = false;
+                state.ServicesPresent = false;
+                state.Running = false;
+                state.Ready = false;
+            }
+
+            public void WaitForEpmdExit()
+            {
+                Events.Add("epmd");
+            }
+
+            private static LocalModuleMsiManifest CreateManifest(
+                LocalModuleMsiProvisioningItemRequest request,
+                string ownershipNonce,
+                bool installedByApplication,
+                bool preExisting)
+            {
+                string root = request.CloneOrdinal == 0
+                    ? Path.Combine(
+                        request.InstallVolumeRoot,
+                        "Program Files",
+                        "Regime")
+                    : LocalModuleInstallRootPolicy.BuildCloneInstallDirectory(
+                        request.InstallVolumeRoot,
+                        request.CloneOrdinal);
+                return LocalModuleMsiManifest.Create(
+                    request.Inn,
+                    request.CloneOrdinal,
+                    request.ApiPort,
+                    request.DatabasePort,
+                    "{10000000-0000-0000-0000-" +
+                        request.CloneOrdinal.ToString("000000000000") + "}",
+                    "{20000000-0000-0000-0000-" +
+                        request.CloneOrdinal.ToString("000000000000") + "}",
+                    root,
+                    installedByApplication,
+                    preExisting,
+                    ownershipNonce);
+            }
+        }
+
+        private sealed class FakeLocalModuleMsiState
+        {
+            internal bool ProductPresent { get; set; }
+            internal bool ProductMatches { get; set; }
+            internal bool ConfigurationMatches { get; set; }
+            internal bool ServicesPresent { get; set; }
+            internal bool ServicesMatch { get; set; }
+            internal bool FirewallPresent { get; set; }
+            internal bool FirewallMatches { get; set; }
+            internal bool Running { get; set; }
+            internal bool Ready { get; set; }
+        }
+
+        private sealed class FakeLocalModuleMsiRepository :
+            ILocalModuleMsiManifestRepository
+        {
+            private readonly Dictionary<string, LocalModuleMsiManifest> _items =
+                new Dictionary<string, LocalModuleMsiManifest>(
+                    StringComparer.Ordinal);
+
+            internal string FailDeleteOnceForInn { get; set; }
+
+            public LocalModuleMsiManifest Read(string inn)
+            {
+                LocalModuleMsiManifest value;
+                return _items.TryGetValue(inn, out value) ? value : null;
+            }
+
+            public IList<LocalModuleMsiManifest> ReadAll()
+            {
+                return new List<LocalModuleMsiManifest>(_items.Values);
+            }
+
+            public void Write(LocalModuleMsiManifest manifest)
+            {
+                LocalModuleMsiManifest.Validate(manifest);
+                _items[manifest.Inn] = manifest;
+            }
+
+            public void Delete(string inn, string expectedManifestSha256)
+            {
+                if (string.Equals(FailDeleteOnceForInn, inn,
+                        StringComparison.Ordinal))
+                {
+                    FailDeleteOnceForInn = null;
+                    throw new IOException(
+                        "Simulated crash boundary before manifest deletion.");
+                }
+                LocalModuleMsiManifest value = Read(inn);
+                if (value == null || !string.Equals(
+                        value.ManifestSha256,
+                        expectedManifestSha256,
+                        StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException(
+                        "Fake manifest fingerprint mismatch.");
+                _items.Remove(inn);
+            }
+        }
+
+        private sealed class FakeLocalModuleMsiJournalStore :
+            ILocalModuleMsiLifecycleJournalStore
+        {
+            private readonly Dictionary<string, LocalModuleMsiLifecycleJournal>
+                _items = new Dictionary<string, LocalModuleMsiLifecycleJournal>(
+                    StringComparer.Ordinal);
+
+            internal bool Contains(string inn)
+            {
+                return _items.ContainsKey(inn);
+            }
+
+            public LocalModuleMsiLifecycleJournal Read(string inn)
+            {
+                LocalModuleMsiLifecycleJournal value;
+                return _items.TryGetValue(inn, out value) ? value : null;
+            }
+
+            public void Write(LocalModuleMsiLifecycleJournal journal)
+            {
+                _items[journal.Inn] = journal;
+            }
+
+            public void Delete(
+                string inn,
+                string operationId,
+                string ownershipNonce)
+            {
+                LocalModuleMsiLifecycleJournal value = Read(inn);
+                if (value != null &&
+                    (!string.Equals(value.OperationId, operationId,
+                        StringComparison.Ordinal) ||
+                     !string.Equals(value.OwnershipNonce, ownershipNonce,
+                        StringComparison.Ordinal)))
+                    throw new InvalidDataException(
+                        "Fake lifecycle journal ownership mismatch.");
+                _items.Remove(inn);
             }
         }
 
