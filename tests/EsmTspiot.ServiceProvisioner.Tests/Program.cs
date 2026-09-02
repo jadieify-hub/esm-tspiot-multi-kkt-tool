@@ -76,6 +76,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Local module MSI profile reports every structural mismatch safely", LocalModuleMsiProfileReportsEveryStructuralMismatchSafely);
             Run("Local module MSI registry rejects unknown exact identity", LocalModuleMsiRegistryRejectsUnknownExactIdentity);
             Run("Local module MSI structure is read only after trust", LocalModuleMsiStructureIsReadOnlyAfterTrust);
+            Run("Local module MSI clone identity is stable except PackageCode", LocalModuleMsiCloneIdentityIsStableExceptPackageCode);
+            Run("Local module MSI transformer edits only profiled rows", LocalModuleMsiTransformerEditsOnlyProfiledRows);
             Run("Managed local module protocol accepts consistent shared INN rows", ManagedLocalModuleProtocolAcceptsConsistentSharedInnRows);
             Run("Managed provisioning session accepts only known monotonic messages", ManagedProvisioningSessionAcceptsOnlyKnownMonotonicMessages);
             Run("Managed session server interleaves caller and helper per KKT", ManagedSessionServerInterleavesCallerAndHelperPerKkt);
@@ -1289,6 +1291,177 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     new DataContractJsonSerializer(
                         typeof(LocalModuleMsiCapabilityProfile)).ReadObject(stream);
             }
+        }
+
+        private static void LocalModuleMsiCloneIdentityIsStableExceptPackageCode()
+        {
+            Queue<Guid> packageCodes = new Queue<Guid>();
+            packageCodes.Enqueue(new Guid("10000000-0000-0000-0000-000000000001"));
+            packageCodes.Enqueue(new Guid("10000000-0000-0000-0000-000000000002"));
+            packageCodes.Enqueue(new Guid("10000000-0000-0000-0000-000000000003"));
+            LocalModuleMsiIdentityFactory factory =
+                new LocalModuleMsiIdentityFactory(delegate {
+                    return packageCodes.Dequeue();
+                });
+
+            LocalModuleMsiCloneIdentity first = factory.Create(
+                "2.6.1",
+                "7701234567",
+                1);
+            LocalModuleMsiCloneIdentity repeat = factory.Create(
+                "2.6.1",
+                "7701234567",
+                1);
+            LocalModuleMsiCloneIdentity otherInn = factory.Create(
+                "2.6.1",
+                "7701234568",
+                2);
+
+            AssertEqual(first.ProductCode, repeat.ProductCode,
+                "ProductCode must be stable for version plus INN.");
+            AssertEqual(first.UpgradeCode, repeat.UpgradeCode,
+                "UpgradeCode must be stable for the logical INN instance.");
+            AssertFalse(first.PackageCode == repeat.PackageCode,
+                "Every generated physical MSI must receive a fresh PackageCode.");
+            AssertFalse(first.ProductCode == first.UpgradeCode ||
+                    first.ProductCode == first.PackageCode ||
+                    first.UpgradeCode == first.PackageCode,
+                "ProductCode, UpgradeCode and PackageCode must be unique.");
+            AssertFalse(first.ProductCode == otherInn.ProductCode,
+                "Different INNs must not share ProductCode.");
+            AssertFalse(first.UpgradeCode == otherInn.UpgradeCode,
+                "Different INNs must not share UpgradeCode.");
+            AssertEqual("Regime1", first.InstallDirectoryName,
+                "Clone ordinal must determine only the visible instance suffix.");
+            AssertEqual("regime1", first.ApiServiceName,
+                "The API service name must be instance-scoped.");
+            AssertEqual("yenisei1", first.DatabaseServiceName,
+                "The database service name must be instance-scoped.");
+            AssertEqual(5, GuidVersion(first.ProductCode),
+                "Stable clone IDs must carry RFC-4122 version bits.");
+            AssertEqual(2, GuidVariant(first.ProductCode),
+                "Stable clone IDs must carry the RFC-4122 variant.");
+        }
+
+        private static void LocalModuleMsiTransformerEditsOnlyProfiledRows()
+        {
+            string directory = CreateTemporaryDirectory();
+            try
+            {
+                using (MsiTestPackageFixture fixture =
+                    MsiTestPackageFactory.Create(directory))
+                {
+                    LocalModuleMsiCloneIdentity identity =
+                        new LocalModuleMsiIdentityFactory(delegate {
+                            return new Guid(
+                                "20000000-0000-0000-0000-000000000001");
+                        }).Create("2.6.1", "7701234567", 1);
+                    LocalModuleMsiTransformPlan plan =
+                        LocalModuleMsiTransformPlan.Create(
+                            identity,
+                            "2.6.1",
+                            6995,
+                            7984);
+                    string outputPath = Path.Combine(directory, "clone.msi");
+
+                    using (TransformedLocalModuleMsi transformed =
+                        new LocalModuleMsiTransformer().Transform(
+                            fixture.Package,
+                            plan,
+                            outputPath))
+                    {
+                        AssertEqual(identity.ProductCode.ToString("B").ToUpperInvariant(),
+                            MsiTestPackageFactory.ReadProperty(
+                                outputPath,
+                                "ProductCode"),
+                            "ProductCode must be updated exactly once.");
+                        AssertEqual(identity.UpgradeCode.ToString("B").ToUpperInvariant(),
+                            MsiTestPackageFactory.ReadProperty(
+                                outputPath,
+                                "UpgradeCode"),
+                            "UpgradeCode must be updated exactly once.");
+                        AssertEqual(identity.PackageCode.ToString("B").ToUpperInvariant(),
+                            MsiTestPackageFactory.ReadPackageCode(outputPath),
+                            "Summary PackageCode must be fresh.");
+                        AssertEqual("Regime1", MsiTestPackageFactory.ReadRowValue(
+                                outputPath,
+                                "Directory",
+                                "Directory",
+                                "APPLICATIONFOLDER",
+                                "DefaultDir"),
+                            "Only APPLICATIONFOLDER must receive the clone suffix.");
+                        AssertContains(MsiTestPackageFactory.ReadRowValue(
+                                outputPath,
+                                "Registry",
+                                "Registry",
+                                "RegimeInstallDir",
+                                "Key"),
+                            "экземпляр 1");
+                        AssertContains(MsiTestPackageFactory.ReadRowValue(
+                                outputPath,
+                                "RegLocator",
+                                "Signature_",
+                                "RegimeInstallDirRegistry",
+                                "Key"),
+                            "экземпляр 1");
+                        AssertContains(MsiTestPackageFactory.ReadRowValue(
+                                outputPath,
+                                "CustomAction",
+                                "Action",
+                                "SetInstallRegimeService",
+                                "Target"),
+                            "\"regime1\"");
+                        AssertContains(MsiTestPackageFactory.ReadRowValue(
+                                outputPath,
+                                "CustomAction",
+                                "Action",
+                                "SetInstallYeniseiService",
+                                "Target"),
+                            "\"yenisei1\"");
+                        AssertEqual("1=0", MsiTestPackageFactory.ReadRowValue(
+                                outputPath,
+                                "InstallExecuteSequence",
+                                "Action",
+                                "InstallAutoApdater",
+                                "Condition"),
+                            "Clone auto-updater must be disabled.");
+                        AssertEqual("1=0", MsiTestPackageFactory.ReadRowValue(
+                                outputPath,
+                                "InstallExecuteSequence",
+                                "Action",
+                                "StopEPMD",
+                                "Condition"),
+                            "Clone uninstall must not kill global epmd.");
+                        AssertEqual("regime1@127.0.0.1", plan.ApiNodeName,
+                            "The transform plan must carry the isolated API node.");
+                        AssertEqual("yenisei1@127.0.0.1", plan.DatabaseNodeName,
+                            "The transform plan must carry the isolated database node.");
+                        AssertEqual(6995, plan.ApiPort,
+                            "The planned API port must survive table transformation.");
+                        AssertEqual(7984, plan.DatabasePort,
+                            "The planned database port must survive table transformation.");
+                    }
+                }
+            }
+            finally
+            {
+                DeleteTestTreeWithReadOnlyFiles(directory);
+            }
+        }
+
+        private static int GuidVersion(Guid value)
+        {
+            string text = value.ToString("N");
+            return int.Parse(text.Substring(12, 1));
+        }
+
+        private static int GuidVariant(Guid value)
+        {
+            string text = value.ToString("N");
+            int high = int.Parse(
+                text.Substring(16, 1),
+                System.Globalization.NumberStyles.HexNumber);
+            return (high & 8) == 8 ? 2 : 0;
         }
 
         private static LocalModuleMsiDatabaseSnapshot CreateLocalModuleMsiSnapshot(
