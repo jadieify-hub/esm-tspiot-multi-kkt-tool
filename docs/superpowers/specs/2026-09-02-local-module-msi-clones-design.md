@@ -47,8 +47,15 @@
 
 | Роль | Каталог | Службы | API | CouchDB |
 | --- | --- | --- | ---: | ---: |
-| Клон 1 | `C:\Program Files\Regime1` | `regime1`, `yenisei1` | `6995` | `7984` |
-| Клон 2 | `C:\Program Files\Regime2` | `regime2`, `yenisei2` | `7995` | `8984` |
+| Клон 1 | `<корень>\Program Files\Regime1` | `regime1`, `yenisei1` | `6995` | `7984` |
+| Клон 2 | `<корень>\Program Files\Regime2` | `regime2`, `yenisei2` | `7995` | `8984` |
+
+Корень установки клона является параметром локального плана. По умолчанию выбирается тот
+же том, на котором фактически установлен базовый ЛМ; для текущего стенда это даёт
+`D:\Program Files\RegimeN`. Перед подтверждением показываются требуемое место, свободное
+место на выбранном томе и ожидаемый рост Windows Installer cache на системном томе.
+Пользователь может выбрать другой фиксированный локальный том, но не сетевой путь,
+UNC, mapped drive, reparse point или каталог вне `Program Files` выбранного тома.
 
 Между клонами применяется шаг `1000`; переход от базового CouchDB `5984` к первому клону
 `7984` является отдельным правилом профиля. Номер клона закрепляется за нормализованным
@@ -144,8 +151,9 @@ code-signing сертификата и закрытого ключа в прое
 
 ## 6. Конфигурация, cookie и секреты
 
-Cookie создают штатные custom actions `WriteValuesToVmArgs`, `WriteIniFiles` и
-`WriteErtsBinPath`. Программа не генерирует и не передаёт cookie самостоятельно.
+Cookie в `vm.args` создаёт штатный custom action `WriteValuesToVmArgs`. Отдельно
+`WriteIniFiles` формирует `local.ini`, а `WriteErtsBinPath` — `erl.ini` с
+`Bindir`/`Rootdir`. Программа не генерирует и не передаёт cookie самостоятельно.
 
 Постусловия:
 
@@ -303,7 +311,7 @@ Legacy KRS-службы и каталоги убираются только elev
 Гейт воспроизводит существующую CI-матрицу:
 
 - net8 shared/helper/WinForms tests;
-- отдельную net48-компиляцию и 185 shared-сценариев по CI-скрипту;
+- отдельную net48-компиляцию и полный набор shared-сценариев по CI-скрипту;
 - C# 5 сборку с явным `/p:LangVersion=5`;
 - MSBuild, найденный через `vswhere` или тот же полный путь, что использует CI;
 - `package_compact_release.ps1`, который сам вызывает compact security contract на stage;
