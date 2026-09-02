@@ -16,8 +16,9 @@ namespace EsmTspiot.ServiceProvisioner
             LocalModuleMsiTransformPlan plan)
         {
             string stage = "create workspace";
-            string workspace = transformedMsiPath + ".cabwork-" +
-                Guid.NewGuid().ToString("N");
+            string workspace = transformedMsiPath + ".cabwork";
+            if (Directory.Exists(workspace) || File.Exists(workspace))
+                throw new IOException("MSI cabinet workspace already exists.");
             Directory.CreateDirectory(workspace);
             try
             {

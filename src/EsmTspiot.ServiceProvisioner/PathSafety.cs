@@ -199,7 +199,10 @@ namespace EsmTspiot.ServiceProvisioner
             IList<string> serviceSids)
         {
             Directory.CreateDirectory(path);
-            IList<SecurityIdentifier> preservedTraverseSids = ReadSafeTraverseSids(path);
+            IList<SecurityIdentifier> preservedTraverseSids =
+                kind == ProtectedDirectoryKind.InstallerStaging
+                ? new List<SecurityIdentifier>()
+                : ReadSafeTraverseSids(path);
             DirectorySecurity security = new DirectorySecurity();
             security.SetAccessRuleProtection(true, false);
             security.SetOwner(AdministratorsSid);

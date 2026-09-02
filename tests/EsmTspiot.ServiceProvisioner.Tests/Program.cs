@@ -95,6 +95,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Local module MSI clone identity is stable except PackageCode", LocalModuleMsiCloneIdentityIsStableExceptPackageCode);
             Run("Local module MSI transformer edits only profiled rows", LocalModuleMsiTransformerEditsOnlyProfiledRows);
             Run("Local module MSI output rejects cabinet and table drift", LocalModuleMsiOutputRejectsCabinetAndTableDrift);
+            Run("Local module MSI staging recovers every mutation boundary", LocalModuleMsiStagingRecoversEveryMutationBoundary);
             Run("Managed local module protocol accepts consistent shared INN rows", ManagedLocalModuleProtocolAcceptsConsistentSharedInnRows);
             Run("Managed provisioning session accepts only known monotonic messages", ManagedProvisioningSessionAcceptsOnlyKnownMonotonicMessages);
             Run("Managed session server interleaves caller and helper per KKT", ManagedSessionServerInterleavesCallerAndHelperPerKkt);
@@ -1720,6 +1721,129 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 text.Substring(16, 1),
                 System.Globalization.NumberStyles.HexNumber);
             return (high & 8) == 8 ? 2 : 0;
+        }
+
+        private static void LocalModuleMsiStagingRecoversEveryMutationBoundary()
+        {
+            string directory = CreateTemporaryDirectory();
+            try
+            {
+                string machineRoot = Path.Combine(directory, "MultiKKT");
+                Directory.CreateDirectory(machineRoot);
+                string source = Path.Combine(directory, "source-package.bin");
+                File.WriteAllText(source, "synthetic-package");
+                LocalModuleMsiStagingStage[] stages =
+                {
+                    LocalModuleMsiStagingStage.JournalCreated,
+                    LocalModuleMsiStagingStage.SourceCopied,
+                    LocalModuleMsiStagingStage.Transformed,
+                    LocalModuleMsiStagingStage.Verified,
+                    LocalModuleMsiStagingStage.InstallerReturned,
+                    LocalModuleMsiStagingStage.ManifestPersisted,
+                    LocalModuleMsiStagingStage.Installed
+                };
+                for (int index = 0; index < stages.Length; index++)
+                {
+                    FakePathSafety safety = new FakePathSafety(true);
+                    LocalModuleMsiWorkspace workspace =
+                        LocalModuleMsiWorkspace.Create(
+                            machineRoot,
+                            Guid.NewGuid().ToString("N"),
+                            new string((char)('0' + index), 32),
+                            safety);
+                    if (stages[index] >= LocalModuleMsiStagingStage.SourceCopied)
+                        workspace.CopySource(source);
+                    if (stages[index] >= LocalModuleMsiStagingStage.Transformed)
+                    {
+                        File.Copy(source, workspace.OutputMsiPath);
+                        workspace.MarkTransformed();
+                    }
+                    if (stages[index] >= LocalModuleMsiStagingStage.Verified)
+                        workspace.MarkVerified();
+                    if (stages[index] >= LocalModuleMsiStagingStage.InstallerReturned)
+                        workspace.MarkInstallerReturned();
+                    if (stages[index] >= LocalModuleMsiStagingStage.ManifestPersisted)
+                        workspace.MarkManifestPersisted();
+                    if (stages[index] >= LocalModuleMsiStagingStage.Installed)
+                        workspace.MarkInstalled(
+                            "{10000000-0000-0000-0000-000000000001}",
+                            "{20000000-0000-0000-0000-000000000001}");
+                    string ownedRoot = workspace.RootPath;
+                    int protectionCalls = safety.ProtectionCallCount;
+                    LocalModuleMsiWorkspace.RecoverPending(machineRoot, safety);
+                    AssertFalse(Directory.Exists(ownedRoot),
+                        "Recovery must delete the exact journal-owned staging root.");
+                    AssertTrue(safety.ProtectionCallCount > protectionCalls,
+                        "Recovery must reconstruct the exact protected ACL before deletion.");
+                }
+
+                string prefixSibling = Path.Combine(
+                    machineRoot,
+                    "Operations",
+                    "LocalModuleMsi2");
+                Directory.CreateDirectory(prefixSibling);
+                string sentinel = Path.Combine(prefixSibling, "keep.txt");
+                File.WriteAllText(sentinel, "keep");
+                LocalModuleMsiWorkspace.RecoverPending(
+                    machineRoot,
+                    new FakePathSafety(true));
+                AssertTrue(File.Exists(sentinel),
+                    "Recovery must never use a staging-root prefix match.");
+
+                FakePathSafety interruptedWriteSafety = new FakePathSafety(true);
+                LocalModuleMsiWorkspace interruptedWrite =
+                    LocalModuleMsiWorkspace.Create(
+                        machineRoot,
+                        Guid.NewGuid().ToString("N"),
+                        new string('d', 32),
+                        interruptedWriteSafety);
+                File.WriteAllText(
+                    Path.Combine(
+                        interruptedWrite.RootPath,
+                        LocalModuleMsiStagingJournalStore.JournalTempFileName),
+                    "interrupted");
+                LocalModuleMsiWorkspace.RecoverPending(
+                    machineRoot,
+                    interruptedWriteSafety);
+                AssertFalse(Directory.Exists(interruptedWrite.RootPath),
+                    "Recovery must delete an interrupted journal temp file.");
+
+                FakePathSafety foreignSafety = new FakePathSafety(true);
+                LocalModuleMsiWorkspace foreign = LocalModuleMsiWorkspace.Create(
+                    machineRoot,
+                    Guid.NewGuid().ToString("N"),
+                    new string('f', 32),
+                    foreignSafety);
+                string foreignFile = Path.Combine(foreign.RootPath, "foreign.txt");
+                File.WriteAllText(foreignFile, "foreign");
+                AssertThrows<InvalidDataException>(delegate {
+                    foreign.Cleanup();
+                }, "Cleanup must reject a file outside the exact allowlist.");
+                AssertTrue(File.Exists(foreignFile),
+                    "Rejected foreign data must not be deleted.");
+                File.Delete(foreignFile);
+                foreign.Cleanup();
+
+                FakePathSafety safe = new FakePathSafety(true);
+                LocalModuleMsiWorkspace unsafeWorkspace =
+                    LocalModuleMsiWorkspace.Create(
+                        machineRoot,
+                        Guid.NewGuid().ToString("N"),
+                        new string('e', 32),
+                        safe);
+                AssertThrows<InvalidDataException>(delegate {
+                    LocalModuleMsiWorkspace.RecoverPending(
+                        machineRoot,
+                        new FakePathSafety(false));
+                }, "Recovery must reject a reparse or path-escape observation.");
+                AssertTrue(Directory.Exists(unsafeWorkspace.RootPath),
+                    "Unsafe recovery must not delete the staging root.");
+                unsafeWorkspace.Cleanup();
+            }
+            finally
+            {
+                DeleteTestTreeWithReadOnlyFiles(directory);
+            }
         }
 
         private static LocalModuleMsiDatabaseSnapshot CreateLocalModuleMsiSnapshot(
@@ -7550,6 +7674,11 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 _isSafe = isSafe;
                 _directoryCalls = new List<DirectoryProtectionCall>();
                 _fileCalls = new List<FileProtectionCall>();
+            }
+
+            internal int ProtectionCallCount
+            {
+                get { return _directoryCalls.Count + _fileCalls.Count; }
             }
 
             internal bool HasReadOnlyDirectoryAccess(string path, string sid)
