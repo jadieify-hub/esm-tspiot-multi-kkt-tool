@@ -56,6 +56,32 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             {
                 return RunDirectControllerProductionSandbox();
             }
+            if (args != null && args.Length == 3 &&
+                string.Equals(
+                    args[0],
+                    "--local-module-msi-sandbox",
+                    StringComparison.Ordinal))
+            {
+                try
+                {
+                    return RunLocalModuleMsiProductionSandbox(
+                        args[1],
+                        args[2]);
+                }
+                catch (Exception exception)
+                {
+                    try
+                    {
+                        File.WriteAllText(
+                            args[2],
+                            "HARNESS CRASH: " + exception + "\r\n");
+                    }
+                    catch
+                    {
+                    }
+                    return 1;
+                }
+            }
             if (args != null && args.Length != 0)
             {
                 Console.Error.WriteLine("Unknown test mode.");
@@ -66,6 +92,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Provisioning protocol accepts bounded ensure batch", ProvisioningProtocolAcceptsBoundedEnsureBatch);
             Run("Provisioning protocol rejects oversized or duplicate batch", ProvisioningProtocolRejectsOversizedOrDuplicateBatch);
             Run("Provisioning protocol rejects unknown schema or operation", ProvisioningProtocolRejectsUnknownSchemaOrOperation);
+            Run("Production helper rejects retired supervisor entry points", ProductionHelperRejectsRetiredSupervisorEntryPoints);
             Run("Provisioning protocol rejects unsafe item", ProvisioningProtocolRejectsUnsafeItem);
             Run("Provisioning pipe authenticates exact protected peer images", ProvisioningPipeAuthenticatesExactProtectedPeerImages);
             Run("Provisioning pipe accepts protected main images independently of filename", ProvisioningPipeAcceptsProtectedMainImageIndependentlyOfFilename);
@@ -97,6 +124,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Local module MSI output rejects cabinet and table drift", LocalModuleMsiOutputRejectsCabinetAndTableDrift);
             Run("Local module MSI staging recovers every mutation boundary", LocalModuleMsiStagingRecoversEveryMutationBoundary);
             Run("Windows Installer API keeps credentials out of diagnostics", WindowsInstallerApiKeepsCredentialsOutOfDiagnostics);
+            Run("Windows Installer receives a terminated absolute LM directory", WindowsInstallerReceivesTerminatedAbsoluteLmDirectory);
             Run("Installed local module reader scans both registry views", InstalledLocalModuleReaderScansBothRegistryViews);
             Run("Local module MSI manifests guard ownership and content", LocalModuleMsiManifestsGuardOwnershipAndContent);
             Run("Installed local module config exposes only a cookie digest", InstalledLocalModuleConfigExposesOnlyCookieDigest);
@@ -147,11 +175,9 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("ESM instance config transaction backs up restores and defers", EsmInstanceConfigTransactionBacksUpRestoresAndDefers);
             Run("SCM handles are disposed on every failure", ScmHandlesAreDisposedOnEveryFailure);
             Run("SCM configures restricted service SID", ScmConfiguresRestrictedServiceSid);
-            Run("SCM image path targets only protected supervisor mode", ScmImagePathTargetsOnlyProtectedSupervisorMode);
             Run("Supervisor replaces only child ProgramData", SupervisorReplacesOnlyChildProgramData);
             Run("Supervisor rejects caller supplied environment and arguments", SupervisorRejectsCallerSuppliedEnvironmentAndArguments);
             Run("Supervisor stops child gracefully without process kill", SupervisorStopsChildGracefullyWithoutProcessKill);
-            Run("Provisioner accepts only owned local module service mode", ProvisionerAcceptsOnlyOwnedLocalModuleServiceMode);
             Run("Local module SCM creates exact restricted dependency pair", LocalModuleScmCreatesExactRestrictedDependencyPair);
             Run("Local module child plan is rebuilt only from manifest", LocalModuleChildPlanIsRebuiltOnlyFromManifest);
             Run("Local module ownership distinguishes shared Erlang children", LocalModuleOwnershipDistinguishesSharedErlangChildren);
@@ -1263,6 +1289,306 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             }
         }
 
+        private static int RunLocalModuleMsiProductionSandbox(
+            string sourcePath,
+            string reportPath)
+        {
+            WindowsIdentity identity = WindowsIdentity.GetCurrent();
+            WindowsPrincipal principal = new WindowsPrincipal(identity);
+            if (!principal.IsInRole(WindowsBuiltInRole.Administrator) ||
+                identity.User == null)
+            {
+                File.WriteAllText(reportPath,
+                    "FAILED: sandbox requires elevation.\r\n");
+                return 1;
+            }
+
+            string initiatingSid = identity.User.Value;
+            string machineRoot = Path.Combine(
+                Environment.GetFolderPath(
+                    Environment.SpecialFolder.CommonApplicationData),
+                "KRS",
+                "MultiKKT");
+            WindowsServiceApi services = new WindowsServiceApi();
+            WindowsServiceRecord baseApiBefore = services.Query("regime");
+            WindowsServiceRecord baseDatabaseBefore = services.Query("yenisei");
+            LocalModuleMsiManifestStore manifests =
+                new LocalModuleMsiManifestStore(
+                    machineRoot,
+                    new PathSafety(),
+                    initiatingSid);
+            List<LocalModuleMsiProvisioningItemRequest> items =
+                new List<LocalModuleMsiProvisioningItemRequest>();
+            items.Add(MsiRequest("9900000031", 0, 5995, 5984, null));
+            items.Add(MsiRequest("9900000032", 1, 6995, 7984, null));
+            string failure = null;
+            File.WriteAllText(reportPath,
+                "START local-module production sandbox\r\n");
+
+            try
+            {
+                if (services.Query("regime1") != null ||
+                    services.Query("yenisei1") != null)
+                    throw new InvalidOperationException(
+                        "Clone service names regime1/yenisei1 are already occupied.");
+                for (int index = 0; index < items.Count; index++)
+                    if (manifests.Read(items[index].Inn) != null)
+                        throw new InvalidOperationException(
+                            "Sandbox manifest already exists for INN " +
+                            items[index].Inn + ".");
+
+                LocalModuleInstallerSelection installer =
+                    LocalModulePackageVerifier.CreateSupportedIdentity();
+                installer.SourcePath = sourcePath;
+                LmServiceProvisioningBatchRequest request =
+                    new LmServiceProvisioningBatchRequest
+                    {
+                        SchemaVersion = ProvisioningRequestValidator
+                            .CurrentSchemaVersion,
+                        Operation =
+                            LmServiceOperation.EnsureMsiLocalModules,
+                        OperationId = Guid.NewGuid().ToString("N"),
+                        InitiatingSid = initiatingSid,
+                        LocalModuleInstallerSelection = installer
+                    };
+                for (int index = 0; index < items.Count; index++)
+                    request.LocalModuleMsiItems.Add(items[index]);
+                request.PlanHash = CanonicalLmPlanHasher.Compute(request);
+
+                using (LocalModuleMsiProvisioningSession session =
+                    LocalModuleMsiProvisioningSession.CreateWindows(request))
+                {
+                    for (int index = 0; index < items.Count; index++)
+                    {
+                        LocalModuleMsiProvisioningItemResult result =
+                            session.ExecuteItem(index);
+                        File.AppendAllText(reportPath,
+                            "ENSURE " + result.Inn + " " + result.Status +
+                            ": " + result.Message + "\r\n");
+                        if (result.Status !=
+                            LmServiceProvisioningStatus.Succeeded)
+                            throw new InvalidOperationException(
+                                "Ensure failed for INN " + result.Inn +
+                                ": " + result.Status + ".");
+                        items[index].ExpectedManifestSha256 =
+                            result.ManifestSha256;
+                    }
+                }
+
+                RequireRunningSandboxService(services, "regime");
+                RequireRunningSandboxService(services, "yenisei");
+                RequireRunningSandboxService(services, "regime1");
+                RequireRunningSandboxService(services, "yenisei1");
+                RequireOpenSandboxPort(5995);
+                RequireOpenSandboxPort(5984);
+                RequireOpenSandboxPort(6995);
+                RequireOpenSandboxPort(7984);
+                File.AppendAllText(reportPath,
+                    "PASS simultaneous services and listeners\r\n");
+
+                LocalModuleMsiProvisioningContext restartContext =
+                    LocalModuleMsiProvisioningContext
+                        .CreateWindowsForInstalledProducts(
+                            Guid.NewGuid().ToString("N"),
+                            machineRoot,
+                            initiatingSid);
+                for (int index = 0; index < items.Count; index++)
+                {
+                    LocalModuleMsiProvisioningItemResult restarted =
+                        new LocalModuleMsiProvisioner().Restart(
+                            items[index],
+                            restartContext);
+                    File.AppendAllText(reportPath,
+                        "RESTART " + restarted.Inn + " " +
+                        restarted.Status + ": " + restarted.Message +
+                        "\r\n");
+                    if (restarted.Status !=
+                        LmServiceProvisioningStatus.Succeeded)
+                        throw new InvalidOperationException(
+                            "Restart failed for INN " + restarted.Inn + ".");
+                }
+                RequireOpenSandboxPort(5995);
+                RequireOpenSandboxPort(6995);
+                File.AppendAllText(reportPath, "PASS restart cycle\r\n");
+            }
+            catch (Exception exception)
+            {
+                failure = exception.ToString();
+                File.AppendAllText(reportPath,
+                    "FAILED: " + failure + "\r\n");
+            }
+            finally
+            {
+                try
+                {
+                    List<LocalModuleMsiProvisioningItemRequest> removable =
+                        new List<LocalModuleMsiProvisioningItemRequest>();
+                    for (int index = 0; index < items.Count; index++)
+                    {
+                        LocalModuleMsiManifest manifest =
+                            manifests.Read(items[index].Inn);
+                        if (manifest == null) continue;
+                        items[index].ExpectedManifestSha256 =
+                            manifest.ManifestSha256;
+                        removable.Add(items[index]);
+                    }
+                    if (removable.Count > 0)
+                    {
+                        LocalModuleMsiProvisioningContext removeContext =
+                            LocalModuleMsiProvisioningContext
+                                .CreateWindowsForInstalledProducts(
+                                    Guid.NewGuid().ToString("N"),
+                                    machineRoot,
+                                    initiatingSid);
+                        IList<LocalModuleMsiProvisioningItemResult> removed =
+                            new LocalModuleMsiRemovalWorkflow().RemoveAll(
+                                removable,
+                                removeContext);
+                        for (int index = 0; index < removed.Count; index++)
+                            File.AppendAllText(reportPath,
+                                "REMOVE " + removed[index].Inn + " " +
+                                removed[index].Status + ": " +
+                                removed[index].Message + "\r\n");
+                    }
+                    RestoreSandboxBaseState(
+                        services,
+                        baseApiBefore,
+                        baseDatabaseBefore);
+                    if (services.Query("regime1") != null ||
+                        services.Query("yenisei1") != null ||
+                        Directory.Exists(@"D:\Program Files\Regime1"))
+                        throw new InvalidOperationException(
+                            "Cleanup left clone services or install root.");
+                    for (int index = 0; index < items.Count; index++)
+                        if (manifests.Read(items[index].Inn) != null)
+                            throw new InvalidOperationException(
+                                "Cleanup left manifest for " +
+                                items[index].Inn + ".");
+                    File.AppendAllText(reportPath,
+                        "PASS cleanup and baseline restoration\r\n");
+                }
+                catch (Exception cleanupException)
+                {
+                    failure = AppendFailure(
+                        failure,
+                        "Cleanup failed: " + cleanupException.ToString());
+                    File.AppendAllText(reportPath,
+                        "CLEANUP FAILED: " + cleanupException + "\r\n");
+                }
+            }
+
+            File.AppendAllText(reportPath,
+                failure == null ? "SANDBOX_OK\r\n" : "SANDBOX_FAILED\r\n");
+            return failure == null ? 0 : 1;
+        }
+
+        private static void RequireRunningSandboxService(
+            WindowsServiceApi services,
+            string serviceName)
+        {
+            WindowsServiceRecord service = services.Query(serviceName);
+            if (service == null ||
+                service.State != WindowsServiceState.Running ||
+                service.ProcessId <= 0)
+                throw new InvalidOperationException(
+                    "Service is not running: " + serviceName + ".");
+        }
+
+        private static void RequireOpenSandboxPort(int port)
+        {
+            using (TcpClient client = new TcpClient())
+            {
+                IAsyncResult pending = client.BeginConnect(
+                    IPAddress.Loopback,
+                    port,
+                    null,
+                    null);
+                if (!pending.AsyncWaitHandle.WaitOne(5000))
+                    throw new InvalidOperationException(
+                        "Listener did not open on port " + port + ".");
+                client.EndConnect(pending);
+            }
+        }
+
+        private static void RestoreSandboxBaseState(
+            WindowsServiceApi services,
+            WindowsServiceRecord apiBefore,
+            WindowsServiceRecord databaseBefore)
+        {
+            if (apiBefore == null || databaseBefore == null) return;
+            WindowsServiceRecord apiNow = services.Query("regime");
+            WindowsServiceRecord databaseNow = services.Query("yenisei");
+            if (apiBefore.State == WindowsServiceState.Stopped &&
+                apiNow != null && apiNow.State == WindowsServiceState.Running)
+            {
+                services.RequestStop("regime");
+                WaitForSandboxServiceState(
+                    services, "regime", WindowsServiceState.Stopped);
+            }
+            if (databaseBefore.State == WindowsServiceState.Stopped &&
+                databaseNow != null &&
+                databaseNow.State == WindowsServiceState.Running)
+            {
+                services.RequestStop("yenisei");
+                WaitForSandboxServiceState(
+                    services, "yenisei", WindowsServiceState.Stopped);
+            }
+            databaseNow = services.Query("yenisei");
+            if (databaseBefore.State == WindowsServiceState.Running &&
+                databaseNow != null &&
+                databaseNow.State == WindowsServiceState.Stopped)
+            {
+                services.Start("yenisei");
+                WaitForSandboxServiceState(
+                    services, "yenisei", WindowsServiceState.Running);
+            }
+            apiNow = services.Query("regime");
+            if (apiBefore.State == WindowsServiceState.Running &&
+                apiNow != null && apiNow.State == WindowsServiceState.Stopped)
+            {
+                services.Start("regime");
+                WaitForSandboxServiceState(
+                    services, "regime", WindowsServiceState.Running);
+            }
+        }
+
+        private static void WaitForSandboxServiceState(
+            WindowsServiceApi services,
+            string serviceName,
+            WindowsServiceState expected)
+        {
+            for (int attempt = 0; attempt < 80; attempt++)
+            {
+                WindowsServiceRecord observed = services.Query(serviceName);
+                if (observed != null && observed.State == expected) return;
+                System.Threading.Thread.Sleep(250);
+            }
+            throw new InvalidOperationException(
+                "Service did not reach " + expected + ": " +
+                serviceName + ".");
+        }
+
+        private static void ProductionHelperRejectsRetiredSupervisorEntryPoints()
+        {
+            ProvisionerCommandLine ignored;
+            AssertFalse(ProvisionerCommandLine.TryParse(
+                    new[] { "--supervise", "krs-esm-lm-00105700000001" },
+                    out ignored),
+                "The production helper must reject the retired controller supervisor mode.");
+            AssertFalse(ProvisionerCommandLine.TryParse(
+                    new[] {
+                        "--supervise-local-module",
+                        "krs-lm-db-0123456789abcdef01234567"
+                    },
+                    out ignored),
+                "The production helper must reject the retired Erlang supervisor mode.");
+
+            AssertTrue(typeof(ProvisionerCommandLine).Assembly.GetType(
+                    "EsmTspiot.ServiceProvisioner.LegacyManagedStateMigrationWorkflow",
+                    false) != null,
+                "Exact legacy cleanup must remain available after supervisor entry points are disabled.");
+        }
+
         private static void LocalModuleMsiProfileAcceptsExactSanitizedSnapshot()
         {
             LocalModuleMsiCapabilityProfile profile =
@@ -1316,6 +1642,14 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 profile,
                 "InstallExecuteSequence",
                 "InstallAutoApdater");
+            AssertMsiProfileRowMismatch(
+                profile,
+                "InstallExecuteSequence",
+                "UninstallAutoApdater");
+            AssertMsiProfileRowMismatch(
+                profile,
+                "InstallExecuteSequence",
+                "RemoveAll");
             AssertMsiProfileRowMismatch(
                 profile,
                 "CustomAction",
@@ -1500,6 +1834,22 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                             plan,
                             outputPath))
                     {
+                        AssertSequence(
+                            MsiTestPackageFactory.ReadCabinetMembers(
+                                fixture.Package.FullPath,
+                                "media1.cab"),
+                            MsiTestPackageFactory.ReadCabinetMembers(
+                                outputPath,
+                                "media1.cab"),
+                            "The rebuilt first cabinet must preserve exact source member order.");
+                        AssertSequence(
+                            MsiTestPackageFactory.ReadCabinetMembers(
+                                fixture.Package.FullPath,
+                                "Disk1.cab"),
+                            MsiTestPackageFactory.ReadCabinetMembers(
+                                outputPath,
+                                "Disk1.cab"),
+                            "The rebuilt second cabinet must preserve exact source member order.");
                         AssertEqual(identity.ProductCode.ToString("B").ToUpperInvariant(),
                             MsiTestPackageFactory.ReadProperty(
                                 outputPath,
@@ -1510,6 +1860,14 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                                 outputPath,
                                 "UpgradeCode"),
                             "UpgradeCode must be updated exactly once.");
+                        AssertEqual(identity.UpgradeCode.ToString("B").ToUpperInvariant(),
+                            MsiTestPackageFactory.ReadRowValue(
+                                outputPath,
+                                "Upgrade",
+                                "UpgradeCode",
+                                identity.UpgradeCode.ToString("B").ToUpperInvariant(),
+                                "UpgradeCode"),
+                            "Upgrade table must not detect and remove the base product.");
                         AssertEqual(identity.PackageCode.ToString("B").ToUpperInvariant(),
                             MsiTestPackageFactory.ReadPackageCode(outputPath),
                             "Summary PackageCode must be fresh.");
@@ -1555,6 +1913,20 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                                 "InstallAutoApdater",
                                 "Condition"),
                             "Clone auto-updater must be disabled.");
+                        AssertEqual("1=0", MsiTestPackageFactory.ReadRowValue(
+                                outputPath,
+                                "InstallExecuteSequence",
+                                "Action",
+                                "UninstallAutoApdater",
+                                "Condition"),
+                            "Clone auto-updater uninstall must be disabled.");
+                        AssertEqual("1=0", MsiTestPackageFactory.ReadRowValue(
+                                outputPath,
+                                "InstallExecuteSequence",
+                                "Action",
+                                "RemoveAll",
+                                "Condition"),
+                            "Clone data cleanup must be owned by the app.");
                         AssertEqual("1=0", MsiTestPackageFactory.ReadRowValue(
                                 outputPath,
                                 "InstallExecuteSequence",
@@ -1887,8 +2259,16 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     "Repair must request INSTALLSTATE_DEFAULT.");
                 AssertEqual((uint)0, api.Uninstall(product),
                     "Successful MSI uninstall must remain unchanged.");
+                AssertEqual(0, native.InstallLevel,
+                    "MSI configuration must use INSTALLLEVEL_DEFAULT.");
                 AssertEqual(2, native.InstallState,
                     "Uninstall must request INSTALLSTATE_ABSENT.");
+                AssertEqual(6, native.UiTransitions.Count,
+                    "Every MSI operation must disable and restore UI.");
+                AssertEqual(2, native.UiTransitions[0],
+                    "MSI operations must run with INSTALLUILEVEL_NONE.");
+                AssertEqual(5, native.UiTransitions[5],
+                    "MSI operations must restore the previous UI level.");
 
                 native.ReturnCode = 1603;
                 try
@@ -1909,6 +2289,21 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             {
                 DeleteTestTreeWithReadOnlyFiles(directory);
             }
+        }
+
+        private static void WindowsInstallerReceivesTerminatedAbsoluteLmDirectory()
+        {
+            MethodInfo method = typeof(WindowsLocalModuleMsiProvisioningPlatform)
+                .GetMethod(
+                    "InstallProperties",
+                    BindingFlags.Static | BindingFlags.NonPublic);
+            string properties = (string)method.Invoke(
+                null,
+                new object[] { @"D:\Program Files\Regime1" });
+            AssertTrue(
+                properties.Contains(
+                    "APPLICATIONFOLDER=\"D:\\Program Files\\Regime1\\\""),
+                "Windows Installer directory properties must end in a separator.");
         }
 
         private static void InstalledLocalModuleReaderScansBothRegistryViews()
@@ -2374,6 +2769,25 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 "The next ensure must clean the partial install and retry.");
             AssertFalse(journals.Contains(failed.Inn),
                 "A successful retry must clear its lifecycle journal.");
+
+            LocalModuleMsiProvisioningItemRequest cancelled = MsiRequest(
+                "7707083894", 5, 10995, 11984, null);
+            platform.FailInstallWithPartialServicesForInn = cancelled.Inn;
+            int beforeCancelled = platform.Events.Count;
+            LocalModuleMsiProvisioningItemResult cancelledResult =
+                provisioner.Ensure(cancelled, context);
+            AssertEqual(LmServiceProvisioningStatus.Failed,
+                cancelledResult.Status,
+                "A cancelled MSI install must report its original failure.");
+            AssertTrue(platform.Events.GetRange(
+                    beforeCancelled,
+                    platform.Events.Count - beforeCancelled).Contains(
+                        "cleanup-residue:" + cancelled.Inn),
+                "Rollback must remove partial services even when Windows " +
+                "Installer did not register the product.");
+            AssertFalse(platform.State(cancelled.Inn).ServicesPresent,
+                "Cancelled MSI install residue must be removed immediately.");
+            platform.FailInstallWithPartialServicesForInn = null;
 
             LocalModuleMsiProvisioningItemRequest interrupted = MsiRequest(
                 "500100732259", 4, 9995, 10984, null);
@@ -8664,6 +9078,21 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             internal string CommandLine { get; private set; }
             internal int InstallLevel { get; private set; }
             internal int InstallState { get; private set; }
+            internal List<int> UiTransitions { get; private set; }
+            private int _currentUiLevel = 5;
+
+            internal FakeWindowsInstallerNative()
+            {
+                UiTransitions = new List<int>();
+            }
+
+            public int SetInternalUi(int uiLevel)
+            {
+                int previous = _currentUiLevel;
+                _currentUiLevel = uiLevel;
+                UiTransitions.Add(uiLevel);
+                return previous;
+            }
 
             public uint InstallProduct(string packagePath, string commandLine)
             {
@@ -9814,6 +10243,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
             internal List<string> Events { get; private set; }
             internal string FailInstallAfterMutationForInn { get; set; }
+            internal string FailInstallWithPartialServicesForInn { get; set; }
             internal string FailStartForInn { get; set; }
             internal string FailStopForInn { get; set; }
             internal string FailUninstallForInn { get; set; }
@@ -9882,6 +10312,15 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 state.Ready = false;
                 state.ServicesPresent = true;
                 if (string.Equals(
+                        FailInstallWithPartialServicesForInn,
+                        request.Inn,
+                        StringComparison.Ordinal))
+                {
+                    state.ProductPresent = false;
+                    throw new InvalidOperationException(
+                        "Simulated cancelled install with partial services.");
+                }
+                if (string.Equals(
                         FailInstallAfterMutationForInn,
                         request.Inn,
                         StringComparison.Ordinal))
@@ -9949,14 +10388,16 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
             public void Uninstall(LocalModuleMsiManifest manifest)
             {
-                Events.Add("uninstall:" + manifest.Inn);
+                FakeLocalModuleMsiState state = State(manifest.Inn);
+                Events.Add(
+                    (state.ProductPresent ? "uninstall:" : "cleanup-residue:") +
+                    manifest.Inn);
                 if (string.Equals(
                         FailUninstallForInn,
                         manifest.Inn,
                         StringComparison.Ordinal))
                     throw new InvalidOperationException(
                         "Simulated uninstall failure.");
-                FakeLocalModuleMsiState state = State(manifest.Inn);
                 state.ProductPresent = false;
                 state.ServicesPresent = false;
                 state.Running = false;

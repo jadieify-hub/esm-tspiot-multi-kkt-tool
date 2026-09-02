@@ -245,7 +245,7 @@ namespace EsmTspiot.ServiceProvisioner
                             null, true);
                         context.Platform.RemoveFirewall(manifest);
                     }
-                    if (manifest.CanRemove && observed.ProductPresent)
+                    if (manifest.CanRemove)
                     {
                         context.WriteStage(request, nonce,
                             LocalModuleMsiLifecycleStage.ProductUninstalling,
@@ -405,9 +405,25 @@ namespace EsmTspiot.ServiceProvisioner
 
         private static string SafeMessage(Exception exception)
         {
-            return exception == null || string.IsNullOrWhiteSpace(exception.Message)
-                ? "Операция с локальным модулем завершилась ошибкой."
-                : exception.Message;
+            if (exception == null)
+                return "Операция с локальным модулем завершилась ошибкой.";
+            System.Collections.Generic.List<string> details =
+                new System.Collections.Generic.List<string>();
+            Exception current = exception;
+            for (int depth = 0; current != null && depth < 8; depth++)
+            {
+                string message = string.IsNullOrWhiteSpace(current.Message)
+                    ? current.GetType().Name
+                    : current.GetType().Name + ": " + current.Message;
+                System.ComponentModel.Win32Exception win32 =
+                    current as System.ComponentModel.Win32Exception;
+                if (win32 != null)
+                    message += " (Win32 " +
+                        win32.NativeErrorCode.ToString() + ")";
+                details.Add(message);
+                current = current.InnerException;
+            }
+            return string.Join(" -> ", details.ToArray());
         }
 
         private static string ExpectedInstallRoot(

@@ -22,6 +22,7 @@
     { "Table": "Registry", "Key": "regFC4DCF9969288D5B232FA9DAD986BD25", "Columns": ["Root", "Key", "Name", "Value", "Component_"], "Values": ["1", "Software\\ЦРПТ\\Локальный модуль ЧЗ", "installed", "#1", "CMP_Shortcuts"] },
     { "Table": "RegLocator", "Key": "RegimeInstallDirRegistry", "Columns": ["Root", "Key", "Name", "Type"], "Values": ["2", "Software\\Эквирон\\Локальный модуль ЧЗ", "InstallDir", "18"] },
     { "Table": "AppSearch", "Key": "APPLICATIONFOLDER|RegimeInstallDirRegistry", "Columns": ["Property", "Signature_"], "Values": ["APPLICATIONFOLDER", "RegimeInstallDirRegistry"] },
+    { "Table": "Upgrade", "Key": "{9449123B-61C4-40DE-AA6C-1BB9AA02EB67}", "Columns": ["VersionMin", "VersionMax", "Language", "Attributes", "Remove", "ActionProperty"], "Values": ["0", "", "", "257", "", "WIX_UPGRADE_DETECTED"] },
     { "Table": "File", "Key": "fil4D9BD38000F7BBE9FA37B3949730CD45", "Columns": ["Component_", "FileName", "FileSize", "Attributes", "Sequence"], "Values": ["cmp18ECFEBBF9E7C11B51906677C97C8A54", "swehgsto.dis|local.ini.dist", "437", "512", "690"] },
     { "Table": "File", "Key": "filB64169385D3728F85488BA683E5B1809", "Columns": ["Component_", "FileName", "FileSize", "Attributes", "Sequence"], "Values": ["cmp063BF1ED2EAFB46B7865734857C801B0", "mrsfww1l.dis|vm.args.dist", "2137", "512", "1602"] },
     { "Table": "File", "Key": "fil6C2420445C448A9D193F9397AB772B3F", "Columns": ["Component_", "FileName", "FileSize", "Attributes", "Sequence"], "Values": ["cmp0EC13424455C3081A57AF5BD223A4358", "default.ini", "427", "512", "956"] },
@@ -46,6 +47,8 @@
     { "Table": "CustomAction", "Key": "SetStopEPMD", "Columns": ["Type", "Source", "Target"], "Values": ["51", "StopEPMD", "\"[System64Folder]\\taskkill.exe\" /F /IM epmd.exe"] },
     { "Table": "CustomAction", "Key": "StopEPMD", "Columns": ["Type", "Source", "Target"], "Values": ["3137", "WixCA", "WixQuietExec64"] },
     { "Table": "InstallExecuteSequence", "Key": "InstallAutoApdater", "Columns": ["Condition", "Sequence"], "Values": ["NOT Installed AND NOT REMOVE", "6601"] },
+    { "Table": "InstallExecuteSequence", "Key": "UninstallAutoApdater", "Columns": ["Condition", "Sequence"], "Values": ["Installed AND (REMOVE = \"ALL\")", "6602"] },
+    { "Table": "InstallExecuteSequence", "Key": "RemoveAll", "Columns": ["Condition", "Sequence"], "Values": ["Installed AND (REMOVE = \"ALL\") AND NOT UPGRADINGPRODUCTCODE", "6599"] },
     { "Table": "InstallExecuteSequence", "Key": "StopEPMD", "Columns": ["Condition", "Sequence"], "Values": ["Installed AND (REMOVE = \"ALL\")", "1760"] }
   ]
 }

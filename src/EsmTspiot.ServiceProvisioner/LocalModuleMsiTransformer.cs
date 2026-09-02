@@ -120,6 +120,13 @@ namespace EsmTspiot.ServiceProvisioner
                     source.Metadata.UpgradeCode,
                     FormatGuid(plan.Identity.UpgradeCode),
                     true);
+                UpdateUpgradeRow(
+                    database,
+                    FindRow(
+                        source.CapabilityProfile,
+                        "Upgrade",
+                        source.Metadata.UpgradeCode),
+                    FormatGuid(plan.Identity.UpgradeCode));
 
                 UpdateProfileRow(
                     database,
@@ -146,6 +153,14 @@ namespace EsmTspiot.ServiceProvisioner
                     database,
                     source.CapabilityProfile,
                     "InstallAutoApdater");
+                DisableSequenceAction(
+                    database,
+                    source.CapabilityProfile,
+                    "UninstallAutoApdater");
+                DisableSequenceAction(
+                    database,
+                    source.CapabilityProfile,
+                    "RemoveAll");
                 DisableSequenceAction(
                     database,
                     source.CapabilityProfile,
@@ -392,6 +407,60 @@ namespace EsmTspiot.ServiceProvisioner
             {
                 throw new InvalidDataException(
                     expected.Table + ":" + expected.Key + " update failed.");
+            }
+        }
+
+        private static void UpdateUpgradeRow(
+            Database database,
+            MsiProfileRow expected,
+            string replacementCode)
+        {
+            if (expected == null)
+                throw new InvalidDataException("Required MSI Upgrade row is missing.");
+            const string query =
+                "SELECT `UpgradeCode`,`VersionMin`,`VersionMax`,`Language`," +
+                "`Attributes`,`Remove`,`ActionProperty` FROM `Upgrade` " +
+                "WHERE `UpgradeCode` = ?";
+            using (View view = database.OpenView(query))
+            using (Record parameter = new Record(1))
+            {
+                parameter.SetString(1, expected.Key);
+                view.Execute(parameter);
+                using (Record record = view.Fetch())
+                {
+                    if (record == null)
+                        throw new InvalidDataException(
+                            "Upgrade:" + expected.Key + " update-count mismatch.");
+                    for (int field = 2; field <= 7; field++)
+                        if (!string.Equals(
+                                GetString(record, field),
+                                expected.Values[field - 2],
+                                StringComparison.Ordinal))
+                            throw new InvalidDataException(
+                                "Upgrade:" + expected.Key + " source mismatch.");
+                    view.Modify(ViewModifyMode.Delete, record);
+                }
+            }
+            using (View insert = database.OpenView(
+                "SELECT `UpgradeCode`,`VersionMin`,`VersionMax`,`Language`," +
+                "`Attributes`,`Remove`,`ActionProperty` FROM `Upgrade`"))
+            using (Record replacement = new Record(7))
+            {
+                replacement.SetString(1, replacementCode);
+                for (int field = 2; field <= 7; field++)
+                {
+                    string value = expected.Values[field - 2];
+                    if (string.IsNullOrEmpty(value)) continue;
+                    if (field == 5)
+                        replacement.SetInteger(
+                            field,
+                            int.Parse(
+                                value,
+                                System.Globalization.CultureInfo.InvariantCulture));
+                    else
+                        replacement.SetString(field, value);
+                }
+                insert.Modify(ViewModifyMode.Insert, replacement);
             }
         }
 

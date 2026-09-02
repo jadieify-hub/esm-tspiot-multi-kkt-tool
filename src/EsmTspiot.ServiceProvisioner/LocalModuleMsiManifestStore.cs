@@ -36,7 +36,7 @@ namespace EsmTspiot.ServiceProvisioner
             if (pathSafety == null) throw new ArgumentNullException("pathSafety");
             _machineRoot = Path.GetFullPath(machineRoot)
                 .TrimEnd(Path.DirectorySeparatorChar);
-            _securityRoot = Path.GetPathRoot(_machineRoot);
+            _securityRoot = _machineRoot;
             _root = Path.Combine(_machineRoot, "LocalModuleMsiProducts");
             _inventoryContainerRoot = Path.Combine(
                 _machineRoot,

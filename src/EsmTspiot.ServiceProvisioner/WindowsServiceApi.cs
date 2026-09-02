@@ -636,13 +636,36 @@ namespace EsmTspiot.ServiceProvisioner
                 int directOrdinal;
                 if (!EsmTspiot.Shared.Services.DirectControllerIdentity.TryParseServiceName(
                         serviceName,
-                        out directOrdinal))
+                        out directOrdinal) &&
+                    !IsMsiLocalModuleServiceName(serviceName))
                 {
                     throw new ArgumentException(
                         "Managed service name is invalid.",
                         "serviceName");
                 }
             }
+        }
+
+        private static bool IsMsiLocalModuleServiceName(string serviceName)
+        {
+            for (int ordinal = 0;
+                ordinal <= EsmTspiot.Shared.Services.LocalModuleMsiIdentity
+                    .MaximumCloneOrdinal;
+                ordinal++)
+            {
+                if (string.Equals(
+                        serviceName,
+                        EsmTspiot.Shared.Services.LocalModuleMsiIdentity
+                            .ApiServiceName(ordinal),
+                        StringComparison.Ordinal) ||
+                    string.Equals(
+                        serviceName,
+                        EsmTspiot.Shared.Services.LocalModuleMsiIdentity
+                            .DatabaseServiceName(ordinal),
+                        StringComparison.Ordinal))
+                    return true;
+            }
+            return false;
         }
 
         private static void ThrowIfInvalid(SafeServiceHandle handle)

@@ -19,15 +19,6 @@ namespace EsmTspiot.ServiceProvisioner
             {
                 return ExitInvalidRequest;
             }
-            if (commandLine.Mode == ProvisionerMode.Supervisor)
-            {
-                return LmGatewaySupervisorService.RunServiceMode(commandLine.ServiceName);
-            }
-            if (commandLine.Mode == ProvisionerMode.LocalModuleSupervisor)
-            {
-                return ManagedChildServiceHost.Run(commandLine.ServiceName);
-            }
-
             try
             {
                 using (NamedPipeProvisioningChannel channel =
@@ -152,20 +143,6 @@ namespace EsmTspiot.ServiceProvisioner
                             channel.WriteMessage(result);
                             return ToExitCode(result.Status);
                         }
-                        if (request.Operation ==
-                            LmServiceOperation.EnsureManagedLocalModules)
-                        {
-                            using (CompleteStackProvisioningSession session =
-                                WindowsManagedLocalModulePlatform.CreateSession(
-                                    request))
-                            {
-                                LmServiceProvisioningBatchResult result =
-                                    new ManagedProvisioningSessionServer(channel)
-                                        .Run(request, session);
-                                channel.WriteMessage(result);
-                                return ToExitCode(result.Status);
-                            }
-                        }
                         if (request.Operation == LmServiceOperation.RemoveManaged ||
                             request.Operation == LmServiceOperation.CleanupManaged)
                         {
@@ -196,25 +173,6 @@ namespace EsmTspiot.ServiceProvisioner
                                 request.InitiatingSid,
                                 request.OperationId);
                         LmServiceProvisioner provisioner = new LmServiceProvisioner(platform);
-                        if (request.Operation == LmServiceOperation.EnsureBatch)
-                        {
-                            using (PipeProvisioningCancellation cancellation =
-                                new PipeProvisioningCancellation(channel, request.OperationId))
-                            {
-                                LmServiceProvisioningBatchResult result = provisioner.EnsureBatch(
-                                    request,
-                                    cancellation);
-                                channel.WriteMessage(result);
-                                return ToExitCode(result.Status);
-                            }
-                        }
-                        if (request.Operation == LmServiceOperation.InstallControllerVersion)
-                        {
-                            LmControllerInstallResult result =
-                                provisioner.InstallControllerVersion(request);
-                            channel.WriteMessage(result);
-                            return ToExitCode(result.Status);
-                        }
                         if (request.Operation == LmServiceOperation.RemoveManaged)
                         {
                             LmServiceProvisioningItemResult item =

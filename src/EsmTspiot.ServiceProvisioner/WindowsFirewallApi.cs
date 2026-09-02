@@ -34,6 +34,8 @@ namespace EsmTspiot.ServiceProvisioner
                 }
                 catch (TargetInvocationException exception)
                 {
+                    if (exception.InnerException is System.IO.FileNotFoundException)
+                        return null;
                     COMException com = exception.InnerException as COMException;
                     if (com != null &&
                         (com.ErrorCode == FileNotFoundHresult ||

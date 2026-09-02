@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading;
+using Microsoft.Win32;
 using EsmTspiot.Shared.Models;
 using EsmTspiot.Shared.Services;
 
@@ -435,7 +436,19 @@ namespace EsmTspiot.ServiceProvisioner
 
         public void Uninstall(LocalModuleMsiManifest manifest)
         {
-            _installer.Uninstall(manifest.ProductCode);
+            IList<InstalledLocalModuleProduct> installed = _products.ReadAll();
+            bool productPresent = false;
+            for (int index = 0; index < installed.Count; index++)
+                if (string.Equals(installed[index].ProductCode,
+                        manifest.ProductCode,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    productPresent = true;
+                    break;
+                }
+            if (productPresent)
+                _installer.Uninstall(manifest.ProductCode);
+
             IList<InstalledLocalModuleProduct> remaining = _products.ReadAll();
             for (int index = 0; index < remaining.Count; index++)
                 if (string.Equals(remaining[index].ProductCode,
@@ -443,6 +456,155 @@ namespace EsmTspiot.ServiceProvisioner
                         StringComparison.OrdinalIgnoreCase))
                     throw new InvalidOperationException(
                         "Windows Installer still reports the removed product.");
+            if (manifest.CloneOrdinal > 0 && manifest.CanRemove)
+                RemoveCloneResidue(manifest);
+        }
+
+        private void RemoveCloneResidue(LocalModuleMsiManifest manifest)
+        {
+            LocalModuleInstalledLayout layout = LocalModuleInstalledLayout.Create(
+                manifest.InstallRoot,
+                manifest.CloneOrdinal,
+                manifest.ApiPort,
+                manifest.DatabasePort);
+            RemoveStoppedPartialService(
+                layout,
+                LocalModuleProcessRole.Api);
+            RemoveStoppedPartialService(
+                layout,
+                LocalModuleProcessRole.Database);
+
+            string expectedName = "Regime" +
+                manifest.CloneOrdinal.ToString(
+                    System.Globalization.CultureInfo.InvariantCulture);
+            string root = Path.GetFullPath(manifest.InstallRoot)
+                .TrimEnd(Path.DirectorySeparatorChar);
+            if (!string.Equals(
+                    Path.GetFileName(root),
+                    expectedName,
+                    StringComparison.Ordinal) ||
+                !string.Equals(
+                    Path.GetFileName(Path.GetDirectoryName(root)),
+                    "Program Files",
+                    StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException(
+                    "Clone installation root is not exact.");
+            if (Directory.Exists(root))
+            {
+                RejectReparseTree(root);
+                DeleteCloneDirectory(root);
+            }
+
+            string suffix = " экземпляр " +
+                manifest.CloneOrdinal.ToString(
+                    System.Globalization.CultureInfo.InvariantCulture);
+            RemoveInstallRegistryKey(
+                RegistryHive.LocalMachine,
+                @"SOFTWARE\Эквирон\Локальный модуль ЧЗ" + suffix,
+                manifest.InstallRoot);
+            RemoveCrptRegistryKey(
+                @"SOFTWARE\ЦРПТ\Локальный модуль ЧЗ" + suffix);
+        }
+
+        private void DeleteCloneDirectory(string root)
+        {
+            IOException lastError = null;
+            for (int attempt = 0; attempt < 120; attempt++)
+            {
+                try
+                {
+                    if (!Directory.Exists(root)) return;
+                    Directory.Delete(root, true);
+                    return;
+                }
+                catch (IOException exception)
+                {
+                    lastError = exception;
+                    _delay();
+                }
+            }
+            throw new IOException(
+                "Clone installation directory remained locked after uninstall.",
+                lastError);
+        }
+
+        private void RemoveStoppedPartialService(
+            LocalModuleInstalledLayout layout,
+            LocalModuleProcessRole role)
+        {
+            string serviceName = layout.ServiceName(role);
+            WindowsServiceRecord service = _services.Query(serviceName);
+            if (service == null) return;
+            if (!layout.MatchesService(role, service))
+                throw new InvalidOperationException(
+                    "Partial clone service is not owned by this installation.");
+            if (service.State != WindowsServiceState.Stopped ||
+                service.ProcessId != 0)
+                throw new InvalidOperationException(
+                    "Partial clone service is still running.");
+
+            _services.Delete(serviceName);
+            for (int attempt = 0; attempt < 120; attempt++)
+            {
+                if (_services.Query(serviceName) == null) return;
+                _delay();
+            }
+            throw new InvalidOperationException(
+                "Partial clone service was not deleted from SCM.");
+        }
+
+        private static void RejectReparseTree(string root)
+        {
+            if ((File.GetAttributes(root) & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidDataException(
+                    "Clone installation root is a reparse point.");
+            string[] entries = Directory.GetFileSystemEntries(
+                root,
+                "*",
+                SearchOption.AllDirectories);
+            for (int index = 0; index < entries.Length; index++)
+                if ((File.GetAttributes(entries[index]) &
+                        FileAttributes.ReparsePoint) != 0)
+                    throw new InvalidDataException(
+                        "Clone installation tree contains a reparse point.");
+        }
+
+        private static void RemoveInstallRegistryKey(
+            RegistryHive hive,
+            string subKey,
+            string expectedRoot)
+        {
+            RegistryView[] views =
+            {
+                RegistryView.Registry64,
+                RegistryView.Registry32
+            };
+            for (int index = 0; index < views.Length; index++)
+            using (RegistryKey baseKey = RegistryKey.OpenBaseKey(hive, views[index]))
+            using (RegistryKey key = baseKey.OpenSubKey(subKey, true))
+            {
+                if (key == null) continue;
+                string installDir = key.GetValue("InstallDir") as string;
+                if (!PathsEqual(installDir, expectedRoot))
+                    throw new InvalidDataException(
+                        "Clone registry installation root is foreign.");
+                key.Close();
+                baseKey.DeleteSubKeyTree(subKey, false);
+            }
+        }
+
+        private static void RemoveCrptRegistryKey(string subKey)
+        {
+            using (RegistryKey key = Registry.CurrentUser.OpenSubKey(subKey, true))
+            {
+                if (key == null) return;
+                object installed = key.GetValue("installed");
+                if (installed == null || Convert.ToInt32(installed) != 1)
+                    throw new InvalidDataException(
+                        "Clone CRPT registry marker is foreign.");
+                key.Close();
+                Registry.CurrentUser.DeleteSubKeyTree(subKey, false);
+            }
         }
 
         public void WaitForEpmdExit()
@@ -540,8 +702,12 @@ namespace EsmTspiot.ServiceProvisioner
             if (installRoot.IndexOf('"') >= 0)
                 throw new InvalidDataException(
                     "Local-module installation root contains a quote.");
+            string directory = installRoot.TrimEnd(
+                Path.DirectorySeparatorChar,
+                Path.AltDirectorySeparatorChar) +
+                Path.DirectorySeparatorChar;
             return HiddenInstallerProperties + "APPLICATIONFOLDER=\"" +
-                installRoot + "\"";
+                directory + "\"";
         }
 
         private void RequireSource()

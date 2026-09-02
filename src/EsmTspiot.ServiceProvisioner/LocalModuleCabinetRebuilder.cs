@@ -56,16 +56,12 @@ namespace EsmTspiot.ServiceProvisioner
                 PackCabinet(
                     firstCab,
                     extracted,
-                    sourceCabinets.Files,
-                    1,
-                    2246);
+                    sourceCabinets.CabinetMembers["media1.cab"]);
                 stage = "pack second cabinet";
                 PackCabinet(
                     secondCab,
                     extracted,
-                    sourceCabinets.Files,
-                    2247,
-                    2247);
+                    sourceCabinets.CabinetMembers["Disk1.cab"]);
                 stage = "update output MSI database";
                 UpdateOutputDatabase(
                     transformedMsiPath,
@@ -120,6 +116,13 @@ namespace EsmTspiot.ServiceProvisioner
                 });
             }
             CopyFiles(cabinets.Files, result.Files);
+            foreach (KeyValuePair<string, IList<string>> cabinet in
+                cabinets.CabinetMembers)
+            {
+                result.CabinetMembers.Add(
+                    cabinet.Key,
+                    new List<string>(cabinet.Value));
+            }
             return result;
         }
 
@@ -150,24 +153,13 @@ namespace EsmTspiot.ServiceProvisioner
         private static void PackCabinet(
             string cabinetPath,
             string sourceRoot,
-            IList<MsiFilePayloadSnapshot> files,
-            int minimumSequence,
-            int maximumSequence)
+            IList<string> members)
         {
-            List<string> names = new List<string>();
-            for (int index = 0; index < files.Count; index++)
-            {
-                int sequence = files[index].Sequence;
-                if (sequence >= minimumSequence && sequence <= maximumSequence)
-                {
-                    names.Add(files[index].FileId);
-                }
-            }
-            if (names.Count == 0)
+            if (members == null || members.Count == 0)
             {
                 throw new InvalidDataException("MSI cabinet sequence is empty.");
             }
-            new CabInfo(cabinetPath).PackFiles(sourceRoot, names, names);
+            new CabInfo(cabinetPath).PackFiles(sourceRoot, members, members);
         }
 
         private static void UpdateOutputDatabase(
@@ -277,10 +269,13 @@ namespace EsmTspiot.ServiceProvisioner
         {
             Files = new List<MsiFilePayloadSnapshot>();
             Media = new List<MsiMediaSnapshot>();
+            CabinetMembers = new Dictionary<string, IList<string>>(
+                StringComparer.Ordinal);
         }
 
         internal IList<MsiFilePayloadSnapshot> Files { get; private set; }
         internal IList<MsiMediaSnapshot> Media { get; private set; }
+        internal IDictionary<string, IList<string>> CabinetMembers { get; private set; }
     }
 
     internal static class LocalModuleCabinetTools
@@ -295,7 +290,11 @@ namespace EsmTspiot.ServiceProvisioner
                 DatabaseOpenMode.ReadOnly))
             {
                 ReadMedia(database, result.Media);
-                ExtractCabinets(database, result.Media, outputRoot);
+                ExtractCabinets(
+                    database,
+                    result.Media,
+                    outputRoot,
+                    result.CabinetMembers);
                 ReadFiles(database, outputRoot, result.Files);
             }
             return result;
@@ -328,7 +327,8 @@ namespace EsmTspiot.ServiceProvisioner
         private static void ExtractCabinets(
             Database database,
             IList<MsiMediaSnapshot> media,
-            string outputRoot)
+            string outputRoot,
+            IDictionary<string, IList<string>> cabinetMembers)
         {
             for (int index = 0; index < media.Count; index++)
             {
@@ -350,7 +350,13 @@ namespace EsmTspiot.ServiceProvisioner
                         record.GetStream(1, cabinetPath);
                     }
                 }
-                new CabInfo(cabinetPath).Unpack(outputRoot);
+                CabInfo info = new CabInfo(cabinetPath);
+                IList<CabFileInfo> files = info.GetFiles();
+                List<string> names = new List<string>(files.Count);
+                for (int member = 0; member < files.Count; member++)
+                    names.Add(files[member].Name);
+                cabinetMembers.Add(streamName, names);
+                info.Unpack(outputRoot);
                 File.Delete(cabinetPath);
             }
         }

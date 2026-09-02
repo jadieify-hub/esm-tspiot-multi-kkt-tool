@@ -10,6 +10,8 @@ namespace EsmTspiot.ServiceProvisioner
             Media = new List<MsiMediaSnapshot>();
             Rows = new List<MsiProfileRow>();
             Files = new List<MsiFilePayloadSnapshot>();
+            CabinetMembers = new Dictionary<string, IList<string>>(
+                StringComparer.Ordinal);
         }
 
         internal int FileRowCount { get; set; }
@@ -17,6 +19,7 @@ namespace EsmTspiot.ServiceProvisioner
         internal IList<MsiMediaSnapshot> Media { get; private set; }
         internal IList<MsiProfileRow> Rows { get; private set; }
         internal IList<MsiFilePayloadSnapshot> Files { get; private set; }
+        internal IDictionary<string, IList<string>> CabinetMembers { get; private set; }
 
         internal IList<MsiProfileMismatch> Compare(
             LocalModuleMsiCapabilityProfile expected)

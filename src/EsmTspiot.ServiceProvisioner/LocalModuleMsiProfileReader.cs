@@ -131,6 +131,14 @@ namespace EsmTspiot.ServiceProvisioner
             ReadRows(
                 database,
                 result,
+                "Upgrade",
+                new[] { "UpgradeCode", "VersionMin", "VersionMax", "Language", "Attributes", "Remove", "ActionProperty" },
+                2,
+                new[] { "{9449123B-61C4-40DE-AA6C-1BB9AA02EB67}" },
+                false);
+            ReadRows(
+                database,
+                result,
                 "File",
                 new[] { "File", "Component_", "FileName", "FileSize", "Attributes", "Sequence" },
                 2,
@@ -177,7 +185,13 @@ namespace EsmTspiot.ServiceProvisioner
                 "InstallExecuteSequence",
                 new[] { "Action", "Condition", "Sequence" },
                 2,
-                new[] { "InstallAutoApdater", "StopEPMD" },
+                new[]
+                {
+                    "InstallAutoApdater",
+                    "UninstallAutoApdater",
+                    "RemoveAll",
+                    "StopEPMD"
+                },
                 false);
         }
 

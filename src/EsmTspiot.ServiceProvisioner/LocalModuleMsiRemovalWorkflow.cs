@@ -243,13 +243,10 @@ namespace EsmTspiot.ServiceProvisioner
                 }
                 if (manifest.CanRemove)
                 {
-                    if (observed.ProductPresent)
-                    {
-                        context.WriteStage(request, manifest.OwnershipNonce,
-                            LocalModuleMsiLifecycleStage.ProductUninstalling,
-                            null, false);
-                        context.Platform.Uninstall(manifest);
-                    }
+                    context.WriteStage(request, manifest.OwnershipNonce,
+                        LocalModuleMsiLifecycleStage.ProductUninstalling,
+                        null, false);
+                    context.Platform.Uninstall(manifest);
                     LocalModuleMsiObservedState remaining =
                         LocalModuleMsiProvisioner.RequireUnconflicted(
                             request, manifest, context);
