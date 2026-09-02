@@ -42,8 +42,10 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Directory.CreateDirectory(idtRoot);
             LocalModuleMsiCapabilityProfile profile =
                 LocalModuleMsiCapabilityRegistry.LoadSupportedProfile();
-            profile.FileRowCount = 5;
-            profile.MsiFileHashRowCount = 5;
+            Dictionary<string, byte[]> payloads = CreatePayloads();
+            profile.FileRowCount = 6;
+            profile.MsiFileHashRowCount = 6;
+            SetProfileFileSizes(profile, payloads);
 
             using (Database database = new Database(
                 msiPath,
@@ -58,12 +60,15 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 InsertProperty(database, "UpgradeCode", profile.UpgradeCode);
                 stage = "profile rows";
                 InsertProfileRows(database, profile);
+                Insert(database, "File",
+                    new[] { "File", "Component_", "FileName", "FileSize", "Attributes", "Sequence" },
+                    new[] { "filSECOND00000000000000000000000001", "cmpSecond", "regime_net_probe.beam", payloads["filSECOND00000000000000000000000001"].Length.ToString(), "512", "2247" });
                 stage = "media rows";
                 InsertMedia(database, profile.Media);
-                stage = "file hashes";
-                InsertFileHashes(database, profile);
                 stage = "cabinet streams";
-                EmbedTestCabinets(database, root);
+                EmbedTestCabinets(database, root, payloads);
+                stage = "file hashes";
+                InsertFileHashes(database, payloads, root);
                 stage = "summary information";
                 using (SummaryInfo summary = database.SummaryInfo)
                 {
@@ -153,6 +158,194 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 {
                     if (result == null) throw new InvalidDataException("Row missing.");
                     return result.IsNull(1) ? string.Empty : result.GetString(1);
+                }
+            }
+        }
+
+        internal static void ChangeFileSize(string path, string fileId)
+        {
+            ChangeInteger(path, "File", "File", fileId, "FileSize");
+        }
+
+        internal static void ChangeFileHash(string path, string fileId)
+        {
+            ChangeInteger(
+                path,
+                "MsiFileHash",
+                "File_",
+                fileId,
+                "HashPart1");
+        }
+
+        internal static void ChangeMediaSequence(string path, int diskId)
+        {
+            using (Database database = new Database(path, DatabaseOpenMode.Transact))
+            using (View view = database.OpenView(
+                "SELECT `DiskId`,`LastSequence` FROM `Media` WHERE `DiskId` = " +
+                diskId.ToString(System.Globalization.CultureInfo.InvariantCulture)))
+            {
+                view.Execute();
+                using (Record record = view.Fetch())
+                {
+                    if (record == null)
+                        throw new InvalidDataException("Media row missing.");
+                    record.SetInteger(2, record.GetInteger(2) + 1);
+                    view.Modify(ViewModifyMode.Update, record);
+                }
+                database.Commit();
+            }
+        }
+
+        internal static void ChangeCabinetFile(string path, string fileId)
+        {
+            string workspace = path + ".mutate";
+            Directory.CreateDirectory(workspace);
+            try
+            {
+                LocalModuleCabinetSnapshot snapshot =
+                    LocalModuleCabinetTools.Extract(path, workspace);
+                File.AppendAllText(Path.Combine(workspace, fileId), "changed");
+                string firstCab = Path.Combine(workspace, "media1.cab");
+                string secondCab = Path.Combine(workspace, "Disk1.cab");
+                PackForSequence(firstCab, workspace, snapshot.Files, 1, 2246);
+                PackForSequence(secondCab, workspace, snapshot.Files, 2247, 2247);
+                using (Database database = new Database(path, DatabaseOpenMode.Transact))
+                {
+                    ReplaceStream(database, "media1.cab", firstCab);
+                    ReplaceStream(database, "Disk1.cab", secondCab);
+                    database.Commit();
+                }
+            }
+            finally
+            {
+                if (Directory.Exists(workspace)) Directory.Delete(workspace, true);
+            }
+        }
+
+        internal static void RemoveFileRow(string path, string fileId)
+        {
+            using (Database database = new Database(path, DatabaseOpenMode.Transact))
+            {
+                DeleteRow(database, "MsiFileHash", "File_", fileId);
+                DeleteRow(database, "File", "File", fileId);
+                database.Commit();
+            }
+        }
+
+        internal static void AddUnexpectedCabinetFile(string path)
+        {
+            const string fileId = "filUNEXPECTED000000000000000000000001";
+            byte[] content = Encoding.UTF8.GetBytes("unexpected-payload");
+            string workspace = path + ".unexpected";
+            Directory.CreateDirectory(workspace);
+            try
+            {
+                LocalModuleCabinetSnapshot snapshot =
+                    LocalModuleCabinetTools.Extract(path, workspace);
+                File.WriteAllBytes(Path.Combine(workspace, fileId), content);
+                List<string> names = new List<string>();
+                for (int index = 0; index < snapshot.Files.Count; index++)
+                    if (snapshot.Files[index].Sequence <= 2246)
+                        names.Add(snapshot.Files[index].FileId);
+                names.Add(fileId);
+                string cabinet = Path.Combine(workspace, "media1.cab");
+                new CabInfo(cabinet).PackFiles(workspace, names, names);
+                using (Database database = new Database(path, DatabaseOpenMode.Transact))
+                {
+                    ReplaceStream(database, "media1.cab", cabinet);
+                    Insert(database, "File",
+                        new[] { "File", "Component_", "FileName", "FileSize", "Attributes", "Sequence" },
+                        new[] { fileId, "cmpSecond", "unexpected.bin", content.Length.ToString(), "512", "2246" });
+                    int[] parts = MsiFileHashCalculator.Compute(
+                        Path.Combine(workspace, fileId));
+                    Insert(database, "MsiFileHash",
+                        new[] { "File_", "Options", "HashPart1", "HashPart2", "HashPart3", "HashPart4" },
+                        new[] { fileId, "0", parts[0].ToString(), parts[1].ToString(), parts[2].ToString(), parts[3].ToString() });
+                    database.Commit();
+                }
+            }
+            finally
+            {
+                if (Directory.Exists(workspace)) Directory.Delete(workspace, true);
+            }
+        }
+
+        private static void DeleteRow(
+            Database database,
+            string table,
+            string keyColumn,
+            string key)
+        {
+            string query = "SELECT `" + keyColumn + "` FROM `" + table +
+                "` WHERE `" + keyColumn + "` = ?";
+            using (View view = database.OpenView(query))
+            using (Record parameter = new Record(1))
+            {
+                parameter.SetString(1, key);
+                view.Execute(parameter);
+                using (Record record = view.Fetch())
+                {
+                    if (record == null)
+                        throw new InvalidDataException(table + " row missing.");
+                    view.Modify(ViewModifyMode.Delete, record);
+                }
+            }
+        }
+
+        private static void ChangeInteger(
+            string path,
+            string table,
+            string keyColumn,
+            string key,
+            string valueColumn)
+        {
+            string query = "SELECT `" + keyColumn + "`,`" + valueColumn +
+                "` FROM `" + table + "` WHERE `" + keyColumn + "` = ?";
+            using (Database database = new Database(path, DatabaseOpenMode.Transact))
+            using (View view = database.OpenView(query))
+            using (Record parameter = new Record(1))
+            {
+                parameter.SetString(1, key);
+                view.Execute(parameter);
+                using (Record record = view.Fetch())
+                {
+                    record.SetInteger(2, record.GetInteger(2) + 1);
+                    view.Modify(ViewModifyMode.Update, record);
+                }
+                database.Commit();
+            }
+        }
+
+        private static void PackForSequence(
+            string cabinetPath,
+            string root,
+            IList<MsiFilePayloadSnapshot> files,
+            int minimum,
+            int maximum)
+        {
+            List<string> names = new List<string>();
+            for (int index = 0; index < files.Count; index++)
+                if (files[index].Sequence >= minimum &&
+                    files[index].Sequence <= maximum)
+                    names.Add(files[index].FileId);
+            new CabInfo(cabinetPath).PackFiles(root, names, names);
+        }
+
+        private static void ReplaceStream(
+            Database database,
+            string name,
+            string path)
+        {
+            using (View view = database.OpenView(
+                "SELECT `Name`,`Data` FROM `_Streams` WHERE `Name` = ?"))
+            using (Record parameter = new Record(1))
+            {
+                parameter.SetString(1, name);
+                view.Execute(parameter);
+                using (Record record = view.Fetch())
+                {
+                    record.SetStream(2, path);
+                    view.Modify(ViewModifyMode.Update, record);
                 }
             }
         }
@@ -269,35 +462,82 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
         private static void InsertFileHashes(
             Database database,
-            LocalModuleMsiCapabilityProfile profile)
+            IDictionary<string, byte[]> payloads,
+            string root)
         {
-            for (int index = 0; index < profile.Rows.Count; index++)
+            foreach (KeyValuePair<string, byte[]> item in payloads)
             {
-                MsiProfileRow row = profile.Rows[index];
-                if (!string.Equals(row.Table, "File", StringComparison.Ordinal))
-                {
-                    continue;
-                }
+                string payloadRoot = item.Key ==
+                    "filSECOND00000000000000000000000001"
+                    ? Path.Combine(root, "cab2")
+                    : Path.Combine(root, "cab1");
+                int[] parts = MsiFileHashCalculator.Compute(
+                    Path.Combine(payloadRoot, item.Key));
                 Insert(database, "MsiFileHash",
                     new[] { "File_", "Options", "HashPart1", "HashPart2", "HashPart3", "HashPart4" },
-                    new[] { row.Key, "0", "1", "2", "3", "4" });
+                    new[] { item.Key, "0", parts[0].ToString(), parts[1].ToString(), parts[2].ToString(), parts[3].ToString() });
             }
         }
 
-        private static void EmbedTestCabinets(Database database, string root)
+        private static void EmbedTestCabinets(
+            Database database,
+            string root,
+            IDictionary<string, byte[]> payloads)
         {
             string firstRoot = Path.Combine(root, "cab1");
             string secondRoot = Path.Combine(root, "cab2");
             Directory.CreateDirectory(firstRoot);
             Directory.CreateDirectory(secondRoot);
-            File.WriteAllText(Path.Combine(firstRoot, "first.txt"), "first");
-            File.WriteAllText(Path.Combine(secondRoot, "second.txt"), "second");
+            foreach (KeyValuePair<string, byte[]> item in payloads)
+            {
+                string targetRoot = item.Key ==
+                    "filSECOND00000000000000000000000001"
+                    ? secondRoot
+                    : firstRoot;
+                File.WriteAllBytes(Path.Combine(targetRoot, item.Key), item.Value);
+            }
             string firstCab = Path.Combine(root, "media1.cab");
             string secondCab = Path.Combine(root, "Disk1.cab");
             new CabInfo(firstCab).Pack(firstRoot);
             new CabInfo(secondCab).Pack(secondRoot);
             InsertStream(database, "media1.cab", firstCab);
             InsertStream(database, "Disk1.cab", secondCab);
+        }
+
+        private static Dictionary<string, byte[]> CreatePayloads()
+        {
+            UTF8Encoding encoding = new UTF8Encoding(false);
+            Dictionary<string, byte[]> result =
+                new Dictionary<string, byte[]>(StringComparer.Ordinal);
+            result.Add("fil4D9BD38000F7BBE9FA37B3949730CD45", encoding.GetBytes(
+                "[api]\nport = 5995\n[local]\ndb_url = http://127.0.0.1:5984\n"));
+            result.Add("filB64169385D3728F85488BA683E5B1809", encoding.GetBytes(
+                "-name regime@127.0.0.1\n"));
+            result.Add("fil6C2420445C448A9D193F9397AB772B3F", encoding.GetBytes(
+                "[vendor]\nname = CRPT\n[couchdb]\nmax_document_size = 4294967296\n"));
+            result.Add("fil8B086431A47A790C3CAEE2AA56EF7E1C", encoding.GetBytes(
+                "[chttpd]\nport = 5984\nbind_address = 0.0.0.0\n"));
+            result.Add("fil0C0BA2BF1CF3006FEE6418B1FBB8A2DC", encoding.GetBytes(
+                "-name yenisei@127.0.0.1\n"));
+            result.Add("filSECOND00000000000000000000000001", encoding.GetBytes(
+                "unchanged-second-cab"));
+            return result;
+        }
+
+        private static void SetProfileFileSizes(
+            LocalModuleMsiCapabilityProfile profile,
+            IDictionary<string, byte[]> payloads)
+        {
+            for (int index = 0; index < profile.Rows.Count; index++)
+            {
+                MsiProfileRow row = profile.Rows[index];
+                byte[] content;
+                if (row.Table != "File" || !payloads.TryGetValue(row.Key, out content))
+                    continue;
+                for (int column = 0; column < row.Columns.Count; column++)
+                    if (row.Columns[column] == "FileSize")
+                        row.Values[column] = content.Length.ToString();
+            }
         }
 
         private static void InsertStream(

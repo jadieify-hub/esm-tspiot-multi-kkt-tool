@@ -58,13 +58,27 @@ namespace EsmTspiot.ServiceProvisioner
                         "Copied MSI no longer matches the verified source profile.");
                 }
                 ApplyTransform(target, source, plan);
+                LocalModuleMsiDatabaseSnapshot sourcePayload =
+                    new LocalModuleCabinetRebuilder().Rebuild(
+                        source,
+                        target,
+                        plan);
+                VerifiedTransformedLocalModuleMsi verified =
+                    new LocalModuleMsiOutputVerifier().Verify(
+                        sourcePayload,
+                        target,
+                        plan);
                 outputLock = new FileStream(
                     target,
                     FileMode.Open,
                     FileAccess.Read,
                     FileShare.Read);
                 TransformedLocalModuleMsi result =
-                    new TransformedLocalModuleMsi(target, plan, outputLock);
+                    new TransformedLocalModuleMsi(
+                        target,
+                        plan,
+                        verified,
+                        outputLock);
                 outputLock = null;
                 return result;
             }

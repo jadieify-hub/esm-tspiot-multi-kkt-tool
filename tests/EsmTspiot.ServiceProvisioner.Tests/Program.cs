@@ -32,6 +32,22 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             {
                 return VerifyLocalModuleMsiReadOnly(args[1]);
             }
+            if (args != null && args.Length == 3 &&
+                string.Equals(
+                    args[0],
+                    "--transform-local-module-msi",
+                    StringComparison.Ordinal))
+            {
+                return TransformLocalModuleMsiOffline(args[1], args[2]);
+            }
+            if (args != null && args.Length == 2 &&
+                string.Equals(
+                    args[0],
+                    "--inspect-local-module-config-schema",
+                    StringComparison.Ordinal))
+            {
+                return InspectLocalModuleConfigSchema(args[1]);
+            }
             if (args != null && args.Length == 1 &&
                 string.Equals(
                     args[0],
@@ -78,6 +94,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Local module MSI structure is read only after trust", LocalModuleMsiStructureIsReadOnlyAfterTrust);
             Run("Local module MSI clone identity is stable except PackageCode", LocalModuleMsiCloneIdentityIsStableExceptPackageCode);
             Run("Local module MSI transformer edits only profiled rows", LocalModuleMsiTransformerEditsOnlyProfiledRows);
+            Run("Local module MSI output rejects cabinet and table drift", LocalModuleMsiOutputRejectsCabinetAndTableDrift);
             Run("Managed local module protocol accepts consistent shared INN rows", ManagedLocalModuleProtocolAcceptsConsistentSharedInnRows);
             Run("Managed provisioning session accepts only known monotonic messages", ManagedProvisioningSessionAcceptsOnlyKnownMonotonicMessages);
             Run("Managed session server interleaves caller and helper per KKT", ManagedSessionServerInterleavesCallerAndHelperPerKkt);
@@ -221,6 +238,108 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             {
                 Console.Error.WriteLine(exception.Message);
                 return 1;
+            }
+        }
+
+        private static int TransformLocalModuleMsiOffline(
+            string sourcePath,
+            string outputPath)
+        {
+            try
+            {
+                LocalModuleInstallerSelection selection =
+                    LocalModulePackageVerifier.CreateSupportedIdentity();
+                selection.SourcePath = sourcePath;
+                using (VerifiedLocalModulePackage package =
+                    LocalModulePackageVerifier.SupportedVersion2617()
+                        .VerifyAndLock(selection))
+                {
+                    LocalModuleMsiCloneIdentity identity =
+                        new LocalModuleMsiIdentityFactory(delegate {
+                            return Guid.NewGuid();
+                        }).Create(
+                            package.Metadata.ProductVersion,
+                            "990000000000",
+                            1);
+                    LocalModuleMsiTransformPlan plan =
+                        LocalModuleMsiTransformPlan.Create(
+                            identity,
+                            package.Metadata.ProductVersion,
+                            6995,
+                            7984);
+                    using (TransformedLocalModuleMsi transformed =
+                        new LocalModuleMsiTransformer().Transform(
+                            package,
+                            plan,
+                            outputPath))
+                    {
+                        Console.WriteLine(
+                            "LOCAL_MODULE_MSI_TRANSFORM_OK files=" +
+                            transformed.Verified.TotalFileCount +
+                            " modified=" +
+                            transformed.Verified.ModifiedFileCount);
+                    }
+                }
+                return 0;
+            }
+            catch (Exception exception)
+            {
+                Console.Error.WriteLine(exception.ToString());
+                return 1;
+            }
+        }
+
+        private static int InspectLocalModuleConfigSchema(string sourcePath)
+        {
+            string directory = CreateTemporaryDirectory();
+            try
+            {
+                LocalModuleInstallerSelection selection =
+                    LocalModulePackageVerifier.CreateSupportedIdentity();
+                selection.SourcePath = sourcePath;
+                using (VerifiedLocalModulePackage package =
+                    LocalModulePackageVerifier.SupportedVersion2617()
+                        .VerifyAndLock(selection))
+                {
+                    LocalModuleCabinetSnapshot snapshot =
+                        LocalModuleCabinetTools.Extract(sourcePath, directory);
+                    for (int index = 0; index < snapshot.Files.Count; index++)
+                    {
+                        MsiFilePayloadSnapshot file = snapshot.Files[index];
+                        if (!LocalModuleConfigBytes.IsGenerated(file.FileId))
+                            continue;
+                        Console.WriteLine("CONFIG " + file.FileId);
+                        string[] lines = File.ReadAllLines(
+                            Path.Combine(directory, file.FileId));
+                        for (int line = 0; line < lines.Length; line++)
+                        {
+                            string trimmed = lines[line].Trim();
+                            if (trimmed.StartsWith("[", StringComparison.Ordinal) ||
+                                trimmed.StartsWith("-name", StringComparison.Ordinal))
+                                Console.WriteLine("  " + trimmed);
+                            else
+                            {
+                                int equals = trimmed.IndexOf('=');
+                                if (equals > 0 &&
+                                    !trimmed.StartsWith(";", StringComparison.Ordinal) &&
+                                    !trimmed.StartsWith("#", StringComparison.Ordinal))
+                                    Console.WriteLine(
+                                        "  " + trimmed.Substring(0, equals).Trim() +
+                                        " = <redacted>");
+                            }
+                        }
+                    }
+                }
+                return 0;
+            }
+            catch (Exception exception)
+            {
+                Console.Error.WriteLine(exception.ToString());
+                return 1;
+            }
+            finally
+            {
+                DeleteTestTreeWithReadOnlyFiles(directory);
             }
         }
 
@@ -1453,6 +1572,145 @@ namespace EsmTspiot.ServiceProvisioner.Tests
         {
             string text = value.ToString("N");
             return int.Parse(text.Substring(12, 1));
+        }
+
+        private static void LocalModuleMsiOutputRejectsCabinetAndTableDrift()
+        {
+            string directory = CreateTemporaryDirectory();
+            try
+            {
+                using (MsiTestPackageFixture fixture =
+                    MsiTestPackageFactory.Create(directory))
+                {
+                    LocalModuleMsiCloneIdentity identity =
+                        new LocalModuleMsiIdentityFactory(delegate {
+                            return new Guid(
+                                "30000000-0000-0000-0000-000000000001");
+                        }).Create("2.6.1", "7701234567", 1);
+                    LocalModuleMsiTransformPlan plan =
+                        LocalModuleMsiTransformPlan.Create(
+                            identity,
+                            "2.6.1",
+                            6995,
+                            7984);
+                    string outputPath = Path.Combine(directory, "verified-clone.msi");
+                    using (TransformedLocalModuleMsi transformed =
+                        new LocalModuleMsiTransformer().Transform(
+                            fixture.Package,
+                            plan,
+                            outputPath))
+                    {
+                        AssertTrue(transformed.Verified != null,
+                            "A transformed MSI must be byte-verified before return.");
+                        AssertEqual(4, transformed.Verified.ModifiedFileCount,
+                            "Exactly four mutable config files may differ.");
+                        AssertEqual(6, transformed.Verified.TotalFileCount,
+                            "The synthetic second-CAB payload must also be verified.");
+                        AssertEqual(0, fixture.Package.DatabaseSnapshot.Files.Count,
+                            "Transform must not mutate the locked source profile snapshot.");
+                    }
+
+                    string wrongSize = Path.Combine(directory, "wrong-size.msi");
+                    File.Copy(outputPath, wrongSize);
+                    MsiTestPackageFactory.ChangeFileSize(
+                        wrongSize,
+                        "fil4D9BD38000F7BBE9FA37B3949730CD45");
+                    AssertThrows<InvalidDataException>(delegate {
+                        new LocalModuleMsiOutputVerifier().Verify(
+                            fixture.Package.DatabaseSnapshot,
+                            wrongSize,
+                            plan);
+                    }, "A wrong FileSize must fail output verification.");
+
+                    string wrongHash = Path.Combine(directory, "wrong-hash.msi");
+                    File.Copy(outputPath, wrongHash);
+                    MsiTestPackageFactory.ChangeFileHash(
+                        wrongHash,
+                        "fil4D9BD38000F7BBE9FA37B3949730CD45");
+                    AssertThrows<InvalidDataException>(delegate {
+                        new LocalModuleMsiOutputVerifier().Verify(
+                            fixture.Package.DatabaseSnapshot,
+                            wrongHash,
+                            plan);
+                    }, "A wrong MsiFileHash part must fail output verification.");
+
+                    string wrongMedia = Path.Combine(directory, "wrong-media.msi");
+                    File.Copy(outputPath, wrongMedia);
+                    MsiTestPackageFactory.ChangeMediaSequence(wrongMedia, 2);
+                    AssertThrows<InvalidDataException>(delegate {
+                        new LocalModuleMsiOutputVerifier().Verify(
+                            fixture.Package.DatabaseSnapshot,
+                            wrongMedia,
+                            plan);
+                    }, "A changed second-CAB sequence must fail output verification.");
+
+                    string wrongFirstMedia = Path.Combine(
+                        directory,
+                        "wrong-first-media.msi");
+                    File.Copy(outputPath, wrongFirstMedia);
+                    MsiTestPackageFactory.ChangeMediaSequence(wrongFirstMedia, 1);
+                    AssertThrows<InvalidDataException>(delegate {
+                        new LocalModuleMsiOutputVerifier().Verify(
+                            fixture.Package.DatabaseSnapshot,
+                            wrongFirstMedia,
+                            plan);
+                    }, "A changed first-CAB sequence must fail output verification.");
+
+                    string missingFile = Path.Combine(directory, "missing-file.msi");
+                    File.Copy(outputPath, missingFile);
+                    MsiTestPackageFactory.RemoveFileRow(
+                        missingFile,
+                        "filSECOND00000000000000000000000001");
+                    AssertThrows<InvalidDataException>(delegate {
+                        new LocalModuleMsiOutputVerifier().Verify(
+                            fixture.Package.DatabaseSnapshot,
+                            missingFile,
+                            plan);
+                    }, "A missing output file must fail output verification.");
+
+                    string unexpectedFile = Path.Combine(
+                        directory,
+                        "unexpected-file.msi");
+                    File.Copy(outputPath, unexpectedFile);
+                    MsiTestPackageFactory.AddUnexpectedCabinetFile(unexpectedFile);
+                    AssertThrows<InvalidDataException>(delegate {
+                        new LocalModuleMsiOutputVerifier().Verify(
+                            fixture.Package.DatabaseSnapshot,
+                            unexpectedFile,
+                            plan);
+                    }, "An unexpected output file must fail output verification.");
+
+                    string wrongBytes = Path.Combine(directory, "wrong-bytes.msi");
+                    File.Copy(outputPath, wrongBytes);
+                    MsiTestPackageFactory.ChangeCabinetFile(
+                        wrongBytes,
+                        "fil4D9BD38000F7BBE9FA37B3949730CD45");
+                    AssertThrows<InvalidDataException>(delegate {
+                        new LocalModuleMsiOutputVerifier().Verify(
+                            fixture.Package.DatabaseSnapshot,
+                            wrongBytes,
+                            plan);
+                    }, "Changed generated config bytes must fail output verification.");
+
+                    string wrongUnchangedBytes = Path.Combine(
+                        directory,
+                        "wrong-unchanged-bytes.msi");
+                    File.Copy(outputPath, wrongUnchangedBytes);
+                    MsiTestPackageFactory.ChangeCabinetFile(
+                        wrongUnchangedBytes,
+                        "fil6C2420445C448A9D193F9397AB772B3F");
+                    AssertThrows<InvalidDataException>(delegate {
+                        new LocalModuleMsiOutputVerifier().Verify(
+                            fixture.Package.DatabaseSnapshot,
+                            wrongUnchangedBytes,
+                            plan);
+                    }, "Changed immutable default.ini bytes must fail verification.");
+                }
+            }
+            finally
+            {
+                DeleteTestTreeWithReadOnlyFiles(directory);
+            }
         }
 
         private static int GuidVariant(Guid value)
@@ -6750,7 +7008,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             {
                 _failures++;
                 Console.WriteLine("FAIL " + name);
-                Console.WriteLine(ex.Message);
+                Console.WriteLine(ex.ToString());
             }
         }
 
