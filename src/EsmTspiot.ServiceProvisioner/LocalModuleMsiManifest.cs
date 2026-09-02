@@ -11,7 +11,7 @@ namespace EsmTspiot.ServiceProvisioner
     [DataContract]
     internal sealed class LocalModuleMsiManifest
     {
-        internal const int CurrentSchemaVersion = 1;
+        internal const int CurrentSchemaVersion = 2;
         internal const string ExpectedOwnershipMarker =
             "KRS.MultiKKT.LocalModuleMsi.Product.v1";
 
@@ -49,6 +49,12 @@ namespace EsmTspiot.ServiceProvisioner
         internal string UpdatedUtc { get; set; }
 
         [DataMember(Order = 12)]
+        internal string FirewallRuleName { get; set; }
+
+        [DataMember(Order = 13)]
+        internal string FirewallRuleHash { get; set; }
+
+        [DataMember(Order = 14)]
         internal string ManifestSha256 { get; set; }
 
         internal bool CanRemove
@@ -81,6 +87,8 @@ namespace EsmTspiot.ServiceProvisioner
                 UpdatedUtc = DateTime.UtcNow.ToString(
                     "o",
                     CultureInfo.InvariantCulture),
+                FirewallRuleName = string.Empty,
+                FirewallRuleHash = string.Empty,
                 ManifestSha256 = string.Empty
             };
             ValidateStructure(result, false);
@@ -99,6 +107,20 @@ namespace EsmTspiot.ServiceProvisioner
                     "Local-module MSI manifest hash mismatch.");
         }
 
+        internal void AttachFirewallRule(LocalModuleFirewallRule rule)
+        {
+            if (rule == null) throw new ArgumentNullException("rule");
+            if (!string.Equals(
+                    rule.OwnershipId,
+                    OwnershipNonce,
+                    StringComparison.Ordinal))
+                throw new InvalidDataException(
+                    "Firewall rule ownership does not match the manifest.");
+            FirewallRuleName = rule.RuleName;
+            FirewallRuleHash = rule.ExpectedFieldHash;
+            ManifestSha256 = ComputeSha256(this);
+        }
+
         internal static string ComputeSha256(LocalModuleMsiManifest manifest)
         {
             ValidateStructure(manifest, false);
@@ -114,7 +136,9 @@ namespace EsmTspiot.ServiceProvisioner
                 manifest.InstalledByApplication ? "1" : "0",
                 manifest.PreExisting ? "1" : "0",
                 manifest.OwnershipNonce,
-                manifest.UpdatedUtc
+                manifest.UpdatedUtc,
+                manifest.FirewallRuleName ?? string.Empty,
+                manifest.FirewallRuleHash ?? string.Empty
             });
             byte[] digest;
             using (SHA256 algorithm = SHA256.Create())
@@ -150,6 +174,20 @@ namespace EsmTspiot.ServiceProvisioner
                     "Local-module MSI manifest is invalid.");
             RequireCanonicalGuid(manifest.ProductCode);
             RequireCanonicalGuid(manifest.PackageCode);
+            string firewallName = manifest.FirewallRuleName ?? string.Empty;
+            string firewallHash = manifest.FirewallRuleHash ?? string.Empty;
+            if ((firewallName.Length == 0) != (firewallHash.Length == 0) ||
+                (firewallName.Length != 0 &&
+                 (!string.Equals(
+                     firewallName,
+                     LocalModuleFirewallRule.RuleNameFor(
+                         manifest.OwnershipNonce),
+                     StringComparison.Ordinal) ||
+                  !LocalModuleManagedIdentity.IsLowerHex(
+                      firewallHash,
+                      64))))
+                throw new InvalidDataException(
+                    "Local-module MSI firewall ownership is invalid.");
             if (!string.Equals(
                     manifest.InstallRoot,
                     NormalizeRoot(manifest.InstallRoot),

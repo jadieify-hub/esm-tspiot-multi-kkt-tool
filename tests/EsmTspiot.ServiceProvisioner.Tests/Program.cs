@@ -101,6 +101,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Local module MSI manifests guard ownership and content", LocalModuleMsiManifestsGuardOwnershipAndContent);
             Run("Installed local module config exposes only a cookie digest", InstalledLocalModuleConfigExposesOnlyCookieDigest);
             Run("Installed local module services start stop and own listeners", InstalledLocalModuleServicesStartStopAndOwnListeners);
+            Run("Local module firewall manager owns only an exact API rule", LocalModuleFirewallManagerOwnsOnlyExactApiRule);
             Run("Managed local module protocol accepts consistent shared INN rows", ManagedLocalModuleProtocolAcceptsConsistentSharedInnRows);
             Run("Managed provisioning session accepts only known monotonic messages", ManagedProvisioningSessionAcceptsOnlyKnownMonotonicMessages);
             Run("Managed session server interleaves caller and helper per KKT", ManagedSessionServerInterleavesCallerAndHelperPerKkt);
@@ -2165,6 +2166,91 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 "stop:regime1", "stopped:Api",
                 "stop:yenisei1", "stopped:Database"
             }, events, "LM service pair lifecycle order must be exact.");
+        }
+
+        private static void LocalModuleFirewallManagerOwnsOnlyExactApiRule()
+        {
+            LocalModuleInstalledLayout layout =
+                LocalModuleInstalledLayout.Create(
+                    @"D:\Program Files\Regime1",
+                    1,
+                    6995,
+                    7984);
+            FakeWindowsFirewallApi api = new FakeWindowsFirewallApi();
+            LocalModuleFirewallManager manager =
+                new LocalModuleFirewallManager(api);
+            string ownershipId = new string('d', 32);
+            LocalModuleFirewallRule rule = manager.EnsureApiRule(
+                layout,
+                ownershipId,
+                null);
+            AssertEqual(1, api.AddCount,
+                "The exact LM API rule must be created once.");
+            AssertEqual(6995, api.Rule.LocalPort,
+                "Only the LM API port may be opened.");
+            AssertEqual("LocalSubnet", api.Rule.RemoteAddress,
+                "The default remote scope must be LocalSubnet.");
+            AssertEqual(
+                Path.Combine(layout.ErtsBinPath, "erl.exe"),
+                api.Rule.ProgramPath,
+                "The rule must target the instance Erlang executable.");
+            AssertTrue(api.Rule.Enabled && api.Rule.Inbound &&
+                api.Rule.Allow && api.Rule.Tcp &&
+                api.Rule.Domain && api.Rule.Private && !api.Rule.Public,
+                "The rule must be inbound TCP Allow for Domain and Private only.");
+            manager.EnsureApiRule(layout, ownershipId, "LocalSubnet");
+            AssertEqual(1, api.AddCount,
+                "An exact owned rule must be idempotent.");
+
+            WindowsFirewallRuleRecord foreign = api.Rule.Clone();
+            foreign.Public = true;
+            api.Rule = foreign;
+            AssertThrows<InvalidDataException>(delegate {
+                manager.EnsureApiRule(layout, ownershipId, "LocalSubnet");
+            }, "A foreign conflicting rule must not be adopted or overwritten.");
+            AssertThrows<InvalidDataException>(delegate {
+                manager.Remove(rule);
+            }, "A foreign conflicting rule must not be deleted.");
+            AssertEqual(0, api.RemoveCount,
+                "Foreign firewall state must remain untouched.");
+
+            api.Rule = WindowsFirewallRuleRecord.FromExpected(rule);
+            manager.Remove(rule);
+            AssertEqual(1, api.RemoveCount,
+                "Only the exact owned firewall rule may be removed.");
+            AssertTrue(api.Rule == null,
+                "The exact owned firewall rule must disappear.");
+            AssertThrows<ArgumentException>(delegate {
+                manager.EnsureApiRule(layout, ownershipId, "Any");
+            }, "An unbounded remote address must be rejected.");
+            manager.EnsureApiRule(
+                layout,
+                ownershipId,
+                "192.168.10.0/24");
+            AssertEqual("192.168.10.0/24", api.Rule.RemoteAddress,
+                "An explicit validated CIDR must be preserved.");
+
+            LocalModuleMsiManifest manifest = LocalModuleMsiManifest.Create(
+                "1234567890",
+                1,
+                "{10000000-0000-0000-0000-000000000001}",
+                "{20000000-0000-0000-0000-000000000001}",
+                layout.InstallRoot,
+                true,
+                false,
+                ownershipId);
+            manifest.AttachFirewallRule(rule);
+            LocalModuleMsiManifest.Validate(manifest);
+            AssertEqual(rule.RuleName, manifest.FirewallRuleName,
+                "The manifest must retain the exact firewall rule name.");
+            AssertEqual(rule.ExpectedFieldHash, manifest.FirewallRuleHash,
+                "The manifest must retain the exact expected-field hash.");
+            api.Rule = WindowsFirewallRuleRecord.FromExpected(rule);
+            manager.Remove(
+                manifest.FirewallRuleName,
+                manifest.FirewallRuleHash);
+            AssertEqual(2, api.RemoveCount,
+                "Manifest identity must authorize exact owned removal.");
         }
 
         private static void WriteInstalledLocalModuleConfiguration(
@@ -9121,6 +9207,39 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 LocalModuleProcessRole role)
             {
                 _events.Add("stopped:" + role.ToString());
+            }
+        }
+
+        private sealed class FakeWindowsFirewallApi : IWindowsFirewallApi
+        {
+            internal WindowsFirewallRuleRecord Rule { get; set; }
+            internal int AddCount { get; private set; }
+            internal int RemoveCount { get; private set; }
+
+            public WindowsFirewallRuleRecord FindByName(string ruleName)
+            {
+                return Rule != null && string.Equals(
+                    Rule.RuleName,
+                    ruleName,
+                    StringComparison.Ordinal) ? Rule.Clone() : null;
+            }
+
+            public void Add(LocalModuleFirewallRule rule)
+            {
+                AddCount++;
+                Rule = WindowsFirewallRuleRecord.FromExpected(rule);
+            }
+
+            public void Remove(string ruleName)
+            {
+                if (Rule == null || !string.Equals(
+                        Rule.RuleName,
+                        ruleName,
+                        StringComparison.Ordinal))
+                    throw new InvalidOperationException(
+                        "The fake firewall rule does not exist.");
+                RemoveCount++;
+                Rule = null;
             }
         }
 
