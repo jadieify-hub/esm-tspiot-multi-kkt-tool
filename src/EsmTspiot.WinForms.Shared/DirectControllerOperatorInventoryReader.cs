@@ -63,17 +63,31 @@ namespace EsmTspiot.WinForms.Shared
 
         internal DirectControllerPlan BuildPlan(IList<LmGatewayKkt> kkts)
         {
+            return BuildPlan(kkts, null);
+        }
+
+        internal DirectControllerPlan BuildPlan(
+            IList<LmGatewayKkt> kkts,
+            IDictionary<string, int> targetLmPortsByInn)
+        {
             IList<DirectControllerAssignment> saved = ReadAssignments();
             IList<DirectControllerServiceInventoryItem> serviceInventory =
                 ReadServices(saved);
             IList<TcpListenerSnapshotItem> listeners = ReadForeignListeners(
                 saved,
                 serviceInventory);
-            return DirectControllerPlanner.Build(
-                kkts,
-                saved,
-                serviceInventory,
-                listeners);
+            return targetLmPortsByInn == null
+                ? DirectControllerPlanner.Build(
+                    kkts,
+                    saved,
+                    serviceInventory,
+                    listeners)
+                : DirectControllerPlanner.Build(
+                    kkts,
+                    saved,
+                    serviceInventory,
+                    listeners,
+                    targetLmPortsByInn);
         }
 
         private IList<DirectControllerAssignment> ReadAssignments()

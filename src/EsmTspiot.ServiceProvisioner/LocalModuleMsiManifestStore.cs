@@ -16,18 +16,36 @@ namespace EsmTspiot.ServiceProvisioner
         private readonly string _machineRoot;
         private readonly string _securityRoot;
         private readonly string _root;
+        private readonly string _inventoryContainerRoot;
+        private readonly string _inventoryRoot;
         private readonly IPathSafety _pathSafety;
+        private readonly string _initiatingSid;
 
         internal LocalModuleMsiManifestStore(
             string machineRoot,
             IPathSafety pathSafety)
+            : this(machineRoot, pathSafety, null)
+        {
+        }
+
+        internal LocalModuleMsiManifestStore(
+            string machineRoot,
+            IPathSafety pathSafety,
+            string initiatingSid)
         {
             if (pathSafety == null) throw new ArgumentNullException("pathSafety");
             _machineRoot = Path.GetFullPath(machineRoot)
                 .TrimEnd(Path.DirectorySeparatorChar);
             _securityRoot = Path.GetPathRoot(_machineRoot);
             _root = Path.Combine(_machineRoot, "LocalModuleMsiProducts");
+            _inventoryContainerRoot = Path.Combine(
+                _machineRoot,
+                "OperatorInventory");
+            _inventoryRoot = Path.Combine(
+                _inventoryContainerRoot,
+                "LocalModuleMsi");
             _pathSafety = pathSafety;
+            _initiatingSid = initiatingSid;
         }
 
         internal string GetManifestPath(string inn)
@@ -59,6 +77,7 @@ namespace EsmTspiot.ServiceProvisioner
             _pathSafety.EnsureProtectedReadOnlyFile(path, null);
             EnsureSafe(path);
             LocalModuleMsiManifest.Validate(ReadRaw(path));
+            WriteInventory(manifest);
         }
 
         internal LocalModuleMsiManifest Read(string inn)
@@ -128,6 +147,12 @@ namespace EsmTspiot.ServiceProvisioner
                     "Local-module MSI manifest fingerprint mismatch.");
             string path = GetManifestPath(inn);
             File.Delete(path);
+            string inventoryPath = GetInventoryPath(inn);
+            if (File.Exists(inventoryPath))
+            {
+                File.SetAttributes(inventoryPath, FileAttributes.Normal);
+                File.Delete(inventoryPath);
+            }
             DeleteEmptyItemRoot(inn);
         }
 
@@ -234,6 +259,55 @@ namespace EsmTspiot.ServiceProvisioner
                 null,
                 null);
             EnsureSafe(itemRoot);
+        }
+
+        private string GetInventoryPath(string inn)
+        {
+            if (!LocalModuleMsiIdentity.IsInn(inn))
+                throw new ArgumentException("Local-module INN is invalid.", "inn");
+            return Path.Combine(_inventoryRoot, inn + ".json");
+        }
+
+        private void WriteInventory(LocalModuleMsiManifest manifest)
+        {
+            _pathSafety.EnsureProtectedDirectory(
+                _machineRoot,
+                ProtectedDirectoryKind.InventoryContainer,
+                _initiatingSid,
+                null);
+            _pathSafety.EnsureProtectedDirectory(
+                _inventoryContainerRoot,
+                ProtectedDirectoryKind.InventoryContainer,
+                _initiatingSid,
+                null);
+            _pathSafety.EnsureProtectedDirectory(
+                _inventoryRoot,
+                ProtectedDirectoryKind.Inventory,
+                _initiatingSid,
+                null);
+            LocalModuleMsiInventoryItem projection =
+                new LocalModuleMsiInventoryItem
+                {
+                    SchemaVersion =
+                        LocalModuleMsiInventoryItem.CurrentSchemaVersion,
+                    OwnershipMarker =
+                        LocalModuleMsiInventoryItem.ExpectedOwnershipMarker,
+                    Inn = manifest.Inn,
+                    CloneOrdinal = manifest.CloneOrdinal,
+                    ApiPort = manifest.ApiPort,
+                    DatabasePort = manifest.DatabasePort,
+                    InstallRoot = manifest.InstallRoot,
+                    InstalledByApplication = manifest.InstalledByApplication,
+                    PreExisting = manifest.PreExisting,
+                    ManifestSha256 = manifest.ManifestSha256
+                };
+            string path = GetInventoryPath(manifest.Inn);
+            AtomicJsonFile.Write(path, AtomicJsonFile.Serialize(projection));
+            _pathSafety.EnsureProtectedReadOnlyFile(
+                path,
+                string.IsNullOrWhiteSpace(_initiatingSid)
+                    ? null
+                    : new[] { _initiatingSid });
         }
 
         private string GetLifecyclePath(string inn)

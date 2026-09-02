@@ -1958,7 +1958,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 LocalModuleMsiManifestStore store =
                     new LocalModuleMsiManifestStore(
                         machineRoot,
-                        new FakePathSafety(true));
+                        new FakePathSafety(true),
+                        "S-1-5-21-111-222-333-1001");
                 LocalModuleMsiManifest preExisting =
                     LocalModuleMsiManifest.Create(
                         "1234567890",
@@ -1977,6 +1978,21 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 LocalModuleMsiManifest read = store.Read(preExisting.Inn);
                 AssertEqual(preExisting.ProductCode, read.ProductCode,
                     "Manifest read-back must preserve exact product identity.");
+                string operatorInventoryPath = Path.Combine(
+                    machineRoot,
+                    "OperatorInventory",
+                    "LocalModuleMsi",
+                    preExisting.Inn + ".json");
+                AssertTrue(File.Exists(operatorInventoryPath),
+                    "Every manifest write must publish a nonsecret operator projection.");
+                string operatorInventory = File.ReadAllText(
+                    operatorInventoryPath,
+                    Encoding.UTF8);
+                AssertContains(operatorInventory, preExisting.ManifestSha256);
+                AssertFalse(operatorInventory.IndexOf(
+                        "OwnershipNonce",
+                        StringComparison.OrdinalIgnoreCase) >= 0,
+                    "Operator inventory must not expose the ownership nonce.");
                 LocalModuleMsiLifecycleJournal journal =
                     LocalModuleMsiLifecycleJournal.Create(
                         "10000000000000000000000000000001",

@@ -118,7 +118,8 @@ namespace EsmTspiot.ServiceProvisioner
                                 LocalModuleMsiProvisioningContext
                                     .CreateWindowsForInstalledProducts(
                                         request.OperationId,
-                                        machineRoot);
+                                        machineRoot,
+                                        request.InitiatingSid);
                             System.Collections.Generic.IList<
                                 LocalModuleMsiProvisioningItemResult> items;
                             if (request.Operation ==

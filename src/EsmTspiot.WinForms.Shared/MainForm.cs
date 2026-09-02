@@ -531,7 +531,8 @@ namespace EsmTspiot.WinForms.Shared
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
 
-            GroupBox group = CreateGroup("Регистрация ККТ и независимые контроллеры");
+            GroupBox group = CreateGroup(
+                "Регистрация ККТ, независимые контроллеры и ЛМ ЧЗ");
             TableLayoutPanel commands = new TableLayoutPanel();
             commands.Dock = DockStyle.Fill;
             commands.AutoSize = true;
@@ -577,8 +578,9 @@ namespace EsmTspiot.WinForms.Shared
             hint.Text =
                 "Программа найдёт USB/VCOM ККТ через установленный драйвер АТОЛ, " +
                 "поочерёдно зарегистрирует ККТ в ЕСМ, закроет связь после каждой регистрации, " +
-                "затем предложит создать независимые контроллеры 1.6.4.0 и привязать их к ЕСМ. " +
-                "Установку и инициализацию ЛМ ЧЗ можно выполнить позже. " +
+                "затем предложит создать независимые контроллеры 1.6.4.0, " +
+                "установить по одному ЛМ ЧЗ на ИНН и привязать контроллеры к ЕСМ. " +
+                "Инициализация ЛМ выполняется отдельно и автомат не блокирует. " +
                 "Если кассы удерживает Frontol/«Тест драйвера», программа попросит закрыть его и повторить.";
             hint.Margin = new Padding(0, 5, 0, 0);
 
@@ -1151,7 +1153,7 @@ namespace EsmTspiot.WinForms.Shared
             try
             {
                 AppendLog(
-                    "=== Автоматическая регистрация ККТ и прямые контроллеры 1.6.4.0 ===\r\n");
+                    "=== Полная автоматическая настройка ККТ, контроллеров и ЛМ ЧЗ ===\r\n");
                 System.Threading.CancellationToken token =
                     _automaticCancellation.Token;
                 _automationStatusLabel.Text =
@@ -1351,7 +1353,7 @@ namespace EsmTspiot.WinForms.Shared
                         .DiscoverRegisteredKktsForAutomaticPlanAsync(
                             baseUrl,
                             token);
-                DirectControllerSetupOutcome controllerOutcome = null;
+                FullAutomaticLocalSetupOutcome localSetupOutcome = null;
                 bool controllersDeferred = true;
                 if (registeredAfter.Count > 0)
                 {
@@ -1359,7 +1361,7 @@ namespace EsmTspiot.WinForms.Shared
                         this,
                         "Регистрация ККТ завершена. Следующая фаза кратковременно " +
                             "перезапустит службы экземпляров ЕСМ:\r\n\r\n" +
-                            "Настроить независимые контроллеры сейчас?\r\n\r\n" +
+                            "Настроить независимые контроллеры и ЛМ ЧЗ сейчас?\r\n\r\n" +
                             "Нажмите «Нет», чтобы отложить без отката регистрации.",
                         "Настройка контроллеров",
                         MessageBoxButtons.YesNo,
@@ -1369,8 +1371,8 @@ namespace EsmTspiot.WinForms.Shared
                     if (!controllersDeferred)
                     {
                         _workspaceTabs.SelectedTab = _lmGatewayTab;
-                        controllerOutcome = await _lmGatewayPage
-                            .RunDirectControllerSetupFromHostAsync(
+                        localSetupOutcome = await _lmGatewayPage
+                            .RunFullAutomaticLocalSetupFromHostAsync(
                                 registeredAfter,
                                 token);
                     }
@@ -1384,15 +1386,15 @@ namespace EsmTspiot.WinForms.Shared
                 bool registrationHasFailures = registrationOutcome.Cancelled ||
                     HasBulkFailures(registrationOutcome.Results) ||
                     !string.IsNullOrWhiteSpace(finalVcomError);
-                bool controllersComplete = controllerOutcome != null &&
-                    controllerOutcome.Complete;
+                bool controllersComplete = localSetupOutcome != null &&
+                    localSetupOutcome.Complete;
                 _automationStatusLabel.Text = !registrationHasFailures &&
                     (controllersDeferred || controllersComplete)
                     ? "Статус: регистрация завершена"
                     : "Статус: завершено, требуется внимание";
                 string stackSummary = controllersDeferred
                     ? "Регистрация завершена; настройка контроллеров отложена."
-                    : controllerOutcome.FormatSummary();
+                    : localSetupOutcome.FormatSummary();
                 if (!string.IsNullOrWhiteSpace(finalVcomError))
                 {
                     stackSummary += " " + finalVcomError;
@@ -1684,7 +1686,9 @@ namespace EsmTspiot.WinForms.Shared
             if (!string.IsNullOrWhiteSpace(progress.Stage))
             {
                 string prefix = progress.Current > 0 && progress.Total > 0
-                    ? "ККТ " + progress.Current.ToString() + " из " + progress.Total.ToString() + "; "
+                    ? (progress.CountsAttempts ? "Попытка " : "ККТ ") +
+                        progress.Current.ToString() + " из " +
+                        progress.Total.ToString() + "; "
                     : string.Empty;
                 AppendLog(prefix +
                     (string.IsNullOrWhiteSpace(progress.KktSerial) ? string.Empty : "serial=" + progress.KktSerial + "; ") +

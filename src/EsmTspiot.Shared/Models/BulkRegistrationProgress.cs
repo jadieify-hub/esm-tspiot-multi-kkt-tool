@@ -4,6 +4,7 @@ namespace EsmTspiot.Shared.Models
     {
         public int Current { get; set; }
         public int Total { get; set; }
+        public bool CountsAttempts { get; set; }
         public string KktSerial { get; set; }
         public string Stage { get; set; }
         public string Message { get; set; }
