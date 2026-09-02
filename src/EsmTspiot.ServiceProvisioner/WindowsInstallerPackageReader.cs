@@ -1,7 +1,6 @@
 using System;
 using System.IO;
-using System.Runtime.InteropServices;
-using System.Text;
+using WixToolset.Dtf.WindowsInstaller;
 
 namespace EsmTspiot.ServiceProvisioner
 {
@@ -16,6 +15,7 @@ namespace EsmTspiot.ServiceProvisioner
         internal string ProductVersion { get; set; }
         internal string ProductCode { get; set; }
         internal string UpgradeCode { get; set; }
+        internal string PackageCode { get; set; }
 
         internal WindowsInstallerPackageMetadata Clone()
         {
@@ -23,160 +23,76 @@ namespace EsmTspiot.ServiceProvisioner
         }
     }
 
-    internal sealed class WindowsInstallerPackageReader : IWindowsInstallerPackageReader
+    internal sealed class WindowsInstallerPackageReader :
+        IWindowsInstallerPackageReader
     {
-        private const uint ErrorSuccess = 0;
-        private const uint ErrorMoreData = 234;
-        private const uint ErrorNoMoreItems = 259;
-
         public WindowsInstallerPackageMetadata Read(string path)
         {
             string fullPath = Path.GetFullPath(path);
-            uint database = 0;
-            uint result = MsiOpenDatabaseW(fullPath, IntPtr.Zero, out database);
-            if (result != ErrorSuccess || database == 0)
-            {
-                throw CreateMsiError("MSI database could not be opened read-only", result);
-            }
-
             try
             {
-                return new WindowsInstallerPackageMetadata
+                using (Database database = new Database(
+                    fullPath,
+                    DatabaseOpenMode.ReadOnly))
                 {
-                    ProductName = ReadProperty(database, "ProductName"),
-                    ProductVersion = ReadProperty(database, "ProductVersion"),
-                    ProductCode = ReadProperty(database, "ProductCode"),
-                    UpgradeCode = ReadProperty(database, "UpgradeCode")
-                };
+                    return new WindowsInstallerPackageMetadata
+                    {
+                        ProductName = ReadProperty(database, "ProductName"),
+                        ProductVersion = ReadProperty(database, "ProductVersion"),
+                        ProductCode = ReadProperty(database, "ProductCode"),
+                        UpgradeCode = ReadProperty(database, "UpgradeCode"),
+                        PackageCode = RequireValue(
+                            database.SummaryInfo.RevisionNumber,
+                            "PackageCode")
+                    };
+                }
             }
-            finally
+            catch (InvalidDataException)
             {
-                MsiCloseHandle(database);
+                throw;
+            }
+            catch (Exception)
+            {
+                throw new InvalidDataException(
+                    "MSI identity could not be read from the locked package.");
             }
         }
 
-        private static string ReadProperty(uint database, string propertyName)
+        private static string ReadProperty(
+            Database database,
+            string propertyName)
         {
-            uint view = 0;
-            uint queryRecord = 0;
-            uint valueRecord = 0;
-            uint result = MsiDatabaseOpenViewW(
-                database,
-                "SELECT `Value` FROM `Property` WHERE `Property` = ?",
-                out view);
-            if (result != ErrorSuccess || view == 0)
+            const string query =
+                "SELECT `Value` FROM `Property` WHERE `Property` = ?";
+            using (View view = database.OpenView(query))
+            using (Record parameter = new Record(1))
             {
-                throw CreateMsiError("MSI Property view could not be opened", result);
-            }
-
-            try
-            {
-                queryRecord = MsiCreateRecord(1);
-                if (queryRecord == 0)
+                parameter.SetString(1, propertyName);
+                view.Execute(parameter);
+                using (Record value = view.Fetch())
                 {
-                    throw new InvalidDataException("MSI query record could not be created.");
+                    if (value == null)
+                    {
+                        throw new InvalidDataException(
+                            "Required MSI property is missing: " +
+                            propertyName + ".");
+                    }
+                    return RequireValue(
+                        value.IsNull(1) ? null : value.GetString(1),
+                        propertyName);
                 }
-                result = MsiRecordSetStringW(queryRecord, 1, propertyName);
-                if (result != ErrorSuccess)
-                {
-                    throw CreateMsiError("MSI property query could not be prepared", result);
-                }
-                result = MsiViewExecute(view, queryRecord);
-                if (result != ErrorSuccess)
-                {
-                    throw CreateMsiError("MSI property query could not be executed", result);
-                }
-                result = MsiViewFetch(view, out valueRecord);
-                if (result == ErrorNoMoreItems || valueRecord == 0)
-                {
-                    throw new InvalidDataException(
-                        "Required MSI property is missing: " + propertyName + ".");
-                }
-                if (result != ErrorSuccess)
-                {
-                    throw CreateMsiError("MSI property could not be read", result);
-                }
-
-                uint capacity = 256;
-                StringBuilder value = new StringBuilder((int)capacity);
-                result = MsiRecordGetStringW(valueRecord, 1, value, ref capacity);
-                if (result == ErrorMoreData)
-                {
-                    capacity++;
-                    value = new StringBuilder((int)capacity);
-                    result = MsiRecordGetStringW(valueRecord, 1, value, ref capacity);
-                }
-                if (result != ErrorSuccess)
-                {
-                    throw CreateMsiError("MSI property value could not be read", result);
-                }
-
-                string text = value.ToString().Trim();
-                if (text.Length == 0)
-                {
-                    throw new InvalidDataException(
-                        "Required MSI property is empty: " + propertyName + ".");
-                }
-                return text;
-            }
-            finally
-            {
-                if (valueRecord != 0)
-                {
-                    MsiCloseHandle(valueRecord);
-                }
-                if (queryRecord != 0)
-                {
-                    MsiCloseHandle(queryRecord);
-                }
-                MsiViewClose(view);
-                MsiCloseHandle(view);
             }
         }
 
-        private static InvalidDataException CreateMsiError(string message, uint code)
+        private static string RequireValue(string value, string propertyName)
         {
-            return new InvalidDataException(message + " (Windows Installer " + code.ToString() + ").");
+            string result = value == null ? string.Empty : value.Trim();
+            if (result.Length == 0)
+            {
+                throw new InvalidDataException(
+                    "Required MSI property is empty: " + propertyName + ".");
+            }
+            return result;
         }
-
-        [DllImport("msi.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
-        private static extern uint MsiOpenDatabaseW(
-            string databasePath,
-            IntPtr persist,
-            out uint database);
-
-        [DllImport("msi.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
-        private static extern uint MsiDatabaseOpenViewW(
-            uint database,
-            string query,
-            out uint view);
-
-        [DllImport("msi.dll", ExactSpelling = true)]
-        private static extern uint MsiCreateRecord(uint parameterCount);
-
-        [DllImport("msi.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
-        private static extern uint MsiRecordSetStringW(
-            uint record,
-            uint field,
-            string value);
-
-        [DllImport("msi.dll", ExactSpelling = true)]
-        private static extern uint MsiViewExecute(uint view, uint record);
-
-        [DllImport("msi.dll", ExactSpelling = true)]
-        private static extern uint MsiViewFetch(uint view, out uint record);
-
-        [DllImport("msi.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
-        private static extern uint MsiRecordGetStringW(
-            uint record,
-            uint field,
-            StringBuilder value,
-            ref uint valueLength);
-
-        [DllImport("msi.dll", ExactSpelling = true)]
-        private static extern uint MsiViewClose(uint view);
-
-        [DllImport("msi.dll", ExactSpelling = true)]
-        private static extern uint MsiCloseHandle(uint handle);
     }
 }

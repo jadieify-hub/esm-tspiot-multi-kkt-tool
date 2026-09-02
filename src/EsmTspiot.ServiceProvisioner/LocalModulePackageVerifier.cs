@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Text;
 using EsmTspiot.Shared.Models;
 using EsmTspiot.Shared.Services;
 
@@ -12,15 +14,21 @@ namespace EsmTspiot.ServiceProvisioner
         internal VerifiedLocalModulePackage(
             string fullPath,
             FileStream sourceLock,
-            WindowsInstallerPackageMetadata metadata)
+            WindowsInstallerPackageMetadata metadata,
+            LocalModuleMsiCapabilityProfile capabilityProfile,
+            LocalModuleMsiDatabaseSnapshot databaseSnapshot)
         {
             FullPath = fullPath;
             _sourceLock = sourceLock;
             Metadata = metadata.Clone();
+            CapabilityProfile = capabilityProfile;
+            DatabaseSnapshot = databaseSnapshot;
         }
 
         internal string FullPath { get; private set; }
         internal WindowsInstallerPackageMetadata Metadata { get; private set; }
+        internal LocalModuleMsiCapabilityProfile CapabilityProfile { get; private set; }
+        internal LocalModuleMsiDatabaseSnapshot DatabaseSnapshot { get; private set; }
 
         public void Dispose()
         {
@@ -38,21 +46,30 @@ namespace EsmTspiot.ServiceProvisioner
         private readonly IWindowsInstallerPackageReader _packageReader;
         private readonly IFileTrustVerifier _trustVerifier;
         private readonly IPathSafety _pathSafety;
+        private readonly ILocalModuleMsiCapabilityRegistry _capabilityRegistry;
+        private readonly ILocalModuleMsiProfileReader _profileReader;
 
         internal LocalModulePackageVerifier(
             LocalModuleInstallerSelection expected,
             IWindowsInstallerPackageReader packageReader,
             IFileTrustVerifier trustVerifier,
-            IPathSafety pathSafety)
+            IPathSafety pathSafety,
+            ILocalModuleMsiCapabilityRegistry capabilityRegistry,
+            ILocalModuleMsiProfileReader profileReader)
         {
             if (expected == null) throw new ArgumentNullException("expected");
             if (packageReader == null) throw new ArgumentNullException("packageReader");
             if (trustVerifier == null) throw new ArgumentNullException("trustVerifier");
             if (pathSafety == null) throw new ArgumentNullException("pathSafety");
+            if (capabilityRegistry == null)
+                throw new ArgumentNullException("capabilityRegistry");
+            if (profileReader == null) throw new ArgumentNullException("profileReader");
             _expected = Clone(expected);
             _packageReader = packageReader;
             _trustVerifier = trustVerifier;
             _pathSafety = pathSafety;
+            _capabilityRegistry = capabilityRegistry;
+            _profileReader = profileReader;
         }
 
         internal static LocalModulePackageVerifier SupportedVersion2617()
@@ -61,7 +78,9 @@ namespace EsmTspiot.ServiceProvisioner
                 CreateSupportedIdentity(),
                 new WindowsInstallerPackageReader(),
                 new WinTrustVerifier(),
-                new PathSafety());
+                new PathSafety(),
+                new LocalModuleMsiCapabilityRegistry(),
+                new LocalModuleMsiProfileReader());
         }
 
         internal static LocalModuleInstallerSelection CreateSupportedIdentity()
@@ -120,10 +139,30 @@ namespace EsmTspiot.ServiceProvisioner
                 }
                 ValidateObservedTrust(selection, trust.Observed);
 
+                LocalModuleMsiCapabilityProfile profile =
+                    _capabilityRegistry.FindExact(metadata, trust.Observed);
+                LocalModuleMsiDatabaseSnapshot databaseSnapshot =
+                    _profileReader.Read(sourcePath);
+                IList<MsiProfileMismatch> mismatches =
+                    databaseSnapshot.Compare(profile);
+                if (mismatches.Count > 0)
+                {
+                    StringBuilder message = new StringBuilder(
+                        "Local-module MSI structural profile mismatch: ");
+                    for (int index = 0; index < mismatches.Count; index++)
+                    {
+                        if (index > 0) message.Append("; ");
+                        message.Append(mismatches[index].ToString());
+                    }
+                    throw new InvalidDataException(message.ToString());
+                }
+
                 VerifiedLocalModulePackage result = new VerifiedLocalModulePackage(
                     sourcePath,
                     sourceLock,
-                    metadata);
+                    metadata,
+                    profile,
+                    databaseSnapshot);
                 sourceLock = null;
                 return result;
             }

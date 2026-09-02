@@ -254,7 +254,8 @@ git commit -m "Plan MSI local modules by INN"
 - Create: `src/EsmTspiot.ServiceProvisioner/LocalModuleMsiCapabilityRegistry.cs`
 - Create: `src/EsmTspiot.ServiceProvisioner/LocalModuleMsiDatabaseSnapshot.cs`
 - Create: `src/EsmTspiot.ServiceProvisioner/LocalModuleMsiProfileReader.cs`
-- Create: `tests/EsmTspiot.ServiceProvisioner.Tests/Fixtures/local-module-msi-2.6.1-7-profile.json`
+- Create: `src/EsmTspiot.ServiceProvisioner/Profiles/local-module-msi-2.6.1-7-profile.json` (embedded canonical profile, linked into the test output as the sanitized fixture)
+- Modify: `src/EsmTspiot.ServiceProvisioner/EsmTspiot.ServiceProvisioner.csproj`
 - Modify: `src/EsmTspiot.ServiceProvisioner/WindowsInstallerPackageReader.cs`
 - Modify: `src/EsmTspiot.ServiceProvisioner/LocalModulePackageVerifier.cs`
 - Modify: `tests/EsmTspiot.ServiceProvisioner.Tests/EsmTspiot.ServiceProvisioner.Tests.csproj`
@@ -284,21 +285,21 @@ internal sealed class LocalModuleMsiCapabilityRegistry
 }
 ```
 
-- [ ] **Step 1: Add failing profile tests**
+- [x] **Step 1: Add failing profile tests**
 
 Tests must accept the sanitized exact profile and reject one mutation at a time: Product/Package/Upgrade identity, `2246` File rows, `2226` MsiFileHash rows, Media names/LastSequence, required Directory, Registry, RegLocator/AppSearch, five config files, quoted service custom actions, `InstallAutoApdater`, and `StopEPMD`. Assert the exception names the table/key mismatch but contains no source path or secret property value. A registry test must return an explicit unsupported-profile result for an unknown exact identity without weakening the known profile.
 
-- [ ] **Step 2: Run helper tests and observe failure**
+- [x] **Step 2: Run helper tests and observe failure**
 
 Run the Task 1 helper-test command.
 
 Expected: FAIL because only four MSI properties are currently read.
 
-- [ ] **Step 3: Implement read-only DTF queries and exact comparison**
+- [x] **Step 3: Implement read-only DTF queries and exact comparison**
 
 Open with `new Database(path, DatabaseOpenMode.ReadOnly)`. Read only allowlisted columns and normalize them into immutable snapshots. Keep existing Authenticode/hash lock before structural reads. Return all safe mismatches, for example `Media:#Disk1.cab LastSequence expected 2247 observed 2246`; never dump full table rows.
 
-- [ ] **Step 4: Run helper tests and safety gate**
+- [x] **Step 4: Run helper tests and safety gate**
 
 Run the Task 1 helper-test command and:
 
