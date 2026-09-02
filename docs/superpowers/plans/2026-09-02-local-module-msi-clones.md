@@ -44,11 +44,11 @@
 - Produces: helper-local DTF assemblies `WixToolset.Dtf.WindowsInstaller.dll`, `WixToolset.Dtf.WindowsInstaller.Package.dll`, `WixToolset.Dtf.Compression.dll`, `WixToolset.Dtf.Compression.Cab.dll`.
 - Preserves: main/helper SHA pin and identical `EsmTspiot.Shared.dll` check.
 
-- [ ] **Step 1: Write the failing closure test**
+- [x] **Step 1: Write the failing closure test**
 
-Add `DtfDependencyClosureIsExactAndVendorFree` to the provisioner test runner. It must assert that the helper output contains the four exact DTF DLL names above, contains no MSI/vendor file, and the package version read from assembly metadata is `4.0.6.0`.
+Add `DtfDependencyClosureIsExactAndVendorFree` to the provisioner test runner. It must assert that the helper output contains the four exact DTF DLL names above, contains no MSI/vendor file, and the file version metadata is `4.0.6.0`.
 
-- [ ] **Step 2: Run the helper tests and verify the new test fails**
+- [x] **Step 2: Run the helper tests and verify the new test fails**
 
 Run:
 
@@ -61,7 +61,7 @@ $msbuild = Get-KrsMSBuildPath
 
 Expected: FAIL because the DTF assemblies are not in the helper closure.
 
-- [ ] **Step 3: Add the pinned package and copy exact runtime dependencies**
+- [x] **Step 3: Add the pinned package and copy exact runtime dependencies**
 
 Add to both helper and helper-test projects:
 
@@ -71,7 +71,7 @@ Add to both helper and helper-test projects:
 
 Change `EsmTspiot.Provisioner.targets` so `CopyProvisionerClosure` and publish copy the helper EXE, shared DLL, and the four exact DTF DLLs. Change the compact packager’s `helperClosure` and expected layout from a two-file list to that exact six-file helper closure. Keep `.msi` forbidden.
 
-- [ ] **Step 4: Run helper tests and compact-contract verification**
+- [x] **Step 4: Run helper tests and compact-contract verification**
 
 Run the command from Step 2, then:
 
@@ -81,7 +81,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_release_matrix.p
 
 Expected: all existing tests/gates PASS and the new closure test PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add src/EsmTspiot.ServiceProvisioner/EsmTspiot.ServiceProvisioner.csproj tests/EsmTspiot.ServiceProvisioner.Tests/EsmTspiot.ServiceProvisioner.Tests.csproj build/EsmTspiot.Provisioner.targets scripts/package_compact_release.ps1 scripts/verify_compact_security_contract.ps1 tests/EsmTspiot.ServiceProvisioner.Tests/Program.cs

@@ -26,6 +26,43 @@ foreach ($path in @($mainPath, $helperPath)) {
     }
 }
 
+$provisionerRoot = Join-Path $stage 'Provisioner'
+$expectedProvisionerFiles = @(
+    'EsmTspiot.ServiceProvisioner.exe',
+    'EsmTspiot.Shared.dll',
+    'WixToolset.Dtf.Compression.Cab.dll',
+    'WixToolset.Dtf.Compression.dll',
+    'WixToolset.Dtf.WindowsInstaller.Package.dll',
+    'WixToolset.Dtf.WindowsInstaller.dll'
+) | Sort-Object
+$actualProvisionerFiles = @(
+    Get-ChildItem -LiteralPath $provisionerRoot -File |
+        ForEach-Object Name |
+        Sort-Object
+)
+if (($expectedProvisionerFiles -join "`n") -ne
+    ($actualProvisionerFiles -join "`n")) {
+    throw "Compact helper closure differs from the reviewed exact file set. Expected: $($expectedProvisionerFiles -join ', '); actual: $($actualProvisionerFiles -join ', ')."
+}
+
+$expectedDtfHashes = @{
+    'WixToolset.Dtf.WindowsInstaller.dll' = 'CDD7F34DDA1180F21205543C8EE836C5BE66060D94441172366BCE078E1CDB87'
+    'WixToolset.Dtf.WindowsInstaller.Package.dll' = '3DE9CAB111A102040C6B4E17FE26690AFCDF37E8F9D82055A479CEF0DECA803C'
+    'WixToolset.Dtf.Compression.dll' = '7D1C9C7B18D95A5AD80E250E4B185F47FAE6C921048355AE6D53FAB10BF19525'
+    'WixToolset.Dtf.Compression.Cab.dll' = '06971F82041E80DAAC87CCEFFC1F88CC7D663470E9295E487554447A5AE43435'
+}
+foreach ($name in $expectedDtfHashes.Keys) {
+    $path = Join-Path $provisionerRoot $name
+    $actualHash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+    if ($actualHash -ne $expectedDtfHashes[$name]) {
+        throw "Packaged DTF binary differs from the reviewed 4.0.6 dependency: $name"
+    }
+    $info = [Diagnostics.FileVersionInfo]::GetVersionInfo($path)
+    if ($info.FileVersion -ne '4.0.6.0') {
+        throw "Packaged DTF binary has an unexpected file version: $name ($($info.FileVersion))."
+    }
+}
+
 $mainAssembly = [Reflection.Assembly]::LoadFrom($mainPath)
 $integrityType = $mainAssembly.GetType(
     'EsmTspiot.WinForms.Shared.ProvisionerIntegrity',

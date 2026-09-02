@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
@@ -37,6 +38,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 return 2;
             }
 
+            Run("DTF dependency closure is exact and vendor free", DtfDependencyClosureIsExactAndVendorFree);
             Run("Provisioning protocol accepts bounded ensure batch", ProvisioningProtocolAcceptsBoundedEnsureBatch);
             Run("Provisioning protocol rejects oversized or duplicate batch", ProvisioningProtocolRejectsOversizedOrDuplicateBatch);
             Run("Provisioning protocol rejects unknown schema or operation", ProvisioningProtocolRejectsUnknownSchemaOrOperation);
@@ -180,6 +182,85 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
             Console.WriteLine(_failures.ToString() + " provisioner test(s) failed.");
             return 1;
+        }
+
+        private static void DtfDependencyClosureIsExactAndVendorFree()
+        {
+            string outputRoot = Path.GetDirectoryName(
+                typeof(Program).Assembly.Location);
+            string[] expected =
+            {
+                "WixToolset.Dtf.WindowsInstaller.dll",
+                "WixToolset.Dtf.WindowsInstaller.Package.dll",
+                "WixToolset.Dtf.Compression.dll",
+                "WixToolset.Dtf.Compression.Cab.dll"
+            };
+            string[] expectedSha256 =
+            {
+                "CDD7F34DDA1180F21205543C8EE836C5BE66060D94441172366BCE078E1CDB87",
+                "3DE9CAB111A102040C6B4E17FE26690AFCDF37E8F9D82055A479CEF0DECA803C",
+                "7D1C9C7B18D95A5AD80E250E4B185F47FAE6C921048355AE6D53FAB10BF19525",
+                "06971F82041E80DAAC87CCEFFC1F88CC7D663470E9295E487554447A5AE43435"
+            };
+            for (int index = 0; index < expected.Length; index++)
+            {
+                string path = Path.Combine(outputRoot, expected[index]);
+                AssertTrue(
+                    File.Exists(path),
+                    "The helper closure is missing " + expected[index] + ".");
+                if (File.Exists(path))
+                {
+                    AssertEqual(
+                        "4.0.6.0",
+                        FileVersionInfo.GetVersionInfo(path).FileVersion,
+                        expected[index] + " must remain pinned to DTF 4.0.6.");
+                    AssertTrue(
+                        string.Equals(
+                            expectedSha256[index],
+                            ComputeSha256(File.ReadAllBytes(path)),
+                            StringComparison.OrdinalIgnoreCase),
+                        expected[index] + " must match the reviewed DTF binary.");
+                }
+            }
+
+            string[] files = Directory.GetFiles(
+                outputRoot,
+                "*",
+                SearchOption.TopDirectoryOnly);
+            List<string> actualDtf = new List<string>();
+            for (int index = 0; index < files.Length; index++)
+            {
+                string name = Path.GetFileName(files[index]);
+                if (name.StartsWith(
+                    "WixToolset.Dtf.",
+                    StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(
+                        Path.GetExtension(name),
+                        ".dll",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    actualDtf.Add(name);
+                }
+                AssertFalse(
+                    string.Equals(
+                        Path.GetExtension(name),
+                        ".msi",
+                        StringComparison.OrdinalIgnoreCase),
+                    "The helper closure must not contain an MSI package.");
+                AssertFalse(
+                    name.IndexOf("regime", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    name.IndexOf("yenisei", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    name.IndexOf("nssm", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    name.IndexOf("RollingPin", StringComparison.OrdinalIgnoreCase) >= 0,
+                    "The helper closure must not contain a vendor or reference binary.");
+            }
+
+            Array.Sort(expected, StringComparer.OrdinalIgnoreCase);
+            actualDtf.Sort(StringComparer.OrdinalIgnoreCase);
+            AssertEqual(
+                string.Join("|", expected),
+                string.Join("|", actualDtf.ToArray()),
+                "The helper output must contain exactly the reviewed DTF closure.");
         }
 
         private static int RunDirectControllerProductionSandbox()
