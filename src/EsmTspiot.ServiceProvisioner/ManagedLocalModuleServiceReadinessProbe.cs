@@ -89,6 +89,26 @@ namespace EsmTspiot.ServiceProvisioner
         private static extern bool CloseHandle(IntPtr handle);
     }
 
+    internal static class ProcessTreeOwnership
+    {
+        internal static bool IsSameOrDescendant(
+            IProcessParentReader parents,
+            int processId,
+            int serviceProcessId)
+        {
+            if (parents == null) throw new ArgumentNullException("parents");
+            int current = processId;
+            HashSet<int> visited = new HashSet<int>();
+            for (int depth = 0; depth < 8 && current > 0; depth++)
+            {
+                if (current == serviceProcessId) return true;
+                if (!visited.Add(current)) return false;
+                current = parents.GetParentProcessId(current);
+            }
+            return false;
+        }
+    }
+
     internal sealed class ManagedLocalModuleServiceReadinessProbe :
         ILocalModuleServiceReadinessProbe
     {
@@ -224,21 +244,10 @@ namespace EsmTspiot.ServiceProvisioner
 
         private bool IsSameOrDescendant(int processId, int serviceProcessId)
         {
-            int current = processId;
-            HashSet<int> visited = new HashSet<int>();
-            for (int depth = 0; depth < 8 && current > 0; depth++)
-            {
-                if (current == serviceProcessId)
-                {
-                    return true;
-                }
-                if (!visited.Add(current))
-                {
-                    return false;
-                }
-                current = _parents.GetParentProcessId(current);
-            }
-            return false;
+            return ProcessTreeOwnership.IsSameOrDescendant(
+                _parents,
+                processId,
+                serviceProcessId);
         }
 
         private static bool TryResolve(

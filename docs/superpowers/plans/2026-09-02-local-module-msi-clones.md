@@ -579,27 +579,27 @@ internal interface ILocalModuleServicePairController
 }
 ```
 
-- [ ] **Step 1: Add failing config and readiness tests**
+- [x] **Step 1: Add failing config and readiness tests**
 
 Test `WriteValuesToVmArgs` result in `vm.args`, `WriteIniFiles` result in `local.ini`, and `WriteErtsBinPath` result in `erl.ini`. Require equal 32-character cookie within a pair, different digest across pairs, API `0.0.0.0`, DB `127.0.0.1`, expected node names, service ImagePath inside exact install root, and listeners owned by the service process tree. Assert no cookie value is returned or logged.
 
-- [ ] **Step 2: Run helper tests and observe failure**
+- [x] **Step 2: Run helper tests and observe failure**
 
 Run the Task 1 helper-test command.
 
 Expected: FAIL because installed-layout inspection/readiness do not exist.
 
-- [ ] **Step 3: Implement strict parsers and ordered lifecycle**
+- [x] **Step 3: Implement strict parsers and ordered lifecycle**
 
 Parse only the characterized INI/vm.args keys; reject duplicate keys, mixed instance paths and ambiguous quoting. Compare cookies in memory, expose only SHA-256 digest. Start DB and wait for its exact port/owner before API; stop in reverse and require listeners to disappear without killing processes.
 
-- [ ] **Step 4: Run helper tests**
+- [x] **Step 4: Run helper tests**
 
 Run the Task 1 helper-test command.
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add src/EsmTspiot.ServiceProvisioner tests/EsmTspiot.ServiceProvisioner.Tests/Program.cs
