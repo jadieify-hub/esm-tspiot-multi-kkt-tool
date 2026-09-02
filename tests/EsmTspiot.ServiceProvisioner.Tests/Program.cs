@@ -96,6 +96,9 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Local module MSI transformer edits only profiled rows", LocalModuleMsiTransformerEditsOnlyProfiledRows);
             Run("Local module MSI output rejects cabinet and table drift", LocalModuleMsiOutputRejectsCabinetAndTableDrift);
             Run("Local module MSI staging recovers every mutation boundary", LocalModuleMsiStagingRecoversEveryMutationBoundary);
+            Run("Windows Installer API keeps credentials out of diagnostics", WindowsInstallerApiKeepsCredentialsOutOfDiagnostics);
+            Run("Installed local module reader scans both registry views", InstalledLocalModuleReaderScansBothRegistryViews);
+            Run("Local module MSI manifests guard ownership and content", LocalModuleMsiManifestsGuardOwnershipAndContent);
             Run("Managed local module protocol accepts consistent shared INN rows", ManagedLocalModuleProtocolAcceptsConsistentSharedInnRows);
             Run("Managed provisioning session accepts only known monotonic messages", ManagedProvisioningSessionAcceptsOnlyKnownMonotonicMessages);
             Run("Managed session server interleaves caller and helper per KKT", ManagedSessionServerInterleavesCallerAndHelperPerKkt);
@@ -1839,6 +1842,156 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 AssertTrue(Directory.Exists(unsafeWorkspace.RootPath),
                     "Unsafe recovery must not delete the staging root.");
                 unsafeWorkspace.Cleanup();
+            }
+            finally
+            {
+                DeleteTestTreeWithReadOnlyFiles(directory);
+            }
+        }
+
+        private static void WindowsInstallerApiKeepsCredentialsOutOfDiagnostics()
+        {
+            string directory = CreateTemporaryDirectory();
+            try
+            {
+                string package = Path.Combine(directory, "package.msi");
+                File.WriteAllText(package, "synthetic");
+                FakeWindowsInstallerNative native =
+                    new FakeWindowsInstallerNative();
+                WindowsInstallerApi api = new WindowsInstallerApi(native);
+                const string hidden =
+                    "ADMINLOGIN=admin ADMINPASSWORD=admin";
+                AssertEqual((uint)0, api.Install(package, hidden),
+                    "Successful MSI result must remain unchanged.");
+                AssertEqual(Path.GetFullPath(package), native.PackagePath,
+                    "Native MSI install must receive the exact package path.");
+                AssertEqual(hidden, native.CommandLine,
+                    "Native MSI install must receive the required credentials.");
+                AssertEqual(
+                    "ADMINLOGIN=<redacted> ADMINPASSWORD=<redacted>",
+                    WindowsInstallerApi.RedactInstallProperties(hidden),
+                    "Diagnostics must never expose MSI credentials.");
+
+                const string product =
+                    "{10000000-0000-0000-0000-000000000001}";
+                AssertEqual((uint)0, api.Repair(product),
+                    "Successful MSI repair must remain unchanged.");
+                AssertEqual(5, native.InstallState,
+                    "Repair must request INSTALLSTATE_DEFAULT.");
+                AssertEqual((uint)0, api.Uninstall(product),
+                    "Successful MSI uninstall must remain unchanged.");
+                AssertEqual(2, native.InstallState,
+                    "Uninstall must request INSTALLSTATE_ABSENT.");
+
+                native.ReturnCode = 1603;
+                try
+                {
+                    api.Install(package, hidden);
+                    throw new InvalidOperationException(
+                        "Nonzero MSI result must throw.");
+                }
+                catch (WindowsInstallerOperationException exception)
+                {
+                    AssertEqual((uint)1603, exception.MsiErrorCode,
+                        "MSI error code must survive unchanged.");
+                    AssertFalse(exception.Message.Contains("admin"),
+                        "MSI exception must not contain credentials.");
+                }
+            }
+            finally
+            {
+                DeleteTestTreeWithReadOnlyFiles(directory);
+            }
+        }
+
+        private static void InstalledLocalModuleReaderScansBothRegistryViews()
+        {
+            FakeInstalledLocalModuleRegistry registry =
+                new FakeInstalledLocalModuleRegistry();
+            registry.Registry64.Add(new InstalledLocalModuleProduct
+            {
+                ProductCode = "{20000000-0000-0000-0000-000000000001}",
+                DisplayName = "Unrelated",
+                DisplayVersion = "1.0",
+                InstallLocation = @"C:\Unrelated"
+            });
+            registry.Registry32.Add(new InstalledLocalModuleProduct
+            {
+                ProductCode = "{10000000-0000-0000-0000-000000000001}",
+                DisplayName = "Локальный модуль Честный Знак",
+                DisplayVersion = "2.6.1",
+                InstallLocation = @"D:\Program Files\Regime"
+            });
+            InstalledLocalModuleProductReader reader =
+                new InstalledLocalModuleProductReader(registry);
+            InstalledLocalModuleProduct exact = reader.FindExact(
+                "{10000000-0000-0000-0000-000000000001}",
+                "Локальный модуль Честный Знак",
+                "2.6.1",
+                @"D:\Program Files\Regime\");
+            AssertTrue(exact != null,
+                "Exact product must be found in the 32-bit registry view.");
+            AssertTrue(registry.Read32 && registry.Read64,
+                "Installed product inventory must scan both HKLM registry views.");
+            AssertTrue(reader.FindExact(
+                exact.ProductCode,
+                exact.DisplayName,
+                exact.DisplayVersion,
+                @"D:\Other") == null,
+                "A different install root must not match.");
+        }
+
+        private static void LocalModuleMsiManifestsGuardOwnershipAndContent()
+        {
+            string directory = CreateTemporaryDirectory();
+            try
+            {
+                string machineRoot = Path.Combine(directory, "MultiKKT");
+                Directory.CreateDirectory(machineRoot);
+                LocalModuleMsiManifestStore store =
+                    new LocalModuleMsiManifestStore(
+                        machineRoot,
+                        new FakePathSafety(true));
+                LocalModuleMsiManifest preExisting =
+                    LocalModuleMsiManifest.Create(
+                        "1234567890",
+                        0,
+                        "{10000000-0000-0000-0000-000000000001}",
+                        "{20000000-0000-0000-0000-000000000001}",
+                        @"D:\Program Files\Regime",
+                        false,
+                        true,
+                        new string('a', 32));
+                AssertFalse(preExisting.CanRemove,
+                    "A pre-existing base product must be preserved.");
+                store.Write(preExisting);
+                LocalModuleMsiManifest read = store.Read(preExisting.Inn);
+                AssertEqual(preExisting.ProductCode, read.ProductCode,
+                    "Manifest read-back must preserve exact product identity.");
+
+                string path = store.GetManifestPath(preExisting.Inn);
+                string json = File.ReadAllText(path);
+                File.WriteAllText(
+                    path,
+                    json.Replace(
+                        "\"PreExisting\":true",
+                        "\"PreExisting\":false"));
+                AssertThrows<InvalidDataException>(delegate {
+                    store.Read(preExisting.Inn);
+                }, "Manifest content changes must fail the hash guard.");
+
+                LocalModuleMsiManifest applicationInstalled =
+                    LocalModuleMsiManifest.Create(
+                        "123456789012",
+                        0,
+                        "{30000000-0000-0000-0000-000000000001}",
+                        "{40000000-0000-0000-0000-000000000001}",
+                        @"D:\Program Files\Regime",
+                        true,
+                        false,
+                        new string('b', 32));
+                AssertTrue(applicationInstalled.CanRemove,
+                    "An application-installed base product must be removable.");
             }
             finally
             {
@@ -7660,6 +7813,64 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 {
                     callback();
                 }
+            }
+        }
+
+        private sealed class FakeWindowsInstallerNative :
+            IWindowsInstallerNative
+        {
+            internal uint ReturnCode { get; set; }
+            internal string PackagePath { get; private set; }
+            internal string ProductCode { get; private set; }
+            internal string CommandLine { get; private set; }
+            internal int InstallLevel { get; private set; }
+            internal int InstallState { get; private set; }
+
+            public uint InstallProduct(string packagePath, string commandLine)
+            {
+                PackagePath = packagePath;
+                CommandLine = commandLine;
+                return ReturnCode;
+            }
+
+            public uint ConfigureProduct(
+                string productCode,
+                int installLevel,
+                int installState,
+                string commandLine)
+            {
+                ProductCode = productCode;
+                InstallLevel = installLevel;
+                InstallState = installState;
+                CommandLine = commandLine;
+                return ReturnCode;
+            }
+        }
+
+        private sealed class FakeInstalledLocalModuleRegistry :
+            IInstalledLocalModuleRegistry
+        {
+            internal FakeInstalledLocalModuleRegistry()
+            {
+                Registry32 = new List<InstalledLocalModuleProduct>();
+                Registry64 = new List<InstalledLocalModuleProduct>();
+            }
+
+            internal IList<InstalledLocalModuleProduct> Registry32 { get; private set; }
+            internal IList<InstalledLocalModuleProduct> Registry64 { get; private set; }
+            internal bool Read32 { get; private set; }
+            internal bool Read64 { get; private set; }
+
+            public IList<InstalledLocalModuleProduct> Read(
+                Microsoft.Win32.RegistryView view)
+            {
+                if (view == Microsoft.Win32.RegistryView.Registry32)
+                {
+                    Read32 = true;
+                    return Registry32;
+                }
+                Read64 = true;
+                return Registry64;
             }
         }
 
