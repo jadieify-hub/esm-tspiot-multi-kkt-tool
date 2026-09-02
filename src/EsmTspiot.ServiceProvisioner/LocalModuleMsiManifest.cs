@@ -11,7 +11,7 @@ namespace EsmTspiot.ServiceProvisioner
     [DataContract]
     internal sealed class LocalModuleMsiManifest
     {
-        internal const int CurrentSchemaVersion = 2;
+        internal const int CurrentSchemaVersion = 3;
         internal const string ExpectedOwnershipMarker =
             "KRS.MultiKKT.LocalModuleMsi.Product.v1";
 
@@ -28,33 +28,39 @@ namespace EsmTspiot.ServiceProvisioner
         internal int CloneOrdinal { get; set; }
 
         [DataMember(Order = 5)]
-        internal string ProductCode { get; set; }
+        internal int ApiPort { get; set; }
 
         [DataMember(Order = 6)]
-        internal string PackageCode { get; set; }
+        internal int DatabasePort { get; set; }
 
         [DataMember(Order = 7)]
-        internal string InstallRoot { get; set; }
+        internal string ProductCode { get; set; }
 
         [DataMember(Order = 8)]
-        internal bool InstalledByApplication { get; set; }
+        internal string PackageCode { get; set; }
 
         [DataMember(Order = 9)]
-        internal bool PreExisting { get; set; }
+        internal string InstallRoot { get; set; }
 
         [DataMember(Order = 10)]
-        internal string OwnershipNonce { get; set; }
+        internal bool InstalledByApplication { get; set; }
 
         [DataMember(Order = 11)]
-        internal string UpdatedUtc { get; set; }
+        internal bool PreExisting { get; set; }
 
         [DataMember(Order = 12)]
-        internal string FirewallRuleName { get; set; }
+        internal string OwnershipNonce { get; set; }
 
         [DataMember(Order = 13)]
-        internal string FirewallRuleHash { get; set; }
+        internal string UpdatedUtc { get; set; }
 
         [DataMember(Order = 14)]
+        internal string FirewallRuleName { get; set; }
+
+        [DataMember(Order = 15)]
+        internal string FirewallRuleHash { get; set; }
+
+        [DataMember(Order = 16)]
         internal string ManifestSha256 { get; set; }
 
         internal bool CanRemove
@@ -65,6 +71,8 @@ namespace EsmTspiot.ServiceProvisioner
         internal static LocalModuleMsiManifest Create(
             string inn,
             int cloneOrdinal,
+            int apiPort,
+            int databasePort,
             string productCode,
             string packageCode,
             string installRoot,
@@ -78,6 +86,8 @@ namespace EsmTspiot.ServiceProvisioner
                 OwnershipMarker = ExpectedOwnershipMarker,
                 Inn = inn,
                 CloneOrdinal = cloneOrdinal,
+                ApiPort = apiPort,
+                DatabasePort = databasePort,
                 ProductCode = NormalizeGuid(productCode, "productCode"),
                 PackageCode = NormalizeGuid(packageCode, "packageCode"),
                 InstallRoot = NormalizeRoot(installRoot),
@@ -130,6 +140,8 @@ namespace EsmTspiot.ServiceProvisioner
                 manifest.OwnershipMarker,
                 manifest.Inn,
                 manifest.CloneOrdinal.ToString(CultureInfo.InvariantCulture),
+                manifest.ApiPort.ToString(CultureInfo.InvariantCulture),
+                manifest.DatabasePort.ToString(CultureInfo.InvariantCulture),
                 manifest.ProductCode,
                 manifest.PackageCode,
                 manifest.InstallRoot,
@@ -164,6 +176,16 @@ namespace EsmTspiot.ServiceProvisioner
                 manifest.CloneOrdinal < 0 ||
                 manifest.CloneOrdinal >
                     LocalModuleMsiIdentity.MaximumCloneOrdinal ||
+                manifest.ApiPort < 1024 || manifest.ApiPort > 65535 ||
+                manifest.DatabasePort < 1024 ||
+                manifest.DatabasePort > 65535 ||
+                manifest.ApiPort == manifest.DatabasePort ||
+                (manifest.CloneOrdinal > 0 &&
+                 (manifest.ApiPort != LocalModuleMsiIdentity.ApiPortForClone(
+                     manifest.CloneOrdinal) ||
+                  manifest.DatabasePort !=
+                    LocalModuleMsiIdentity.DatabasePortForClone(
+                        manifest.CloneOrdinal))) ||
                 (manifest.InstalledByApplication == manifest.PreExisting) ||
                 (manifest.CloneOrdinal > 0 && manifest.PreExisting) ||
                 !LocalModuleManagedIdentity.IsLowerHex(
