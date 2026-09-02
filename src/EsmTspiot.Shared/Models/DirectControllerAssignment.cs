@@ -15,6 +15,6 @@ namespace EsmTspiot.Shared.Models
         public string ServiceName { get; set; }
         public int GrpcPort { get; set; }
         public int RestPort { get; set; }
-        public int FutureLocalModulePort { get; set; }
+        public int TargetLocalModulePort { get; set; }
     }
 }

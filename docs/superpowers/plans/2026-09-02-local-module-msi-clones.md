@@ -103,8 +103,15 @@ git commit -m "Pin DTF runtime for local module MSI work"
 - Modify: `src/EsmTspiot.Shared/Models/DirectControllerAssignment.cs`
 - Modify: `src/EsmTspiot.Shared/Models/DirectControllerProvisioningItemRequest.cs`
 - Modify: `src/EsmTspiot.Shared/Services/DirectControllerPlanner.cs`
+- Modify: `src/EsmTspiot.Shared/Services/DirectControllerIdentity.cs`
+- Modify: `src/EsmTspiot.Shared/Services/CanonicalLmPlanHasher.cs`
 - Modify: `src/EsmTspiot.ServiceProvisioner/DirectControllerManifest.cs`
+- Modify: `src/EsmTspiot.ServiceProvisioner/DirectControllerManifestStore.cs`
 - Modify: `src/EsmTspiot.ServiceProvisioner/DirectControllerProfileStore.cs`
+- Modify: `src/EsmTspiot.ServiceProvisioner/ProvisioningRequestValidator.cs`
+- Modify: `src/EsmTspiot.ServiceProvisioner/WindowsDirectControllerPlatform.cs`
+- Modify: `src/EsmTspiot.WinForms.Shared/DirectControllerOperatorInventoryReader.cs`
+- Modify: `src/EsmTspiot.WinForms.Shared/LmGatewayPage.DirectControllers.cs`
 - Modify: `tests/EsmTspiot.Shared.Tests/Program.cs`
 - Modify: `tests/EsmTspiot.ServiceProvisioner.Tests/Program.cs`
 
@@ -168,7 +175,7 @@ public static DirectControllerPlan Build(
     IDictionary<string, int> targetLmPortsByInn);
 ```
 
-- [ ] **Step 1: Write failing shared tests for grouping, ports, roots, and controller targets**
+- [x] **Step 1: Write failing shared tests for grouping, ports, roots, and controller targets**
 
 Add tests proving:
 
@@ -189,7 +196,7 @@ AssertNotEqual(controllers.Assignments[0].GrpcPort, controllers.Assignments[1].G
 
 Add helper tests proving `DirectControllerProfileStore` writes the explicit target port supplied by the INN assignment and safely upgrades an owned old manifest whose target was previously derived from controller ordinal.
 
-- [ ] **Step 2: Run shared and helper tests and verify failures**
+- [x] **Step 2: Run shared and helper tests and verify failures**
 
 Run:
 
@@ -203,7 +210,7 @@ $msbuild = Get-KrsMSBuildPath
 
 Expected: FAIL because `TargetLocalModulePort` and the MSI planner do not exist.
 
-- [ ] **Step 3: Implement the minimal planner and root policy**
+- [x] **Step 3: Implement the minimal planner and root policy**
 
 Implement explicit identity methods:
 
@@ -223,7 +230,7 @@ public static int DatabasePortForClone(int ordinal)
 
 Use actual base config ports for ordinal 0. Allocate saved ordinals first, then the first free ordinal; group strictly by normalized INN. Pass the resulting `ApiPort` into every controller assignment of that INN.
 
-- [ ] **Step 4: Run tests and C# 5 builds**
+- [x] **Step 4: Run tests and C# 5 builds**
 
 Run the Step 2 commands, then:
 
@@ -233,10 +240,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_release_matrix.p
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
-git add src/EsmTspiot.Shared src/EsmTspiot.ServiceProvisioner/DirectControllerManifest.cs src/EsmTspiot.ServiceProvisioner/DirectControllerProfileStore.cs tests/EsmTspiot.Shared.Tests/Program.cs tests/EsmTspiot.ServiceProvisioner.Tests/Program.cs
+git add src/EsmTspiot.Shared src/EsmTspiot.ServiceProvisioner/DirectControllerManifest.cs src/EsmTspiot.ServiceProvisioner/DirectControllerManifestStore.cs src/EsmTspiot.ServiceProvisioner/DirectControllerProfileStore.cs src/EsmTspiot.ServiceProvisioner/ProvisioningRequestValidator.cs src/EsmTspiot.ServiceProvisioner/WindowsDirectControllerPlatform.cs src/EsmTspiot.WinForms.Shared/DirectControllerOperatorInventoryReader.cs src/EsmTspiot.WinForms.Shared/LmGatewayPage.DirectControllers.cs tests/EsmTspiot.Shared.Tests/Program.cs tests/EsmTspiot.ServiceProvisioner.Tests/Program.cs
 git commit -m "Plan MSI local modules by INN"
 ```
 

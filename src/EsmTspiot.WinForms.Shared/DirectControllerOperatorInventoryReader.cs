@@ -48,6 +48,7 @@ namespace EsmTspiot.WinForms.Shared
                     KktSerial = assignment.KktSerial,
                     Inn = assignment.KktInn,
                     Ordinal = assignment.Ordinal,
+                    TargetLocalModulePort = assignment.TargetLocalModulePort,
                     ExpectedManifestSha256 = fingerprint
                 });
             }
@@ -195,6 +196,16 @@ namespace EsmTspiot.WinForms.Shared
         private static DirectControllerAssignment ToAssignment(
             InventoryProjection source)
         {
+            int targetPort = source == null
+                ? 0
+                : source.TargetLocalModulePort;
+            if (source != null && targetPort == 0 && source.Ordinal >= 1 &&
+                source.Ordinal <= DirectControllerIdentity.MaximumOrdinal &&
+                source.LegacyFutureLocalModulePort ==
+                    DirectControllerIdentity.FutureLmPortForOrdinal(source.Ordinal))
+            {
+                targetPort = source.LegacyFutureLocalModulePort;
+            }
             if (source == null || source.Ordinal < 1 ||
                 source.Ordinal > DirectControllerIdentity.MaximumOrdinal ||
                 !IsDigits(source.KktSerial, 14) ||
@@ -205,8 +216,7 @@ namespace EsmTspiot.WinForms.Shared
                     StringComparison.Ordinal) ||
                 source.GrpcPort != DirectControllerIdentity.GrpcPortForOrdinal(source.Ordinal) ||
                 source.RestPort != DirectControllerIdentity.RestPortForOrdinal(source.Ordinal) ||
-                source.FutureLocalModulePort !=
-                    DirectControllerIdentity.FutureLmPortForOrdinal(source.Ordinal))
+                targetPort < 1024 || targetPort > 65535)
             {
                 throw new InvalidDataException(
                     "Запись инвентаря прямого контроллера недействительна.");
@@ -220,7 +230,7 @@ namespace EsmTspiot.WinForms.Shared
                 ServiceName = source.ServiceName,
                 GrpcPort = source.GrpcPort,
                 RestPort = source.RestPort,
-                FutureLocalModulePort = source.FutureLocalModulePort
+                TargetLocalModulePort = targetPort
             };
         }
 
@@ -242,8 +252,7 @@ namespace EsmTspiot.WinForms.Shared
             for (int index = 0; index < source.Count; index++)
             {
                 DirectControllerAssignment item = source[index];
-                if (item.GrpcPort == port || item.RestPort == port ||
-                    item.FutureLocalModulePort == port)
+                if (item.GrpcPort == port || item.RestPort == port)
                 {
                     return item;
                 }
@@ -277,8 +286,7 @@ namespace EsmTspiot.WinForms.Shared
             int port)
         {
             if (port != DirectControllerIdentity.GrpcPortForOrdinal(1) &&
-                port != DirectControllerIdentity.RestPortForOrdinal(1) &&
-                port != DirectControllerIdentity.FutureLmPortForOrdinal(1))
+                port != DirectControllerIdentity.RestPortForOrdinal(1))
             {
                 return false;
             }
@@ -342,10 +350,13 @@ namespace EsmTspiot.WinForms.Shared
             [DataMember(Order = 4)] public string ServiceName { get; set; }
             [DataMember(Order = 5)] public int GrpcPort { get; set; }
             [DataMember(Order = 6)] public int RestPort { get; set; }
-            [DataMember(Order = 7)] public int FutureLocalModulePort { get; set; }
+            [DataMember(Order = 7, EmitDefaultValue = false)]
+            public int TargetLocalModulePort { get; set; }
             [DataMember(Order = 8)] public string ControllerVersion { get; set; }
             [DataMember(Order = 9)] public int State { get; set; }
             [DataMember(Order = 10)] public string RemovalFingerprint { get; set; }
+            [DataMember(Name = "FutureLocalModulePort", Order = 11, EmitDefaultValue = false)]
+            public int LegacyFutureLocalModulePort { get; set; }
         }
     }
 }

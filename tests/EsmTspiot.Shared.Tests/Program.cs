@@ -104,6 +104,11 @@ namespace EsmTspiot.Shared.Tests
             Run("Direct controller planner preserves stable saved ordinal", DirectControllerPlannerPreservesStableSavedOrdinal);
             Run("Direct controller planner skips foreign names and ports", DirectControllerPlannerSkipsForeignNamesAndPorts);
             Run("Direct controller planner reports ordinal exhaustion", DirectControllerPlannerReportsOrdinalExhaustion);
+            Run("MSI local module planner groups KKT by INN", MsiLocalModulePlannerGroupsKktByInn);
+            Run("MSI local module planner uses actual base and clone ports", MsiLocalModulePlannerUsesActualBaseAndClonePorts);
+            Run("MSI local module planner preserves saved ordinals", MsiLocalModulePlannerPreservesSavedOrdinals);
+            Run("MSI local module root policy accepts only fixed Program Files volumes", MsiLocalModuleRootPolicyAcceptsOnlyFixedProgramFilesVolumes);
+            Run("MSI local module disk budget reports both volumes", MsiLocalModuleDiskBudgetReportsBothVolumes);
             Run("Direct controller setup defers LM readiness without failing controllers", DirectControllerSetupDefersLmReadinessWithoutFailingControllers);
             Run("LM gateway planner never adopts official base service", LmGatewayPlannerNeverAdoptsOfficialBaseService);
             Run("LM gateway planner allocates sequential local ports", LmGatewayPlannerAllocatesSequentialLocalPorts);
@@ -1652,7 +1657,7 @@ namespace EsmTspiot.Shared.Tests
                 "The base service name is vendor-owned and fixed.");
             AssertEqual(50063, plan.Assignments[0].GrpcPort, "Unexpected base gRPC port.");
             AssertEqual(5063, plan.Assignments[0].RestPort, "Unexpected base REST port.");
-            AssertEqual(5995, plan.Assignments[0].FutureLocalModulePort,
+            AssertEqual(5995, plan.Assignments[0].TargetLocalModulePort,
                 "The future LM port must remain compatible with field binding.");
             AssertEqual(DirectControllerRole.DirectClone, plan.Assignments[1].Role,
                 "Every later KKT uses a direct clone.");
@@ -1660,7 +1665,7 @@ namespace EsmTspiot.Shared.Tests
                 "Clone identity must be derived from the stable ordinal.");
             AssertEqual(50064, plan.Assignments[1].GrpcPort, "Unexpected clone gRPC port.");
             AssertEqual(5064, plan.Assignments[1].RestPort, "Unexpected clone REST port.");
-            AssertEqual(6995, plan.Assignments[1].FutureLocalModulePort,
+            AssertEqual(6995, plan.Assignments[1].TargetLocalModulePort,
                 "Unexpected future LM port for ordinal two.");
         }
 
@@ -1675,7 +1680,7 @@ namespace EsmTspiot.Shared.Tests
                 ServiceName = "esm-lm-controller-4",
                 GrpcPort = 50066,
                 RestPort = 5066,
-                FutureLocalModulePort = 8995
+                TargetLocalModulePort = 8995
             };
             DirectControllerPlan plan = DirectControllerPlanner.Build(
                 new List<LmGatewayKkt>
@@ -1774,6 +1779,199 @@ namespace EsmTspiot.Shared.Tests
             AssertEqual(1, plan.Assignments.Count,
                 "Only the KKT assigned before exhaustion may remain in the plan.");
             AssertContains(string.Join("; ", plan.ValidationMessages), "32");
+        }
+
+        private static void MsiLocalModulePlannerGroupsKktByInn()
+        {
+            string systemVolume = Path.GetPathRoot(Environment.SystemDirectory);
+            LocalModuleMsiPlan lmPlan = LocalModuleMsiPlanner.Build(
+                new List<LmGatewayKkt>
+                {
+                    CreateLmKkt("00105700000001", "1234567894"),
+                    CreateLmKkt("00105700000002", "1234567894")
+                },
+                new List<LocalModuleMsiAssignment>(),
+                new LocalModuleBaseInventory
+                {
+                    IsInstalled = true,
+                    InstallDirectory = Path.Combine(systemVolume, "Program Files", "Regime"),
+                    ApiPort = 5995,
+                    DatabasePort = 5984,
+                    WasInstalledByApplication = false
+                },
+                null,
+                new List<TcpListenerSnapshotItem>());
+
+            AssertTrue(lmPlan.IsValid, string.Join("; ", lmPlan.ValidationMessages));
+            AssertEqual(1, lmPlan.Assignments.Count,
+                "Two KKT of one INN must share one local module.");
+            AssertEqual(0, lmPlan.Assignments[0].CloneOrdinal,
+                "The first INN must use the official base local module.");
+            AssertTrue(lmPlan.Assignments[0].BaseWasPreExisting,
+                "A base product found before this operation must remain pre-existing.");
+
+            DirectControllerPlan controllers = DirectControllerPlanner.Build(
+                new List<LmGatewayKkt>
+                {
+                    CreateLmKkt("00105700000001", "1234567894"),
+                    CreateLmKkt("00105700000002", "1234567894")
+                },
+                new List<DirectControllerAssignment>(),
+                new List<DirectControllerServiceInventoryItem>
+                {
+                    new DirectControllerServiceInventoryItem
+                    {
+                        ServiceName = "esm-lm-controller",
+                        IsVerifiedOfficial = true
+                    }
+                },
+                new List<TcpListenerSnapshotItem>(),
+                lmPlan.CreateTargetApiPortMap());
+
+            AssertTrue(controllers.IsValid,
+                string.Join("; ", controllers.ValidationMessages));
+            AssertEqual(5995, controllers.Assignments[0].TargetLocalModulePort,
+                "The first controller must target the shared base LM.");
+            AssertEqual(5995, controllers.Assignments[1].TargetLocalModulePort,
+                "The second controller of the same INN must target the same LM.");
+            AssertFalse(
+                controllers.Assignments[0].GrpcPort == controllers.Assignments[1].GrpcPort,
+                "Each KKT still requires its own direct-controller gRPC listener.");
+        }
+
+        private static void MsiLocalModulePlannerUsesActualBaseAndClonePorts()
+        {
+            string systemVolume = Path.GetPathRoot(Environment.SystemDirectory);
+            LocalModuleMsiPlan plan = LocalModuleMsiPlanner.Build(
+                new List<LmGatewayKkt>
+                {
+                    CreateLmKkt("00105700000001", "1234567894"),
+                    CreateLmKkt("00105700000002", "7707083893")
+                },
+                new List<LocalModuleMsiAssignment>(),
+                new LocalModuleBaseInventory
+                {
+                    IsInstalled = true,
+                    InstallDirectory = Path.Combine(systemVolume, "Program Files", "Regime"),
+                    ApiPort = 5995,
+                    DatabasePort = 5984,
+                    WasInstalledByApplication = false
+                },
+                null,
+                new List<TcpListenerSnapshotItem>());
+
+            AssertTrue(plan.IsValid, string.Join("; ", plan.ValidationMessages));
+            AssertEqual(2, plan.Assignments.Count, "Expected one LM per unique INN.");
+            AssertEqual(5995, plan.Assignments[0].ApiPort,
+                "Base API port must come from actual inventory.");
+            AssertEqual(5984, plan.Assignments[0].DatabasePort,
+                "Base database port must come from actual inventory.");
+            AssertEqual(6995, plan.Assignments[1].ApiPort,
+                "The first clone API port must use the characterized rule.");
+            AssertEqual(7984, plan.Assignments[1].DatabasePort,
+                "The first clone database port has a deliberate 2000 gap from base.");
+            AssertEqual(systemVolume, plan.Assignments[1].InstallVolumeRoot,
+                "Clone root must default to the actual base-LM volume.");
+        }
+
+        private static void MsiLocalModuleRootPolicyAcceptsOnlyFixedProgramFilesVolumes()
+        {
+            AssertEqual("D:\\", LocalModuleInstallRootPolicy.GetVolumeRoot(
+                @"D:\Program Files\Regime"),
+                "The default volume must be derived from the base install path.");
+            AssertEqual(@"D:\Program Files\Regime1",
+                LocalModuleInstallRootPolicy.BuildCloneInstallDirectory(@"D:\", 1),
+                "Clone paths must always stay under Program Files.");
+            AssertFalse(LocalModuleInstallRootPolicy.IsCanonicalVolumeRoot(@"D:\Temp"),
+                "An arbitrary directory is not an install-volume root.");
+            AssertFalse(LocalModuleInstallRootPolicy.IsCanonicalVolumeRoot(
+                    @"\\server\share"),
+                "UNC roots must be rejected.");
+            AssertFalse(LocalModuleInstallRootPolicy.IsCanonicalVolumeRoot("relative"),
+                "Relative roots must be rejected.");
+            AssertFalse(LocalModuleInstallRootPolicy.IsSupportedVolumeCharacteristics(
+                    DriveType.Network,
+                    FileAttributes.Directory),
+                "Mapped and network drives must be rejected.");
+            AssertFalse(LocalModuleInstallRootPolicy.IsSupportedVolumeCharacteristics(
+                    DriveType.Fixed,
+                    FileAttributes.Directory | FileAttributes.ReparsePoint),
+                "Reparse-point roots must be rejected.");
+            AssertTrue(LocalModuleInstallRootPolicy.IsSupportedVolumeCharacteristics(
+                    DriveType.Fixed,
+                    FileAttributes.Directory),
+                "A plain fixed local volume is supported.");
+        }
+
+        private static void MsiLocalModulePlannerPreservesSavedOrdinals()
+        {
+            string systemVolume = Path.GetPathRoot(Environment.SystemDirectory);
+            LocalModuleMsiPlan plan = LocalModuleMsiPlanner.Build(
+                new List<LmGatewayKkt>
+                {
+                    CreateLmKkt("00105700000002", "7707083893"),
+                    CreateLmKkt("00105700000003", "500100732259")
+                },
+                new List<LocalModuleMsiAssignment>
+                {
+                    new LocalModuleMsiAssignment
+                    {
+                        Inn = "1234567894",
+                        CloneOrdinal = 0,
+                        ApiPort = 5995,
+                        DatabasePort = 5984,
+                        InstallVolumeRoot = systemVolume,
+                        BaseWasPreExisting = true
+                    },
+                    new LocalModuleMsiAssignment
+                    {
+                        Inn = "7707083893",
+                        CloneOrdinal = 3,
+                        ApiPort = LocalModuleMsiIdentity.ApiPortForClone(3),
+                        DatabasePort = LocalModuleMsiIdentity.DatabasePortForClone(3),
+                        InstallVolumeRoot = systemVolume
+                    }
+                },
+                new LocalModuleBaseInventory
+                {
+                    IsInstalled = true,
+                    AssignedInn = "1234567894",
+                    InstallDirectory = Path.Combine(systemVolume, "Program Files", "Regime"),
+                    ApiPort = 5995,
+                    DatabasePort = 5984
+                },
+                null,
+                new List<TcpListenerSnapshotItem>());
+
+            AssertTrue(plan.IsValid, string.Join("; ", plan.ValidationMessages));
+            AssertEqual(3, plan.FindByInn("7707083893").CloneOrdinal,
+                "A saved clone ordinal must survive gaps and sorting.");
+            AssertEqual(1, plan.FindByInn("500100732259").CloneOrdinal,
+                "A new INN must use the first free clone ordinal.");
+            AssertTrue(plan.FindByInn("1234567894") == null,
+                "A temporarily absent base INN stays reserved without inventing a current row.");
+        }
+
+        private static void MsiLocalModuleDiskBudgetReportsBothVolumes()
+        {
+            long mib = 1024L * 1024L;
+            LocalModuleDiskSpaceProjection projection =
+                LocalModuleDiskSpacePolicy.Evaluate(
+                    2,
+                    2,
+                    700L * mib,
+                    700L * mib);
+
+            AssertEqual(640L * mib, projection.InstallVolumeRequiredBytes,
+                "Install volume needs 256 MiB per clone plus 128 MiB headroom.");
+            AssertEqual(640L * mib, projection.SystemVolumeRequiredBytes,
+                "System volume needs staging, cache entries and headroom.");
+            AssertEqual(700L * mib, projection.InstallVolumeObservedFreeBytes,
+                "UI must receive the observed install-volume free space.");
+            AssertEqual(700L * mib, projection.SystemVolumeObservedFreeBytes,
+                "UI must receive the observed system-volume free space.");
+            AssertTrue(projection.HasEnoughSpace,
+                "Both independently checked volumes have enough free space.");
         }
 
         private static void DirectControllerSetupDefersLmReadinessWithoutFailingControllers()

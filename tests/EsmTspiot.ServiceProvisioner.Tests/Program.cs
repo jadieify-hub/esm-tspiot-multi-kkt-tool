@@ -141,6 +141,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Direct controller profile stages only official CA pair", DirectControllerProfileStagesOnlyOfficialCaPair);
             Run("Direct controller profile atomically replaces read only CA", DirectControllerProfileAtomicallyReplacesReadOnlyCa);
             Run("Direct controller profile writes isolated ports without credentials", DirectControllerProfileWritesIsolatedPortsWithoutCredentials);
+            Run("Direct controller manifest safely upgrades legacy target port", DirectControllerManifestSafelyUpgradesLegacyTargetPort);
             Run("Windows direct controller platform creates and removes exact clone", WindowsDirectControllerPlatformCreatesAndRemovesExactClone);
             Run("LM profile adapter detects unsupported controller version", LmProfileAdapterDetectsUnsupportedControllerVersion);
             Run("Ensure creates profile service and listeners in order", EnsureCreatesProfileServiceAndListenersInOrder);
@@ -289,13 +290,17 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 {
                     KktSerial = "99000000000031",
                     Inn = "9900000031",
-                    Ordinal = 31
+                    Ordinal = 31,
+                    TargetLocalModulePort =
+                        DirectControllerIdentity.FutureLmPortForOrdinal(31)
                 },
                 new DirectControllerProvisioningItemRequest
                 {
                     KktSerial = "99000000000032",
                     Inn = "9900000032",
-                    Ordinal = 32
+                    Ordinal = 32,
+                    TargetLocalModulePort =
+                        DirectControllerIdentity.FutureLmPortForOrdinal(32)
                 }
             };
             PathSafety pathSafety = new PathSafety();
@@ -1998,6 +2003,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     "00105700000001",
                     "7701234567",
                     2,
+                    7595,
                     "1.6.4.0",
                     new string('a', 64),
                     Path.Combine(root, "Profiles", "controller-2"),
@@ -2009,6 +2015,12 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 DirectControllerManifest observed = store.Read("00105700000001");
                 AssertEqual(fingerprint, store.ComputeFingerprint(observed),
                     "A persisted direct-controller identity must retain its removal fingerprint.");
+                observed.TargetLocalModulePort = 7596;
+                AssertFalse(string.Equals(
+                        fingerprint,
+                        store.ComputeFingerprint(observed),
+                        StringComparison.OrdinalIgnoreCase),
+                    "The explicit target LM port must be covered by the removal fingerprint.");
 
                 string allJson = string.Join(
                     "\n",
@@ -4678,6 +4690,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     "00105700000001",
                     "7701234567",
                     2,
+                    7595,
                     "1.6.4.0",
                     new string('a', 64),
                     environmentRoot,
@@ -4699,7 +4712,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
                 AssertContains(yaml, "gRPCPort: 50064");
                 AssertContains(yaml, "RESTPort: 5064");
-                AssertContains(yaml, "port: 6995");
+                AssertContains(yaml, "port: 7595");
                 AssertFalse(yaml.IndexOf("admin", StringComparison.OrdinalIgnoreCase) >= 0 ||
                             yaml.IndexOf("password", StringComparison.OrdinalIgnoreCase) >= 0,
                     "The local controller profile must not persist ESM binding credentials.");
@@ -4710,6 +4723,69 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 AssertFalse(File.Exists(Path.Combine(vendorRoot, "server.crt")) ||
                             File.Exists(Path.Combine(vendorRoot, "server.pem")),
                     "The vendor process must generate its own server identity on first start.");
+            }
+            finally
+            {
+                DeleteTestTreeWithReadOnlyFiles(root);
+            }
+        }
+
+        private static void DirectControllerManifestSafelyUpgradesLegacyTargetPort()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                const string serial = "00105700000001";
+                DirectControllerManifestStore store = new DirectControllerManifestStore(
+                    Path.Combine(root, "DirectControllers"),
+                    new FakePathSafety(true),
+                    null,
+                    Path.Combine(root, "ProgramData"));
+                DirectControllerManifest legacy = new DirectControllerManifest
+                {
+                    SchemaVersion = 1,
+                    OwnershipMarker = DirectControllerManifest.ExpectedOwnershipMarker,
+                    KktSerial = serial,
+                    KktInn = "7701234567",
+                    Ordinal = 2,
+                    ServiceName = "esm-lm-controller-2",
+                    GrpcPort = 50064,
+                    RestPort = 5064,
+                    LegacyFutureLocalModulePort = 6995,
+                    ControllerVersion = "1.6.4.0",
+                    ControllerBinarySha256 = new string('a', 64),
+                    ProfileEnvironmentRoot = store.GetProfileEnvironmentRoot(2),
+                    OperationId = Guid.NewGuid().ToString("N"),
+                    State = DirectControllerLifecycleState.Ready,
+                    UpdatedUtc = DateTime.UtcNow.ToString("o")
+                };
+                string manifestPath = Path.Combine(
+                    root,
+                    "DirectControllers",
+                    "Owned",
+                    serial,
+                    "manifest.json");
+                Directory.CreateDirectory(Path.GetDirectoryName(manifestPath));
+                using (FileStream stream = File.Create(manifestPath))
+                {
+                    new DataContractJsonSerializer(
+                        typeof(DirectControllerManifest)).WriteObject(stream, legacy);
+                }
+
+                DirectControllerManifest upgraded = store.Read(serial);
+
+                AssertEqual(DirectControllerManifest.CurrentSchemaVersion,
+                    upgraded.SchemaVersion,
+                    "An owned v1 manifest must be normalized to the current schema.");
+                AssertEqual(6995, upgraded.TargetLocalModulePort,
+                    "The legacy ordinal-derived target must survive migration.");
+                AssertEqual(0, upgraded.LegacyFutureLocalModulePort,
+                    "The legacy field must be cleared before the next write.");
+                store.Write(upgraded);
+                string persisted = File.ReadAllText(manifestPath, Encoding.UTF8);
+                AssertContains(persisted, "TargetLocalModulePort");
+                AssertFalse(persisted.Contains("FutureLocalModulePort"),
+                    "Rewritten manifests must not retain the obsolete field.");
             }
             finally
             {
@@ -5601,6 +5677,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     KktSerial = (105700000001L + index).ToString("00000000000000"),
                     Inn = (1000000002L + (index * 1000000001L)).ToString("0000000000"),
                     Ordinal = index + 1,
+                    TargetLocalModulePort =
+                        DirectControllerIdentity.FutureLmPortForOrdinal(index + 1),
                     ExpectedManifestSha256 = operation ==
                         LmServiceOperation.EnsureDirectControllers
                         ? null
