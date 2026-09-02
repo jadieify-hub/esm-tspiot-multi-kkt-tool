@@ -517,21 +517,21 @@ internal sealed class LocalModuleMsiManifest
 }
 ```
 
-- [ ] **Step 1: Add failing API, registry, redaction, and ownership tests**
+- [x] **Step 1: Add failing API, registry, redaction, and ownership tests**
 
 Assert native calls receive `ADMINLOGIN=admin ADMINPASSWORD=admin` but diagnostic records contain `ADMINLOGIN=<redacted> ADMINPASSWORD=<redacted>`; MSI error codes survive unchanged. Verify HKLM 32/64 uninstall inventory, exact ProductCode/InstallLocation/version, pre-existing base preservation, app-installed base removal eligibility, and hash-guarded manifest read-back.
 
-- [ ] **Step 2: Run helper tests and observe failure**
+- [x] **Step 2: Run helper tests and observe failure**
 
 Run the Task 1 helper-test command.
 
 Expected: FAIL because the Windows Installer adapter/manifests do not exist.
 
-- [ ] **Step 3: Implement native install/repair/uninstall and manifests**
+- [x] **Step 3: Implement native install/repair/uninstall and manifests**
 
 Use `MsiInstallProductW` and `MsiConfigureProductExW`; do not spawn `msiexec`. Convert nonzero return codes to an exception that retains the numeric MSI code. Store no password/property command line. A base product discovered before the operation gets `PreExisting=true`, `InstalledByApplication=false`.
 
-- [ ] **Step 4: Run helper tests and secret scan**
+- [x] **Step 4: Run helper tests and secret scan**
 
 Run the Task 1 helper-test command and:
 
@@ -541,7 +541,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify_lm_safety.ps1
 
 Expected: PASS; only the existing allowlisted credential default appears in production code.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add src/EsmTspiot.ServiceProvisioner tests/EsmTspiot.ServiceProvisioner.Tests/Program.cs

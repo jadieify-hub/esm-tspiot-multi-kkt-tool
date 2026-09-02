@@ -1,0 +1,198 @@
+using System;
+using System.Globalization;
+using System.IO;
+using System.Runtime.Serialization;
+using System.Security.Cryptography;
+using System.Text;
+using EsmTspiot.Shared.Services;
+
+namespace EsmTspiot.ServiceProvisioner
+{
+    [DataContract]
+    internal sealed class LocalModuleMsiManifest
+    {
+        internal const int CurrentSchemaVersion = 1;
+        internal const string ExpectedOwnershipMarker =
+            "KRS.MultiKKT.LocalModuleMsi.Product.v1";
+
+        [DataMember(Order = 1)]
+        internal int SchemaVersion { get; set; }
+
+        [DataMember(Order = 2)]
+        internal string OwnershipMarker { get; set; }
+
+        [DataMember(Order = 3)]
+        internal string Inn { get; set; }
+
+        [DataMember(Order = 4)]
+        internal int CloneOrdinal { get; set; }
+
+        [DataMember(Order = 5)]
+        internal string ProductCode { get; set; }
+
+        [DataMember(Order = 6)]
+        internal string PackageCode { get; set; }
+
+        [DataMember(Order = 7)]
+        internal string InstallRoot { get; set; }
+
+        [DataMember(Order = 8)]
+        internal bool InstalledByApplication { get; set; }
+
+        [DataMember(Order = 9)]
+        internal bool PreExisting { get; set; }
+
+        [DataMember(Order = 10)]
+        internal string OwnershipNonce { get; set; }
+
+        [DataMember(Order = 11)]
+        internal string UpdatedUtc { get; set; }
+
+        [DataMember(Order = 12)]
+        internal string ManifestSha256 { get; set; }
+
+        internal bool CanRemove
+        {
+            get { return InstalledByApplication && !PreExisting; }
+        }
+
+        internal static LocalModuleMsiManifest Create(
+            string inn,
+            int cloneOrdinal,
+            string productCode,
+            string packageCode,
+            string installRoot,
+            bool installedByApplication,
+            bool preExisting,
+            string ownershipNonce)
+        {
+            LocalModuleMsiManifest result = new LocalModuleMsiManifest
+            {
+                SchemaVersion = CurrentSchemaVersion,
+                OwnershipMarker = ExpectedOwnershipMarker,
+                Inn = inn,
+                CloneOrdinal = cloneOrdinal,
+                ProductCode = NormalizeGuid(productCode, "productCode"),
+                PackageCode = NormalizeGuid(packageCode, "packageCode"),
+                InstallRoot = NormalizeRoot(installRoot),
+                InstalledByApplication = installedByApplication,
+                PreExisting = preExisting,
+                OwnershipNonce = ownershipNonce,
+                UpdatedUtc = DateTime.UtcNow.ToString(
+                    "o",
+                    CultureInfo.InvariantCulture),
+                ManifestSha256 = string.Empty
+            };
+            ValidateStructure(result, false);
+            result.ManifestSha256 = ComputeSha256(result);
+            return result;
+        }
+
+        internal static void Validate(LocalModuleMsiManifest manifest)
+        {
+            ValidateStructure(manifest, true);
+            if (!string.Equals(
+                    manifest.ManifestSha256,
+                    ComputeSha256(manifest),
+                    StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException(
+                    "Local-module MSI manifest hash mismatch.");
+        }
+
+        internal static string ComputeSha256(LocalModuleMsiManifest manifest)
+        {
+            ValidateStructure(manifest, false);
+            string canonical = string.Join("\n", new[]
+            {
+                manifest.SchemaVersion.ToString(CultureInfo.InvariantCulture),
+                manifest.OwnershipMarker,
+                manifest.Inn,
+                manifest.CloneOrdinal.ToString(CultureInfo.InvariantCulture),
+                manifest.ProductCode,
+                manifest.PackageCode,
+                manifest.InstallRoot,
+                manifest.InstalledByApplication ? "1" : "0",
+                manifest.PreExisting ? "1" : "0",
+                manifest.OwnershipNonce,
+                manifest.UpdatedUtc
+            });
+            byte[] digest;
+            using (SHA256 algorithm = SHA256.Create())
+                digest = algorithm.ComputeHash(
+                    new UTF8Encoding(false, true).GetBytes(canonical));
+            StringBuilder value = new StringBuilder(64);
+            for (int index = 0; index < digest.Length; index++)
+                value.Append(digest[index].ToString("x2"));
+            return value.ToString();
+        }
+
+        private static void ValidateStructure(
+            LocalModuleMsiManifest manifest,
+            bool requireHash)
+        {
+            if (manifest == null ||
+                manifest.SchemaVersion != CurrentSchemaVersion ||
+                !string.Equals(
+                    manifest.OwnershipMarker,
+                    ExpectedOwnershipMarker,
+                    StringComparison.Ordinal) ||
+                !LocalModuleMsiIdentity.IsInn(manifest.Inn) ||
+                manifest.CloneOrdinal < 0 ||
+                manifest.CloneOrdinal >
+                    LocalModuleMsiIdentity.MaximumCloneOrdinal ||
+                (manifest.InstalledByApplication == manifest.PreExisting) ||
+                (manifest.CloneOrdinal > 0 && manifest.PreExisting) ||
+                !LocalModuleManagedIdentity.IsLowerHex(
+                    manifest.OwnershipNonce,
+                    32) ||
+                string.IsNullOrWhiteSpace(manifest.UpdatedUtc))
+                throw new InvalidDataException(
+                    "Local-module MSI manifest is invalid.");
+            RequireCanonicalGuid(manifest.ProductCode);
+            RequireCanonicalGuid(manifest.PackageCode);
+            if (!string.Equals(
+                    manifest.InstallRoot,
+                    NormalizeRoot(manifest.InstallRoot),
+                    StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException(
+                    "Local-module MSI install root is invalid.");
+            if (requireHash &&
+                !LocalModuleManagedIdentity.IsLowerHex(
+                    manifest.ManifestSha256,
+                    64))
+                throw new InvalidDataException(
+                    "Local-module MSI manifest hash is invalid.");
+        }
+
+        private static string NormalizeGuid(string value, string parameter)
+        {
+            Guid parsed;
+            if (!Guid.TryParseExact(value, "B", out parsed))
+                throw new ArgumentException(
+                    "MSI identity must be a braced GUID.",
+                    parameter);
+            return parsed.ToString("B").ToUpperInvariant();
+        }
+
+        private static void RequireCanonicalGuid(string value)
+        {
+            Guid parsed;
+            if (!Guid.TryParseExact(value, "B", out parsed) ||
+                !string.Equals(
+                    value,
+                    parsed.ToString("B"),
+                    StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException(
+                    "Local-module MSI identity is invalid.");
+        }
+
+        private static string NormalizeRoot(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value) || !Path.IsPathRooted(value))
+                throw new InvalidDataException(
+                    "Local-module MSI install root is invalid.");
+            return Path.GetFullPath(value)
+                .TrimEnd(Path.DirectorySeparatorChar);
+        }
+    }
+}
