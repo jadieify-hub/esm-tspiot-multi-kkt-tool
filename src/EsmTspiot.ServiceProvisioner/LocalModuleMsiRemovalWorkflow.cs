@@ -57,35 +57,70 @@ namespace EsmTspiot.ServiceProvisioner
             LocalModuleMsiProvisioningContext context)
         {
             if (context == null) throw new ArgumentNullException("context");
-            List<LocalModuleMsiProvisioningItemResult> results =
-                new List<LocalModuleMsiProvisioningItemResult>();
+            IList<LocalModuleMsiManifest> manifests =
+                context.Manifests.ReadAll();
+            List<LocalModuleMsiProvisioningItemRequest> requests =
+                new List<LocalModuleMsiProvisioningItemRequest>();
+            for (int index = 0; index < manifests.Count; index++)
+            {
+                LocalModuleMsiProvisioningItemRequest request =
+                    RequestFor(manifests[index]);
+                request.ExpectedManifestSha256 =
+                    manifests[index].ManifestSha256;
+                requests.Add(request);
+            }
+            return RemoveAll(requests, context);
+        }
+
+        internal IList<LocalModuleMsiProvisioningItemResult> RemoveAll(
+            IList<LocalModuleMsiProvisioningItemRequest> requests,
+            LocalModuleMsiProvisioningContext context)
+        {
+            if (requests == null) throw new ArgumentNullException("requests");
+            if (context == null) throw new ArgumentNullException("context");
+            LocalModuleMsiProvisioningItemResult[] results =
+                new LocalModuleMsiProvisioningItemResult[requests.Count];
             using (context.AcquireMutationLock())
             {
-                List<LocalModuleMsiManifest> manifests =
-                    new List<LocalModuleMsiManifest>(context.Manifests.ReadAll());
-                manifests.Sort(delegate(
-                    LocalModuleMsiManifest left,
-                    LocalModuleMsiManifest right)
+                List<RemovalPlanItem> plan = new List<RemovalPlanItem>();
+                for (int index = 0; index < requests.Count; index++)
                 {
-                    return right.CloneOrdinal.CompareTo(left.CloneOrdinal);
+                    LocalModuleMsiProvisioningContext.ValidateRequest(
+                        requests[index]);
+                    plan.Add(new RemovalPlanItem
+                    {
+                        OriginalIndex = index,
+                        Request = requests[index],
+                        Manifest = LocalModuleMsiProvisioner
+                            .RequireCurrentManifest(requests[index], context)
+                    });
+                }
+                plan.Sort(delegate(RemovalPlanItem left, RemovalPlanItem right)
+                {
+                    return right.Manifest.CloneOrdinal.CompareTo(
+                        left.Manifest.CloneOrdinal);
                 });
-                for (int index = 0; index < manifests.Count; index++)
+                for (int index = 0; index < plan.Count; index++)
                 {
-                    LocalModuleMsiManifest manifest = manifests[index];
-                    LocalModuleMsiProvisioningItemRequest request =
-                        RequestFor(manifest);
-                    request.ExpectedManifestSha256 = manifest.ManifestSha256;
+                    RemovalPlanItem item = plan[index];
                     try
                     {
-                        results.Add(RemoveOne(request, manifest, context));
+                        results[item.OriginalIndex] =
+                            item.Manifest.CloneOrdinal == 0 &&
+                            item.Manifest.CanRemove
+                                ? RemoveOwnedBaseWithCompensation(
+                                    item.Request, item.Manifest, context)
+                                : RemoveOne(
+                                    item.Request, item.Manifest, context);
                     }
                     catch (Exception exception)
                     {
-                        results.Add(LocalModuleMsiProvisioner.Result(
-                            request,
-                            LmServiceProvisioningStatus.CleanupPending,
-                            exception.Message,
-                            manifest.ManifestSha256));
+                        results[item.OriginalIndex] =
+                            LocalModuleMsiProvisioner.Result(
+                                item.Request,
+                                LmServiceProvisioningStatus.CleanupPending,
+                                exception.Message,
+                                item.Manifest.ManifestSha256);
                     }
                 }
             }
@@ -269,6 +304,13 @@ namespace EsmTspiot.ServiceProvisioner
 
         private sealed class CloneRestart
         {
+            internal LocalModuleMsiProvisioningItemRequest Request { get; set; }
+            internal LocalModuleMsiManifest Manifest { get; set; }
+        }
+
+        private sealed class RemovalPlanItem
+        {
+            internal int OriginalIndex { get; set; }
             internal LocalModuleMsiProvisioningItemRequest Request { get; set; }
             internal LocalModuleMsiManifest Manifest { get; set; }
         }

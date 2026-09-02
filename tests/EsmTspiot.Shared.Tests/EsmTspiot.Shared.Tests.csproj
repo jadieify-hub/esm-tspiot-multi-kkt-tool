@@ -11,5 +11,6 @@
     <Compile Include="..\..\src\EsmTspiot.WindowsSecurity.Shared\ProtectedAclPolicy.cs" Link="ProtectedAclPolicy.cs" />
     <Compile Include="..\..\src\EsmTspiot.WinForms.Shared\ProvisionerProcessLauncher.cs" Link="ProvisionerProcessLauncher.cs" />
     <Compile Include="..\..\src\EsmTspiot.WinForms.Shared\LmServiceProvisionerClient.cs" Link="LmServiceProvisionerClient.cs" />
+    <Compile Include="..\..\src\EsmTspiot.WinForms.Shared\LocalModuleMsiProvisionerClient.cs" Link="LocalModuleMsiProvisionerClient.cs" />
   </ItemGroup>
 </Project>

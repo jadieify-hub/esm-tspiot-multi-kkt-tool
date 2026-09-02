@@ -214,6 +214,23 @@ namespace EsmTspiot.ServiceProvisioner
                 delegate { return Guid.NewGuid().ToString("N"); });
         }
 
+        internal static LocalModuleMsiProvisioningContext
+            CreateWindowsForInstalledProducts(
+            string operationId,
+            string machineRoot)
+        {
+            PathSafety pathSafety = new PathSafety();
+            LocalModuleMsiManifestStore store =
+                new LocalModuleMsiManifestStore(machineRoot, pathSafety);
+            return new LocalModuleMsiProvisioningContext(
+                operationId,
+                WindowsLocalModuleMsiProvisioningPlatform
+                    .CreateForInstalledProducts(machineRoot),
+                store,
+                store,
+                delegate { return Guid.NewGuid().ToString("N"); });
+        }
+
         internal string NewOwnershipNonce()
         {
             string value = _newOwnershipNonce();

@@ -88,6 +88,70 @@ namespace EsmTspiot.ServiceProvisioner
                             }
                         }
                         if (request.Operation ==
+                            LmServiceOperation.EnsureMsiLocalModules)
+                        {
+                            using (LocalModuleMsiProvisioningSession session =
+                                LocalModuleMsiProvisioningSession.CreateWindows(
+                                    request))
+                            {
+                                LmServiceProvisioningBatchResult result =
+                                    new LocalModuleMsiProvisioningSessionServer(
+                                        channel).Run(request, session);
+                                channel.WriteMessage(result);
+                                return ToExitCode(result.Status);
+                            }
+                        }
+                        if (request.Operation ==
+                                LmServiceOperation.RestartMsiLocalModule ||
+                            request.Operation ==
+                                LmServiceOperation.RemoveMsiLocalModule ||
+                            request.Operation ==
+                                LmServiceOperation.RemoveAllMsiLocalModules)
+                        {
+                            string machineRoot = Path.Combine(
+                                Environment.GetFolderPath(
+                                    Environment.SpecialFolder
+                                        .CommonApplicationData),
+                                "KRS",
+                                "MultiKKT");
+                            LocalModuleMsiProvisioningContext msiContext =
+                                LocalModuleMsiProvisioningContext
+                                    .CreateWindowsForInstalledProducts(
+                                        request.OperationId,
+                                        machineRoot);
+                            System.Collections.Generic.IList<
+                                LocalModuleMsiProvisioningItemResult> items;
+                            if (request.Operation ==
+                                LmServiceOperation.RestartMsiLocalModule)
+                            {
+                                items = new System.Collections.Generic.List<
+                                    LocalModuleMsiProvisioningItemResult>();
+                                items.Add(new LocalModuleMsiProvisioner().Restart(
+                                    request.LocalModuleMsiItems[0],
+                                    msiContext));
+                            }
+                            else if (request.Operation ==
+                                LmServiceOperation.RemoveMsiLocalModule)
+                            {
+                                items = new System.Collections.Generic.List<
+                                    LocalModuleMsiProvisioningItemResult>();
+                                items.Add(new LocalModuleMsiRemovalWorkflow().Remove(
+                                    request.LocalModuleMsiItems[0],
+                                    msiContext));
+                            }
+                            else
+                            {
+                                items = new LocalModuleMsiRemovalWorkflow()
+                                    .RemoveAll(
+                                        request.LocalModuleMsiItems,
+                                        msiContext);
+                            }
+                            LmServiceProvisioningBatchResult result =
+                                CreateMsiResult(request, items);
+                            channel.WriteMessage(result);
+                            return ToExitCode(result.Status);
+                        }
+                        if (request.Operation ==
                             LmServiceOperation.EnsureManagedLocalModules)
                         {
                             using (CompleteStackProvisioningSession session =
@@ -299,6 +363,31 @@ namespace EsmTspiot.ServiceProvisioner
                     });
                 }
             }
+            else if (request.LocalModuleMsiItems != null &&
+                request.LocalModuleMsiItems.Count > 0)
+            {
+                for (int index = 0;
+                    index < request.LocalModuleMsiItems.Count;
+                    index++)
+                {
+                    LocalModuleMsiProvisioningItemRequest item =
+                        request.LocalModuleMsiItems[index];
+                    result.LocalModuleMsiItems.Add(
+                        new LocalModuleMsiProvisioningItemResult
+                        {
+                            Inn = item == null ? string.Empty : item.Inn,
+                            CloneOrdinal = item == null
+                                ? 0
+                                : item.CloneOrdinal,
+                            ApiPort = item == null ? 0 : item.ApiPort,
+                            Status = status,
+                            Message = message,
+                            ManifestSha256 = item == null
+                                ? string.Empty
+                                : item.ExpectedManifestSha256
+                        });
+                }
+            }
             else if (request.RemovalConfirmation != null)
             {
                 result.Items.Add(new LmServiceProvisioningItemResult
@@ -342,7 +431,7 @@ namespace EsmTspiot.ServiceProvisioner
                 new LmServiceProvisioningBatchResult
                 {
                     SchemaVersion =
-                        ProvisioningRequestValidator.CurrentSchemaVersion,
+                        ProvisioningRequestValidator.LegacySchemaVersion,
                     OperationId = request.OperationId,
                     PlanHash = request.PlanHash,
                     Status = LmServiceProvisioningStatus.Succeeded
@@ -431,7 +520,7 @@ namespace EsmTspiot.ServiceProvisioner
                 new LmServiceProvisioningBatchRequest
                 {
                     SchemaVersion =
-                        ProvisioningRequestValidator.CurrentSchemaVersion,
+                        ProvisioningRequestValidator.LegacySchemaVersion,
                     Operation = LmServiceOperation.RemoveManaged,
                     OperationId = batch.OperationId,
                     InitiatingSid = batch.InitiatingSid,
@@ -496,12 +585,45 @@ namespace EsmTspiot.ServiceProvisioner
         {
             LmServiceProvisioningBatchResult result = new LmServiceProvisioningBatchResult
             {
-                SchemaVersion = ProvisioningRequestValidator.CurrentSchemaVersion,
+                SchemaVersion = request.SchemaVersion,
                 OperationId = request.OperationId,
                 PlanHash = request.PlanHash,
                 Status = item.Status
             };
             result.Items.Add(item);
+            return result;
+        }
+
+        private static LmServiceProvisioningBatchResult CreateMsiResult(
+            LmServiceProvisioningBatchRequest request,
+            System.Collections.Generic.IList<
+                LocalModuleMsiProvisioningItemResult> items)
+        {
+            LmServiceProvisioningBatchResult result =
+                new LmServiceProvisioningBatchResult
+                {
+                    SchemaVersion = ProvisioningRequestValidator
+                        .CurrentSchemaVersion,
+                    OperationId = request.OperationId,
+                    PlanHash = request.PlanHash,
+                    Status = LmServiceProvisioningStatus.Succeeded
+                };
+            for (int index = 0; index < items.Count; index++)
+            {
+                result.LocalModuleMsiItems.Add(items[index]);
+                result.Status = AggregateRemovalStatus(
+                    new LmServiceProvisioningItemResult[]
+                    {
+                        new LmServiceProvisioningItemResult
+                        {
+                            Status = result.Status
+                        },
+                        new LmServiceProvisioningItemResult
+                        {
+                            Status = items[index].Status
+                        }
+                    });
+            }
             return result;
         }
 
@@ -554,7 +676,7 @@ namespace EsmTspiot.ServiceProvisioner
         {
             LmServiceProvisioningBatchResult result = new LmServiceProvisioningBatchResult
             {
-                SchemaVersion = ProvisioningRequestValidator.CurrentSchemaVersion,
+                SchemaVersion = request.SchemaVersion,
                 OperationId = request.OperationId,
                 PlanHash = request.PlanHash,
                 Status = LmServiceProvisioningStatus.UnsupportedController

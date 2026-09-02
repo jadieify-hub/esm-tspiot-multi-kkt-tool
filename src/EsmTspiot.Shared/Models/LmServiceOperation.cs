@@ -26,6 +26,14 @@ namespace EsmTspiot.Shared.Models
         [EnumMember]
         RemoveDirectController = 9,
         [EnumMember]
-        RemoveAllDirectControllers = 10
+        RemoveAllDirectControllers = 10,
+        [EnumMember]
+        EnsureMsiLocalModules = 11,
+        [EnumMember]
+        RestartMsiLocalModule = 12,
+        [EnumMember]
+        RemoveMsiLocalModule = 13,
+        [EnumMember]
+        RemoveAllMsiLocalModules = 14
     }
 }

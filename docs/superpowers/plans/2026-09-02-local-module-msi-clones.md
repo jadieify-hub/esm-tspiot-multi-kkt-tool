@@ -741,21 +741,21 @@ public sealed class LocalModuleMsiProvisioningItemRequest
 
 Add operations `EnsureMsiLocalModules`, `RestartMsiLocalModule`, `RemoveMsiLocalModule`, `RemoveAllMsiLocalModules`; set `ProvisioningRequestValidator.CurrentSchemaVersion = 3`.
 
-- [ ] **Step 1: Add failing v3 protocol and client tests**
+- [x] **Step 1: Add failing v3 protocol and client tests**
 
 Test canonical hashing of every field, no password/cookie/command/full install path in protocol, duplicate INN/ordinal/port rejection, local-volume validation, unknown v1/v2 rejection with a clear version error, monotonic item exchange, and independent item failure continuation. Assert the new client validates helper version/hash before launch.
 
-- [ ] **Step 2: Run shared/helper tests and observe failure**
+- [x] **Step 2: Run shared/helper tests and observe failure**
 
 Run Task 2 Step 2.
 
 Expected: FAIL because schema v3 and MSI client/session do not exist.
 
-- [ ] **Step 3: Implement schema v3 and route helper operations**
+- [x] **Step 3: Implement schema v3 and route helper operations**
 
 Keep direct-controller operations in the same request envelope. For MSI ensure, initialize and lock the shared source once, then process unique-INN items sequentially. Remove the old `_stopRemaining` canary behavior; only emit cancelled for user cancellation or a declared batch-global source-integrity failure.
 
-- [ ] **Step 4: Run shared/helper/operator matrices**
+- [x] **Step 4: Run shared/helper/operator matrices**
 
 Run:
 
@@ -765,7 +765,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_release_matrix.p
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add src/EsmTspiot.Shared src/EsmTspiot.ServiceProvisioner src/EsmTspiot.WinForms.Shared src/EsmTspiot.Legacy.WinForms/EsmTspiot.Legacy.WinForms.csproj src/EsmTspiot.Modern.WinForms/EsmTspiot.Modern.WinForms.csproj tests

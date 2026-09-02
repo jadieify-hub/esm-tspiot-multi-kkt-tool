@@ -9,6 +9,7 @@ namespace EsmTspiot.Shared.Models
         public LmServiceProvisioningBatchResult()
         {
             Items = new List<LmServiceProvisioningItemResult>();
+            LocalModuleMsiItems = new List<LocalModuleMsiProvisioningItemResult>();
         }
 
         [DataMember(Order = 1)]
@@ -25,5 +26,9 @@ namespace EsmTspiot.Shared.Models
 
         [DataMember(Order = 5)]
         public IList<LmServiceProvisioningItemResult> Items { get; private set; }
+
+        [DataMember(Order = 6, EmitDefaultValue = false)]
+        public IList<LocalModuleMsiProvisioningItemResult> LocalModuleMsiItems
+        { get; private set; }
     }
 }

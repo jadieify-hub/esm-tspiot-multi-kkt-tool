@@ -104,6 +104,49 @@ namespace EsmTspiot.Shared.Services
                         : item.ExpectedManifestSha256);
                 }
             }
+            else if (IsMsiLocalModuleOperation(request.Operation))
+            {
+                if (request.Operation ==
+                    LmServiceOperation.EnsureMsiLocalModules)
+                {
+                    AppendLocalModuleInstaller(
+                        canonical,
+                        request.LocalModuleInstallerSelection);
+                    Append(canonical, "license-notice",
+                        LocalModuleLicenseNotice);
+                }
+                int count = request.LocalModuleMsiItems == null
+                    ? 0
+                    : request.LocalModuleMsiItems.Count;
+                Append(canonical, "msi-lm-count",
+                    count.ToString(CultureInfo.InvariantCulture));
+                for (int index = 0; index < count; index++)
+                {
+                    LocalModuleMsiProvisioningItemRequest item =
+                        request.LocalModuleMsiItems[index];
+                    Append(canonical, "msi-lm-index",
+                        index.ToString(CultureInfo.InvariantCulture));
+                    Append(canonical, "msi-lm-inn",
+                        item == null ? null : item.Inn);
+                    Append(canonical, "msi-lm-ordinal", item == null
+                        ? null
+                        : item.CloneOrdinal.ToString(
+                            CultureInfo.InvariantCulture));
+                    Append(canonical, "msi-lm-api", item == null
+                        ? null
+                        : item.ApiPort.ToString(CultureInfo.InvariantCulture));
+                    Append(canonical, "msi-lm-db", item == null
+                        ? null
+                        : item.DatabasePort.ToString(
+                            CultureInfo.InvariantCulture));
+                    Append(canonical, "msi-lm-volume",
+                        item == null ? null : item.InstallVolumeRoot);
+                    Append(canonical, "msi-lm-remote",
+                        item == null ? null : item.RemoteAddress);
+                    Append(canonical, "msi-lm-manifest",
+                        item == null ? null : item.ExpectedManifestSha256);
+                }
+            }
 
             using (SHA256 algorithm = SHA256.Create())
             {
@@ -279,6 +322,15 @@ namespace EsmTspiot.Shared.Services
                 operation == LmServiceOperation.RestartDirectController ||
                 operation == LmServiceOperation.RemoveDirectController ||
                 operation == LmServiceOperation.RemoveAllDirectControllers;
+        }
+
+        private static bool IsMsiLocalModuleOperation(
+            LmServiceOperation operation)
+        {
+            return operation == LmServiceOperation.EnsureMsiLocalModules ||
+                operation == LmServiceOperation.RestartMsiLocalModule ||
+                operation == LmServiceOperation.RemoveMsiLocalModule ||
+                operation == LmServiceOperation.RemoveAllMsiLocalModules;
         }
 
         private static void Append(StringBuilder canonical, string key, string value)

@@ -13,6 +13,7 @@ namespace EsmTspiot.ServiceProvisioner
         private const string HiddenInstallerProperties =
             "ADMINLOGIN=admin ADMINPASSWORD=admin ";
         private readonly VerifiedLocalModulePackage _source;
+        private readonly WindowsInstallerPackageMetadata _metadata;
         private readonly string _machineRoot;
         private readonly IPathSafety _pathSafety;
         private readonly ILocalModuleMsiTransformer _transformer;
@@ -45,6 +46,49 @@ namespace EsmTspiot.ServiceProvisioner
             WindowsFirewallApi firewallApi = new WindowsFirewallApi();
             return new WindowsLocalModuleMsiProvisioningPlatform(
                 source,
+                source.Metadata,
+                machineRoot,
+                pathSafety,
+                new LocalModuleMsiTransformer(),
+                new WindowsInstallerApi(),
+                new InstalledLocalModuleProductReader(),
+                services,
+                servicePairs,
+                readiness,
+                new LocalModuleConfigurationInspector(),
+                firewallApi,
+                new LocalModuleFirewallManager(firewallApi),
+                listeners,
+                delegate { return Guid.NewGuid(); },
+                delegate { Thread.Sleep(250); });
+        }
+
+        internal static WindowsLocalModuleMsiProvisioningPlatform
+            CreateForInstalledProducts(string machineRoot)
+        {
+            LocalModuleInstallerSelection identity =
+                LocalModulePackageVerifier.CreateSupportedIdentity();
+            WindowsInstallerPackageMetadata metadata =
+                new WindowsInstallerPackageMetadata
+                {
+                    ProductName = identity.ProductName,
+                    ProductVersion = identity.ProductVersion,
+                    ProductCode = identity.ProductCode,
+                    UpgradeCode = identity.UpgradeCode,
+                    PackageCode = "{00000000-0000-0000-0000-000000000000}"
+                };
+            PathSafety pathSafety = new PathSafety();
+            WindowsServiceApi services = new WindowsServiceApi();
+            TcpListenerOwnerReader listeners = new TcpListenerOwnerReader();
+            LocalModuleMsiReadinessProbe readiness =
+                new LocalModuleMsiReadinessProbe(
+                    services, listeners, new NativeProcessParentReader());
+            LocalModuleServicePairController servicePairs =
+                new LocalModuleServicePairController(services, readiness);
+            WindowsFirewallApi firewallApi = new WindowsFirewallApi();
+            return new WindowsLocalModuleMsiProvisioningPlatform(
+                null,
+                metadata,
                 machineRoot,
                 pathSafety,
                 new LocalModuleMsiTransformer(),
@@ -63,6 +107,7 @@ namespace EsmTspiot.ServiceProvisioner
 
         internal WindowsLocalModuleMsiProvisioningPlatform(
             VerifiedLocalModulePackage source,
+            WindowsInstallerPackageMetadata metadata,
             string machineRoot,
             IPathSafety pathSafety,
             ILocalModuleMsiTransformer transformer,
@@ -78,7 +123,7 @@ namespace EsmTspiot.ServiceProvisioner
             Func<Guid> newGuid,
             Action delay)
         {
-            if (source == null) throw new ArgumentNullException("source");
+            if (metadata == null) throw new ArgumentNullException("metadata");
             if (string.IsNullOrWhiteSpace(machineRoot))
                 throw new ArgumentException("Machine root is required.",
                     "machineRoot");
@@ -97,6 +142,7 @@ namespace EsmTspiot.ServiceProvisioner
             if (newGuid == null) throw new ArgumentNullException("newGuid");
             if (delay == null) throw new ArgumentNullException("delay");
             _source = source;
+            _metadata = metadata.Clone();
             _machineRoot = Path.GetFullPath(machineRoot);
             _pathSafety = pathSafety;
             _transformer = transformer;
@@ -135,7 +181,7 @@ namespace EsmTspiot.ServiceProvisioner
                     string.Equals(product.DisplayName, expected.ProductName,
                         StringComparison.Ordinal) &&
                     string.Equals(product.DisplayVersion,
-                        _source.Metadata.ProductVersion,
+                        _metadata.ProductVersion,
                         StringComparison.Ordinal);
             }
 
@@ -220,6 +266,7 @@ namespace EsmTspiot.ServiceProvisioner
             LocalModuleMsiProvisioningItemRequest request,
             string ownershipNonce)
         {
+            RequireSource();
             string installRoot = InstallRoot(request);
             if (request.CloneOrdinal == 0)
                 return LocalModuleMsiManifest.Create(
@@ -227,15 +274,15 @@ namespace EsmTspiot.ServiceProvisioner
                     request.CloneOrdinal,
                     request.ApiPort,
                     request.DatabasePort,
-                    _source.Metadata.ProductCode,
-                    _source.Metadata.PackageCode,
+                    _metadata.ProductCode,
+                    _metadata.PackageCode,
                     installRoot,
                     true,
                     false,
                     ownershipNonce);
             LocalModuleMsiCloneIdentity identity =
                 new LocalModuleMsiIdentityFactory(_newGuid).Create(
-                    _source.Metadata.ProductVersion,
+                    _metadata.ProductVersion,
                     request.Inn,
                     request.CloneOrdinal);
             return LocalModuleMsiManifest.Create(
@@ -255,14 +302,15 @@ namespace EsmTspiot.ServiceProvisioner
             LocalModuleMsiProvisioningItemRequest request,
             LocalModuleMsiManifest manifest)
         {
+            RequireSource();
             string installRoot = InstallRoot(request);
             if (request.CloneOrdinal == 0)
             {
                 if (!string.Equals(manifest.ProductCode,
-                        _source.Metadata.ProductCode,
+                        _metadata.ProductCode,
                         StringComparison.OrdinalIgnoreCase) ||
                     !string.Equals(manifest.PackageCode,
-                        _source.Metadata.PackageCode,
+                        _metadata.PackageCode,
                         StringComparison.OrdinalIgnoreCase))
                     throw new InvalidDataException(
                         "Prepared base MSI identity changed before install.");
@@ -271,7 +319,7 @@ namespace EsmTspiot.ServiceProvisioner
                     InstallProperties(installRoot));
                 RequireInstalled(
                     manifest.ProductCode,
-                    _source.Metadata.ProductName,
+                    _metadata.ProductName,
                     installRoot);
                 return;
             }
@@ -284,7 +332,7 @@ namespace EsmTspiot.ServiceProvisioner
                 new LocalModuleMsiIdentityFactory(delegate {
                     return packageCode;
                 }).Create(
-                    _source.Metadata.ProductVersion,
+                    _metadata.ProductVersion,
                     request.Inn,
                     request.CloneOrdinal);
             if (!string.Equals(manifest.ProductCode,
@@ -295,7 +343,7 @@ namespace EsmTspiot.ServiceProvisioner
             LocalModuleMsiTransformPlan plan =
                 LocalModuleMsiTransformPlan.Create(
                     identity,
-                    _source.Metadata.ProductVersion,
+                    _metadata.ProductVersion,
                     request.ApiPort,
                     request.DatabasePort);
             string stagingOperation = _newGuid().ToString("N");
@@ -336,16 +384,16 @@ namespace EsmTspiot.ServiceProvisioner
                     "Only the exact vendor base may be preserved as pre-existing.");
             string installRoot = InstallRoot(request);
             RequireInstalled(
-                _source.Metadata.ProductCode,
-                _source.Metadata.ProductName,
+                _metadata.ProductCode,
+                _metadata.ProductName,
                 installRoot);
             return LocalModuleMsiManifest.Create(
                 request.Inn,
                 0,
                 request.ApiPort,
                 request.DatabasePort,
-                _source.Metadata.ProductCode,
-                _source.Metadata.PackageCode,
+                _metadata.ProductCode,
+                _metadata.PackageCode,
                 installRoot,
                 false,
                 true,
@@ -448,21 +496,21 @@ namespace EsmTspiot.ServiceProvisioner
                 {
                     ProductCode = manifest.ProductCode,
                     ProductName = request.CloneOrdinal == 0
-                        ? _source.Metadata.ProductName
+                        ? _metadata.ProductName
                         : "Локальный модуль Честный Знак экземпляр " +
                             request.CloneOrdinal.ToString()
                 };
             if (request.CloneOrdinal == 0)
                 return new ProductExpectation
                 {
-                    ProductCode = _source.Metadata.ProductCode,
-                    ProductName = _source.Metadata.ProductName
+                    ProductCode = _metadata.ProductCode,
+                    ProductName = _metadata.ProductName
                 };
             LocalModuleMsiCloneIdentity identity =
                 new LocalModuleMsiIdentityFactory(delegate {
                     return new Guid("f0000000-0000-4000-8000-000000000001");
                 }).Create(
-                    _source.Metadata.ProductVersion,
+                    _metadata.ProductVersion,
                     request.Inn,
                     request.CloneOrdinal);
             return new ProductExpectation
@@ -481,7 +529,7 @@ namespace EsmTspiot.ServiceProvisioner
             if (_products.FindExact(
                     productCode,
                     productName,
-                    _source.Metadata.ProductVersion,
+                    _metadata.ProductVersion,
                     installRoot) == null)
                 throw new InvalidOperationException(
                     "Windows Installer did not confirm the exact LM product.");
@@ -494,6 +542,13 @@ namespace EsmTspiot.ServiceProvisioner
                     "Local-module installation root contains a quote.");
             return HiddenInstallerProperties + "APPLICATIONFOLDER=\"" +
                 installRoot + "\"";
+        }
+
+        private void RequireSource()
+        {
+            if (_source == null)
+                throw new InvalidOperationException(
+                    "A verified source MSI is required for installation.");
         }
 
         private static bool PathsEqual(string left, string right)

@@ -212,7 +212,7 @@ namespace EsmTspiot.ServiceProvisioner
                     LmServiceProvisioningBatchRequest single =
                         new LmServiceProvisioningBatchRequest
                         {
-                            SchemaVersion = ProvisioningRequestValidator.CurrentSchemaVersion,
+                            SchemaVersion = ProvisioningRequestValidator.LegacySchemaVersion,
                             Operation = LmServiceOperation.RemoveManaged,
                             OperationId = request.OperationId,
                             InitiatingSid = request.InitiatingSid,
@@ -490,7 +490,9 @@ namespace EsmTspiot.ServiceProvisioner
         {
             return new LmServiceProvisioningBatchResult
             {
-                SchemaVersion = ProvisioningRequestValidator.CurrentSchemaVersion,
+                SchemaVersion = request == null
+                    ? ProvisioningRequestValidator.LegacySchemaVersion
+                    : request.SchemaVersion,
                 OperationId = request == null ? string.Empty : request.OperationId,
                 PlanHash = request == null ? string.Empty : request.PlanHash,
                 Status = LmServiceProvisioningStatus.Pending
