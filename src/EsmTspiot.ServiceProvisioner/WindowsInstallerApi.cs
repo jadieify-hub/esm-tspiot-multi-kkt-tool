@@ -7,6 +7,7 @@ namespace EsmTspiot.ServiceProvisioner
 {
     internal interface IWindowsInstallerNative
     {
+        int SetInternalUi(int uiLevel);
         uint InstallProduct(string packagePath, string commandLine);
         uint ConfigureProduct(
             string productCode,
@@ -17,9 +18,10 @@ namespace EsmTspiot.ServiceProvisioner
 
     internal sealed class WindowsInstallerApi : IWindowsInstallerApi
     {
-        private const int InstallLevelDefault = -1;
+        private const int InstallLevelDefault = 0;
         private const int InstallStateAbsent = 2;
         private const int InstallStateDefault = 5;
+        private const int InstallUiLevelNone = 2;
         private readonly IWindowsInstallerNative _native;
 
         internal WindowsInstallerApi()
@@ -40,33 +42,59 @@ namespace EsmTspiot.ServiceProvisioner
                 throw new FileNotFoundException(
                     "Local-module MSI package was not found.",
                     path);
-            return Complete(
+            return RunWithoutInstallerUi(
                 "install",
-                _native.InstallProduct(path, hiddenProperties ?? string.Empty));
+                delegate
+                {
+                    return _native.InstallProduct(
+                        path,
+                        hiddenProperties ?? string.Empty);
+                });
         }
 
         public uint Repair(string productCode)
         {
             string product = NormalizeProductCode(productCode);
-            return Complete(
+            return RunWithoutInstallerUi(
                 "repair",
-                _native.ConfigureProduct(
-                    product,
-                    InstallLevelDefault,
-                    InstallStateDefault,
-                    "REINSTALL=ALL REINSTALLMODE=vomus"));
+                delegate
+                {
+                    return _native.ConfigureProduct(
+                        product,
+                        InstallLevelDefault,
+                        InstallStateDefault,
+                        "REINSTALL=ALL REINSTALLMODE=vomus");
+                });
         }
 
         public uint Uninstall(string productCode)
         {
             string product = NormalizeProductCode(productCode);
-            return Complete(
+            return RunWithoutInstallerUi(
                 "uninstall",
-                _native.ConfigureProduct(
-                    product,
-                    InstallLevelDefault,
-                    InstallStateAbsent,
-                    string.Empty));
+                delegate
+                {
+                    return _native.ConfigureProduct(
+                        product,
+                        InstallLevelDefault,
+                        InstallStateAbsent,
+                        "REBOOT=ReallySuppress");
+                });
+        }
+
+        private uint RunWithoutInstallerUi(
+            string operation,
+            Func<uint> nativeOperation)
+        {
+            int previous = _native.SetInternalUi(InstallUiLevelNone);
+            try
+            {
+                return Complete(operation, nativeOperation());
+            }
+            finally
+            {
+                _native.SetInternalUi(previous);
+            }
         }
 
         internal static string RedactInstallProperties(string properties)
@@ -109,6 +137,11 @@ namespace EsmTspiot.ServiceProvisioner
 
     internal sealed class WindowsInstallerNative : IWindowsInstallerNative
     {
+        public int SetInternalUi(int uiLevel)
+        {
+            return MsiSetInternalUI(uiLevel, IntPtr.Zero);
+        }
+
         public uint InstallProduct(string packagePath, string commandLine)
         {
             return MsiInstallProductW(packagePath, commandLine);
@@ -144,6 +177,14 @@ namespace EsmTspiot.ServiceProvisioner
             int installLevel,
             int installState,
             string commandLine);
+
+        [DllImport(
+            "msi.dll",
+            CharSet = CharSet.Unicode,
+            ExactSpelling = true)]
+        private static extern int MsiSetInternalUI(
+            int uiLevel,
+            IntPtr windowHandle);
 
     }
 }

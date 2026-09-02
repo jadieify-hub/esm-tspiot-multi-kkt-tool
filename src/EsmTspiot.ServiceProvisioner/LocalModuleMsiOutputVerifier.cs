@@ -24,6 +24,9 @@ namespace EsmTspiot.ServiceProvisioner
                     LocalModuleCabinetTools.Extract(transformedMsiPath, workspace);
                 stage = "verify media";
                 VerifyMedia(source.Media, output.Media);
+                VerifyCabinetMembers(
+                    source.CabinetMembers,
+                    output.CabinetMembers);
                 if (source.Files.Count == 0 ||
                     output.Files.Count != source.Files.Count)
                     throw new InvalidDataException("MSI output file set mismatch.");
@@ -137,6 +140,30 @@ namespace EsmTspiot.ServiceProvisioner
             for (int index = 0; index < files.Count; index++)
                 result.Add(files[index].FileId, files[index]);
             return result;
+        }
+
+        private static void VerifyCabinetMembers(
+            IDictionary<string, IList<string>> expected,
+            IDictionary<string, IList<string>> actual)
+        {
+            if (expected.Count != actual.Count)
+                throw new InvalidDataException("MSI cabinet count mismatch.");
+            foreach (KeyValuePair<string, IList<string>> cabinet in expected)
+            {
+                IList<string> found;
+                if (!actual.TryGetValue(cabinet.Key, out found) ||
+                    found.Count != cabinet.Value.Count)
+                    throw new InvalidDataException(
+                        "MSI cabinet member count mismatch: " + cabinet.Key + ".");
+                for (int index = 0; index < found.Count; index++)
+                    if (!string.Equals(
+                            cabinet.Value[index],
+                            found[index],
+                            StringComparison.Ordinal))
+                        throw new InvalidDataException(
+                            "MSI cabinet member order mismatch: " +
+                            cabinet.Key + " index=" + index + ".");
+            }
         }
 
         private static bool HashMatchesPayload(

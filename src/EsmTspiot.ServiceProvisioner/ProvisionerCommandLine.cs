@@ -20,39 +20,6 @@ namespace EsmTspiot.ServiceProvisioner
         internal static bool TryParse(string[] args, out ProvisionerCommandLine result)
         {
             result = null;
-            string serial;
-            if (args != null && args.Length == 2 &&
-                string.Equals(args[0], "--supervise", StringComparison.Ordinal) &&
-                LmServiceIdentity.TryParseName(args[1], out serial))
-            {
-                result = new ProvisionerCommandLine
-                {
-                    Mode = ProvisionerMode.Supervisor,
-                    ServiceName = LmServiceIdentity.CreateName(serial)
-                };
-                return true;
-            }
-            string instanceId;
-            LocalModuleProcessRole role;
-            if (args != null && args.Length == 2 &&
-                string.Equals(
-                    args[0],
-                    "--supervise-local-module",
-                    StringComparison.Ordinal) &&
-                LocalModuleServiceIdentity.TryParseName(
-                    args[1],
-                    out instanceId,
-                    out role))
-            {
-                result = new ProvisionerCommandLine
-                {
-                    Mode = ProvisionerMode.LocalModuleSupervisor,
-                    ServiceName = LocalModuleServiceIdentity.CreateName(
-                        instanceId,
-                        role)
-                };
-                return true;
-            }
             if (args == null || args.Length != 4 ||
                 !string.Equals(args[0], "--pipe", StringComparison.Ordinal) ||
                 !string.Equals(args[2], "--operation", StringComparison.Ordinal) ||

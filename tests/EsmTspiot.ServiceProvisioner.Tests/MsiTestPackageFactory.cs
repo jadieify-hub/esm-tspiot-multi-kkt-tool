@@ -139,6 +139,39 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             }
         }
 
+        internal static string[] ReadCabinetMembers(string path, string streamName)
+        {
+            string workspace = path + "." + streamName + ".members";
+            Directory.CreateDirectory(workspace);
+            try
+            {
+                string cabinetPath = Path.Combine(workspace, streamName);
+                using (Database database = new Database(path, DatabaseOpenMode.ReadOnly))
+                using (View view = database.OpenView(
+                    "SELECT `Data` FROM `_Streams` WHERE `Name` = ?"))
+                using (Record parameter = new Record(1))
+                {
+                    parameter.SetString(1, streamName);
+                    view.Execute(parameter);
+                    using (Record record = view.Fetch())
+                    {
+                        if (record == null)
+                            throw new InvalidDataException("Cabinet stream missing.");
+                        record.GetStream(1, cabinetPath);
+                    }
+                }
+                IList<CabFileInfo> files = new CabInfo(cabinetPath).GetFiles();
+                string[] result = new string[files.Count];
+                for (int index = 0; index < files.Count; index++)
+                    result[index] = files[index].Name;
+                return result;
+            }
+            finally
+            {
+                if (Directory.Exists(workspace)) Directory.Delete(workspace, true);
+            }
+        }
+
         internal static string ReadRowValue(
             string path,
             string table,
@@ -368,6 +401,10 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 new[] { "Signature_", "Root", "Key", "Name", "Type" },
                 new[] { "s72", "i2", "l255", "L255", "i2" },
                 new[] { "Signature_" });
+            ImportSchema(database, root, "Upgrade",
+                new[] { "UpgradeCode", "VersionMin", "VersionMax", "Language", "Attributes", "Remove", "ActionProperty" },
+                new[] { "s38", "S20", "S20", "S255", "i4", "S255", "s72" },
+                new[] { "UpgradeCode", "VersionMin", "VersionMax", "Language", "Attributes" });
             ImportSchema(database, root, "AppSearch",
                 new[] { "Property", "Signature_" },
                 new[] { "s72", "s72" },
@@ -495,11 +532,32 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     ? secondRoot
                     : firstRoot;
                 File.WriteAllBytes(Path.Combine(targetRoot, item.Key), item.Value);
+                if (item.Key == "filSECOND00000000000000000000000001")
+                    File.WriteAllBytes(Path.Combine(firstRoot, item.Key), item.Value);
             }
             string firstCab = Path.Combine(root, "media1.cab");
             string secondCab = Path.Combine(root, "Disk1.cab");
-            new CabInfo(firstCab).Pack(firstRoot);
-            new CabInfo(secondCab).Pack(secondRoot);
+            string[] firstMembers =
+            {
+                "fil0C0BA2BF1CF3006FEE6418B1FBB8A2DC",
+                "fil4D9BD38000F7BBE9FA37B3949730CD45",
+                "fil6C2420445C448A9D193F9397AB772B3F",
+                "fil8B086431A47A790C3CAEE2AA56EF7E1C",
+                "filB64169385D3728F85488BA683E5B1809",
+                "filSECOND00000000000000000000000001"
+            };
+            new CabInfo(firstCab).PackFiles(
+                firstRoot,
+                firstMembers,
+                firstMembers);
+            string[] secondMembers =
+            {
+                "filSECOND00000000000000000000000001"
+            };
+            new CabInfo(secondCab).PackFiles(
+                secondRoot,
+                secondMembers,
+                secondMembers);
             InsertStream(database, "media1.cab", firstCab);
             InsertStream(database, "Disk1.cab", secondCab);
         }
@@ -588,6 +646,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             if (table == "CustomAction") return "Action";
             if (table == "InstallExecuteSequence") return "Action";
             if (table == "AppSearch") return "Property";
+            if (table == "Upgrade") return "UpgradeCode";
             throw new InvalidDataException("Unsupported synthetic table: " + table + ".");
         }
     }
