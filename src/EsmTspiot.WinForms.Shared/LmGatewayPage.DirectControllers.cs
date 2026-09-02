@@ -16,6 +16,8 @@ namespace EsmTspiot.WinForms.Shared
         internal DirectControllerSetupOutcome()
         {
             Messages = new List<string>();
+            ReadyAssignments = new Dictionary<string, DirectControllerAssignment>(
+                StringComparer.Ordinal);
         }
 
         internal bool Complete { get; set; }
@@ -24,6 +26,9 @@ namespace EsmTspiot.WinForms.Shared
         internal int WarningCount { get; set; }
         internal int FailedCount { get; set; }
         internal IList<string> Messages { get; private set; }
+        internal IDictionary<string, DirectControllerAssignment>
+            ReadyAssignments { get; private set; }
+        internal int ExpectedKktCount { get; set; }
 
         internal string FormatSummary()
         {
@@ -41,6 +46,25 @@ namespace EsmTspiot.WinForms.Shared
                 CancellationToken cancellation)
         {
             DirectControllerSetupOutcome outcome =
+                await EnsureDirectControllersFromHostAsync(
+                    registeredKkts,
+                    null,
+                    cancellation).ConfigureAwait(true);
+            await BindReadyDirectControllersAsync(
+                registeredKkts,
+                outcome,
+                cancellation).ConfigureAwait(true);
+            FinalizeDirectControllerOutcome(outcome);
+            return outcome;
+        }
+
+        internal async Task<DirectControllerSetupOutcome>
+            EnsureDirectControllersFromHostAsync(
+                IList<LmGatewayKkt> registeredKkts,
+                IDictionary<string, int> targetLmPortsByInn,
+                CancellationToken cancellation)
+        {
+            DirectControllerSetupOutcome outcome =
                 new DirectControllerSetupOutcome();
             if (registeredKkts == null || registeredKkts.Count == 0)
             {
@@ -49,11 +73,13 @@ namespace EsmTspiot.WinForms.Shared
                     "Нет зарегистрированных ККТ для настройки контроллеров.");
                 return outcome;
             }
+            outcome.ExpectedKktCount = registeredKkts.Count;
 
             _statusLabel.Text = "Подготовка плана прямых контроллеров 1.6.4.0...";
             DirectControllerPlan plan =
                 new DirectControllerOperatorInventoryReader().BuildPlan(
-                    registeredKkts);
+                    registeredKkts,
+                    targetLmPortsByInn);
             if (!plan.IsValid)
             {
                 outcome.FailedCount = plan.ValidationMessages.Count;
@@ -93,9 +119,6 @@ namespace EsmTspiot.WinForms.Shared
                     requests,
                     Guid.NewGuid().ToString("N"),
                     cancellation).ConfigureAwait(true);
-            Dictionary<string, DirectControllerAssignment> ready =
-                new Dictionary<string, DirectControllerAssignment>(
-                    StringComparer.Ordinal);
             for (int index = 0; index < provisioned.Items.Count; index++)
             {
                 LmServiceProvisioningItemResult item = provisioned.Items[index];
@@ -105,7 +128,7 @@ namespace EsmTspiot.WinForms.Shared
                 if (item.Status == LmServiceProvisioningStatus.Succeeded &&
                     assignment != null)
                 {
-                    ready[item.KktSerial] = assignment;
+                    outcome.ReadyAssignments[item.KktSerial] = assignment;
                     outcome.ReadyCount++;
                 }
                 else if (item.Status == LmServiceProvisioningStatus.Cancelled)
@@ -120,7 +143,19 @@ namespace EsmTspiot.WinForms.Shared
                 }
             }
 
-            if (ready.Count > 0 && !cancellation.IsCancellationRequested)
+            return outcome;
+        }
+
+        internal async Task BindReadyDirectControllersAsync(
+            IList<LmGatewayKkt> registeredKkts,
+            DirectControllerSetupOutcome outcome,
+            CancellationToken cancellation)
+        {
+            if (outcome == null) throw new ArgumentNullException("outcome");
+            if (registeredKkts == null) throw new ArgumentNullException(
+                "registeredKkts");
+            if (outcome.ReadyAssignments.Count > 0 &&
+                !cancellation.IsCancellationRequested)
             {
                 _statusLabel.Text = "Привязка экземпляров ЕСМ к контроллерам...";
                 LmGatewayDiscovery discovery = new LmGatewayDiscovery();
@@ -130,24 +165,16 @@ namespace EsmTspiot.WinForms.Shared
                 {
                     LmGatewayKkt kkt = registeredKkts[index];
                     DirectControllerAssignment assignment;
-                    if (kkt == null || !ready.TryGetValue(
+                    if (kkt == null || !outcome.ReadyAssignments.TryGetValue(
                             kkt.KktSerial,
                             out assignment))
                     {
                         continue;
                     }
                     discovery.Items.Add(kkt);
-                    string port = assignment.GrpcPort.ToString(
-                        CultureInfo.InvariantCulture);
-                    inputs.Add(new LmGatewayBindingInput
-                    {
-                        KktSerial = assignment.KktSerial,
-                        KktInn = assignment.KktInn,
-                        ControllerAddress = "127.0.0.1",
-                        ControllerGrpcPort = port,
-                        ExpectedLmAddress = "127.0.0.1",
-                        ExpectedLmPort = port
-                    });
+                    inputs.Add(DirectControllerBindingInputFactory.Create(
+                        kkt,
+                        assignment));
                 }
                 LmGatewayBindingPlan bindingPlan =
                     LmGatewayBindingPlanner.Build(discovery, inputs);
@@ -196,9 +223,13 @@ namespace EsmTspiot.WinForms.Shared
                 }
                 outcome.Cancelled |= binding.Cancelled;
             }
+        }
 
+        private void FinalizeDirectControllerOutcome(
+            DirectControllerSetupOutcome outcome)
+        {
             outcome.Complete = DirectControllerSetupPolicy.IsComplete(
-                registeredKkts.Count,
+                outcome.ExpectedKktCount,
                 outcome.ReadyCount,
                 outcome.FailedCount,
                 outcome.Cancelled);
@@ -209,7 +240,6 @@ namespace EsmTspiot.WinForms.Shared
             {
                 Log(SensitiveDataMasker.Mask(outcome.Messages[index]) + "\r\n");
             }
-            return outcome;
         }
 
         private bool HasDirectControllersForRemoval()

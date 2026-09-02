@@ -384,6 +384,7 @@ namespace EsmTspiot.Shared.Services
                 {
                     Current = current,
                     Total = total,
+                    CountsAttempts = true,
                     Stage = stage,
                     Message = FormatVisibleDevices(snapshot.Devices),
                     Response = response

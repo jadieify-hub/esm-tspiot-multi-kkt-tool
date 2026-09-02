@@ -476,6 +476,9 @@ try {
         "KktSoftwarePort",
         "LmEndpoint",
         "LmState",
+        "LmRole",
+        "LmInstallRoot",
+        "LmOwnership",
         "EsmLinkState")
     if ($grid.Columns.Count -ne $expectedNames.Count) {
         throw "The operator-facing LM table must contain only $($expectedNames.Count) working columns; actual: $($grid.Columns.Count)."
@@ -906,8 +909,11 @@ try {
 
     $staticFlags = [System.Reflection.BindingFlags]::Static -bor
         [System.Reflection.BindingFlags]::NonPublic
-    $lmStateFormatter = $page.GetType().GetMethod(
-        "GetLmStateText", $staticFlags)
+    $lmStateFormatter = @($page.GetType().GetMethods($staticFlags) |
+        Where-Object {
+            $_.Name -eq "GetLmStateText" -and
+            $_.GetParameters().Count -eq 2
+        })[0]
     $emptyLmStateArguments = New-Object object[] 2
     $controllerOnlyArguments = New-Object object[] 2
     $controllerOnlyArguments[0] = $inventoryItem
@@ -1029,14 +1035,14 @@ try {
         throw "The installer action must expose the single automatic setup command."
     }
     $expectedCreateKitsText = Get-Utf8Text(
-        "0KHQvtC30LTQsNGC0YwgLyDQvtCx0L3QvtCy0LjRgtGMINC60L7QvdGC0YDQvtC70LvQtdGA0Ys=")
+        "0J3QsNGB0YLRgNC+0LjRgtGMINC60L7QvdGC0YDQvtC70LvQtdGA0Ysg0Lgg0JvQnCDQp9CX")
     if ($installButton.Text -ne $expectedCreateKitsText) {
-        throw "The LM-tab action must create or update direct controllers."
+        throw "The LM-tab action must configure direct controllers and local modules."
     }
-    if ($removeAllButton.Tag -ne "RemoveAllDirectControllers" -or
+    if ($removeAllButton.Tag -ne "RemoveAllCreatedComponents" -or
         $removeAllButton.Text -ne (Get-Utf8Text(
-            "0KPQtNCw0LvQuNGC0Ywg0LLRgdC1INC60L7QvdGC0YDQvtC70LvQtdGA0Ys="))) {
-        throw "The controller page must expose the protected direct-controller remove-all command."
+            "0KPQtNCw0LvQuNGC0Ywg0LLRgdGRINGB0L7Qt9C00LDQvdC90L7QtQ=="))) {
+        throw "The LM page must expose the protected application-owned remove-all command."
     }
     if ($null -ne $automaticInstallerButton.Parent -or
         $null -ne $automaticInstallerPath.Parent) {
@@ -1065,10 +1071,12 @@ try {
         throw "Automatic-mode stop button overflows the normal page width."
     }
 
-    if ($null -ne $pathBox.Parent -or $null -ne $selectButton.Parent -or
-        $null -ne $localModulePathBox.Parent -or
-        $null -ne $selectLocalModuleButton.Parent) {
-        throw "The controller page must not expose obsolete vendor-package selectors."
+    if ($null -ne $pathBox.Parent -or $null -ne $selectButton.Parent) {
+        throw "The controller page must not expose obsolete controller-package selectors."
+    }
+    if ($null -eq $localModulePathBox.Parent -or
+        $null -eq $selectLocalModuleButton.Parent) {
+        throw "The full automatic workflow must expose the official local-module MSI selector."
     }
 
     $page.Size = [System.Drawing.Size]::new(748, 512)
@@ -1132,13 +1140,13 @@ try {
             'MessageBoxButtons\.YesNo,\s*MessageBoxIcon\.Warning,\s*MessageBoxDefaultButton\.Button2').Count -ne 4) {
         throw "Every destructive or warning Yes/No prompt must default to No."
     }
-    if ($directControllersSource -notmatch '(?s)EnsureDirectControllersAsync\(.*?for \(int index = 0; index < provisioned\.Items\.Count; index\+\+\).*?ready\[item\.KktSerial\] = assignment' -or
+    if ($directControllersSource -notmatch '(?s)EnsureDirectControllersFromHostAsync\(.*?for \(int index = 0; index < provisioned\.Items\.Count; index\+\+\).*?ReadyAssignments\[item\.KktSerial\] = assignment' -or
         $directControllersSource -notmatch 'DirectControllerSetupPolicy\.IsDeferredLocalModuleWarning') {
         throw "Direct controller setup must process every KKT independently and defer LM 2025/2055 failures."
     }
-    if ($mainFormSource -notmatch '(?s)DiscoverRegisteredKktsForAutomaticPlanAsync.*?MessageBoxButtons\.YesNo.*?RunDirectControllerSetupFromHostAsync' -or
+    if ($mainFormSource -notmatch '(?s)DiscoverRegisteredKktsForAutomaticPlanAsync.*?MessageBoxButtons\.YesNo.*?RunFullAutomaticLocalSetupFromHostAsync' -or
         $mainFormSource -notmatch 'controllersDeferred \|\| controllersComplete') {
-        throw "Registration must finish before an independently deferrable direct-controller phase."
+        throw "Registration must finish before an independently deferrable controller and local-module phase."
     }
     if ($directControllersSource -notmatch 'RemoveAllDirectControllersAsync' -or
         $directControllersSource -notmatch 'esm-lm-controller') {

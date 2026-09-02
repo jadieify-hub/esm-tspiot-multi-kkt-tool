@@ -199,11 +199,15 @@ namespace EsmTspiot.ServiceProvisioner
         internal static LocalModuleMsiProvisioningContext CreateWindows(
             string operationId,
             VerifiedLocalModulePackage source,
-            string machineRoot)
+            string machineRoot,
+            string initiatingSid)
         {
             PathSafety pathSafety = new PathSafety();
             LocalModuleMsiManifestStore store =
-                new LocalModuleMsiManifestStore(machineRoot, pathSafety);
+                new LocalModuleMsiManifestStore(
+                    machineRoot,
+                    pathSafety,
+                    initiatingSid);
             return new LocalModuleMsiProvisioningContext(
                 operationId,
                 WindowsLocalModuleMsiProvisioningPlatform.Create(
@@ -217,11 +221,15 @@ namespace EsmTspiot.ServiceProvisioner
         internal static LocalModuleMsiProvisioningContext
             CreateWindowsForInstalledProducts(
             string operationId,
-            string machineRoot)
+            string machineRoot,
+            string initiatingSid)
         {
             PathSafety pathSafety = new PathSafety();
             LocalModuleMsiManifestStore store =
-                new LocalModuleMsiManifestStore(machineRoot, pathSafety);
+                new LocalModuleMsiManifestStore(
+                    machineRoot,
+                    pathSafety,
+                    initiatingSid);
             return new LocalModuleMsiProvisioningContext(
                 operationId,
                 WindowsLocalModuleMsiProvisioningPlatform

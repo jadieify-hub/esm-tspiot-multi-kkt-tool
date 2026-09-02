@@ -12,5 +12,6 @@
     <Compile Include="..\..\src\EsmTspiot.WinForms.Shared\ProvisionerProcessLauncher.cs" Link="ProvisionerProcessLauncher.cs" />
     <Compile Include="..\..\src\EsmTspiot.WinForms.Shared\LmServiceProvisionerClient.cs" Link="LmServiceProvisionerClient.cs" />
     <Compile Include="..\..\src\EsmTspiot.WinForms.Shared\LocalModuleMsiProvisionerClient.cs" Link="LocalModuleMsiProvisionerClient.cs" />
+    <Compile Include="..\..\src\EsmTspiot.WinForms.Shared\LocalModuleMsiOperatorInventoryReader.cs" Link="LocalModuleMsiOperatorInventoryReader.cs" />
   </ItemGroup>
 </Project>

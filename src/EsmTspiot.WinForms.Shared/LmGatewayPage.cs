@@ -393,6 +393,8 @@ namespace EsmTspiot.WinForms.Shared
                     ManagedLocalModuleInventoryItem managedLm =
                         _managedLocalModuleInventory.Find(
                             item.Kkt.KktSerial);
+                    LocalModuleMsiInventoryItem msiLm =
+                        FindMsiInventoryByInn(item.Kkt.KktInn);
                     LmGatewayDraft draft = GetOrCreateServiceDraft(item.Kkt.KktSerial);
                     int ordinal = GetCurrentKktOrdinal(
                         displayPlan,
@@ -403,8 +405,12 @@ namespace EsmTspiot.WinForms.Shared
                         item.Kkt.KktSerial,
                         item.Kkt.KktInn,
                         item.Kkt.SoftPort ?? string.Empty,
-                        GetLmEndpointText(item, draft, inventory, managedLm),
-                        GetLmStateText(inventory, managedLm),
+                        GetLmEndpointText(
+                            item, draft, inventory, managedLm, msiLm),
+                        GetLmStateText(inventory, managedLm, msiLm),
+                        GetMsiRoleText(msiLm),
+                        msiLm == null ? string.Empty : msiLm.InstallRoot,
+                        GetMsiOwnershipText(msiLm),
                         GetEsmLinkStateText(item));
                     LmServiceInventoryItem removable = FindRemovalInventory(
                         removalInventory,
@@ -469,6 +475,9 @@ namespace EsmTspiot.WinForms.Shared
                         softwarePort,
                         GetLmEndpointText(null, null, inventory, managedLm),
                         GetLmStateText(inventory, managedLm),
+                        "Старый комплект",
+                        string.Empty,
+                        "Старая схема",
                         "Нет в ЕСМ");
                     _grid.Rows[orphanRowIndex].Tag = new LmGatewayGridRow(
                         null,

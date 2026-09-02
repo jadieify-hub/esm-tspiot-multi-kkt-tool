@@ -39,11 +39,15 @@ namespace EsmTspiot.WinForms.Shared
         private LmGatewayDraftSettingsStore _draftSettingsStore;
         private OperatorPackagePathStore _packagePathStore;
         private LmServiceProvisionerClient _serviceProvisioner;
+        private LocalModuleMsiProvisionerClient _localModuleMsiProvisioner;
         private CompleteStackProvisionerClient _completeStackProvisioner;
         private LmServiceInventoryReader _inventoryReader;
         private ManagedLocalModuleInventoryReader _managedLocalModuleInventoryReader;
         private ManagedLocalModuleInventorySnapshot _managedLocalModuleInventory =
             new ManagedLocalModuleInventorySnapshot();
+        private LocalModuleMsiOperatorInventorySnapshot
+            _localModuleMsiInventory =
+                new LocalModuleMsiOperatorInventorySnapshot();
         private LmGatewayProbe _serviceProbe;
         private ReadOnlyTcpListenerOwnerReader _tcpListenerReader;
         private LmGatewayRemovalWorkflow _removalWorkflow;
@@ -53,10 +57,13 @@ namespace EsmTspiot.WinForms.Shared
         private bool _helperAvailable;
         private string _helperUnavailableReason = string.Empty;
         private string _serviceInventoryWarning = string.Empty;
+        private int _lastAutomaticLocalModulesReady;
+        private int _lastAutomaticLocalModulesFailed;
 
         private void InitializeServiceFeatures()
         {
             _serviceProvisioner = new LmServiceProvisionerClient();
+            _localModuleMsiProvisioner = new LocalModuleMsiProvisionerClient();
             _completeStackProvisioner = new CompleteStackProvisionerClient();
             _inventoryReader = new LmServiceInventoryReader();
             _managedLocalModuleInventoryReader =
@@ -86,20 +93,41 @@ namespace EsmTspiot.WinForms.Shared
                 Dock = DockStyle.Fill,
                 AutoSize = true,
                 Padding = new Padding(6, 3, 6, 5),
-                ColumnCount = 2,
-                RowCount = 2
+                ColumnCount = 3,
+                RowCount = 4
             };
             table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             Label description = new Label
             {
                 Text = "Используется установленный официальный контроллер 1.6.4.0. " +
-                    "Для каждой ККТ создаётся отдельная служба; ЛМ ЧЗ можно установить и инициализировать позже.",
+                    "Для каждой ККТ создаётся отдельная служба; ЛМ ЧЗ можно " +
+                    "установить и инициализировать позже.",
                 AutoSize = true,
                 Anchor = AnchorStyles.Left,
                 Margin = new Padding(0, 6, 0, 5)
             };
-            ConfigureButton(_installControllerButton, "Создать / обновить контроллеры");
+            Label msiLabel = new Label
+            {
+                Text = "Официальный MSI ЛМ ЧЗ",
+                AutoSize = true,
+                Anchor = AnchorStyles.Left
+            };
+            _localModuleInstallerPathTextBox.ReadOnly = true;
+            _localModuleInstallerPathTextBox.Dock = DockStyle.Fill;
+            ConfigureButton(_selectLocalModuleInstallerButton, "Выбрать MSI...");
+            _selectLocalModuleInstallerButton.Click += delegate
+            {
+                SelectLocalModuleInstaller(this);
+            };
+            _localModuleInstallerStatusLabel.AutoSize = true;
+            _localModuleInstallerStatusLabel.Dock = DockStyle.Fill;
+            _localModuleInstallerStatusLabel.Text = "MSI ЛМ ЧЗ не выбран; " +
+                "контроллеры всё равно можно настроить.";
+            ConfigureButton(
+                _installControllerButton,
+                "Настроить контроллеры и ЛМ ЧЗ");
             _installControllerButton.Tag = "AutomaticSetup";
             _installControllerButton.Click += async delegate { await StartAutomaticSetupAsync(); };
             _setupActionHintLabel.AutoSize = false;
@@ -109,9 +137,15 @@ namespace EsmTspiot.WinForms.Shared
             _setupActionHintLabel.AutoEllipsis = true;
             _setupActionHintLabel.Margin = new Padding(8, 0, 0, 4);
             table.Controls.Add(description, 0, 0);
-            table.SetColumnSpan(description, 2);
-            table.Controls.Add(_installControllerButton, 0, 1);
-            table.Controls.Add(_setupActionHintLabel, 1, 1);
+            table.SetColumnSpan(description, 3);
+            table.Controls.Add(msiLabel, 0, 1);
+            table.Controls.Add(_localModuleInstallerPathTextBox, 1, 1);
+            table.Controls.Add(_selectLocalModuleInstallerButton, 2, 1);
+            table.Controls.Add(_localModuleInstallerStatusLabel, 1, 2);
+            table.SetColumnSpan(_localModuleInstallerStatusLabel, 2);
+            table.Controls.Add(_installControllerButton, 0, 3);
+            table.Controls.Add(_setupActionHintLabel, 1, 3);
+            table.SetColumnSpan(_setupActionHintLabel, 2);
             group.Controls.Add(table);
             return group;
         }
@@ -230,9 +264,9 @@ namespace EsmTspiot.WinForms.Shared
                         throw new InvalidOperationException(
                             "В ЕСМ нет зарегистрированных ККТ для полной настройки.");
                     }
-                    await RunDirectControllerSetupFromHostAsync(kkts, token);
+                    await RunFullAutomaticLocalSetupFromHostAsync(kkts, token);
                 },
-                "Подготовка независимых контроллеров ЕСМ 1.6.4.0...");
+                "Подготовка контроллеров и независимых ЛМ ЧЗ...");
         }
 
         public async Task<IList<LmGatewayKkt>>
@@ -1034,20 +1068,33 @@ namespace EsmTspiot.WinForms.Shared
                     throw;
                 }
                 _serviceInventoryWarning =
-                    "Не удалось проверить созданные программой компоненты; " +
-                    "настройка и удаление служб заблокированы. " +
-                    "Обычные операции с ККТ в ЕСМ доступны на других вкладках.";
+                    "Старый инвентарь служебных ЛМ недоступен; основной " +
+                    "автомат продолжит работу через разовый helper с UAC.";
                 Log(_serviceInventoryWarning + " Причина: " + ex.GetType().Name +
                     ". Операция/путь: " +
                     SensitiveDataMasker.Mask(ex.Message) + "\r\n");
             }
+            try
+            {
+                _localModuleMsiInventory =
+                    new LocalModuleMsiOperatorInventoryReader().Read();
+            }
+            catch (Exception ex)
+            {
+                if (!(ex is IOException) &&
+                    !(ex is UnauthorizedAccessException) &&
+                    !(ex is InvalidDataException) &&
+                    !(ex is ArgumentException) &&
+                    !(ex is System.Security.SecurityException))
+                    throw;
+                _localModuleMsiInventory =
+                    new LocalModuleMsiOperatorInventorySnapshot();
+                Log("Инвентарь независимых MSI ЛМ будет повторно проверен " +
+                    "helper: " + ex.GetType().Name + "; " +
+                    SensitiveDataMasker.Mask(ex.Message) + "\r\n");
+            }
             UpdateOfficialControllerStatus();
             _helperAvailable = _serviceProvisioner.IsAvailable(out _helperUnavailableReason);
-            if (!string.IsNullOrEmpty(_serviceInventoryWarning))
-            {
-                _helperAvailable = false;
-                _helperUnavailableReason = _serviceInventoryWarning;
-            }
         }
 
         private void AppendServiceCapabilityStatus()
@@ -1733,14 +1780,14 @@ namespace EsmTspiot.WinForms.Shared
             bool managed = selected != null && selected.Role == LmServiceRole.Managed;
             LmGatewayBindingSessionRow selectedSession = GetSelectedSessionRow();
             _selectInstallerButton.Enabled = false;
-            _selectLocalModuleInstallerButton.Enabled = false;
+            _selectLocalModuleInstallerButton.Enabled = idle;
             _installControllerButton.Enabled = idle && _helperAvailable && hasKkts;
             _bindButton.Enabled = idle && selectedSession != null && managed &&
                 selected.IsRunning && selected.IsReady;
             _removeServiceButton.Enabled = idle && managed && _helperAvailable &&
                 selected.Status != LmServiceProvisioningStatus.CleanupPending;
             _removeAllServicesButton.Enabled = idle && _helperAvailable &&
-                HasDirectControllersForRemoval();
+                HasOwnedComponentsForRemoval();
             _cleanupButton.Enabled = idle && managed && _helperAvailable &&
                 selected.Status == LmServiceProvisioningStatus.CleanupPending;
             string setupReason = !_helperAvailable
@@ -1760,7 +1807,8 @@ namespace EsmTspiot.WinForms.Shared
                 _helperAvailable ? "Удалить выбранный комплект ККТ, контроллер и неиспользуемый ЛМ." : _helperUnavailableReason);
             _serviceToolTip.SetToolTip(_removeAllServicesButton,
                 _helperAvailable
-                    ? "Удалить созданные клоны и восстановить конфигурации ЕСМ."
+                    ? "Удалить созданные клоны ЛМ и контроллеров; " +
+                        "поставщицкий базовый ЛМ сохранить."
                     : _helperUnavailableReason);
 
             if (!idle)
@@ -2150,6 +2198,24 @@ namespace EsmTspiot.WinForms.Shared
             LmServiceInventoryItem controller,
             ManagedLocalModuleInventoryItem managedLm)
         {
+            return GetLmEndpointText(
+                session,
+                draft,
+                controller,
+                managedLm,
+                null);
+        }
+
+        private static string GetLmEndpointText(
+            LmGatewayBindingSessionRow session,
+            LmGatewayDraft draft,
+            LmServiceInventoryItem controller,
+            ManagedLocalModuleInventoryItem managedLm,
+            LocalModuleMsiInventoryItem msiLm)
+        {
+            if (msiLm != null)
+                return "127.0.0.1:" + msiLm.ApiPort.ToString(
+                    CultureInfo.InvariantCulture);
             if (managedLm != null &&
                 !string.IsNullOrWhiteSpace(managedLm.Endpoint))
             {
@@ -2169,12 +2235,58 @@ namespace EsmTspiot.WinForms.Shared
             LmServiceInventoryItem controller,
             ManagedLocalModuleInventoryItem managedLm)
         {
+            return GetLmStateText(controller, managedLm, null);
+        }
+
+        private static string GetLmStateText(
+            LmServiceInventoryItem controller,
+            ManagedLocalModuleInventoryItem managedLm,
+            LocalModuleMsiInventoryItem msiLm)
+        {
+            if (msiLm != null)
+                return "Установлен; сверка при операции";
             if (managedLm != null &&
                 !string.IsNullOrWhiteSpace(managedLm.State))
             {
                 return managedLm.State;
             }
             return "Не создан";
+        }
+
+        private LocalModuleMsiInventoryItem FindMsiInventoryByInn(string inn)
+        {
+            string expected = (inn ?? string.Empty).Trim();
+            for (int index = 0;
+                index < _localModuleMsiInventory.Items.Count;
+                index++)
+            {
+                LocalModuleMsiInventoryItem item =
+                    _localModuleMsiInventory.Items[index];
+                if (item != null && string.Equals(
+                        item.Inn,
+                        expected,
+                        StringComparison.Ordinal))
+                    return item;
+            }
+            return null;
+        }
+
+        private static string GetMsiRoleText(LocalModuleMsiInventoryItem item)
+        {
+            if (item == null) return "Не создан";
+            return item.CloneOrdinal == 0
+                ? "Базовый"
+                : "Клон " + item.CloneOrdinal.ToString(
+                    CultureInfo.InvariantCulture);
+        }
+
+        private static string GetMsiOwnershipText(
+            LocalModuleMsiInventoryItem item)
+        {
+            if (item == null) return string.Empty;
+            return item.PreExisting
+                ? "Поставщик; сохраняется"
+                : "Создан программой";
         }
 
         private static string GetEsmLinkStateText(

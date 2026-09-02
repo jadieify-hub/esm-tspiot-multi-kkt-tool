@@ -109,7 +109,12 @@ namespace EsmTspiot.Shared.Tests
             Run("MSI local module planner preserves saved ordinals", MsiLocalModulePlannerPreservesSavedOrdinals);
             Run("MSI local module root policy accepts only fixed Program Files volumes", MsiLocalModuleRootPolicyAcceptsOnlyFixedProgramFilesVolumes);
             Run("MSI local module disk budget reports both volumes", MsiLocalModuleDiskBudgetReportsBothVolumes);
+#if !NETFRAMEWORK
+            Run("MSI local module operator inventory restores stable assignments", MsiLocalModuleOperatorInventoryRestoresStableAssignments);
+#endif
+            Run("MSI local module removal wording preserves vendor base", MsiLocalModuleRemovalWordingPreservesVendorBase);
             Run("Direct controller setup defers LM readiness without failing controllers", DirectControllerSetupDefersLmReadinessWithoutFailingControllers);
+            Run("Direct controller binding separates controller and LM ports", DirectControllerBindingSeparatesControllerAndLmPorts);
             Run("LM gateway planner never adopts official base service", LmGatewayPlannerNeverAdoptsOfficialBaseService);
             Run("LM gateway planner allocates sequential local ports", LmGatewayPlannerAllocatesSequentialLocalPorts);
             Run("LM gateway planner keeps owned and skips foreign listener", LmGatewayPlannerKeepsOwnedAndSkipsForeignListener);
@@ -215,6 +220,10 @@ namespace EsmTspiot.Shared.Tests
             Run("Automatic mode skips LM setup after registration failure", AutomaticModeSkipsLmSetupAfterRegistrationFailure);
             Run("LM automatic setup installs before configuring KKT", LmAutomaticSetupInstallsBeforeConfiguringKkt);
             Run("LM automatic setup stops after failed installation", LmAutomaticSetupStopsAfterFailedInstallation);
+#if !NETFRAMEWORK
+            Run("Full automatic setup keeps LM initialization deferred", FullAutomaticSetupKeepsLmInitializationDeferred);
+            Run("Full automatic setup does not stop after LM failure", FullAutomaticSetupDoesNotStopAfterLmFailure);
+#endif
             Run("LM automatic setup reports incomplete controller configuration", LmAutomaticSetupReportsIncompleteControllerConfiguration);
             Run("LM lifecycle ensures probes then binds", LmLifecycleEnsuresProbesThenBinds);
             Run("LM lifecycle completion requires verified readback", LmLifecycleCompletionRequiresVerifiedReadback);
@@ -1973,6 +1982,79 @@ namespace EsmTspiot.Shared.Tests
                 "UI must receive the observed system-volume free space.");
             AssertTrue(projection.HasEnoughSpace,
                 "Both independently checked volumes have enough free space.");
+        }
+
+#if !NETFRAMEWORK
+        private static void MsiLocalModuleOperatorInventoryRestoresStableAssignments()
+        {
+            string root = Path.Combine(
+                Path.GetTempPath(),
+                "krs-lm-msi-inventory-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            try
+            {
+                string installRoot = Path.Combine(
+                    Path.GetPathRoot(Path.GetFullPath(root)),
+                    "Program Files",
+                    "Regime");
+                LocalModuleMsiInventoryItem item =
+                    new LocalModuleMsiInventoryItem
+                    {
+                        SchemaVersion =
+                            LocalModuleMsiInventoryItem.CurrentSchemaVersion,
+                        OwnershipMarker =
+                            LocalModuleMsiInventoryItem.ExpectedOwnershipMarker,
+                        Inn = "1234567894",
+                        CloneOrdinal = 0,
+                        ApiPort = 5995,
+                        DatabasePort = 5984,
+                        InstallRoot = installRoot,
+                        InstalledByApplication = false,
+                        PreExisting = true,
+                        ManifestSha256 = new string('a', 64)
+                    };
+                string path = Path.Combine(root, item.Inn + ".json");
+                using (FileStream stream = File.Create(path))
+                {
+                    new System.Runtime.Serialization.Json
+                        .DataContractJsonSerializer(
+                            typeof(LocalModuleMsiInventoryItem))
+                        .WriteObject(stream, item);
+                }
+
+                LocalModuleMsiOperatorInventorySnapshot snapshot =
+                    new LocalModuleMsiOperatorInventoryReader(root).Read();
+
+                AssertEqual(1, snapshot.Assignments.Count,
+                    "The operator projection must restore one stable assignment.");
+                AssertEqual("1234567894", snapshot.Assignments[0].Inn,
+                    "The saved INN must survive application restart.");
+                AssertEqual(5995, snapshot.BaseInventory.ApiPort,
+                    "The base port must come from observed inventory, not a clone formula.");
+                AssertTrue(snapshot.Assignments[0].BaseWasPreExisting,
+                    "Removal UI must preserve a vendor-owned base product.");
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        }
+#endif
+
+        private static void MsiLocalModuleRemovalWordingPreservesVendorBase()
+        {
+            string preserving =
+                LocalModuleRemovalMessagePolicy
+                    .BuildRemoveEverythingConfirmation(2, 1, true);
+            string owned =
+                LocalModuleRemovalMessagePolicy
+                    .BuildRemoveEverythingConfirmation(2, 1, false);
+
+            AssertContains(preserving, "останется установленным");
+            AssertFalse(owned.IndexOf(
+                    "останется установленным",
+                    StringComparison.Ordinal) >= 0,
+                "An application-installed base must not be promised preservation.");
         }
 
         private static void DirectControllerSetupDefersLmReadinessWithoutFailingControllers()
@@ -4204,6 +4286,31 @@ namespace EsmTspiot.Shared.Tests
             AssertTrue(ContainsProgressText(progress, "ИНН") &&
                 ContainsProgressText(progress, "ККТ: 1"),
                 "Every poll must expose visible INNs and KKT count.");
+            AssertTrue(progress[0].CountsAttempts,
+                "Poll counters must be labelled as attempts, not KKT ordinals.");
+        }
+
+        private static void DirectControllerBindingSeparatesControllerAndLmPorts()
+        {
+            LmGatewayBindingInput input =
+                DirectControllerBindingInputFactory.Create(
+                    new LmGatewayKkt
+                    {
+                        KktSerial = "00105700000001",
+                        KktInn = "1234567894"
+                    },
+                    new DirectControllerAssignment
+                    {
+                        KktSerial = "00105700000001",
+                        KktInn = "1234567894",
+                        GrpcPort = 50063,
+                        TargetLocalModulePort = 5995
+                    });
+
+            AssertEqual("50063", input.ControllerGrpcPort,
+                "ESM must bind to the controller gRPC listener.");
+            AssertEqual("5995", input.ExpectedLmPort,
+                "Read-back must compare the controller's LM target, not its gRPC port.");
         }
 
         private static void SequentialRegistrationDisposesVcomBeforeReturning()
@@ -5336,6 +5443,65 @@ namespace EsmTspiot.Shared.Tests
             AssertContains(rejected, "аутентификац");
             AssertContains(rejected, "2");
             AssertContains(failed, "3");
+        }
+
+        private static void FullAutomaticSetupKeepsLmInitializationDeferred()
+        {
+            LmAutomaticSetupCoordinator coordinator =
+                new LmAutomaticSetupCoordinator();
+            List<LmAutomaticSetupStage> stages =
+                new List<LmAutomaticSetupStage>();
+
+            LmAutomaticSetupResult result = coordinator.ExecuteFullAsync(
+                delegate { return Task.FromResult(true); },
+                delegate { return Task.FromResult(true); },
+                delegate { return Task.FromResult(true); },
+                delegate { return Task.FromResult(true); },
+                delegate(LmAutomaticSetupStage stage) { stages.Add(stage); },
+                CancellationToken.None).GetAwaiter().GetResult();
+
+            AssertTrue(result.Complete,
+                "Registration, controllers and ESM binding must complete the run.");
+            AssertTrue(result.InitializationDeferred,
+                "LM initialization must remain an explicit deferred state.");
+            AssertEqual(5, stages.Count,
+                "The operator must see every full-automatic stage.");
+            AssertEqual(LmAutomaticSetupStage.Registration, stages[0],
+                "Registration must remain the first stage.");
+            AssertEqual(LmAutomaticSetupStage.ControllerEnsure, stages[1],
+                "Controller provisioning must follow registration.");
+            AssertEqual(LmAutomaticSetupStage.LocalModuleEnsure, stages[2],
+                "Local-module provisioning must follow controllers.");
+            AssertEqual(LmAutomaticSetupStage.EsmBinding, stages[3],
+                "ESM binding must run after provisioning attempts.");
+            AssertEqual(LmAutomaticSetupStage.InitializationDeferred, stages[4],
+                "Initialization must be reported without being executed.");
+        }
+
+        private static void FullAutomaticSetupDoesNotStopAfterLmFailure()
+        {
+            LmAutomaticSetupCoordinator coordinator =
+                new LmAutomaticSetupCoordinator();
+            bool bindingCalled = false;
+
+            LmAutomaticSetupResult result = coordinator.ExecuteFullAsync(
+                delegate { return Task.FromResult(true); },
+                delegate { return Task.FromResult(true); },
+                delegate { return Task.FromResult(false); },
+                delegate
+                {
+                    bindingCalled = true;
+                    return Task.FromResult(true);
+                },
+                null,
+                CancellationToken.None).GetAwaiter().GetResult();
+
+            AssertTrue(bindingCalled,
+                "A missing or failed LM MSI must not cancel ESM controller binding.");
+            AssertTrue(result.Complete,
+                "Deferred LM installation must not fail completed KKT/controller work.");
+            AssertTrue(result.LocalModuleDeferred,
+                "The result must preserve that LM installation needs attention.");
         }
 
         private static void MsiProvisionerLaunchVerifiesHelperBeforeProcessStart()

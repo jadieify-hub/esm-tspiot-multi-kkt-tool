@@ -30,8 +30,8 @@ namespace EsmTspiot.WinForms.Shared
             ConfigureButton(_bindButton, "Привязать к ЕСМ");
             _bindButton.Tag = "BindSelectedEsm";
             ConfigureButton(_removeServiceButton, "Удалить выбранный комплект");
-            ConfigureButton(_removeAllServicesButton, "Удалить все контроллеры");
-            _removeAllServicesButton.Tag = "RemoveAllDirectControllers";
+            ConfigureButton(_removeAllServicesButton, "Удалить всё созданное");
+            _removeAllServicesButton.Tag = "RemoveAllCreatedComponents";
             ConfigureButton(_cleanupButton, "Завершить очистку");
             ConfigureButton(_cancelButton, "Остановить");
             _refreshButton.Click += async delegate { await RefreshAsync(); };
@@ -39,7 +39,7 @@ namespace EsmTspiot.WinForms.Shared
             _removeServiceButton.Click += async delegate { await ConfirmAndRemoveServiceAsync(); };
             _removeAllServicesButton.Click += async delegate
             {
-                await ConfirmAndRemoveAllDirectControllersAsync();
+                await ConfirmAndRemoveEverythingAsync();
             };
             _cleanupButton.Click += async delegate { await ConfirmAndCleanupServiceAsync(); };
             _cancelButton.Click += delegate { CancelCurrentOperation(); };
@@ -91,30 +91,47 @@ namespace EsmTspiot.WinForms.Shared
             DataGridViewTextBoxColumn ordinal = CreateTextColumn("№", 30);
             ordinal.Name = "KktOrdinal";
             _grid.Columns.Add(ordinal);
-            DataGridViewTextBoxColumn serial = CreateTextColumn("Серийный № ККТ", 105);
+            DataGridViewTextBoxColumn serial = CreateTextColumn("Серийный № ККТ", 100);
             serial.Name = "KktSerial";
             _grid.Columns.Add(serial);
-            DataGridViewTextBoxColumn inn = CreateTextColumn("ИНН", 75);
+            DataGridViewTextBoxColumn inn = CreateTextColumn("ИНН", 70);
             inn.Name = "KktInn";
             _grid.Columns.Add(inn);
-            DataGridViewTextBoxColumn softwarePort = CreateTextColumn("Порт ПО", 90);
+            DataGridViewTextBoxColumn softwarePort = CreateTextColumn("Порт ПО", 75);
             softwarePort.Name = "KktSoftwarePort";
             softwarePort.ToolTipText =
                 "softPort для Frontol или другой кассовой программы.";
             _grid.Columns.Add(softwarePort);
             DataGridViewTextBoxColumn endpoint = CreateTextColumn(
                 "Адрес и порт ЛМ ЧЗ",
-                150);
+                115);
             endpoint.Name = "LmEndpoint";
             _grid.Columns.Add(endpoint);
             DataGridViewTextBoxColumn lmState = CreateTextColumn(
                 "Состояние ЛМ",
-                120);
+                85);
             lmState.Name = "LmState";
             _grid.Columns.Add(lmState);
+            DataGridViewTextBoxColumn lmRole = CreateTextColumn("Тип", 55);
+            lmRole.Name = "LmRole";
+            lmRole.ToolTipText = "Базовый поставщицкий ЛМ или независимый клон.";
+            _grid.Columns.Add(lmRole);
+            DataGridViewTextBoxColumn installRoot = CreateTextColumn(
+                "Каталог ЛМ",
+                110);
+            installRoot.Name = "LmInstallRoot";
+            installRoot.ToolTipText = "Фактический каталог установки ЛМ ЧЗ.";
+            _grid.Columns.Add(installRoot);
+            DataGridViewTextBoxColumn ownership = CreateTextColumn(
+                "Владение",
+                90);
+            ownership.Name = "LmOwnership";
+            ownership.ToolTipText =
+                "Создан программой или сохранён как поставщицкий компонент.";
+            _grid.Columns.Add(ownership);
             DataGridViewTextBoxColumn esmState = CreateTextColumn(
                 "Связь с ЕСМ",
-                150);
+                120);
             esmState.Name = "EsmLinkState";
             esmState.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
             esmState.MinimumWidth = 120;

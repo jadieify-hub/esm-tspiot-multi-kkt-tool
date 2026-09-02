@@ -62,7 +62,8 @@ namespace EsmTspiot.ServiceProvisioner
                     LocalModuleMsiProvisioningContext.CreateWindows(
                         request.OperationId,
                         source,
-                        machineRoot);
+                        machineRoot,
+                        request.InitiatingSid);
                 LocalModuleMsiProvisioningSession result =
                     new LocalModuleMsiProvisioningSession(
                         request,

@@ -23,14 +23,17 @@
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayPage.Services.cs" Link="LmGatewayPage.Services.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayPage.Binding.cs" Link="LmGatewayPage.Binding.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayPage.DirectControllers.cs" Link="LmGatewayPage.DirectControllers.cs" />
+    <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayPage.MsiLocalModules.cs" Link="LmGatewayPage.MsiLocalModules.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayCredentialDefaults.cs" Link="LmGatewayCredentialDefaults.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayBindingDialog.cs" Link="LmGatewayBindingDialog.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmAutomaticSetupDialog.cs" Link="LmAutomaticSetupDialog.cs" />
+    <Compile Include="..\EsmTspiot.WinForms.Shared\LocalModuleInstallVolumeDialog.cs" Link="LocalModuleInstallVolumeDialog.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayRemovalDialog.cs" Link="LmGatewayRemovalDialog.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmControllerInstallerPicker.cs" Link="LmControllerInstallerPicker.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LocalModuleInstallerPicker.cs" Link="LocalModuleInstallerPicker.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmServiceProvisionerClient.cs" Link="LmServiceProvisionerClient.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LocalModuleMsiProvisionerClient.cs" Link="LocalModuleMsiProvisionerClient.cs" />
+    <Compile Include="..\EsmTspiot.WinForms.Shared\LocalModuleMsiOperatorInventoryReader.cs" Link="LocalModuleMsiOperatorInventoryReader.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\CompleteStackProvisionerClient.cs" Link="CompleteStackProvisionerClient.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\AtolDriverRuntimeLocator.cs" Link="AtolDriverRuntimeLocator.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\AtolVcomEnumerator.cs" Link="AtolVcomEnumerator.cs" />
