@@ -14,6 +14,7 @@
   <ItemGroup>
     <ProjectReference Include="..\EsmTspiot.Shared\EsmTspiot.Shared.csproj" />
     <Compile Include="..\EsmTspiot.WindowsSecurity.Shared\ProtectedAclPolicy.cs" Link="ProtectedAclPolicy.cs" />
+    <PackageReference Include="WixToolset.Dtf.WindowsInstaller.Package" Version="4.0.6" />
     <Reference Include="System.Runtime.Serialization" />
     <Reference Include="System.ServiceProcess" />
   </ItemGroup>

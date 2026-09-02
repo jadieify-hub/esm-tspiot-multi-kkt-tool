@@ -4,6 +4,11 @@
     <ProvisionerOutputDirectory>$(MSBuildThisFileDirectory)..\src\EsmTspiot.ServiceProvisioner\bin\$(Configuration)\net48\</ProvisionerOutputDirectory>
     <ProvisionerExe>$(ProvisionerOutputDirectory)EsmTspiot.ServiceProvisioner.exe</ProvisionerExe>
     <ProvisionerShared>$(ProvisionerOutputDirectory)EsmTspiot.Shared.dll</ProvisionerShared>
+    <ProvisionerDtfWindowsInstaller>$(ProvisionerOutputDirectory)WixToolset.Dtf.WindowsInstaller.dll</ProvisionerDtfWindowsInstaller>
+    <ProvisionerDtfWindowsInstallerPackage>$(ProvisionerOutputDirectory)WixToolset.Dtf.WindowsInstaller.Package.dll</ProvisionerDtfWindowsInstallerPackage>
+    <ProvisionerDtfCompression>$(ProvisionerOutputDirectory)WixToolset.Dtf.Compression.dll</ProvisionerDtfCompression>
+    <ProvisionerDtfCompressionCab>$(ProvisionerOutputDirectory)WixToolset.Dtf.Compression.Cab.dll</ProvisionerDtfCompressionCab>
+    <ProvisionerRuntimeClosure>$(ProvisionerExe);$(ProvisionerShared);$(ProvisionerDtfWindowsInstaller);$(ProvisionerDtfWindowsInstallerPackage);$(ProvisionerDtfCompression);$(ProvisionerDtfCompressionCab)</ProvisionerRuntimeClosure>
     <ProvisionerIntegritySource>$(MSBuildProjectDirectory)\obj\$(Configuration)\$(TargetFramework)\ProvisionerIntegrity.g.cs</ProvisionerIntegritySource>
   </PropertyGroup>
 
@@ -19,6 +24,14 @@
            Text="Provisioner helper was not produced." />
     <Error Condition="!Exists('$(ProvisionerShared)')"
            Text="Provisioner net48 shared dependency was not produced." />
+    <Error Condition="!Exists('$(ProvisionerDtfWindowsInstaller)')"
+           Text="Provisioner DTF Windows Installer dependency was not produced." />
+    <Error Condition="!Exists('$(ProvisionerDtfWindowsInstallerPackage)')"
+           Text="Provisioner DTF Windows Installer Package dependency was not produced." />
+    <Error Condition="!Exists('$(ProvisionerDtfCompression)')"
+           Text="Provisioner DTF Compression dependency was not produced." />
+    <Error Condition="!Exists('$(ProvisionerDtfCompressionCab)')"
+           Text="Provisioner DTF CAB dependency was not produced." />
     <GetFileHash Files="$(ProvisionerExe)" Algorithm="SHA256">
       <Output TaskParameter="Items" ItemName="_ProvisionerHashItem" />
     </GetFileHash>
@@ -76,8 +89,10 @@
           AfterTargets="Build"
           DependsOnTargets="VerifyProvisionerMetadata"
           Condition="'$(DesignTimeBuild)' != 'true'">
+    <RemoveDir Directories="$(TargetDir)Provisioner"
+               Condition="Exists('$(TargetDir)Provisioner')" />
     <MakeDir Directories="$(TargetDir)Provisioner" />
-    <Copy SourceFiles="$(ProvisionerExe);$(ProvisionerShared)"
+    <Copy SourceFiles="$(ProvisionerRuntimeClosure)"
           DestinationFolder="$(TargetDir)Provisioner"
           SkipUnchangedFiles="true" />
   </Target>
@@ -85,8 +100,10 @@
   <Target Name="CopyPublishedProvisionerClosure"
           AfterTargets="Publish"
           Condition="'$(DesignTimeBuild)' != 'true'">
+    <RemoveDir Directories="$(PublishDir)Provisioner"
+               Condition="Exists('$(PublishDir)Provisioner')" />
     <MakeDir Directories="$(PublishDir)Provisioner" />
-    <Copy SourceFiles="$(ProvisionerExe);$(ProvisionerShared)"
+    <Copy SourceFiles="$(ProvisionerRuntimeClosure)"
           DestinationFolder="$(PublishDir)Provisioner"
           SkipUnchangedFiles="true" />
   </Target>

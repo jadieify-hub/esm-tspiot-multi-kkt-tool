@@ -71,6 +71,10 @@ $sourceMain = Join-Path $legacyOutput "EsmTspiot.Legacy.WinForms.exe"
 $sourceShared = Join-Path $legacyOutput "EsmTspiot.Shared.dll"
 $sourceHelper = Join-Path $helperOutput "EsmTspiot.ServiceProvisioner.exe"
 $sourceHelperShared = Join-Path $helperOutput "EsmTspiot.Shared.dll"
+$sourceDtfWindowsInstaller = Join-Path $helperOutput "WixToolset.Dtf.WindowsInstaller.dll"
+$sourceDtfWindowsInstallerPackage = Join-Path $helperOutput "WixToolset.Dtf.WindowsInstaller.Package.dll"
+$sourceDtfCompression = Join-Path $helperOutput "WixToolset.Dtf.Compression.dll"
+$sourceDtfCompressionCab = Join-Path $helperOutput "WixToolset.Dtf.Compression.Cab.dll"
 $fieldGuide = Join-Path $repositoryRoot "docs\testing\2026-09-01-field-acceptance-1.6.4.0.md"
 $stagedMain = Join-Path $stageRoot "MultiKKT-ESM-TSPioT.exe"
 $stagedHelper = Join-Path $stageRoot "Provisioner\EsmTspiot.ServiceProvisioner.exe"
@@ -82,6 +86,10 @@ Copy-RequiredFile $fieldGuide (Join-Path $stageRoot "FIELD_TEST_1.6.4.0.md")
 $helperClosure = @(
     Get-Item -LiteralPath $sourceHelper
     Get-Item -LiteralPath $sourceHelperShared
+    Get-Item -LiteralPath $sourceDtfWindowsInstaller
+    Get-Item -LiteralPath $sourceDtfWindowsInstallerPackage
+    Get-Item -LiteralPath $sourceDtfCompression
+    Get-Item -LiteralPath $sourceDtfCompressionCab
 )
 foreach ($file in $helperClosure) {
     Copy-RequiredFile $file.FullName (Join-Path $stageRoot ("Provisioner\" + $file.Name))
@@ -112,13 +120,36 @@ Author: Ruslan Kerusov
    Inherited ACLs must not grant ordinary users write access.
 3. From Downloads, Desktop or another user-writable directory, the application deliberately blocks Windows-service mutations.
 4. Install the official ESM LM Controller 1.6.4.0 before controller setup. Its vendor binary is discovered and verified in the installed location; it is not included in this archive.
-5. This archive contains no vendor binaries, extracted runtime, credentials, LM CHZ database or managed Erlang runtime.
+5. This archive contains no ESP/CHZ vendor binaries, extracted runtime, credentials, LM CHZ database or managed Erlang runtime.
 6. Before a real installation, follow FIELD_TEST_1.6.4.0.md.
 7. Registration and controller setup are independent. A controller or binding failure never rolls back a KKT that ESM has already registered. LM CHZ installation and initialization are intentionally deferred to a later supported workflow.
+8. Provisioner contains unmodified WiX Toolset DTF 4.0.6 libraries licensed under the Microsoft Reciprocal License (MS-RL). See THIRD-PARTY-NOTICES.txt.
 
 Run: MultiKKT-ESM-TSPioT.exe
 "@
 [IO.File]::WriteAllText((Join-Path $stageRoot "README.txt"), $readme, [Text.UTF8Encoding]::new($true))
+
+$thirdPartyNotices = @"
+Third-party notices
+
+WiX Toolset Deployment Tools Foundation (DTF) 4.0.6
+Files:
+- WixToolset.Dtf.WindowsInstaller.dll
+- WixToolset.Dtf.WindowsInstaller.Package.dll
+- WixToolset.Dtf.Compression.dll
+- WixToolset.Dtf.Compression.Cab.dll
+
+Copyright (c) .NET Foundation and contributors.
+License: Microsoft Reciprocal License (MS-RL)
+License terms: https://licenses.nuget.org/MS-RL
+Source: https://github.com/wixtoolset/wix
+
+The listed binaries are redistributed without modification.
+"@
+[IO.File]::WriteAllText(
+    (Join-Path $stageRoot "THIRD-PARTY-NOTICES.txt"),
+    $thirdPartyNotices,
+    [Text.UTF8Encoding]::new($true))
 
 $forbiddenStage = @(Get-ChildItem -LiteralPath $stageRoot -Recurse -File | Where-Object {
     $_.Extension -in @(".msi", ".pdb", ".pfx", ".p12", ".pem", ".key", ".cer", ".crt", ".der") -or
@@ -133,7 +164,8 @@ $expectedExact = @(
     "EsmTspiot.Shared.dll",
     "FIELD_TEST_1.6.4.0.md",
     "MultiKKT-ESM-TSPioT.exe",
-    "README.txt"
+    "README.txt",
+    "THIRD-PARTY-NOTICES.txt"
 )
 $expectedExact += @($helperClosure | ForEach-Object { "Provisioner/" + $_.Name })
 $actualBeforeSums = @(Get-ChildItem -LiteralPath $stageRoot -Recurse -File | ForEach-Object { Get-StageRelativePath $_.FullName } | Sort-Object)
