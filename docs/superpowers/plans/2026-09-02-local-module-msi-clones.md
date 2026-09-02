@@ -629,27 +629,27 @@ internal sealed class LocalModuleFirewallRule
 }
 ```
 
-- [ ] **Step 1: Add failing firewall ownership tests**
+- [x] **Step 1: Add failing firewall ownership tests**
 
 Require inbound TCP Allow, Domain|Private only, Public false, exact API port and instance `erl.exe`, `LocalSubnet` default, validated explicit IP/CIDR, no DB rule, idempotent exact match, refusal to adopt/overwrite/delete a foreign conflict, and exact owned removal.
 
-- [ ] **Step 2: Run helper tests and observe failure**
+- [x] **Step 2: Run helper tests and observe failure**
 
 Run the Task 1 helper-test command.
 
 Expected: FAIL because firewall interfaces do not exist.
 
-- [ ] **Step 3: Implement the COM firewall adapter and ownership description**
+- [x] **Step 3: Implement the COM firewall adapter and ownership description**
 
 Use the Windows Firewall COM API (`HNetCfg.FwPolicy2`/`HNetCfg.FWRule`) through a narrow adapter. Encode `KRS MultiKKT LM <ownership-id>` in Name and Grouping; re-read every field after creation. Store rule name and expected-field hash in the manifest.
 
-- [ ] **Step 4: Run helper tests and safety gate**
+- [x] **Step 4: Run helper tests and safety gate**
 
 Run the Task 1 helper-test command and `scripts\verify_lm_safety.ps1`.
 
 Expected: PASS and no shell firewall command exists.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add src/EsmTspiot.ServiceProvisioner tests/EsmTspiot.ServiceProvisioner.Tests/Program.cs
