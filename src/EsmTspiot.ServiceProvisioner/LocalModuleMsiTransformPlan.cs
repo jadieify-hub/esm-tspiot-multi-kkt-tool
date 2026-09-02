@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using EsmTspiot.Shared.Services;
 
 namespace EsmTspiot.ServiceProvisioner
@@ -7,6 +8,8 @@ namespace EsmTspiot.ServiceProvisioner
     {
         private LocalModuleMsiTransformPlan()
         {
+            ExpectedConfigFiles =
+                new Dictionary<string, byte[]>(StringComparer.Ordinal);
         }
 
         internal LocalModuleMsiCloneIdentity Identity { get; private set; }
@@ -17,6 +20,7 @@ namespace EsmTspiot.ServiceProvisioner
         internal string DatabaseNodeName { get; private set; }
         internal string EquironRegistryKey { get; private set; }
         internal string CrptRegistryKey { get; private set; }
+        internal IDictionary<string, byte[]> ExpectedConfigFiles { get; private set; }
 
         internal static LocalModuleMsiTransformPlan Create(
             LocalModuleMsiCloneIdentity identity,

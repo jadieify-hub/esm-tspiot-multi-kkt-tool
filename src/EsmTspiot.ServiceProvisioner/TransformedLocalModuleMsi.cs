@@ -8,10 +8,12 @@ namespace EsmTspiot.ServiceProvisioner
         internal TransformedLocalModuleMsi(
             string fullPath,
             LocalModuleMsiTransformPlan plan,
+            VerifiedTransformedLocalModuleMsi verified,
             FileStream outputLock)
         {
             FullPath = fullPath;
             Plan = plan;
+            Verified = verified;
             _outputLock = outputLock;
         }
 
@@ -19,6 +21,7 @@ namespace EsmTspiot.ServiceProvisioner
 
         internal string FullPath { get; private set; }
         internal LocalModuleMsiTransformPlan Plan { get; private set; }
+        internal VerifiedTransformedLocalModuleMsi Verified { get; private set; }
 
         public void Dispose()
         {

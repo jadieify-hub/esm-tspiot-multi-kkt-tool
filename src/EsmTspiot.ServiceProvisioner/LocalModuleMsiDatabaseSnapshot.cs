@@ -9,12 +9,14 @@ namespace EsmTspiot.ServiceProvisioner
         {
             Media = new List<MsiMediaSnapshot>();
             Rows = new List<MsiProfileRow>();
+            Files = new List<MsiFilePayloadSnapshot>();
         }
 
         internal int FileRowCount { get; set; }
         internal int MsiFileHashRowCount { get; set; }
         internal IList<MsiMediaSnapshot> Media { get; private set; }
         internal IList<MsiProfileRow> Rows { get; private set; }
+        internal IList<MsiFilePayloadSnapshot> Files { get; private set; }
 
         internal IList<MsiProfileMismatch> Compare(
             LocalModuleMsiCapabilityProfile expected)
@@ -138,6 +140,17 @@ namespace EsmTspiot.ServiceProvisioner
         {
             return (table ?? string.Empty) + "\n" + (key ?? string.Empty);
         }
+    }
+
+    internal sealed class MsiFilePayloadSnapshot
+    {
+        internal string FileId { get; set; }
+        internal int Sequence { get; set; }
+        internal int FileSize { get; set; }
+        internal int ActualSize { get; set; }
+        internal int[] HashParts { get; set; }
+        internal int[] ComputedHashParts { get; set; }
+        internal string Sha256 { get; set; }
     }
 
     internal sealed class MsiProfileMismatch
