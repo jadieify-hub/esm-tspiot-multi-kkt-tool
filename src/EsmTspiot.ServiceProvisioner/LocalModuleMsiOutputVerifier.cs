@@ -13,8 +13,9 @@ namespace EsmTspiot.ServiceProvisioner
         {
             if (source == null) throw new ArgumentNullException("source");
             if (plan == null) throw new ArgumentNullException("plan");
-            string workspace = Path.GetFullPath(transformedMsiPath) +
-                ".verify-" + Guid.NewGuid().ToString("N");
+            string workspace = Path.GetFullPath(transformedMsiPath) + ".verify";
+            if (Directory.Exists(workspace) || File.Exists(workspace))
+                throw new IOException("MSI verification workspace already exists.");
             Directory.CreateDirectory(workspace);
             string stage = "extract transformed cabinets";
             try

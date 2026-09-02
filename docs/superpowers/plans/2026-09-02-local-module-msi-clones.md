@@ -81,7 +81,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_release_matrix.p
 
 Expected: all existing tests/gates PASS and the new closure test PASS.
 
-- [x] **Step 5: Commit**
+- [ ] **Step 5: Commit**
 
 ```powershell
 git add src/EsmTspiot.ServiceProvisioner/EsmTspiot.ServiceProvisioner.csproj tests/EsmTspiot.ServiceProvisioner.Tests/EsmTspiot.ServiceProvisioner.Tests.csproj build/EsmTspiot.Provisioner.targets scripts/package_compact_release.ps1 scripts/verify_compact_security_contract.ps1 tests/EsmTspiot.ServiceProvisioner.Tests/Program.cs
@@ -455,27 +455,27 @@ internal sealed class LocalModuleMsiWorkspace : IDisposable
 }
 ```
 
-- [ ] **Step 1: Add failing mutation-boundary tests**
+- [x] **Step 1: Add failing mutation-boundary tests**
 
 Inject failure after journal creation, source copy, transformation, verification, Windows Installer return, and manifest persistence. Assert next-start recovery deletes only the exact journal-owned workspace, reconstructs exact SYSTEM+Administrators ACL when needed, rejects reparse points/path escape, and never uses a prefix match such as `HelperProof` matching `HelperProof2`.
 
-- [ ] **Step 2: Run helper tests and observe failure**
+- [x] **Step 2: Run helper tests and observe failure**
 
 Run the Task 1 helper-test command.
 
 Expected: FAIL because the staging journal/workspace does not exist.
 
-- [ ] **Step 3: Implement write-ahead ownership and `finally` cleanup**
+- [x] **Step 3: Implement write-ahead ownership and `finally` cleanup**
 
 Create `%ProgramData%\KRS\MultiKKT\Operations\LocalModuleMsi\<operation-id>`. Persist canonical path, nonce, expected files and state before copying. Cleanup validates nonce, exact path boundary, no reparse points and exact file allowlist before deletion. ACL repair applies an explicit protected descriptor to the owned tree; never call `icacls /reset`.
 
-- [ ] **Step 4: Run helper tests and LM safety gate**
+- [x] **Step 4: Run helper tests and LM safety gate**
 
 Run the Task 1 helper-test command and `scripts\verify_lm_safety.ps1`.
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add src/EsmTspiot.ServiceProvisioner tests/EsmTspiot.ServiceProvisioner.Tests/Program.cs
