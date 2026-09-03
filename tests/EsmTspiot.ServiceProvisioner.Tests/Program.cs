@@ -1390,6 +1390,26 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 File.AppendAllText(reportPath,
                     "PASS simultaneous services and listeners\r\n");
 
+                RequireAutomaticSandboxService(services, "regime");
+                RequireAutomaticSandboxService(services, "yenisei");
+                RequireAutomaticSandboxService(services, "regime1");
+                RequireAutomaticSandboxService(services, "yenisei1");
+                RequireSandboxBaseStartModeRecord(
+                    manifests,
+                    items[0],
+                    baseApiBefore,
+                    baseDatabaseBefore);
+                File.AppendAllText(reportPath,
+                    "PASS automatic start on base and clone; " +
+                    "baseline start mode recorded\r\n");
+                RequireSandboxCloneConfiguration(manifests, items[1]);
+                File.AppendAllText(reportPath,
+                    "PASS clone configuration matches its plan; " +
+                    "API credentials present\r\n");
+                RequireNoKrsHelperProcess();
+                File.AppendAllText(reportPath,
+                    "PASS no persistent KRS helper process\r\n");
+
                 LocalModuleMsiProvisioningContext restartContext =
                     LocalModuleMsiProvisioningContext
                         .CreateWindowsForInstalledProducts(
@@ -1458,6 +1478,11 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                         services,
                         baseApiBefore,
                         baseDatabaseBefore);
+                    RequireSandboxBaseStartModeRestored(
+                        services,
+                        baseApiBefore,
+                        baseDatabaseBefore);
+                    RequireNoKrsHelperProcess();
                     if (services.Query("regime1") != null ||
                         services.Query("yenisei1") != null ||
                         Directory.Exists(@"D:\Program Files\Regime1"))
@@ -1511,6 +1536,102 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     throw new InvalidOperationException(
                         "Listener did not open on port " + port + ".");
                 client.EndConnect(pending);
+            }
+        }
+
+        private static void RequireAutomaticSandboxService(
+            WindowsServiceApi services,
+            string serviceName)
+        {
+            WindowsServiceRecord service = services.Query(serviceName);
+            if (service == null ||
+                service.StartMode != WindowsServiceStartMode.AutoStart)
+                throw new InvalidOperationException(
+                    "Service is not set to automatic start: " +
+                    serviceName + ".");
+        }
+
+        private static void RequireSandboxCloneConfiguration(
+            LocalModuleMsiManifestStore manifests,
+            LocalModuleMsiProvisioningItemRequest item)
+        {
+            LocalModuleMsiManifest manifest = manifests.Read(item.Inn);
+            if (manifest == null)
+                throw new InvalidOperationException(
+                    "Manifest is missing for INN " + item.Inn + ".");
+            LocalModuleInstalledLayout layout =
+                LocalModuleInstalledLayout.Create(
+                    manifest.InstallRoot,
+                    manifest.CloneOrdinal,
+                    manifest.ApiPort,
+                    manifest.DatabasePort);
+            // Throws when the installed configuration does not match its
+            // plan or the vendor installer left [api] login/password empty.
+            // Values are checked in place and never copied into the report.
+            new LocalModuleConfigurationInspector().Inspect(layout);
+        }
+
+        private static void RequireSandboxBaseStartModeRecord(
+            LocalModuleMsiManifestStore manifests,
+            LocalModuleMsiProvisioningItemRequest baseItem,
+            WindowsServiceRecord apiBefore,
+            WindowsServiceRecord databaseBefore)
+        {
+            LocalModuleMsiManifest manifest = manifests.Read(baseItem.Inn);
+            if (manifest == null || !manifest.PreExisting) return;
+            if (apiBefore == null || databaseBefore == null) return;
+            bool wasAutomatic =
+                apiBefore.StartMode == WindowsServiceStartMode.AutoStart &&
+                databaseBefore.StartMode == WindowsServiceStartMode.AutoStart;
+            if (manifest.StartModeAdjusted == wasAutomatic)
+                throw new InvalidOperationException(
+                    "Base manifest start-mode record does not match the baseline.");
+            if (manifest.StartModeAdjusted &&
+                (manifest.PreviousApiStartMode != (int)apiBefore.StartMode ||
+                 manifest.PreviousDatabaseStartMode !=
+                    (int)databaseBefore.StartMode))
+                throw new InvalidOperationException(
+                    "Base manifest recorded wrong previous start modes.");
+        }
+
+        private static void RequireSandboxBaseStartModeRestored(
+            WindowsServiceApi services,
+            WindowsServiceRecord apiBefore,
+            WindowsServiceRecord databaseBefore)
+        {
+            RequireSandboxStartModeRestored(services, "regime", apiBefore);
+            RequireSandboxStartModeRestored(services, "yenisei", databaseBefore);
+        }
+
+        private static void RequireSandboxStartModeRestored(
+            WindowsServiceApi services,
+            string serviceName,
+            WindowsServiceRecord before)
+        {
+            if (before == null) return;
+            WindowsServiceRecord now = services.Query(serviceName);
+            if (now == null) return;
+            if (now.StartMode != before.StartMode)
+                throw new InvalidOperationException(
+                    "Cleanup did not restore the start mode of " +
+                    serviceName + ": expected " + before.StartMode +
+                    ", observed " + now.StartMode + ".");
+        }
+
+        private static void RequireNoKrsHelperProcess()
+        {
+            Process[] helpers = Process.GetProcessesByName(
+                "EsmTspiot.ServiceProvisioner");
+            try
+            {
+                if (helpers.Length > 0)
+                    throw new InvalidOperationException(
+                        "A KRS helper process is still running after the operation.");
+            }
+            finally
+            {
+                for (int index = 0; index < helpers.Length; index++)
+                    helpers[index].Dispose();
             }
         }
 
