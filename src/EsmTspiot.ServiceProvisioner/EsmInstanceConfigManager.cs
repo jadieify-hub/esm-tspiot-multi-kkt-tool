@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Text;
 using System.Threading;
+using EsmTspiot.Shared.Services;
 
 namespace EsmTspiot.ServiceProvisioner
 {
@@ -138,7 +139,8 @@ namespace EsmTspiot.ServiceProvisioner
             manifest.UpdatedUtc = DateTime.UtcNow.ToString("o");
             _manifests.Write(manifest);
 
-            string serviceName = "esm-cm-" + manifest.KktSerial;
+            string serviceName =
+                EsmInstanceServiceIdentity.CreateName(manifest.KktSerial);
             bool wasRunning = StopInstance(serviceName);
             bool applied = false;
             try
@@ -189,7 +191,8 @@ namespace EsmTspiot.ServiceProvisioner
                 throw new InvalidDataException(
                     "Конфигурация ЕСМ изменилась после применения; автоматический откат запрещён.");
             }
-            string serviceName = "esm-cm-" + manifest.KktSerial;
+            string serviceName =
+                EsmInstanceServiceIdentity.CreateName(manifest.KktSerial);
             bool wasRunning = StopInstance(serviceName);
             try
             {

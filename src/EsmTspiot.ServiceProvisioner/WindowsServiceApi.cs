@@ -34,7 +34,7 @@ namespace EsmTspiot.ServiceProvisioner
 
         public WindowsServiceRecord Query(string serviceName)
         {
-            ValidateExactName(serviceName);
+            ValidateLifecycleName(serviceName);
             using (SafeServiceHandle manager = OpenManager(ScManagerConnect))
             using (SafeServiceHandle service = OpenServiceW(
                 manager,
@@ -179,7 +179,7 @@ namespace EsmTspiot.ServiceProvisioner
 
         public void Start(string serviceName)
         {
-            ValidateExactName(serviceName);
+            ValidateLifecycleName(serviceName);
             using (SafeServiceHandle manager = OpenManager(ScManagerConnect))
             using (SafeServiceHandle service = OpenRequiredService(manager, serviceName, ServiceStart))
             {
@@ -192,7 +192,7 @@ namespace EsmTspiot.ServiceProvisioner
 
         public void RequestStop(string serviceName)
         {
-            ValidateExactName(serviceName);
+            ValidateLifecycleName(serviceName);
             using (SafeServiceHandle manager = OpenManager(ScManagerConnect))
             using (SafeServiceHandle service = OpenRequiredService(
                 manager,
@@ -657,24 +657,53 @@ namespace EsmTspiot.ServiceProvisioner
             }
         }
 
-        private static void ValidateExactName(string serviceName)
+        internal static bool IsOwnedServiceName(string serviceName)
         {
             string serial;
-            if (!EsmTspiot.Shared.Services.LmServiceIdentity.TryParseName(
+            if (EsmTspiot.Shared.Services.LmServiceIdentity.TryParseName(
                     serviceName,
-                    out serial) &&
-                !LocalModuleServiceIdentity.IsManagedName(serviceName))
+                    out serial) ||
+                LocalModuleServiceIdentity.IsManagedName(serviceName))
             {
-                int directOrdinal;
-                if (!EsmTspiot.Shared.Services.DirectControllerIdentity.TryParseServiceName(
-                        serviceName,
-                        out directOrdinal) &&
-                    !IsMsiLocalModuleServiceName(serviceName))
-                {
-                    throw new ArgumentException(
-                        "Managed service name is invalid.",
-                        "serviceName");
-                }
+                return true;
+            }
+            int directOrdinal;
+            return EsmTspiot.Shared.Services.DirectControllerIdentity.TryParseServiceName(
+                    serviceName,
+                    out directOrdinal) ||
+                IsMsiLocalModuleServiceName(serviceName);
+        }
+
+        // Служба экземпляра ЕСМ принадлежит вендору. Мы правим её
+        // конфигурацию и потому обязаны её остановить и запустить, но
+        // создавать, перенастраивать и удалять её нельзя: эти операции
+        // остаются на строгом списке наших собственных служб.
+        internal static bool IsLifecycleServiceName(string serviceName)
+        {
+            string instanceSerial;
+            return IsOwnedServiceName(serviceName) ||
+                EsmTspiot.Shared.Services.EsmInstanceServiceIdentity.TryParseName(
+                    serviceName,
+                    out instanceSerial);
+        }
+
+        private static void ValidateExactName(string serviceName)
+        {
+            if (!IsOwnedServiceName(serviceName))
+            {
+                throw new ArgumentException(
+                    "Managed service name is invalid.",
+                    "serviceName");
+            }
+        }
+
+        private static void ValidateLifecycleName(string serviceName)
+        {
+            if (!IsLifecycleServiceName(serviceName))
+            {
+                throw new ArgumentException(
+                    "Managed service name is invalid.",
+                    "serviceName");
             }
         }
 
