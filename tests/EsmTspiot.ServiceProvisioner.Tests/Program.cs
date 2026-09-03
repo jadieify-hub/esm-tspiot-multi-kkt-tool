@@ -179,6 +179,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("ESM instance YAML rejects duplicate anchors and aliases", EsmInstanceYamlRejectsDuplicateAnchorsAndAliases);
             Run("ESM instance YAML supports block sequences and rejects ambiguity", EsmInstanceYamlSupportsBlockSequencesAndRejectsAmbiguity);
             Run("ESM instance config transaction backs up restores and defers", EsmInstanceConfigTransactionBacksUpRestoresAndDefers);
+            Run("ESM instance service is startable but never mutable", EsmInstanceServiceIsStartableButNeverMutable);
             Run("SCM handles are disposed on every failure", ScmHandlesAreDisposedOnEveryFailure);
             Run("SCM configures restricted service SID", ScmConfiguresRestrictedServiceSid);
             Run("Supervisor replaces only child ProgramData", SupervisorReplacesOnlyChildProgramData);
@@ -7448,6 +7449,51 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             }, "Multiple YAML documents must be rejected.");
         }
 
+        private static void EsmInstanceServiceIsStartableButNeverMutable()
+        {
+            const string instance = "esm-cm-00106205280301";
+            AssertTrue(
+                WindowsServiceApi.IsLifecycleServiceName(instance),
+                "Экземпляр ЕСМ обязан останавливаться и запускаться: без этого " +
+                "перенаправление на клон контроллера падает в поле.");
+            AssertFalse(
+                WindowsServiceApi.IsOwnedServiceName(instance),
+                "Вендорскую службу ЕСМ нельзя создавать, менять и удалять.");
+            AssertTrue(
+                WindowsServiceApi.IsOwnedServiceName("esm-lm-controller-2"),
+                "Клон контроллера остаётся нашей службой.");
+
+            string[] foreign =
+            {
+                "esm-cm-",
+                "esm-cm-0010620528030",
+                "esm-cm-001062052803011",
+                "esm-cm-0010620528030X",
+                "esm-cm-00106205280301 ",
+                "Esm-Cm-00106205280301"
+            };
+            for (int index = 0; index < foreign.Length; index++)
+            {
+                AssertFalse(
+                    WindowsServiceApi.IsLifecycleServiceName(foreign[index]),
+                    "Имя " + foreign[index] + " не должно приниматься.");
+            }
+
+            string serial;
+            AssertTrue(
+                EsmTspiot.Shared.Services.EsmInstanceServiceIdentity.TryParseName(
+                    instance,
+                    out serial),
+                "Имя службы экземпляра ЕСМ должно разбираться.");
+            AssertEqual("00106205280301", serial,
+                "Серийный номер должен извлекаться.");
+            AssertEqual(
+                instance,
+                EsmTspiot.Shared.Services.EsmInstanceServiceIdentity.CreateName(
+                    "00106205280301"),
+                "Имя службы должно собираться обратно без изменений.");
+        }
+
         private static void EsmInstanceConfigTransactionBacksUpRestoresAndDefers()
         {
             string root = CreateTemporaryDirectory();
@@ -10134,6 +10180,26 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             }
         }
 
+        private static void RequireLifecycleServiceName(string serviceName)
+        {
+            if (!WindowsServiceApi.IsLifecycleServiceName(serviceName))
+            {
+                throw new ArgumentException(
+                    "Managed service name is invalid.",
+                    "serviceName");
+            }
+        }
+
+        private static void RequireOwnedServiceName(string serviceName)
+        {
+            if (!WindowsServiceApi.IsOwnedServiceName(serviceName))
+            {
+                throw new ArgumentException(
+                    "Managed service name is invalid.",
+                    "serviceName");
+            }
+        }
+
         private sealed class FakeWindowsServiceApi : IWindowsServiceApi
         {
             private readonly Dictionary<string, WindowsServiceRecord> _records =
@@ -10157,6 +10223,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
             public WindowsServiceRecord Query(string serviceName)
             {
+                RequireLifecycleServiceName(serviceName);
                 WindowsServiceRecord record;
                 int remaining;
                 if (_deleteQueriesRemaining.TryGetValue(serviceName, out remaining))
@@ -10188,6 +10255,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
             public void Start(string serviceName)
             {
+                RequireLifecycleServiceName(serviceName);
                 EnsureExact(serviceName);
                 Events.Add("start:" + serviceName);
                 _records[serviceName].State = WindowsServiceState.Running;
@@ -10199,6 +10267,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
             public void RequestStop(string serviceName)
             {
+                RequireLifecycleServiceName(serviceName);
                 EnsureExact(serviceName);
                 Events.Add("stop:" + serviceName);
                 _records[serviceName].State = WindowsServiceState.Stopped;
@@ -10209,6 +10278,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 string serviceName,
                 WindowsServiceStartMode startMode)
             {
+                RequireOwnedServiceName(serviceName);
                 EnsureExact(serviceName);
                 Events.Add("startmode:" + serviceName + ":" + startMode);
                 _records[serviceName].StartMode = startMode;
@@ -10216,6 +10286,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
             public void Delete(string serviceName)
             {
+                RequireOwnedServiceName(serviceName);
                 EnsureExact(serviceName);
                 if (DeleteVisibilityQueries > 0)
                 {
@@ -10476,6 +10547,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
             public WindowsServiceRecord Query(string serviceName)
             {
+                RequireLifecycleServiceName(serviceName);
                 WindowsServiceRecord record;
                 return _records.TryGetValue(serviceName, out record) ? record : null;
             }
@@ -10498,6 +10570,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
             public void Start(string serviceName)
             {
+                RequireLifecycleServiceName(serviceName);
                 WindowsServiceRecord record = Require(serviceName);
                 record.State = WindowsServiceState.Running;
                 if (Events != null) Events.Add("start:" + serviceName);
@@ -10505,6 +10578,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
             public void RequestStop(string serviceName)
             {
+                RequireLifecycleServiceName(serviceName);
                 WindowsServiceRecord record = Require(serviceName);
                 record.State = WindowsServiceState.Stopped;
                 if (Events != null) Events.Add("stop:" + serviceName);
@@ -10512,6 +10586,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
             public void Delete(string serviceName)
             {
+                RequireOwnedServiceName(serviceName);
                 Require(serviceName);
                 _records.Remove(serviceName);
             }
@@ -10520,6 +10595,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 string serviceName,
                 WindowsServiceStartMode startMode)
             {
+                RequireOwnedServiceName(serviceName);
                 Require(serviceName).StartMode = startMode;
                 if (Events != null)
                     Events.Add("startmode:" + serviceName + ":" + startMode);

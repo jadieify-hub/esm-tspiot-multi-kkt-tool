@@ -7,7 +7,8 @@ namespace EsmTspiot.Shared.Services
 {
     public static class ServiceRecoveryCommandBuilder
     {
-        public const string ServiceNamePrefix = "esm-cm-";
+        public const string ServiceNamePrefix =
+            EsmInstanceServiceIdentity.Prefix;
 
         private static readonly string[] ControlModuleCandidates =
         {

@@ -110,6 +110,7 @@ namespace EsmTspiot.Shared.Tests
             Run("MSI local module root policy accepts only fixed Program Files volumes", MsiLocalModuleRootPolicyAcceptsOnlyFixedProgramFilesVolumes);
             Run("MSI local module planner reserves ordinals and names port owners", MsiLocalModulePlannerReservesOrdinalsAndNamesPortOwners);
             Run("MSI local module package policy pins the vendor, not the version", MsiLocalModulePackagePolicyPinsVendorNotVersion);
+            Run("ESM instance service identity matches the vendor naming", EsmInstanceServiceIdentityMatchesVendorNaming);
             Run("MSI local module disk budget reports both volumes", MsiLocalModuleDiskBudgetReportsBothVolumes);
 #if !NETFRAMEWORK
             Run("MSI local module operator inventory restores stable assignments", MsiLocalModuleOperatorInventoryRestoresStableAssignments);
@@ -1920,6 +1921,59 @@ namespace EsmTspiot.Shared.Tests
                 Path.GetPathRoot(Environment.SystemDirectory),
                 LocalModuleInstallRootPolicy.GetSystemVolumeRoot(),
                 "New local modules must always target the system volume.");
+        }
+
+        private static void EsmInstanceServiceIdentityMatchesVendorNaming()
+        {
+            AssertEqual(
+                EsmInstanceServiceIdentity.Prefix,
+                ServiceRecoveryCommandBuilder.ServiceNamePrefix,
+                "Префикс службы экземпляра ЕСМ должен быть один на всю программу.");
+            AssertEqual(
+                "esm-cm-00106205280301",
+                EsmInstanceServiceIdentity.CreateName("00106205280301"),
+                "Имя службы экземпляра ЕСМ задаёт вендор.");
+
+            string serial;
+            AssertTrue(
+                EsmInstanceServiceIdentity.TryParseName(
+                    "esm-cm-00106205280301",
+                    out serial),
+                "Вендорское имя должно разбираться.");
+            AssertEqual("00106205280301", serial,
+                "Серийный номер должен извлекаться без изменений.");
+
+            string[] foreign =
+            {
+                null,
+                "",
+                "esm-cm-",
+                "esm-cm-0010620528030",
+                "esm-cm-001062052803011",
+                "esm-cm-0010620528030X",
+                "esm-lm-controller-2",
+                "Esm-Cm-00106205280301"
+            };
+            for (int index = 0; index < foreign.Length; index++)
+            {
+                string parsed;
+                AssertFalse(
+                    EsmInstanceServiceIdentity.TryParseName(foreign[index], out parsed),
+                    "Имя " + (foreign[index] ?? "<null>") +
+                    " не должно приниматься за службу экземпляра ЕСМ.");
+            }
+
+            bool rejectedShortSerial = false;
+            try
+            {
+                EsmInstanceServiceIdentity.CreateName("920352376299");
+            }
+            catch (ArgumentException)
+            {
+                rejectedShortSerial = true;
+            }
+            AssertTrue(rejectedShortSerial,
+                "Серийный номер ККТ должен состоять ровно из 14 цифр.");
         }
 
         private static void MsiLocalModulePackagePolicyPinsVendorNotVersion()
