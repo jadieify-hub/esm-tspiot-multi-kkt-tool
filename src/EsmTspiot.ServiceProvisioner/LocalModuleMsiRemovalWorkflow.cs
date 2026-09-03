@@ -241,6 +241,13 @@ namespace EsmTspiot.ServiceProvisioner
                         null, false);
                     context.Platform.RemoveFirewall(manifest);
                 }
+                if (manifest.StartModeAdjusted)
+                {
+                    context.WriteStage(request, manifest.OwnershipNonce,
+                        LocalModuleMsiLifecycleStage.StartModeRestoring,
+                        null, false);
+                    context.Platform.RestoreStartMode(manifest);
+                }
                 if (manifest.CanRemove)
                 {
                     context.WriteStage(request, manifest.OwnershipNonce,
@@ -269,7 +276,10 @@ namespace EsmTspiot.ServiceProvisioner
                     request,
                     LmServiceProvisioningStatus.RemovedLocalArtifactsBindingRetained,
                     manifest.PreExisting
-                        ? "Назначение удалено; предустановленный базовый ЛМ сохранён."
+                        ? manifest.StartModeAdjusted
+                            ? "Назначение удалено; предустановленный базовый ЛМ " +
+                                "сохранён, прежний режим запуска его служб возвращён."
+                            : "Назначение удалено; предустановленный базовый ЛМ сохранён."
                         : "Созданный локальный модуль удалён; привязка ЕСМ сохранена.",
                     string.Empty);
             }

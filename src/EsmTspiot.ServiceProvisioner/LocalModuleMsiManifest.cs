@@ -11,7 +11,7 @@ namespace EsmTspiot.ServiceProvisioner
     [DataContract]
     internal sealed class LocalModuleMsiManifest
     {
-        internal const int CurrentSchemaVersion = 3;
+        internal const int CurrentSchemaVersion = 4;
         internal const string ExpectedOwnershipMarker =
             "KRS.MultiKKT.LocalModuleMsi.Product.v1";
 
@@ -63,6 +63,17 @@ namespace EsmTspiot.ServiceProvisioner
         [DataMember(Order = 16)]
         internal string ManifestSha256 { get; set; }
 
+        // Start-mode journal for an adopted vendor base: the previous SCM start
+        // types are recorded once so removal can hand them back unchanged.
+        [DataMember(Order = 17)]
+        internal bool StartModeAdjusted { get; set; }
+
+        [DataMember(Order = 18)]
+        internal int PreviousApiStartMode { get; set; }
+
+        [DataMember(Order = 19)]
+        internal int PreviousDatabaseStartMode { get; set; }
+
         internal bool CanRemove
         {
             get { return InstalledByApplication && !PreExisting; }
@@ -99,6 +110,9 @@ namespace EsmTspiot.ServiceProvisioner
                     CultureInfo.InvariantCulture),
                 FirewallRuleName = string.Empty,
                 FirewallRuleHash = string.Empty,
+                StartModeAdjusted = false,
+                PreviousApiStartMode = 0,
+                PreviousDatabaseStartMode = 0,
                 ManifestSha256 = string.Empty
             };
             ValidateStructure(result, false);
@@ -131,6 +145,19 @@ namespace EsmTspiot.ServiceProvisioner
             ManifestSha256 = ComputeSha256(this);
         }
 
+        internal void RecordStartModeAdjustment(
+            WindowsServiceStartMode previousApiStartMode,
+            WindowsServiceStartMode previousDatabaseStartMode)
+        {
+            if (StartModeAdjusted)
+                throw new InvalidOperationException(
+                    "Start-mode adjustment is already recorded.");
+            StartModeAdjusted = true;
+            PreviousApiStartMode = (int)previousApiStartMode;
+            PreviousDatabaseStartMode = (int)previousDatabaseStartMode;
+            ManifestSha256 = ComputeSha256(this);
+        }
+
         internal static string ComputeSha256(LocalModuleMsiManifest manifest)
         {
             ValidateStructure(manifest, false);
@@ -150,7 +177,12 @@ namespace EsmTspiot.ServiceProvisioner
                 manifest.OwnershipNonce,
                 manifest.UpdatedUtc,
                 manifest.FirewallRuleName ?? string.Empty,
-                manifest.FirewallRuleHash ?? string.Empty
+                manifest.FirewallRuleHash ?? string.Empty,
+                manifest.StartModeAdjusted ? "1" : "0",
+                manifest.PreviousApiStartMode.ToString(
+                    CultureInfo.InvariantCulture),
+                manifest.PreviousDatabaseStartMode.ToString(
+                    CultureInfo.InvariantCulture)
             });
             byte[] digest;
             using (SHA256 algorithm = SHA256.Create())
@@ -210,6 +242,13 @@ namespace EsmTspiot.ServiceProvisioner
                       64))))
                 throw new InvalidDataException(
                     "Local-module MSI firewall ownership is invalid.");
+            if (manifest.StartModeAdjusted
+                ? (!IsStartMode(manifest.PreviousApiStartMode) ||
+                   !IsStartMode(manifest.PreviousDatabaseStartMode))
+                : (manifest.PreviousApiStartMode != 0 ||
+                   manifest.PreviousDatabaseStartMode != 0))
+                throw new InvalidDataException(
+                    "Local-module MSI start-mode record is invalid.");
             if (!string.Equals(
                     manifest.InstallRoot,
                     NormalizeRoot(manifest.InstallRoot),
@@ -222,6 +261,13 @@ namespace EsmTspiot.ServiceProvisioner
                     64))
                 throw new InvalidDataException(
                     "Local-module MSI manifest hash is invalid.");
+        }
+
+        private static bool IsStartMode(int value)
+        {
+            return value == (int)WindowsServiceStartMode.AutoStart ||
+                value == (int)WindowsServiceStartMode.DemandStart ||
+                value == (int)WindowsServiceStartMode.Disabled;
         }
 
         private static string NormalizeGuid(string value, string parameter)

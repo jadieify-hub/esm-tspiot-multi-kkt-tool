@@ -20,6 +20,7 @@ namespace EsmTspiot.ServiceProvisioner
         internal bool FirewallMatches { get; set; }
         internal bool Running { get; set; }
         internal bool Ready { get; set; }
+        internal bool AutomaticStart { get; set; }
         internal string ConflictMessage { get; set; }
 
         internal bool IsExactReady
@@ -28,7 +29,8 @@ namespace EsmTspiot.ServiceProvisioner
             {
                 return ProductPresent && ProductMatches &&
                     ConfigurationMatches && ServicesPresent && ServicesMatch &&
-                    FirewallPresent && FirewallMatches && Running && Ready &&
+                    FirewallPresent && FirewallMatches && AutomaticStart &&
+                    Running && Ready &&
                     string.IsNullOrEmpty(ConflictMessage);
             }
         }
@@ -51,6 +53,10 @@ namespace EsmTspiot.ServiceProvisioner
         LocalModuleFirewallRule EnsureFirewall(
             LocalModuleMsiProvisioningItemRequest request,
             LocalModuleMsiManifest manifest);
+        LocalModuleStartModeAdjustment EnsureAutomaticStart(
+            LocalModuleMsiProvisioningItemRequest request,
+            LocalModuleMsiManifest manifest);
+        void RestoreStartMode(LocalModuleMsiManifest manifest);
         void StartAndVerify(
             LocalModuleMsiProvisioningItemRequest request,
             LocalModuleMsiManifest manifest);
@@ -85,7 +91,9 @@ namespace EsmTspiot.ServiceProvisioner
         [EnumMember] ManifestDeleting = 10,
         [EnumMember] EpmdWaiting = 11,
         [EnumMember] CloneCompensation = 12,
-        [EnumMember] CleanupPending = 13
+        [EnumMember] CleanupPending = 13,
+        [EnumMember] StartModeEnsuring = 14,
+        [EnumMember] StartModeRestoring = 15
     }
 
     [DataContract]
@@ -149,7 +157,7 @@ namespace EsmTspiot.ServiceProvisioner
                 !LocalModuleManagedIdentity.IsLowerHex(
                     journal.OwnershipNonce, 32) ||
                 journal.Stage < LocalModuleMsiLifecycleStage.Observing ||
-                journal.Stage > LocalModuleMsiLifecycleStage.CleanupPending ||
+                journal.Stage > LocalModuleMsiLifecycleStage.StartModeRestoring ||
                 journal.LastErrorClass == null ||
                 string.IsNullOrWhiteSpace(journal.UpdatedUtc))
                 throw new InvalidDataException(

@@ -129,11 +129,13 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Windows Installer receives a terminated absolute LM directory", WindowsInstallerReceivesTerminatedAbsoluteLmDirectory);
             Run("Installed local module reader scans both registry views", InstalledLocalModuleReaderScansBothRegistryViews);
             Run("Local module MSI manifests guard ownership and content", LocalModuleMsiManifestsGuardOwnershipAndContent);
+            Run("Local module start-mode controller adjusts and restores the exact pair", LocalModuleStartModeControllerAdjustsAndRestoresExactPair);
             Run("Installed local module config exposes only a cookie digest", InstalledLocalModuleConfigExposesOnlyCookieDigest);
             Run("Installed local module services start stop and own listeners", InstalledLocalModuleServicesStartStopAndOwnListeners);
             Run("Local module firewall manager owns only an exact API rule", LocalModuleFirewallManagerOwnsOnlyExactApiRule);
             Run("MSI local module ensure is idempotent and recovers cleanup", MsiLocalModuleEnsureIsIdempotentAndRecoversCleanup);
             Run("MSI local module removal preserves base and compensates EPMD", MsiLocalModuleRemovalPreservesBaseAndCompensatesEpmd);
+            Run("MSI local module ensure enables automatic start for an adopted base", MsiLocalModuleEnsureEnablesAutomaticStartForAdoptedBase);
             Run("MSI local module protocol v3 hashes and validates every item", MsiLocalModuleProtocolV3HashesAndValidatesEveryItem);
             Run("MSI local module session continues independent INN failures", MsiLocalModuleSessionContinuesIndependentInnFailures);
             Run("Managed local module protocol accepts consistent shared INN rows", ManagedLocalModuleProtocolAcceptsConsistentSharedInnRows);
@@ -2575,6 +2577,56 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                         new string('b', 32));
                 AssertTrue(applicationInstalled.CanRemove,
                     "An application-installed base product must be removable.");
+
+                LocalModuleMsiManifest adjusted =
+                    LocalModuleMsiManifest.Create(
+                        "7707083893",
+                        0,
+                        5995,
+                        5984,
+                        "{50000000-0000-0000-0000-000000000001}",
+                        "{60000000-0000-0000-0000-000000000001}",
+                        @"D:\Program Files\Regime",
+                        false,
+                        true,
+                        new string('c', 32));
+                AssertFalse(adjusted.StartModeAdjusted,
+                    "A fresh manifest must not carry a start-mode record.");
+                string unadjustedHash = adjusted.ManifestSha256;
+                adjusted.RecordStartModeAdjustment(
+                    WindowsServiceStartMode.DemandStart,
+                    WindowsServiceStartMode.DemandStart);
+                AssertTrue(adjusted.StartModeAdjusted &&
+                    adjusted.PreviousApiStartMode ==
+                        (int)WindowsServiceStartMode.DemandStart &&
+                    adjusted.PreviousDatabaseStartMode ==
+                        (int)WindowsServiceStartMode.DemandStart,
+                    "The start-mode record must keep both previous modes.");
+                AssertFalse(string.Equals(
+                        unadjustedHash,
+                        adjusted.ManifestSha256,
+                        StringComparison.Ordinal),
+                    "The manifest hash must cover the start-mode record.");
+                LocalModuleMsiManifest.Validate(adjusted);
+                AssertThrows<InvalidOperationException>(delegate {
+                    adjusted.RecordStartModeAdjustment(
+                        WindowsServiceStartMode.AutoStart,
+                        WindowsServiceStartMode.AutoStart);
+                }, "A start-mode record must be written once and never overwritten.");
+                store.Write(adjusted);
+                LocalModuleMsiManifest adjustedRead = store.Read(adjusted.Inn);
+                AssertEqual((int)WindowsServiceStartMode.DemandStart,
+                    adjustedRead.PreviousApiStartMode,
+                    "Manifest read-back must preserve the start-mode record.");
+                string adjustedPath = store.GetManifestPath(adjusted.Inn);
+                File.WriteAllText(
+                    adjustedPath,
+                    File.ReadAllText(adjustedPath).Replace(
+                        "\"StartModeAdjusted\":true",
+                        "\"StartModeAdjusted\":false"));
+                AssertThrows<InvalidDataException>(delegate {
+                    store.Read(adjusted.Inn);
+                }, "Start-mode record changes must fail the manifest guard.");
             }
             finally
             {
@@ -3172,6 +3224,257 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 "Remove-all must not adopt a manifest absent from the confirmed request.");
             AssertTrue(selectivePlatform.State(unlistedClone.Inn).ProductPresent,
                 "An unlisted installed clone must remain untouched.");
+        }
+
+        private static void LocalModuleStartModeControllerAdjustsAndRestoresExactPair()
+        {
+            LocalModuleInstalledLayout layout =
+                LocalModuleInstalledLayout.Create(
+                    @"D:\Program Files\Regime",
+                    0,
+                    5995,
+                    5984);
+            FakeWindowsServiceApi services = new FakeWindowsServiceApi();
+            services.SetRecord(new WindowsServiceRecord
+            {
+                ServiceName = layout.ApiServiceName,
+                ImagePath = layout.ServiceImagePath,
+                StartMode = WindowsServiceStartMode.DemandStart,
+                State = WindowsServiceState.Running
+            });
+            services.SetRecord(new WindowsServiceRecord
+            {
+                ServiceName = layout.DatabaseServiceName,
+                ImagePath = layout.ServiceImagePath,
+                StartMode = WindowsServiceStartMode.DemandStart,
+                State = WindowsServiceState.Running
+            });
+            LocalModuleServiceStartModeController controller =
+                new LocalModuleServiceStartModeController(services);
+            AssertFalse(LocalModuleServiceStartModeController.IsAutomatic(
+                    services.Query(layout.ApiServiceName),
+                    services.Query(layout.DatabaseServiceName)),
+                "A manual vendor pair must not report automatic start.");
+
+            LocalModuleStartModeAdjustment adjustment =
+                controller.EnsureAutomatic(layout);
+            AssertTrue(adjustment.Adjusted,
+                "Switching a manual pair must report an adjustment.");
+            AssertEqual(WindowsServiceStartMode.DemandStart,
+                adjustment.PreviousApiStartMode,
+                "The previous API start mode must be reported.");
+            AssertEqual(WindowsServiceStartMode.DemandStart,
+                adjustment.PreviousDatabaseStartMode,
+                "The previous database start mode must be reported.");
+            AssertSequence(new[]
+            {
+                "startmode:" + layout.DatabaseServiceName + ":AutoStart",
+                "startmode:" + layout.ApiServiceName + ":AutoStart"
+            }, services.Events,
+                "Only the two start types of the exact pair may change.");
+            AssertTrue(LocalModuleServiceStartModeController.IsAutomatic(
+                    services.Query(layout.ApiServiceName),
+                    services.Query(layout.DatabaseServiceName)),
+                "Both services must be on automatic start afterwards.");
+
+            int events = services.Events.Count;
+            LocalModuleStartModeAdjustment repeated =
+                controller.EnsureAutomatic(layout);
+            AssertFalse(repeated.Adjusted,
+                "An automatic pair must report no adjustment.");
+            AssertEqual(events, services.Events.Count,
+                "An automatic pair must not be touched again.");
+
+            controller.Restore(
+                layout,
+                WindowsServiceStartMode.DemandStart,
+                WindowsServiceStartMode.DemandStart);
+            AssertEqual(WindowsServiceStartMode.DemandStart,
+                services.Query(layout.ApiServiceName).StartMode,
+                "Restore must hand the API service its previous start mode back.");
+            AssertEqual(WindowsServiceStartMode.DemandStart,
+                services.Query(layout.DatabaseServiceName).StartMode,
+                "Restore must hand the database service its previous start mode back.");
+
+            services.SetRecord(new WindowsServiceRecord
+            {
+                ServiceName = layout.ApiServiceName,
+                ImagePath = @"D:\Program Files\Regime\foreign.exe",
+                StartMode = WindowsServiceStartMode.DemandStart
+            });
+            AssertThrows<InvalidDataException>(delegate {
+                controller.EnsureAutomatic(layout);
+            }, "A foreign service under the vendor name must be refused.");
+            controller.Restore(
+                layout,
+                WindowsServiceStartMode.AutoStart,
+                WindowsServiceStartMode.AutoStart);
+            AssertEqual(WindowsServiceStartMode.DemandStart,
+                services.Query(layout.ApiServiceName).StartMode,
+                "Restore must never touch a foreign service.");
+
+            services.SetRecord(new WindowsServiceRecord
+            {
+                ServiceName = layout.ApiServiceName,
+                ImagePath = layout.ServiceImagePath,
+                StartMode = WindowsServiceStartMode.Disabled
+            });
+            events = services.Events.Count;
+            AssertThrows<InvalidOperationException>(delegate {
+                controller.EnsureAutomatic(layout);
+            }, "A disabled vendor service must be left to the administrator.");
+            AssertEqual(events, services.Events.Count,
+                "A disabled pair must not be modified.");
+
+            services.Delete(layout.ApiServiceName);
+            services.Delete(layout.DatabaseServiceName);
+            controller.Restore(
+                layout,
+                WindowsServiceStartMode.DemandStart,
+                WindowsServiceStartMode.DemandStart);
+            AssertEqual(events, services.Events.Count,
+                "Restore must ignore services that are already gone.");
+        }
+
+        private static void MsiLocalModuleEnsureEnablesAutomaticStartForAdoptedBase()
+        {
+            FakeLocalModuleMsiLifecyclePlatform platform =
+                new FakeLocalModuleMsiLifecyclePlatform();
+            FakeLocalModuleMsiRepository repository =
+                new FakeLocalModuleMsiRepository();
+            FakeLocalModuleMsiJournalStore journals =
+                new FakeLocalModuleMsiJournalStore();
+            LocalModuleMsiProvisioningContext context =
+                CreateMsiContext(platform, repository, journals);
+            LocalModuleMsiProvisioner provisioner =
+                new LocalModuleMsiProvisioner();
+            LocalModuleMsiRemovalWorkflow removal =
+                new LocalModuleMsiRemovalWorkflow();
+            LocalModuleMsiProvisioningItemRequest vendorBase = MsiRequest(
+                "7707083893", 0, 5995, 5984, null);
+            FakeLocalModuleMsiState state = platform.State(vendorBase.Inn);
+            state.ProductPresent = true;
+            state.ProductMatches = true;
+            state.ServicesPresent = true;
+            state.Running = true;
+            state.Ready = true;
+            state.AutomaticStart = false;
+
+            LocalModuleMsiProvisioningItemResult adopted =
+                provisioner.Ensure(vendorBase, context);
+            AssertEqual(LmServiceProvisioningStatus.Succeeded, adopted.Status,
+                "A running vendor base on manual start must be adopted.");
+            AssertSequence(new[]
+            {
+                "firewall:7707083893", "startmode:7707083893",
+                "start:7707083893"
+            }, platform.Events,
+                "Automatic start must be enabled after the firewall and before start.");
+            AssertTrue(state.AutomaticStart,
+                "Adoption must switch the vendor pair to automatic start.");
+            LocalModuleMsiManifest manifest = repository.Read(vendorBase.Inn);
+            AssertTrue(manifest.StartModeAdjusted,
+                "The manifest must journal the start-mode adjustment.");
+            AssertEqual((int)WindowsServiceStartMode.DemandStart,
+                manifest.PreviousApiStartMode,
+                "The previous API start mode must be recorded.");
+            AssertEqual((int)WindowsServiceStartMode.DemandStart,
+                manifest.PreviousDatabaseStartMode,
+                "The previous database start mode must be recorded.");
+            AssertEqual(adopted.ManifestSha256, manifest.ManifestSha256,
+                "The reported hash must cover the start-mode record.");
+
+            vendorBase.ExpectedManifestSha256 = adopted.ManifestSha256;
+            int mutations = platform.Events.Count;
+            LocalModuleMsiProvisioningItemResult repeated =
+                provisioner.Ensure(vendorBase, context);
+            AssertEqual(LmServiceProvisioningStatus.Succeeded, repeated.Status,
+                "An adopted base on automatic start must be a no-op.");
+            AssertEqual(mutations, platform.Events.Count,
+                "A ready base must not be mutated again.");
+
+            state.AutomaticStart = false;
+            LocalModuleMsiProvisioningItemResult repaired =
+                provisioner.Ensure(vendorBase, context);
+            AssertEqual(LmServiceProvisioningStatus.Succeeded, repaired.Status,
+                "A base reverted to manual start must be repaired.");
+            AssertTrue(platform.Events.LastIndexOf("startmode:7707083893") >= mutations,
+                "Repair must re-enable automatic start.");
+            AssertTrue(state.AutomaticStart,
+                "Repair must restore automatic start.");
+            manifest = repository.Read(vendorBase.Inn);
+            AssertEqual(adopted.ManifestSha256, manifest.ManifestSha256,
+                "Repair must keep the original start-mode record.");
+
+            platform.Events.Clear();
+            LocalModuleMsiProvisioningItemResult removed =
+                removal.Remove(vendorBase, context);
+            AssertEqual(
+                LmServiceProvisioningStatus.RemovedLocalArtifactsBindingRetained,
+                removed.Status,
+                "Removing an adopted base must succeed without uninstalling it.");
+            AssertSequence(new[]
+            {
+                "remove-firewall:7707083893", "restore-startmode:7707083893"
+            }, platform.Events,
+                "Removal must hand the previous start mode back after the firewall rule.");
+            AssertFalse(state.AutomaticStart,
+                "Removal must return the vendor pair to its previous start mode.");
+            AssertTrue(state.ProductPresent && state.Running,
+                "Removal must leave the vendor base installed and running.");
+            AssertContains(removed.Message, "режим запуска");
+            AssertTrue(repository.Read(vendorBase.Inn) == null,
+                "Removal must delete the base assignment manifest.");
+
+            LocalModuleMsiProvisioningItemRequest clone = MsiRequest(
+                "1234567890", 1, 6995, 7984, null);
+            platform.Events.Clear();
+            provisioner.Ensure(clone, context);
+            AssertFalse(platform.Events.Contains("startmode:1234567890"),
+                "A clone installed with AUTOSERVICE must not need a start-mode change.");
+            AssertFalse(repository.Read(clone.Inn).StartModeAdjusted,
+                "A clone manifest must not journal a start-mode adjustment.");
+
+            FakeLocalModuleMsiLifecyclePlatform failing =
+                new FakeLocalModuleMsiLifecyclePlatform();
+            FakeLocalModuleMsiRepository failingRepository =
+                new FakeLocalModuleMsiRepository();
+            LocalModuleMsiProvisioningContext failingContext = CreateMsiContext(
+                failing, failingRepository, new FakeLocalModuleMsiJournalStore());
+            LocalModuleMsiProvisioningItemRequest failingBase = MsiRequest(
+                "525700335451", 0, 5995, 5984, null);
+            FakeLocalModuleMsiState failingState = failing.State(failingBase.Inn);
+            failingState.ProductPresent = true;
+            failingState.ProductMatches = true;
+            failingState.ServicesPresent = true;
+            failingState.Running = true;
+            failing.FailStartForInn = failingBase.Inn;
+            LocalModuleMsiProvisioningItemResult failed =
+                provisioner.Ensure(failingBase, failingContext);
+            AssertEqual(LmServiceProvisioningStatus.Failed, failed.Status,
+                "A failed base start must fail the adoption.");
+            AssertTrue(failing.Events.IndexOf("startmode:525700335451") >= 0 &&
+                failing.Events.IndexOf("startmode:525700335451") <
+                    failing.Events.IndexOf("restore-startmode:525700335451"),
+                "Rollback must restore the previous start mode of the vendor base.");
+            AssertFalse(failingState.AutomaticStart,
+                "Rollback must leave the vendor base on its previous start mode.");
+            AssertTrue(failingRepository.Read(failingBase.Inn) == null,
+                "Rollback must delete the base assignment manifest.");
+
+            failing.Events.Clear();
+            failing.FailStartForInn = null;
+            failing.FailStartModeForInn = failingBase.Inn;
+            LocalModuleMsiProvisioningItemResult refused =
+                provisioner.Ensure(failingBase, failingContext);
+            AssertEqual(LmServiceProvisioningStatus.Failed, refused.Status,
+                "A refused start-mode change must fail the adoption.");
+            AssertFalse(failing.Events.Contains("restore-startmode:525700335451"),
+                "Nothing must be restored when no adjustment was recorded.");
+            AssertFalse(failing.Events.Contains("start:525700335451"),
+                "Services must not be started after a refused start-mode change.");
+            AssertTrue(failingRepository.Read(failingBase.Inn) == null,
+                "A refused adoption must leave no base assignment manifest.");
         }
 
         private static LocalModuleMsiProvisioningContext CreateMsiContext(
@@ -9581,6 +9884,15 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 _records[serviceName].ProcessId = 0;
             }
 
+            public void SetStartMode(
+                string serviceName,
+                WindowsServiceStartMode startMode)
+            {
+                EnsureExact(serviceName);
+                Events.Add("startmode:" + serviceName + ":" + startMode);
+                _records[serviceName].StartMode = startMode;
+            }
+
             public void Delete(string serviceName)
             {
                 EnsureExact(serviceName);
@@ -9881,6 +10193,15 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             {
                 Require(serviceName);
                 _records.Remove(serviceName);
+            }
+
+            public void SetStartMode(
+                string serviceName,
+                WindowsServiceStartMode startMode)
+            {
+                Require(serviceName).StartMode = startMode;
+                if (Events != null)
+                    Events.Add("startmode:" + serviceName + ":" + startMode);
             }
 
             private WindowsServiceRecord Require(string serviceName)
@@ -10386,6 +10707,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             internal string FailStartForInn { get; set; }
             internal string FailStopForInn { get; set; }
             internal string FailUninstallForInn { get; set; }
+            internal string FailStartModeForInn { get; set; }
 
             internal FakeLocalModuleMsiState State(string inn)
             {
@@ -10428,6 +10750,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     FirewallMatches = state.FirewallMatches,
                     Running = state.Running,
                     Ready = state.Ready,
+                    AutomaticStart = state.AutomaticStart,
                     ConflictMessage = conflict
                 };
             }
@@ -10450,6 +10773,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 state.Running = false;
                 state.Ready = false;
                 state.ServicesPresent = true;
+                // AUTOSERVICE=1 leaves the vendor pair on automatic start.
+                state.AutomaticStart = true;
                 if (string.Equals(
                         FailInstallWithPartialServicesForInn,
                         request.Inn,
@@ -10488,6 +10813,39 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                         "erts-13.0.4", "bin", "erl.exe"),
                     request.ApiPort,
                     request.RemoteAddress);
+            }
+
+            public LocalModuleStartModeAdjustment EnsureAutomaticStart(
+                LocalModuleMsiProvisioningItemRequest request,
+                LocalModuleMsiManifest manifest)
+            {
+                Events.Add("startmode:" + request.Inn);
+                if (string.Equals(
+                        FailStartModeForInn,
+                        request.Inn,
+                        StringComparison.Ordinal))
+                    throw new InvalidOperationException(
+                        "Simulated start-mode failure.");
+                FakeLocalModuleMsiState state = State(request.Inn);
+                WindowsServiceStartMode previous = state.AutomaticStart
+                    ? WindowsServiceStartMode.AutoStart
+                    : WindowsServiceStartMode.DemandStart;
+                state.AutomaticStart = true;
+                return new LocalModuleStartModeAdjustment
+                {
+                    PreviousApiStartMode = previous,
+                    PreviousDatabaseStartMode = previous
+                };
+            }
+
+            public void RestoreStartMode(LocalModuleMsiManifest manifest)
+            {
+                Events.Add("restore-startmode:" + manifest.Inn);
+                State(manifest.Inn).AutomaticStart =
+                    manifest.PreviousApiStartMode ==
+                        (int)WindowsServiceStartMode.AutoStart &&
+                    manifest.PreviousDatabaseStartMode ==
+                        (int)WindowsServiceStartMode.AutoStart;
             }
 
             public void StartAndVerify(
@@ -10541,6 +10899,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 state.ServicesPresent = false;
                 state.Running = false;
                 state.Ready = false;
+                state.AutomaticStart = false;
             }
 
             public void WaitForEpmdExit()
@@ -10589,6 +10948,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             internal bool FirewallMatches { get; set; }
             internal bool Running { get; set; }
             internal bool Ready { get; set; }
+            internal bool AutomaticStart { get; set; }
         }
 
         private sealed class FakeLocalModuleMsiRepository :

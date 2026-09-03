@@ -8,5 +8,6 @@ namespace EsmTspiot.ServiceProvisioner
         void Start(string serviceName);
         void RequestStop(string serviceName);
         void Delete(string serviceName);
+        void SetStartMode(string serviceName, WindowsServiceStartMode startMode);
     }
 }
