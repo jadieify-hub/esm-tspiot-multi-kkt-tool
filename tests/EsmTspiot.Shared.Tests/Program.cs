@@ -104,6 +104,7 @@ namespace EsmTspiot.Shared.Tests
             Run("Direct controller planner preserves stable saved ordinal", DirectControllerPlannerPreservesStableSavedOrdinal);
             Run("Direct controller planner skips foreign names and ports", DirectControllerPlannerSkipsForeignNamesAndPorts);
             Run("Direct controller planner reports ordinal exhaustion", DirectControllerPlannerReportsOrdinalExhaustion);
+            Run("Direct controller planner tolerates an absent saved KKT", DirectControllerPlannerToleratesAbsentSavedKkt);
             Run("MSI local module planner groups KKT by INN", MsiLocalModulePlannerGroupsKktByInn);
             Run("MSI local module planner uses actual base and clone ports", MsiLocalModulePlannerUsesActualBaseAndClonePorts);
             Run("MSI local module planner preserves saved ordinals", MsiLocalModulePlannerPreservesSavedOrdinals);
@@ -1723,6 +1724,53 @@ namespace EsmTspiot.Shared.Tests
                 "Stable service identity follows the preserved ordinal.");
             AssertEqual(1, plan.FindBySerial("00105700000001").Ordinal,
                 "The free official base remains available to a new KKT.");
+        }
+
+        private static void DirectControllerPlannerToleratesAbsentSavedKkt()
+        {
+            // Одна ККТ временно не отдаётся ЕСМ (например, её экземпляр
+            // перезапускается и отвечает 2003). Это не должно ронять стадию
+            // контроллеров целиком, но её номер обязан остаться занятым.
+            DirectControllerAssignment absent = new DirectControllerAssignment
+            {
+                KktSerial = "00105700000009",
+                KktInn = "7707083893",
+                Ordinal = 2,
+                Role = DirectControllerRole.DirectClone,
+                ServiceName = "esm-lm-controller-2",
+                GrpcPort = 50064,
+                RestPort = 5064,
+                TargetLocalModulePort = 6995
+            };
+            DirectControllerPlan plan = DirectControllerPlanner.Build(
+                new List<LmGatewayKkt>
+                {
+                    CreateLmKkt("00105700000001", "1234567894"),
+                    CreateLmKkt("00105700000002", "7707083893")
+                },
+                new List<DirectControllerAssignment> { absent },
+                new List<DirectControllerServiceInventoryItem>
+                {
+                    new DirectControllerServiceInventoryItem
+                    {
+                        ServiceName = "esm-lm-controller",
+                        IsVerifiedOfficial = true
+                    }
+                },
+                new List<TcpListenerSnapshotItem>());
+
+            AssertTrue(plan.IsValid, string.Join("; ", plan.ValidationMessages));
+            AssertEqual(0, plan.ValidationMessages.Count,
+                "Недоступная сейчас ККТ не является ошибкой плана: " +
+                string.Join("; ", plan.ValidationMessages));
+            AssertEqual(2, plan.Assignments.Count,
+                "В план входят только присутствующие ККТ.");
+            AssertTrue(plan.FindBySerial("00105700000009") == null,
+                "Отсутствующая ККТ в план этого прогона не попадает.");
+            AssertEqual(1, plan.FindBySerial("00105700000001").Ordinal,
+                "Штатная служба достаётся присутствующей ККТ.");
+            AssertEqual(3, plan.FindBySerial("00105700000002").Ordinal,
+                "Номер отсутствующей ККТ остаётся занятым за ней.");
         }
 
         private static void DirectControllerPlannerSkipsForeignNamesAndPorts()
