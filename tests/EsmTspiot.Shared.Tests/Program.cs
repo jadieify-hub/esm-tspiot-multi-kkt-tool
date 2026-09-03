@@ -223,6 +223,8 @@ namespace EsmTspiot.Shared.Tests
 #if !NETFRAMEWORK
             Run("Full automatic setup keeps LM initialization deferred", FullAutomaticSetupKeepsLmInitializationDeferred);
             Run("Full automatic setup does not stop after LM failure", FullAutomaticSetupDoesNotStopAfterLmFailure);
+            Run("Full automatic setup reads back ESM after binding", FullAutomaticSetupReadsBackEsmAfterBinding);
+            Run("LM contour read-back policy classifies ESM observations", LmContourReadbackPolicyClassifiesEsmObservations);
 #endif
             Run("LM automatic setup reports incomplete controller configuration", LmAutomaticSetupReportsIncompleteControllerConfiguration);
             Run("LM lifecycle ensures probes then binds", LmLifecycleEnsuresProbesThenBinds);
@@ -5457,14 +5459,18 @@ namespace EsmTspiot.Shared.Tests
                 delegate { return Task.FromResult(true); },
                 delegate { return Task.FromResult(true); },
                 delegate { return Task.FromResult(true); },
+                delegate { return Task.FromResult(true); },
                 delegate(LmAutomaticSetupStage stage) { stages.Add(stage); },
                 CancellationToken.None).GetAwaiter().GetResult();
 
             AssertTrue(result.Complete,
-                "Registration, controllers and ESM binding must complete the run.");
+                "Registration, controllers, local modules, ESM binding and " +
+                "read-back must complete the run.");
+            AssertEqual(string.Empty, result.IncompleteReason,
+                "A complete contour must not report a missing stage.");
             AssertTrue(result.InitializationDeferred,
                 "LM initialization must remain an explicit deferred state.");
-            AssertEqual(5, stages.Count,
+            AssertEqual(6, stages.Count,
                 "The operator must see every full-automatic stage.");
             AssertEqual(LmAutomaticSetupStage.Registration, stages[0],
                 "Registration must remain the first stage.");
@@ -5474,7 +5480,9 @@ namespace EsmTspiot.Shared.Tests
                 "Local-module provisioning must follow controllers.");
             AssertEqual(LmAutomaticSetupStage.EsmBinding, stages[3],
                 "ESM binding must run after provisioning attempts.");
-            AssertEqual(LmAutomaticSetupStage.InitializationDeferred, stages[4],
+            AssertEqual(LmAutomaticSetupStage.EsmReadback, stages[4],
+                "The ESM read-back must follow binding.");
+            AssertEqual(LmAutomaticSetupStage.InitializationDeferred, stages[5],
                 "Initialization must be reported without being executed.");
         }
 
@@ -5493,15 +5501,153 @@ namespace EsmTspiot.Shared.Tests
                     bindingCalled = true;
                     return Task.FromResult(true);
                 },
+                delegate { return Task.FromResult(true); },
                 null,
                 CancellationToken.None).GetAwaiter().GetResult();
 
             AssertTrue(bindingCalled,
                 "A missing or failed LM MSI must not cancel ESM controller binding.");
-            AssertTrue(result.Complete,
-                "Deferred LM installation must not fail completed KKT/controller work.");
+            AssertTrue(result.ControllerEnsureSucceeded && result.EsmBindingSucceeded,
+                "Deferred LM installation must not discard completed KKT/controller work.");
+            AssertFalse(result.Complete,
+                "A contour without its local modules must not be reported complete.");
             AssertTrue(result.LocalModuleDeferred,
                 "The result must preserve that LM installation needs attention.");
+            AssertTrue(result.IncompleteReason.IndexOf("ЛМ", StringComparison.Ordinal) >= 0,
+                "The incomplete reason must name the missing local modules.");
+        }
+
+        private static void FullAutomaticSetupReadsBackEsmAfterBinding()
+        {
+            LmAutomaticSetupCoordinator coordinator =
+                new LmAutomaticSetupCoordinator();
+            List<string> order = new List<string>();
+
+            LmAutomaticSetupResult unconfirmed = coordinator.ExecuteFullAsync(
+                delegate { order.Add("register"); return Task.FromResult(true); },
+                delegate { order.Add("controllers"); return Task.FromResult(true); },
+                delegate { order.Add("local-modules"); return Task.FromResult(true); },
+                delegate { order.Add("bind"); return Task.FromResult(true); },
+                delegate { order.Add("readback"); return Task.FromResult(false); },
+                null,
+                CancellationToken.None).GetAwaiter().GetResult();
+
+            AssertEqual(5, order.Count, "Every contour stage must run exactly once.");
+            AssertEqual("bind", order[3], "ESM binding must precede the read-back.");
+            AssertEqual("readback", order[4], "The ESM read-back must run after binding.");
+            AssertTrue(unconfirmed.EsmBindingSucceeded,
+                "The binding result must be preserved when the read-back fails.");
+            AssertFalse(unconfirmed.EsmReadbackSucceeded,
+                "A failed read-back must be recorded.");
+            AssertFalse(unconfirmed.Complete,
+                "An unconfirmed binding must leave the contour incomplete.");
+            AssertTrue(unconfirmed.IncompleteReason.IndexOf("ЕСМ", StringComparison.Ordinal) >= 0,
+                "The incomplete reason must point at the ESM read-back.");
+
+            LmAutomaticSetupResult confirmed = coordinator.ExecuteFullAsync(
+                delegate { return Task.FromResult(true); },
+                delegate { return Task.FromResult(true); },
+                delegate { return Task.FromResult(true); },
+                delegate { return Task.FromResult(true); },
+                delegate { return Task.FromResult(true); },
+                null,
+                CancellationToken.None).GetAwaiter().GetResult();
+            AssertTrue(confirmed.Complete,
+                "A confirmed read-back completes the contour.");
+            AssertEqual(string.Empty, confirmed.IncompleteReason,
+                "A complete contour has no missing stage.");
+        }
+
+        private static void LmContourReadbackPolicyClassifiesEsmObservations()
+        {
+            LmGatewayReadbackObservation verified = CreateContourObservation("ok");
+            AssertEqual(LmContourReadbackState.Verified,
+                LmContourReadbackPolicy.Classify(verified),
+                "A matching endpoint with a healthy LM status is verified.");
+            AssertTrue(LmContourReadbackPolicy.IsAcceptable(
+                    LmContourReadbackState.Verified),
+                "A verified read-back is acceptable.");
+            string verifiedLine = LmContourReadbackPolicy.Describe(verified);
+            AssertTrue(verifiedLine.IndexOf("00105700000001", StringComparison.Ordinal) >= 0 &&
+                verifiedLine.IndexOf("127.0.0.1:50064", StringComparison.Ordinal) >= 0,
+                "The verified line must name the KKT and the confirmed controller endpoint.");
+
+            LmGatewayReadbackObservation uninitialized = CreateContourObservation("error 2025");
+            AssertEqual(LmContourReadbackState.LocalModuleNotInitialized,
+                LmContourReadbackPolicy.Classify(uninitialized),
+                "An LM error code before initialization is not a contour failure.");
+            AssertTrue(LmContourReadbackPolicy.IsAcceptable(
+                    LmContourReadbackState.LocalModuleNotInitialized),
+                "A confirmed binding with an uninitialized LM is acceptable.");
+            string pendingLine = LmContourReadbackPolicy.Describe(uninitialized);
+            AssertTrue(pendingLine.IndexOf("не инициализирован", StringComparison.Ordinal) >= 0 &&
+                pendingLine.IndexOf("error 2025", StringComparison.Ordinal) >= 0,
+                "The pending line must explain that the LM awaits initialization and quote ESM.");
+
+            LmGatewayReadbackObservation otherError = CreateContourObservation("error 1234");
+            AssertEqual(LmContourReadbackState.LocalModuleNotInitialized,
+                LmContourReadbackPolicy.Classify(otherError),
+                "Any LM-level error behind a confirmed endpoint is an initialization matter.");
+
+            LmGatewayReadbackObservation mismatch = CreateContourObservation("ok");
+            mismatch.EndpointMatches = false;
+            mismatch.Details = "ЕСМ сообщает целевой ЛМ 127.0.0.1:5995, ожидалось 127.0.0.1:50064.";
+            AssertEqual(LmContourReadbackState.Attention,
+                LmContourReadbackPolicy.Classify(mismatch),
+                "An endpoint mismatch requires attention.");
+            AssertFalse(LmContourReadbackPolicy.IsAcceptable(
+                    LmContourReadbackState.Attention),
+                "An endpoint mismatch is not acceptable.");
+            AssertTrue(LmContourReadbackPolicy.Describe(mismatch).IndexOf(
+                    "ожидалось 127.0.0.1:50064", StringComparison.Ordinal) >= 0,
+                "The attention line must carry the ESM details.");
+
+            LmGatewayReadbackObservation unconfigured = CreateContourObservation("not_configured");
+            unconfigured.HasLmConfiguration = false;
+            AssertEqual(LmContourReadbackState.Attention,
+                LmContourReadbackPolicy.Classify(unconfigured),
+                "A KKT without an LM binding requires attention.");
+
+            LmGatewayReadbackObservation unavailable = CreateContourObservation("ok");
+            unavailable.IsAvailable = false;
+            AssertEqual(LmContourReadbackState.Unavailable,
+                LmContourReadbackPolicy.Classify(unavailable),
+                "An unreachable ESM instance is unavailable.");
+            AssertEqual(LmContourReadbackState.Unavailable,
+                LmContourReadbackPolicy.Classify(null),
+                "A missing observation is unavailable.");
+            AssertFalse(LmContourReadbackPolicy.IsAcceptable(
+                    LmContourReadbackState.Unavailable),
+                "An unavailable read-back is not acceptable.");
+
+            LmGatewayTarget expected = LmContourReadbackPolicy.ExpectedTarget(
+                new DirectControllerAssignment { GrpcPort = 50064 });
+            AssertEqual("127.0.0.1", expected.Address,
+                "The expected binding target is the local controller address.");
+            AssertEqual(50064, expected.Port,
+                "The expected binding target is the controller gRPC port.");
+            AssertTrue(LmContourReadbackPolicy.ExpectedTarget(null) == null,
+                "A KKT without a controller assignment has no expected target.");
+        }
+
+        private static LmGatewayReadbackObservation CreateContourObservation(
+            string lmStatus)
+        {
+            return new LmGatewayReadbackObservation
+            {
+                InstanceId = "00105700000001",
+                KktSerial = "00105700000001",
+                KktInn = "1234567894",
+                IsAvailable = true,
+                IdentityMatches = true,
+                HasLmConfiguration = true,
+                EndpointMatches = true,
+                LmAddress = "127.0.0.1",
+                LmPort = "50064",
+                LmStatus = lmStatus,
+                LmVersion = "2.6.1",
+                Details = string.Empty
+            };
         }
 
         private static void MsiProvisionerLaunchVerifiesHelperBeforeProcessStart()

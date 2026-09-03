@@ -10,7 +10,8 @@ namespace EsmTspiot.Shared.Services
         ControllerEnsure = 1,
         LocalModuleEnsure = 2,
         EsmBinding = 3,
-        InitializationDeferred = 4
+        EsmReadback = 4,
+        InitializationDeferred = 5
     }
 
     public sealed class LmAutomaticSetupResult
@@ -19,6 +20,7 @@ namespace EsmTspiot.Shared.Services
         public bool ControllerEnsureSucceeded { get; internal set; }
         public bool LocalModuleEnsureSucceeded { get; internal set; }
         public bool EsmBindingSucceeded { get; internal set; }
+        public bool EsmReadbackSucceeded { get; internal set; }
         public bool InitializationDeferred { get; internal set; }
 
         public bool LocalModuleDeferred
@@ -26,13 +28,37 @@ namespace EsmTspiot.Shared.Services
             get { return !LocalModuleEnsureSucceeded; }
         }
 
+        // The contour counts as complete only when everything the cash desk
+        // relies on after a reboot is confirmed: registration, controllers,
+        // local modules, the ESM binding, and the ESM read-back of that
+        // binding. LM business initialization is a separate deferred step.
         public bool Complete
         {
             get
             {
                 return RegistrationSucceeded &&
                     ControllerEnsureSucceeded &&
-                    EsmBindingSucceeded;
+                    LocalModuleEnsureSucceeded &&
+                    EsmBindingSucceeded &&
+                    EsmReadbackSucceeded;
+            }
+        }
+
+        public string IncompleteReason
+        {
+            get
+            {
+                if (!RegistrationSucceeded)
+                    return "регистрация ККТ не завершена";
+                if (!ControllerEnsureSucceeded)
+                    return "не все контроллеры готовы";
+                if (!LocalModuleEnsureSucceeded)
+                    return "ЛМ ЧЗ не установлены или отложены";
+                if (!EsmBindingSucceeded)
+                    return "привязка к ЕСМ не подтверждена";
+                if (!EsmReadbackSucceeded)
+                    return "ЕСМ не подтвердил привязку при контрольном чтении";
+                return string.Empty;
             }
         }
     }
@@ -68,6 +94,7 @@ namespace EsmTspiot.Shared.Services
             Func<CancellationToken, Task<bool>> ensureControllers,
             Func<CancellationToken, Task<bool>> ensureLocalModules,
             Func<CancellationToken, Task<bool>> bindEsm,
+            Func<CancellationToken, Task<bool>> readbackEsm,
             Action<LmAutomaticSetupStage> reportStage,
             CancellationToken cancellation)
         {
@@ -77,6 +104,7 @@ namespace EsmTspiot.Shared.Services
             if (ensureLocalModules == null)
                 throw new ArgumentNullException("ensureLocalModules");
             if (bindEsm == null) throw new ArgumentNullException("bindEsm");
+            if (readbackEsm == null) throw new ArgumentNullException("readbackEsm");
 
             LmAutomaticSetupResult result = new LmAutomaticSetupResult();
             Report(reportStage, LmAutomaticSetupStage.Registration);
@@ -97,6 +125,10 @@ namespace EsmTspiot.Shared.Services
             Report(reportStage, LmAutomaticSetupStage.EsmBinding);
             cancellation.ThrowIfCancellationRequested();
             result.EsmBindingSucceeded = await bindEsm(cancellation);
+
+            Report(reportStage, LmAutomaticSetupStage.EsmReadback);
+            cancellation.ThrowIfCancellationRequested();
+            result.EsmReadbackSucceeded = await readbackEsm(cancellation);
 
             Report(reportStage, LmAutomaticSetupStage.InitializationDeferred);
             result.InitializationDeferred = true;
