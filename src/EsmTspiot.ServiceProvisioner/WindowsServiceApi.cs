@@ -145,6 +145,38 @@ namespace EsmTspiot.ServiceProvisioner
             }
         }
 
+        public void SetStartMode(
+            string serviceName,
+            WindowsServiceStartMode startMode)
+        {
+            ValidateExactName(serviceName);
+            using (SafeServiceHandle manager = OpenManager(ScManagerConnect))
+            using (SafeServiceHandle service = OpenRequiredService(
+                manager,
+                serviceName,
+                ServiceChangeConfig))
+            {
+                // Only the start type changes; every other field stays
+                // SERVICE_NO_CHANGE/null so the vendor image path, account,
+                // dependencies, and display name are left untouched.
+                if (!ChangeServiceConfigW(
+                    service,
+                    ServiceNoChange,
+                    (uint)startMode,
+                    ServiceNoChange,
+                    null,
+                    null,
+                    IntPtr.Zero,
+                    null,
+                    null,
+                    null,
+                    null))
+                {
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                }
+            }
+        }
+
         public void Start(string serviceName)
         {
             ValidateExactName(serviceName);

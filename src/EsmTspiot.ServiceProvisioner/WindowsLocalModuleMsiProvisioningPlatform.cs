@@ -20,6 +20,7 @@ namespace EsmTspiot.ServiceProvisioner
         private readonly InstalledLocalModuleProductReader _products;
         private readonly IWindowsServiceApi _services;
         private readonly LocalModuleServicePairController _servicePairs;
+        private readonly LocalModuleServiceStartModeController _startModes;
         private readonly LocalModuleMsiReadinessProbe _readiness;
         private readonly LocalModuleConfigurationInspector _configurations;
         private readonly IWindowsFirewallApi _firewallApi;
@@ -149,6 +150,7 @@ namespace EsmTspiot.ServiceProvisioner
             _products = products;
             _services = services;
             _servicePairs = servicePairs;
+            _startModes = new LocalModuleServiceStartModeController(services);
             _readiness = readiness;
             _configurations = configurations;
             _firewallApi = firewallApi;
@@ -224,6 +226,8 @@ namespace EsmTspiot.ServiceProvisioner
                     StringComparison.Ordinal);
             }
 
+            bool automaticStart =
+                LocalModuleServiceStartModeController.IsAutomatic(api, database);
             bool running = (api != null &&
                 api.State == WindowsServiceState.Running) ||
                 (database != null &&
@@ -257,6 +261,7 @@ namespace EsmTspiot.ServiceProvisioner
                 FirewallMatches = firewallMatches,
                 Running = running,
                 Ready = ready,
+                AutomaticStart = automaticStart,
                 ConflictMessage = conflict
             };
         }
@@ -409,6 +414,27 @@ namespace EsmTspiot.ServiceProvisioner
                 Layout(request, manifest),
                 manifest.OwnershipNonce,
                 request.RemoteAddress);
+        }
+
+        public LocalModuleStartModeAdjustment EnsureAutomaticStart(
+            LocalModuleMsiProvisioningItemRequest request,
+            LocalModuleMsiManifest manifest)
+        {
+            return _startModes.EnsureAutomatic(Layout(request, manifest));
+        }
+
+        public void RestoreStartMode(LocalModuleMsiManifest manifest)
+        {
+            if (manifest == null) throw new ArgumentNullException("manifest");
+            if (!manifest.StartModeAdjusted) return;
+            _startModes.Restore(
+                LocalModuleInstalledLayout.Create(
+                    manifest.InstallRoot,
+                    manifest.CloneOrdinal,
+                    manifest.ApiPort,
+                    manifest.DatabasePort),
+                (WindowsServiceStartMode)manifest.PreviousApiStartMode,
+                (WindowsServiceStartMode)manifest.PreviousDatabaseStartMode);
         }
 
         public void StartAndVerify(

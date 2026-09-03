@@ -157,6 +157,22 @@ namespace EsmTspiot.ServiceProvisioner
                     context.Manifests.Write(manifest);
                     manifest = context.Manifests.Read(request.Inn);
                 }
+                if (!observed.AutomaticStart)
+                {
+                    context.WriteStage(request, ownershipNonce,
+                        LocalModuleMsiLifecycleStage.StartModeEnsuring,
+                        null, createdThisOperation);
+                    LocalModuleStartModeAdjustment startModes =
+                        context.Platform.EnsureAutomaticStart(request, manifest);
+                    if (startModes.Adjusted && !manifest.StartModeAdjusted)
+                    {
+                        manifest.RecordStartModeAdjustment(
+                            startModes.PreviousApiStartMode,
+                            startModes.PreviousDatabaseStartMode);
+                        context.Manifests.Write(manifest);
+                        manifest = context.Manifests.Read(request.Inn);
+                    }
+                }
                 context.WriteStage(request, ownershipNonce,
                     LocalModuleMsiLifecycleStage.ServicesStarting,
                     null, createdThisOperation);
@@ -165,7 +181,7 @@ namespace EsmTspiot.ServiceProvisioner
                 CompleteJournal(request, manifest, context);
                 return Result(request,
                     LmServiceProvisioningStatus.Succeeded,
-                    "Локальный модуль установлен и запущен.",
+                    "Локальный модуль установлен и запущен; автозапуск служб включён.",
                     manifest.ManifestSha256);
             }
             catch (Exception exception)
@@ -244,6 +260,13 @@ namespace EsmTspiot.ServiceProvisioner
                             LocalModuleMsiLifecycleStage.FirewallRemoving,
                             null, true);
                         context.Platform.RemoveFirewall(manifest);
+                    }
+                    if (manifest.StartModeAdjusted)
+                    {
+                        context.WriteStage(request, nonce,
+                            LocalModuleMsiLifecycleStage.StartModeRestoring,
+                            null, true);
+                        context.Platform.RestoreStartMode(manifest);
                     }
                     if (manifest.CanRemove)
                     {
