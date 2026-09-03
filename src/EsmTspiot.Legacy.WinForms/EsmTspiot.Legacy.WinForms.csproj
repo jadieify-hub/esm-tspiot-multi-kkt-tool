@@ -24,6 +24,7 @@
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayPage.Binding.cs" Link="LmGatewayPage.Binding.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayPage.DirectControllers.cs" Link="LmGatewayPage.DirectControllers.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayPage.MsiLocalModules.cs" Link="LmGatewayPage.MsiLocalModules.cs" />
+    <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayPage.ManualStages.cs" Link="LmGatewayPage.ManualStages.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayCredentialDefaults.cs" Link="LmGatewayCredentialDefaults.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayBindingDialog.cs" Link="LmGatewayBindingDialog.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmAutomaticSetupDialog.cs" Link="LmAutomaticSetupDialog.cs" />

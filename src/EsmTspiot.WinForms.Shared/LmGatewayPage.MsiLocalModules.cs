@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Security.Principal;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -13,21 +14,49 @@ namespace EsmTspiot.WinForms.Shared
 {
     internal sealed class FullAutomaticLocalSetupOutcome
     {
+        internal FullAutomaticLocalSetupOutcome()
+        {
+            LocalModuleLines = new List<string>();
+            EsmLines = new List<string>();
+            IncompleteReason = string.Empty;
+        }
+
         internal DirectControllerSetupOutcome Controllers { get; set; }
         internal bool LocalModulesDeferred { get; set; }
         internal int LocalModulesReady { get; set; }
         internal int LocalModulesFailed { get; set; }
+        internal bool EsmReadbackSucceeded { get; set; }
+        internal int EsmVerifiedCount { get; set; }
+        internal int EsmLocalModulePendingCount { get; set; }
+        internal int EsmAttentionCount { get; set; }
         internal bool Complete { get; set; }
+        internal string IncompleteReason { get; set; }
+        internal IList<string> LocalModuleLines { get; private set; }
+        internal IList<string> EsmLines { get; private set; }
 
         internal string FormatSummary()
         {
             string controllers = Controllers == null
                 ? "контроллеры не запускались"
                 : Controllers.FormatSummary();
-            return controllers + " ЛМ готовы: " +
+            StringBuilder text = new StringBuilder();
+            text.Append(controllers + " ЛМ готовы: " +
                 LocalModulesReady.ToString(CultureInfo.InvariantCulture) +
                 "; ЛМ отложены/с ошибкой: " +
-                LocalModulesFailed.ToString(CultureInfo.InvariantCulture) + ".";
+                LocalModulesFailed.ToString(CultureInfo.InvariantCulture) +
+                ". ЕСМ подтвердил привязку: " +
+                EsmVerifiedCount.ToString(CultureInfo.InvariantCulture) +
+                "; ЛМ ждёт инициализации: " +
+                EsmLocalModulePendingCount.ToString(CultureInfo.InvariantCulture) +
+                "; требуется проверка: " +
+                EsmAttentionCount.ToString(CultureInfo.InvariantCulture) + ".");
+            if (!Complete && !string.IsNullOrEmpty(IncompleteReason))
+                text.Append(" Контур не завершён: " + IncompleteReason + ".");
+            for (int index = 0; index < LocalModuleLines.Count; index++)
+                text.Append("\r\n" + LocalModuleLines[index]);
+            for (int index = 0; index < EsmLines.Count; index++)
+                text.Append("\r\n" + EsmLines[index]);
+            return text.ToString();
         }
     }
 
@@ -207,6 +236,7 @@ namespace EsmTspiot.WinForms.Shared
                 new FullAutomaticLocalSetupOutcome();
             _lastAutomaticLocalModulesReady = 0;
             _lastAutomaticLocalModulesFailed = 0;
+            _lastAutomaticLocalModuleLines.Clear();
             LocalModuleMsiOperatorInventorySnapshot inventory =
                 new LocalModuleMsiOperatorInventoryReader().Read();
             LocalModuleMsiPlan plan = LocalModuleMsiPlanner.Build(
@@ -293,6 +323,14 @@ namespace EsmTspiot.WinForms.Shared
                         FinalizeDirectControllerOutcome(controllers);
                         return controllers.Complete;
                     },
+                    async delegate(CancellationToken operationCancellation)
+                    {
+                        return await ReadbackContourAsync(
+                            registeredKkts,
+                            controllers,
+                            outcome,
+                            operationCancellation).ConfigureAwait(true);
+                    },
                     ReportFullAutomaticStage,
                     cancellation).ConfigureAwait(true);
 
@@ -302,12 +340,24 @@ namespace EsmTspiot.WinForms.Shared
             outcome.LocalModulesFailed = Math.Max(
                 outcome.LocalModulesFailed,
                 _lastAutomaticLocalModulesFailed);
+            outcome.EsmReadbackSucceeded = coordinated.EsmReadbackSucceeded;
             outcome.Complete = coordinated.Complete;
+            outcome.IncompleteReason = coordinated.IncompleteReason;
+            for (int index = 0;
+                index < _lastAutomaticLocalModuleLines.Count;
+                index++)
+                outcome.LocalModuleLines.Add(_lastAutomaticLocalModuleLines[index]);
+            if (outcome.LocalModulesDeferred)
+                outcome.LocalModuleLines.Add(
+                    "ЛМ ЧЗ: установка отложена оператором или MSI не выбран; " +
+                    "контур без ЛМ не считается завершённым.");
             Log("Инициализация ЛМ ЧЗ не блокирует автомат: она выполняется " +
                 "ЛМ отдельно после запуска.\r\n");
             _statusLabel.Text = outcome.Complete
-                ? "ККТ и контроллеры настроены; инициализация ЛМ выполняется отдельно."
-                : "Настройка завершена частично; проверьте журнал.";
+                ? "Контур настроен: контроллеры, ЛМ ЧЗ и привязка подтверждены " +
+                    "ЕСМ; инициализация ЛМ выполняется отдельно."
+                : "Настройка завершена частично: " + outcome.IncompleteReason +
+                    ". Проверьте журнал.";
             Log("=== Итог полного автомата ===\r\n" +
                 outcome.FormatSummary() + "\r\n");
             return outcome;
@@ -382,9 +432,9 @@ namespace EsmTspiot.WinForms.Shared
                 bool ready = item.Status ==
                     LmServiceProvisioningStatus.Succeeded;
                 if (ready) succeeded++; else failed++;
-                Log("ИНН " + (item.Inn ?? string.Empty) +
-                    ": ЛМ " + item.Status.ToString() + "; " +
-                    SensitiveDataMasker.Mask(item.Message) + "\r\n");
+                string line = DescribeLocalModuleResult(plan, item, ready);
+                _lastAutomaticLocalModuleLines.Add(line);
+                Log(line + "\r\n");
             }
             _lastAutomaticLocalModulesReady = succeeded;
             _lastAutomaticLocalModulesFailed = failed;
@@ -442,6 +492,8 @@ namespace EsmTspiot.WinForms.Shared
                 _statusLabel.Text = "Установка независимых ЛМ ЧЗ...";
             else if (stage == LmAutomaticSetupStage.EsmBinding)
                 _statusLabel.Text = "Привязка контроллеров к ЕСМ...";
+            else if (stage == LmAutomaticSetupStage.EsmReadback)
+                _statusLabel.Text = "Контрольное чтение настроек ЕСМ...";
             else if (stage == LmAutomaticSetupStage.InitializationDeferred)
                 _statusLabel.Text = "Инициализация ЛМ выполняется отдельно.";
         }

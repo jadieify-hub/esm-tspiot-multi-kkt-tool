@@ -94,7 +94,7 @@ namespace EsmTspiot.WinForms.Shared
                 AutoSize = true,
                 Padding = new Padding(6, 3, 6, 5),
                 ColumnCount = 3,
-                RowCount = 4
+                RowCount = 5
             };
             table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
@@ -146,6 +146,9 @@ namespace EsmTspiot.WinForms.Shared
             table.Controls.Add(_installControllerButton, 0, 3);
             table.Controls.Add(_setupActionHintLabel, 1, 3);
             table.SetColumnSpan(_setupActionHintLabel, 2);
+            Control manualStages = BuildManualStagePanel();
+            table.Controls.Add(manualStages, 0, 4);
+            table.SetColumnSpan(manualStages, 3);
             group.Controls.Add(table);
             return group;
         }
@@ -1782,6 +1785,7 @@ namespace EsmTspiot.WinForms.Shared
             _selectInstallerButton.Enabled = false;
             _selectLocalModuleInstallerButton.Enabled = idle;
             _installControllerButton.Enabled = idle && _helperAvailable && hasKkts;
+            UpdateManualStageActionState(idle, hasKkts);
             _bindButton.Enabled = idle && selectedSession != null && managed &&
                 selected.IsRunning && selected.IsReady;
             _removeServiceButton.Enabled = idle && managed && _helperAvailable &&

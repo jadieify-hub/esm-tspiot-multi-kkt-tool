@@ -1090,6 +1090,28 @@ try {
             "Installer controls do not fit the normal page width: button right={0}px, page={1}px." -f
             $installButton.Right, $page.ClientSize.Width)
     }
+    # Manual mode exposes the same contour stages one at a time. Each action
+    # must be placed, tagged for automation, captioned, and fit the page.
+    $manualStageActions = @(
+        @{ Field = "_ensureControllersButton"; Tag = "EnsureControllers"; Text = "0KjQsNCzIDE6INC60L7QvdGC0YDQvtC70LvQtdGA0Ys=" },
+        @{ Field = "_ensureLocalModulesButton"; Tag = "EnsureLocalModules"; Text = "0KjQsNCzIDI6INCb0Jwg0KfQlw==" },
+        @{ Field = "_bindAllEsmButton"; Tag = "BindReadyEsm"; Text = "0KjQsNCzIDM6INC/0YDQuNCy0Y/Qt9C60LAg0Log0JXQodCc" },
+        @{ Field = "_readbackEsmButton"; Tag = "ReadbackEsm"; Text = "0KjQsNCzIDQ6INC/0YDQvtCy0LXRgNC40YLRjCDQv9C+INCV0KHQnA==" })
+    foreach ($manualStage in $manualStageActions) {
+        $manualStageButton = Get-PrivateFieldValue -Instance $page -Name $manualStage.Field
+        if ($null -eq $manualStageButton.Parent) {
+            throw "Manual stage action $($manualStage.Field) is not placed on the LM page."
+        }
+        if ($manualStageButton.Tag -ne $manualStage.Tag) {
+            throw "Manual stage action $($manualStage.Field) must expose tag $($manualStage.Tag)."
+        }
+        if ($manualStageButton.Text -ne (Get-Utf8Text $manualStage.Text)) {
+            throw "Manual stage action $($manualStage.Field) has an unexpected caption: '$($manualStageButton.Text)'."
+        }
+        if ($manualStageButton.Right -gt $manualStageButton.Parent.ClientSize.Width) {
+            throw "Manual stage action $($manualStage.Field) overflows the page at normal width."
+        }
+    }
     if ($removeAllButton.Right -gt $removeAllButton.Parent.ClientSize.Width) {
         throw "The remove-all action overflows its toolbar at normal page width."
     }
