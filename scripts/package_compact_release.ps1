@@ -8,8 +8,10 @@ $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $scriptRoot ".."))
 $releaseRoot = [IO.Path]::GetFullPath((Join-Path $repositoryRoot "artifacts\release"))
 $stageRoot = [IO.Path]::GetFullPath((Join-Path $releaseRoot "MultiKKT-ESM-TSPioT-compact"))
-$zipPath = Join-Path $releaseRoot "MultiKKT-ESM-TSPioT-compact.zip"
-$outerSumsPath = Join-Path $releaseRoot "SHA256SUMS-MultiKKT-compact.txt"
+# Имя архива получает версию после сборки: без неё в каталоге лежат
+# неразличимые файлы, и оператор не может понять, какой из них новый.
+$zipPath = $null
+$outerSumsPath = $null
 $fixedTimestamp = [DateTimeOffset]::new(2026, 1, 1, 0, 0, 0, [TimeSpan]::Zero)
 . (Join-Path $scriptRoot "build_tools.ps1")
 
@@ -80,6 +82,14 @@ $stagedMain = Join-Path $stageRoot "MultiKKT-ESM-TSPioT.exe"
 $stagedHelper = Join-Path $stageRoot "Provisioner\EsmTspiot.ServiceProvisioner.exe"
 
 Copy-RequiredFile $sourceMain $stagedMain
+$productVersion = (Get-Item -LiteralPath $stagedMain).VersionInfo.FileVersion
+if (-not ($productVersion -match "^[0-9]+(\.[0-9]+){3}$")) {
+    throw "Unexpected main application version: $productVersion"
+}
+$zipPath = Join-Path $releaseRoot ("MultiKKT-ESM-TSPioT-" + $productVersion + ".zip")
+$outerSumsPath = Join-Path $releaseRoot ("SHA256SUMS-MultiKKT-" + $productVersion + ".txt")
+Assert-ChildPath $releaseRoot $zipPath
+Assert-ChildPath $releaseRoot $outerSumsPath
 Copy-RequiredFile $sourceShared (Join-Path $stageRoot "EsmTspiot.Shared.dll")
 Copy-RequiredFile $fieldGuide (Join-Path $stageRoot "FIELD_TEST.md")
 
@@ -109,7 +119,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $readme = @"
-Multi-KKT for ESM/TS PIOT - compact package
+Multi-KKT for ESM/TS PIOT - compact package, version $productVersion
 
 Publisher and owner: KRS
 Author: Ruslan Kerusov
