@@ -81,7 +81,7 @@ $stagedHelper = Join-Path $stageRoot "Provisioner\EsmTspiot.ServiceProvisioner.e
 
 Copy-RequiredFile $sourceMain $stagedMain
 Copy-RequiredFile $sourceShared (Join-Path $stageRoot "EsmTspiot.Shared.dll")
-Copy-RequiredFile $fieldGuide (Join-Path $stageRoot "FIELD_TEST_1.6.4.0.md")
+Copy-RequiredFile $fieldGuide (Join-Path $stageRoot "FIELD_TEST.md")
 
 $helperClosure = @(
     Get-Item -LiteralPath $sourceHelper
@@ -117,9 +117,9 @@ Author: Ruslan Kerusov
 1. Verify the SHA-256 checksums before use.
 2. Extract the complete archive to any local folder (Downloads, Desktop, a USB stick) and run it from there. Keep EsmTspiot.Shared.dll and the Provisioner folder next to the executable; a lone EXE does not start. There is no installer and nothing is copied into system folders.
 3. Before every Windows-service operation the application checks that all helper files are present, that their SHA-256 match the values embedded in the main executable and that the versions match. UAC is requested only for service operations.
-4. Install the official ESM LM Controller 1.6.4.0 before controller setup and keep the official CRPT LM CHZ installer at hand. Vendor binaries are discovered and verified in their installed or original locations; they are not included in this archive.
+4. Install the official ESM LM Controller (any current vendor build) before controller setup and keep the official CRPT LM CHZ installer at hand. Vendor binaries are discovered and verified in their installed or original locations; they are not included in this archive.
 5. This archive contains no ESP/CHZ vendor binaries, extracted runtime, credentials, LM CHZ database or managed Erlang runtime.
-6. Before a real installation, follow FIELD_TEST_1.6.4.0.md.
+6. Before a real installation, follow FIELD_TEST.md.
 7. Registration, controllers and LM CHZ are independent stages. A controller, LM or binding failure never rolls back a KKT that ESM has already registered. LM CHZ instances are installed from the operator-supplied official MSI, one per INN with automatic start; the contour is reported complete only after ESM confirms every binding. LM business initialization is intentionally left to ESM or the operator.
 8. Provisioner contains unmodified WiX Toolset DTF 4.0.6 libraries licensed under the Microsoft Reciprocal License (MS-RL). See THIRD-PARTY-NOTICES.txt.
 
@@ -160,7 +160,7 @@ if ($forbiddenStage.Count -gt 0) {
 
 $expectedExact = @(
     "EsmTspiot.Shared.dll",
-    "FIELD_TEST_1.6.4.0.md",
+    "FIELD_TEST.md",
     "MultiKKT-ESM-TSPioT.exe",
     "README.txt",
     "THIRD-PARTY-NOTICES.txt"

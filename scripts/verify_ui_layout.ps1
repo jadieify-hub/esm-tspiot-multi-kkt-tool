@@ -431,12 +431,16 @@ try {
     if ($automaticStatus.Text -ne $expectedAutomaticStatus) {
         throw "Automatic mode must initially be ready for registration without package selection. Observed: '$($automaticStatus.Text)'."
     }
-    if (-not $officialControllerStatus.Text.Contains("1.6.4.0")) {
-        throw "The base controller status must describe the supported installed controller 1.6.4.0."
+    $expectedControllerVendor = Get-Utf8Text("0JvQnCDQp9CX")
+    if (-not $officialControllerStatus.Text.Contains($expectedControllerVendor)) {
+        throw "The base controller status must name the controller instead of a pinned version."
+    }
+    if ($officialControllerStatus.Text.Contains("1.6.4.0")) {
+        throw "The base controller status must not pin a controller version."
     }
 
     $expectedPackageLabels = @((Get-Utf8Text(
-        "0JjRgdC/0L7Qu9GM0LfRg9C10YLRgdGPINGD0YHRgtCw0L3QvtCy0LvQtdC90L3Ri9C5INC+0YTQuNGG0LjQsNC70YzQvdGL0Lkg0LrQvtC90YLRgNC+0LvQu9C10YAgMS42LjQuMC4g0JTQu9GPINC60LDQttC00L7QuSDQmtCa0KIg0YHQvtC30LTQsNGR0YLRgdGPINC+0YLQtNC10LvRjNC90LDRjyDRgdC70YPQttCx0LA7INCb0Jwg0KfQlyDQvNC+0LbQvdC+INGD0YHRgtCw0L3QvtCy0LjRgtGMINC4INC40L3QuNGG0LjQsNC70LjQt9C40YDQvtCy0LDRgtGMINC/0L7Qt9C20LUu")))
+        "0JjRgdC/0L7Qu9GM0LfRg9C10YLRgdGPINGD0YHRgtCw0L3QvtCy0LvQtdC90L3Ri9C5INC+0YTQuNGG0LjQsNC70YzQvdGL0Lkg0LrQvtC90YLRgNC+0LvQu9C10YAg0JvQnCDQp9CXINC+0YIg0JXQodCfLiDQlNC70Y8g0LrQsNC20LTQvtC5INCa0JrQoiDRgdC+0LfQtNCw0ZHRgtGB0Y8g0L7RgtC00LXQu9GM0L3QsNGPINGB0LvRg9C20LHQsDsg0JvQnCDQp9CXINC80L7QttC90L4g0YPRgdGC0LDQvdC+0LLQuNGC0Ywg0Lgg0LjQvdC40YbQuNCw0LvQuNC30LjRgNC+0LLQsNGC0Ywg0L/QvtC30LbQtS4=")))
     $lmPageLabelTexts = @(Get-DescendantControls -Root $page |
         Where-Object { $_ -is [System.Windows.Forms.Label] } |
         ForEach-Object { $_.Text })

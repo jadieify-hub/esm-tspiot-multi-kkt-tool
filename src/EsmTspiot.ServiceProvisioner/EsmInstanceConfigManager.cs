@@ -15,8 +15,13 @@ namespace EsmTspiot.ServiceProvisioner
 
     internal interface IEsmInstanceConfigManager
     {
+        // recoverFromAbortedOperation ставится только тогда, когда предыдущая
+        // наша операция по этой ККТ оборвалась (манифест в RequiresAttention).
+        // В этом случае запись «конфигурация применена» не является
+        // доказательством того, что мы её действительно писали.
         EsmInstanceConfigApplyState ApplyAndRestart(
-            DirectControllerManifest manifest);
+            DirectControllerManifest manifest,
+            bool recoverFromAbortedOperation);
         bool RestoreAndRestart(DirectControllerManifest manifest);
     }
 
@@ -31,7 +36,8 @@ namespace EsmTspiot.ServiceProvisioner
         }
 
         public EsmInstanceConfigApplyState ApplyAndRestart(
-            DirectControllerManifest manifest)
+            DirectControllerManifest manifest,
+            bool recoverFromAbortedOperation)
         {
             return EsmInstanceConfigApplyState.Deferred;
         }
@@ -72,7 +78,8 @@ namespace EsmTspiot.ServiceProvisioner
         }
 
         public EsmInstanceConfigApplyState ApplyAndRestart(
-            DirectControllerManifest manifest)
+            DirectControllerManifest manifest,
+            bool recoverFromAbortedOperation)
         {
             if (manifest == null) throw new ArgumentNullException("manifest");
             string configPath = GetConfigPath(manifest.KktSerial);
@@ -99,8 +106,21 @@ namespace EsmTspiot.ServiceProvisioner
                     manifest.EsmConfigOriginalSha256,
                     StringComparison.OrdinalIgnoreCase))
             {
-                throw new InvalidDataException(
-                    "Конфигурация ЕСМ изменена после нашей последней операции; автоматическая перезапись запрещена.");
+                if (!recoverFromAbortedOperation)
+                {
+                    throw new InvalidDataException(
+                        "Конфигурация ЕСМ изменена после нашей последней операции; " +
+                        "автоматическая перезапись запрещена. " +
+                        "Снимите комплект этой ККТ кнопкой «Удалить всё созданное» и повторите настройку.");
+                }
+                // Прошлая наша операция оборвалась, а файл с тех пор сменился:
+                // ЕСМ пересоздал конфигурацию при перерегистрации ККТ. Записи
+                // о владении относятся к исчезнувшему файлу — перепривязываемся
+                // к текущему, как к первому применению.
+                manifest.EsmConfigOriginalSha256 = null;
+                manifest.EsmConfigAppliedSha256 = null;
+                TryDeleteBackup(
+                    _manifests.GetEsmConfigBackupPath(manifest.KktSerial));
             }
             if (string.Equals(currentHash, appliedHash, StringComparison.OrdinalIgnoreCase))
             {
@@ -141,10 +161,11 @@ namespace EsmTspiot.ServiceProvisioner
 
             string serviceName =
                 EsmInstanceServiceIdentity.CreateName(manifest.KktSerial);
-            bool wasRunning = StopInstance(serviceName);
+            bool wasRunning = false;
             bool applied = false;
             try
             {
+                wasRunning = StopInstance(serviceName);
                 _writer.WriteBytes(configPath, patched);
                 applied = true;
                 StartInstance(serviceName, wasRunning);
@@ -188,8 +209,8 @@ namespace EsmTspiot.ServiceProvisioner
                     manifest.EsmConfigOriginalSha256,
                     StringComparison.OrdinalIgnoreCase))
             {
-                throw new InvalidDataException(
-                    "Конфигурация ЕСМ изменилась после применения; автоматический откат запрещён.");
+                Disown(manifest);
+                return false;
             }
             string serviceName =
                 EsmInstanceServiceIdentity.CreateName(manifest.KktSerial);
@@ -211,6 +232,17 @@ namespace EsmTspiot.ServiceProvisioner
             _manifests.Write(manifest);
             TryDeleteBackup(backupPath);
             return true;
+        }
+
+        // Снять с манифеста признак владения конфигурацией ЕСМ, не трогая
+        // сам файл. Резервная копия остаётся на диске: она может понадобиться
+        // оператору, а мы её больше не сторожим.
+        private void Disown(DirectControllerManifest manifest)
+        {
+            manifest.EsmConfigOriginalSha256 = null;
+            manifest.EsmConfigAppliedSha256 = null;
+            manifest.UpdatedUtc = DateTime.UtcNow.ToString("o");
+            _manifests.Write(manifest);
         }
 
         private string GetConfigPath(string serial)

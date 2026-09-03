@@ -56,6 +56,20 @@ namespace EsmTspiot.ServiceProvisioner
             return definition;
         }
 
+        private static bool IsHex(string value, int length)
+        {
+            if (value == null || value.Length != length) return false;
+            for (int index = 0; index < value.Length; index++)
+            {
+                char character = value[index];
+                bool digit = character >= '0' && character <= '9';
+                bool lower = character >= 'a' && character <= 'f';
+                bool upper = character >= 'A' && character <= 'F';
+                if (!digit && !lower && !upper) return false;
+            }
+            return true;
+        }
+
         private static void ValidateVerifiedBinary(
             ControllerCapabilityProfile profile,
             VerifiedControllerBinary binary)
@@ -71,19 +85,19 @@ namespace EsmTspiot.ServiceProvisioner
                     "Verified controller path is invalid: " + ex.GetType().Name + ".",
                     "binary");
             }
-            if (!string.Equals(binary.Version, profile.Version, StringComparison.Ordinal) ||
-                !string.Equals(binary.Sha256, profile.ControllerBinary.Sha256,
-                    StringComparison.OrdinalIgnoreCase) ||
-                !string.Equals(binary.SignerThumbprint,
-                    profile.ControllerBinary.SignerThumbprint,
-                    StringComparison.OrdinalIgnoreCase) ||
-                binary.Machine != profile.ControllerBinary.Machine ||
-                !string.Equals(Path.GetFileName(fullPath),
+            // Версию и хеш задаёт конкретная сборка вендора, поэтому здесь
+            // проверяется не их совпадение с профилем, а то, что бинарник
+            // действительно опознан: имя файла, непустая версия установленного
+            // продукта и вычисленный отпечаток содержимого.
+            if (!string.Equals(Path.GetFileName(fullPath),
                     profile.ControllerBinary.FileName,
-                    StringComparison.OrdinalIgnoreCase))
+                    StringComparison.OrdinalIgnoreCase) ||
+                string.IsNullOrWhiteSpace(binary.Version) ||
+                !IsHex(binary.Sha256, 64) ||
+                string.IsNullOrWhiteSpace(binary.SignerThumbprint))
             {
                 throw new InvalidOperationException(
-                    "Verified controller binary does not match capability profile 1.6.4.0.");
+                    "Проверенный бинарник контроллера не опознан.");
             }
             binary.FullPath = fullPath;
         }

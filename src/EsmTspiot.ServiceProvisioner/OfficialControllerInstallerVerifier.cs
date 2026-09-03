@@ -126,7 +126,9 @@ namespace EsmTspiot.ServiceProvisioner
             FileStream sourceLock = null;
             FileStream stagedLock = null;
             string operationDirectory = Path.Combine(_stagingRoot, _operationId);
-            string stagedPath = Path.Combine(operationDirectory, _profile.Installer.FileName);
+            string stagedPath = Path.Combine(
+                operationDirectory,
+                Path.GetFileName(selection.FileName));
             try
             {
                 sourceLock = new FileStream(
@@ -262,16 +264,14 @@ namespace EsmTspiot.ServiceProvisioner
             {
                 throw new InvalidDataException("Installer selection is missing.");
             }
-            LmControllerInstallerSelection expected = ToSelection(
-                selection.SourcePath,
-                _profile.Installer,
-                selection.StopManagedInstancesWarningAccepted);
-            ValidationResult comparison = ProvisioningRequestValidator.ValidateInstallerSelection(
-                expected,
-                selection);
-            if (!comparison.IsValid)
+            // Профиль больше не диктует имя, размер, хеш и версию пакета:
+            // проверяется форма выбора, а сам файл сверяется с диском ниже и
+            // остаётся закреплённым до конца операции.
+            ValidationResult shape =
+                ProvisioningRequestValidator.ValidateInstallerSelection(selection);
+            if (!shape.IsValid)
             {
-                throw new InvalidDataException(comparison.JoinMessages());
+                throw new InvalidDataException(shape.JoinMessages());
             }
         }
 

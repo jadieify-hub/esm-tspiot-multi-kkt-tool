@@ -286,7 +286,7 @@ namespace EsmTspiot.ServiceProvisioner
                 manifest.TargetLocalModulePort > 65535 ||
                 DirectControllerIdentity.IsControllerPort(
                     manifest.TargetLocalModulePort) ||
-                !string.Equals(manifest.ControllerVersion, "1.6.4.0", StringComparison.Ordinal) ||
+                string.IsNullOrWhiteSpace(manifest.ControllerVersion) ||
                 !IsHex(manifest.ControllerBinarySha256, 64) ||
                 !ValidOptionalHashPair(
                     manifest.EsmConfigOriginalSha256,

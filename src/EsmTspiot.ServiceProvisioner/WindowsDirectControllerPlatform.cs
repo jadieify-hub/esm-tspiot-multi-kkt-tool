@@ -67,7 +67,7 @@ namespace EsmTspiot.ServiceProvisioner
         internal static WindowsDirectControllerPlatform Create(string initiatingSid)
         {
             ControllerCapabilityProfile profile =
-                ControllerCapabilityProfile.SupportedVersion1640();
+                ControllerCapabilityProfile.Supported();
             PathSafety pathSafety = new PathSafety();
             OfficialControllerLocator locator = new OfficialControllerLocator(
                 profile,
@@ -78,7 +78,7 @@ namespace EsmTspiot.ServiceProvisioner
             {
                 throw new NotSupportedException(
                     resolved.ErrorMessage ??
-                    "Не найден проверенный контроллер ЛМ ЧЗ версии 1.6.4.0.");
+                    "Не найден проверенный контроллер ЛМ ЧЗ от ЕСП.");
             }
             DirectControllerManifestStore manifests =
                 DirectControllerManifestStore.CreateMachineStore(
@@ -131,6 +131,9 @@ namespace EsmTspiot.ServiceProvisioner
                     operationId,
                     DirectControllerLifecycleState.Preparing);
                 DirectControllerManifest existing = _manifests.Read(item.KktSerial);
+                bool previousOperationAborted =
+                    existing != null &&
+                    existing.State == DirectControllerLifecycleState.RequiresAttention;
                 if (existing != null)
                 {
                     RequireSameControllerIdentity(existing, item);
@@ -170,7 +173,9 @@ namespace EsmTspiot.ServiceProvisioner
                         throw new InvalidOperationException(ready.Message);
                     }
                     EsmInstanceConfigApplyState configState =
-                        _esmConfigs.ApplyAndRestart(manifest);
+                        _esmConfigs.ApplyAndRestart(
+                            manifest,
+                            previousOperationAborted);
                     manifest.State = DirectControllerLifecycleState.Ready;
                     manifest.UpdatedUtc = DateTime.UtcNow.ToString("o");
                     _manifests.Write(manifest);
@@ -317,7 +322,7 @@ namespace EsmTspiot.ServiceProvisioner
             if (service == null || !MatchesOfficialBase(service))
             {
                 throw new InvalidOperationException(
-                    "Штатная служба esm-lm-controller не совпадает с проверенным профилем 1.6.4.0.");
+                    "Штатная служба esm-lm-controller не совпадает с проверенным профилем контроллера.");
             }
             if (service.State == WindowsServiceState.Stopped && service.ProcessId == 0)
             {

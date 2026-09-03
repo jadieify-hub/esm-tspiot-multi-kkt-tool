@@ -294,6 +294,14 @@ namespace EsmTspiot.ServiceProvisioner
         }
 
         internal static ValidationResult ValidateInstallerSelection(
+            LmControllerInstallerSelection selection)
+        {
+            ValidationResult result = new ValidationResult();
+            ValidateInstallerShape(selection, result);
+            return result;
+        }
+
+        internal static ValidationResult ValidateInstallerSelection(
             LmControllerInstallerSelection selected,
             LmControllerInstallerSelection observed)
         {

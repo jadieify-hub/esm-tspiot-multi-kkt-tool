@@ -69,23 +69,55 @@ namespace EsmTspiot.ServiceProvisioner
             }
         }
 
+        // Пустое ожидание означает «признак не закреплён». Так профиль
+        // фиксирует то, что вендор не меняет от версии к версии (подпись,
+        // назначение сертификата, имя продукта), и не фиксирует то, что
+        // меняется в каждой сборке: размер, хеш, номер версии, отпечаток
+        // сертификата и разрядность. Конкретный выбранный оператором файл
+        // сверяется отдельно и остаётся закреплённым на всю операцию.
         private static bool Matches(
             TrustedFileExpectation expected,
             TrustedFileExpectation observed)
         {
-            return string.Equals(expected.FileName, observed.FileName, StringComparison.Ordinal) &&
-                expected.ByteLength == observed.ByteLength &&
-                FixedTimeEqualsHex(expected.Sha256, observed.Sha256) &&
-                string.Equals(Normalize(expected.FileVersion), observed.FileVersion, StringComparison.Ordinal) &&
-                string.Equals(Normalize(expected.ProductVersion), observed.ProductVersion, StringComparison.Ordinal) &&
-                string.Equals(Normalize(expected.ProductName), observed.ProductName, StringComparison.Ordinal) &&
-                string.Equals(Normalize(expected.CompanyName), observed.CompanyName, StringComparison.Ordinal) &&
-                expected.Machine == observed.Machine &&
-                SignerSubjectMatches(
+            return OptionalTextMatches(expected.FileName, observed.FileName) &&
+                (expected.ByteLength <= 0 ||
+                    expected.ByteLength == observed.ByteLength) &&
+                OptionalHashMatches(expected.Sha256, observed.Sha256) &&
+                OptionalTextMatches(expected.FileVersion, observed.FileVersion) &&
+                OptionalTextMatches(expected.ProductVersion, observed.ProductVersion) &&
+                OptionalTextMatches(expected.ProductName, observed.ProductName) &&
+                OptionalTextMatches(expected.CompanyName, observed.CompanyName) &&
+                (expected.Machine == PeMachine.Unknown ||
+                    expected.Machine == observed.Machine) &&
+                OptionalSignerSubjectMatches(
                     Normalize(expected.SignerSubject),
                     observed.SignerSubject) &&
-                string.Equals(Normalize(expected.SignerThumbprint), observed.SignerThumbprint, StringComparison.OrdinalIgnoreCase) &&
+                OptionalHashMatches(
+                    expected.SignerThumbprint,
+                    observed.SignerThumbprint) &&
                 (!expected.RequireCodeSigningEku || observed.RequireCodeSigningEku);
+        }
+
+        private static bool OptionalTextMatches(string expected, string observed)
+        {
+            string normalized = Normalize(expected);
+            return normalized.Length == 0 ||
+                string.Equals(normalized, observed, StringComparison.Ordinal);
+        }
+
+        private static bool OptionalHashMatches(string expected, string observed)
+        {
+            string normalized = Normalize(expected);
+            return normalized.Length == 0 ||
+                FixedTimeEqualsHex(normalized, observed);
+        }
+
+        private static bool OptionalSignerSubjectMatches(
+            string expected,
+            string observed)
+        {
+            return expected.Length == 0 ||
+                SignerSubjectMatches(expected, observed);
         }
 
         private static bool SignerSubjectMatches(

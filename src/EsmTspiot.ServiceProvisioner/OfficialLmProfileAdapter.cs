@@ -8,8 +8,12 @@ using EsmTspiot.Shared.Validation;
 
 namespace EsmTspiot.ServiceProvisioner
 {
+    // Схема managed-профиля ЛМ описана под контроллер 1.6.4.0 и версией
+    // вендора больше не управляется: этот путь создания ЛМ не используется
+    // рабочим сценарием и удаляется отдельным этапом.
     internal sealed class OfficialLmProfileAdapter
     {
+        private const string ControllerProfileSchemaTag = "1.6.4.0";
         private static readonly Encoding StrictUtf8 = new UTF8Encoding(false, true);
         private readonly ControllerCapabilityProfile _profile;
         private readonly ManagedServiceManifestStore _manifestStore;
@@ -30,8 +34,7 @@ namespace EsmTspiot.ServiceProvisioner
             _manifestStore = manifestStore;
             _writer = writer;
             _serviceApi = serviceApi;
-            if (!string.Equals(_profile.Version, "1.6.4.0", StringComparison.Ordinal) ||
-                !string.Equals(_profile.ProfileEnvironmentKey, "ProgramData", StringComparison.Ordinal) ||
+            if (                !string.Equals(_profile.ProfileEnvironmentKey, "ProgramData", StringComparison.Ordinal) ||
                 !string.Equals(
                     _profile.VendorProfileRelativePath,
                     Path.Combine("ESP", "lmcontroller"),
@@ -69,10 +72,10 @@ namespace EsmTspiot.ServiceProvisioner
             }
 
             LmProfileConfiguration configuration = LmProfileConfiguration.FromSpec(
-                _profile.Version,
+                ControllerProfileSchemaTag,
                 spec);
             string content = BuildNewConfiguration(spec.KktSerial, configuration);
-            ExactLmYamlDocument.Parse(content, _profile.Version);
+            ExactLmYamlDocument.Parse(content, ControllerProfileSchemaTag);
             _writer.WriteUtf8(path, content);
             _manifestStore.ValidateProfileContentPath(spec.KktSerial, serviceSid, path);
             return configuration;
@@ -89,10 +92,10 @@ namespace EsmTspiot.ServiceProvisioner
                 throw new FileNotFoundException("Managed LM configuration was not created.", path);
             }
             string source = File.ReadAllText(path, StrictUtf8);
-            ExactLmYamlDocument document = ExactLmYamlDocument.Parse(source, _profile.Version);
-            LmProfileConfiguration desired = LmProfileConfiguration.FromSpec(_profile.Version, spec);
+            ExactLmYamlDocument document = ExactLmYamlDocument.Parse(source, ControllerProfileSchemaTag);
+            LmProfileConfiguration desired = LmProfileConfiguration.FromSpec(ControllerProfileSchemaTag, spec);
             string updated = document.Apply(desired);
-            ExactLmYamlDocument.Parse(updated, _profile.Version);
+            ExactLmYamlDocument.Parse(updated, ControllerProfileSchemaTag);
             _writer.WriteUtf8(path, updated);
             _manifestStore.ValidateProfileContentPath(spec.KktSerial, serviceSid, path);
         }
@@ -102,7 +105,7 @@ namespace EsmTspiot.ServiceProvisioner
             string path = GetConfigurationPath(kktSerial);
             _manifestStore.ValidateProfileContentPath(kktSerial, serviceSid, path);
             string source = File.ReadAllText(path, StrictUtf8);
-            return ExactLmYamlDocument.Parse(source, _profile.Version).ToConfiguration();
+            return ExactLmYamlDocument.Parse(source, ControllerProfileSchemaTag).ToConfiguration();
         }
 
         internal string GetConfigurationPath(string kktSerial)
@@ -177,7 +180,9 @@ namespace EsmTspiot.ServiceProvisioner
             {
                 throw new InvalidDataException("Managed LM spec identity is invalid.");
             }
-            LmProfileConfiguration.FromSpec("1.6.4.0", spec);
+            LmProfileConfiguration.FromSpec(
+                ControllerProfileSchemaTag,
+                spec);
         }
 
         private static string ToTargetUrl(string targetAddress)
