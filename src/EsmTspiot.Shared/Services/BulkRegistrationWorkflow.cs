@@ -166,8 +166,13 @@ namespace EsmTspiot.Shared.Services
                 DkktDeviceInfo device = plan.ExistingDevices[i];
                 string serial = (device.KktSerial ?? string.Empty).Trim();
                 KktInstanceInfo instance = FindInstance(instances, serial);
-                ApiResponse detailResponse = await _api.GetInstanceAsync(baseUrl, serial, cancellationToken);
-                Report(progress, i + 1, plan.ExistingDevices.Count, serial, "Проверка регистрации", string.Empty, detailResponse);
+                ApiResponse detailResponse = await GetInstanceDetailsWithRetry(
+                    baseUrl,
+                    serial,
+                    i + 1,
+                    plan.ExistingDevices.Count,
+                    progress,
+                    cancellationToken);
 
                 KktInstanceDetails details;
                 if (detailResponse.IsSuccess && InstanceDetailsParser.TryParse(detailResponse.ResponseBody, out details))
@@ -524,11 +529,51 @@ namespace EsmTspiot.Shared.Services
             return response;
         }
 
+        // Экземпляр ЕСМ, только что перезапущенный после смены конфигурации
+        // контроллера, какое-то время отвечает 2003 «Невозможно подключиться
+        // к Агенту-сервису ДККТ». Одна такая осечка не должна выбрасывать ККТ
+        // из плана: если агент действительно не поднят, повтор это подтвердит.
         private static bool IsTransientFailure(ApiResponse response)
         {
             return response != null &&
                 (response.IsConnectionFailure ||
-                    TspiotErrorDecoder.ContainsErrorCode(response.ResponseBody, 1013));
+                    TspiotErrorDecoder.ContainsErrorCode(response.ResponseBody, 1013) ||
+                    TspiotErrorDecoder.ContainsErrorCode(response.ResponseBody, 2003));
+        }
+
+        private async Task<ApiResponse> GetInstanceDetailsWithRetry(
+            string baseUrl,
+            string serial,
+            int current,
+            int total,
+            Action<BulkRegistrationProgress> progress,
+            CancellationToken cancellationToken)
+        {
+            ApiResponse response = null;
+            for (int attempt = 1; attempt <= MaximumTransientAttempts; attempt++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                response = await _api.GetInstanceAsync(baseUrl, serial, cancellationToken);
+                Report(
+                    progress,
+                    current,
+                    total,
+                    serial,
+                    "Проверка регистрации",
+                    "Попытка " + attempt.ToString(),
+                    response);
+                if (response.IsSuccess || !IsTransientFailure(response))
+                {
+                    return response;
+                }
+
+                if (attempt < MaximumTransientAttempts)
+                {
+                    await _delay(RetryDelay, cancellationToken);
+                }
+            }
+
+            return response;
         }
 
         private async Task<KktInstanceDetails> WaitForReadiness(

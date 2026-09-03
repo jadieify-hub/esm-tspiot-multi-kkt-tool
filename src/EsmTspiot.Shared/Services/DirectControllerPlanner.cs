@@ -274,7 +274,7 @@ namespace EsmTspiot.Shared.Services
             for (int index = 0; index < saved.Count; index++)
             {
                 DirectControllerAssignment item = saved[index];
-                if (!IsCanonical(item, targetLmPortsByInn))
+                if (!IsCanonical(item))
                 {
                     plan.ValidationMessages.Add(
                         "Сохранённое назначение контроллера имеет недопустимый формат.");
@@ -294,23 +294,40 @@ namespace EsmTspiot.Shared.Services
                 }
 
                 LmGatewayKkt current;
-                if (currentBySerial.TryGetValue(item.KktSerial, out current))
+                if (!currentBySerial.TryGetValue(item.KktSerial, out current))
                 {
-                    if (!string.Equals(item.KktInn, current.KktInn, StringComparison.Ordinal))
-                    {
-                        plan.ValidationMessages.Add(
-                            "ККТ " + item.KktSerial +
-                            " ранее была закреплена за другим ИНН.");
-                        continue;
-                    }
-                    savedBySerial.Add(item.KktSerial, Copy(item));
+                    // ККТ не участвует в этом прогоне: ЕСМ её не отдал, она
+                    // снята или временно недоступна. Номер контроллера уже
+                    // зарезервирован за ней и другой ККТ не достанется, но
+                    // ошибкой это не является: остальные ККТ настраиваются.
+                    continue;
                 }
+                if (!string.Equals(item.KktInn, current.KktInn, StringComparison.Ordinal))
+                {
+                    plan.ValidationMessages.Add(
+                        "ККТ " + item.KktSerial +
+                        " ранее была закреплена за другим ИНН.");
+                    continue;
+                }
+                int expectedLocalModulePort;
+                if (!targetLmPortsByInn.TryGetValue(
+                        Trim(item.KktInn),
+                        out expectedLocalModulePort) ||
+                    item.TargetLocalModulePort != expectedLocalModulePort)
+                {
+                    plan.ValidationMessages.Add(
+                        "Целевой порт ЛМ для ККТ " + item.KktSerial +
+                        " не совпадает с планом.");
+                    continue;
+                }
+                savedBySerial.Add(item.KktSerial, Copy(item));
             }
         }
 
-        private static bool IsCanonical(
-            DirectControllerAssignment item,
-            IDictionary<string, int> targetLmPortsByInn)
+        // Форма назначения проверяется без привязки к текущему плану:
+        // соответствие целевого порта ЛМ имеет смысл только для ККТ, которая
+        // в этом прогоне действительно участвует.
+        private static bool IsCanonical(DirectControllerAssignment item)
         {
             if (item == null || !IsAsciiDigits(Trim(item.KktSerial), 14) ||
                 !IsInn(Trim(item.KktInn)) || item.Ordinal < 1 ||
@@ -325,8 +342,9 @@ namespace EsmTspiot.Shared.Services
                     StringComparison.Ordinal) &&
                 item.GrpcPort == DirectControllerIdentity.GrpcPortForOrdinal(item.Ordinal) &&
                 item.RestPort == DirectControllerIdentity.RestPortForOrdinal(item.Ordinal) &&
-                targetLmPortsByInn.ContainsKey(Trim(item.KktInn)) &&
-                item.TargetLocalModulePort == targetLmPortsByInn[Trim(item.KktInn)];
+                item.TargetLocalModulePort >= 1024 &&
+                item.TargetLocalModulePort <= 65535 &&
+                !DirectControllerIdentity.IsControllerPort(item.TargetLocalModulePort);
         }
 
         private static bool HasVerifiedOfficialService(
