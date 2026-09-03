@@ -120,51 +120,44 @@ namespace EsmTspiot.ServiceProvisioner
                     source.Metadata.UpgradeCode,
                     FormatGuid(plan.Identity.UpgradeCode),
                     true);
+                // Строки берутся по назначению: идентификаторы Registry и
+                // RegLocator генерируются сборкой вендора и меняются от версии
+                // к версии.
+                LocalModuleMsiStructure structure =
+                    LocalModuleMsiStructure.Resolve(
+                        source.CapabilityProfile.Rows,
+                        source.Metadata.UpgradeCode);
                 UpdateUpgradeRow(
                     database,
-                    FindRow(
-                        source.CapabilityProfile,
-                        "Upgrade",
-                        source.Metadata.UpgradeCode),
+                    structure.UpgradeRow,
                     FormatGuid(plan.Identity.UpgradeCode));
 
                 UpdateProfileRow(
                     database,
-                    FindRow(source.CapabilityProfile, "Directory", "APPLICATIONFOLDER"),
+                    structure.ApplicationFolderRow,
                     "Directory",
                     delegate(MsiProfileRow row) {
                         row.Values[IndexOf(row, "DefaultDir")] =
                             plan.Identity.InstallDirectoryName;
                     });
-                UpdateRegistryRows(database, source.CapabilityProfile, plan);
+                UpdateRegistryRows(database, structure, plan);
                 UpdateProfileRow(
                     database,
-                    FindRow(
-                        source.CapabilityProfile,
-                        "RegLocator",
-                        "RegimeInstallDirRegistry"),
+                    structure.RegLocatorRow,
                     "Signature_",
                     delegate(MsiProfileRow row) {
                         row.Values[IndexOf(row, "Key")] =
                             plan.EquironRegistryKey;
                     });
                 UpdateServiceActions(database, source.CapabilityProfile, plan);
-                DisableSequenceAction(
-                    database,
-                    source.CapabilityProfile,
-                    "InstallAutoApdater");
-                DisableSequenceAction(
-                    database,
-                    source.CapabilityProfile,
-                    "UninstallAutoApdater");
-                DisableSequenceAction(
-                    database,
-                    source.CapabilityProfile,
-                    "RemoveAll");
-                DisableSequenceAction(
-                    database,
-                    source.CapabilityProfile,
-                    "StopEPMD");
+                for (int index = 0;
+                    index < structure.DisabledSequenceRows.Count;
+                    index++)
+                {
+                    DisableSequenceAction(
+                        database,
+                        structure.DisabledSequenceRows[index]);
+                }
 
                 using (SummaryInfo summary = database.SummaryInfo)
                 {
@@ -185,30 +178,32 @@ namespace EsmTspiot.ServiceProvisioner
 
         private static void UpdateRegistryRows(
             Database database,
-            LocalModuleMsiCapabilityProfile profile,
+            LocalModuleMsiStructure structure,
             LocalModuleMsiTransformPlan plan)
         {
-            string[] keys =
+            RewriteRegistryKeys(
+                database,
+                structure.InstallDirectoryRegistryRows,
+                plan.EquironRegistryKey);
+            RewriteRegistryKeys(
+                database,
+                structure.VendorRegistryRows,
+                plan.CrptRegistryKey);
+        }
+
+        private static void RewriteRegistryKeys(
+            Database database,
+            IList<MsiProfileRow> rows,
+            string replacement)
+        {
+            for (int index = 0; index < rows.Count; index++)
             {
-                "RegimeInstallDir",
-                "RegimeInstallDirRoot",
-                "regFC4DCF9969288D5B232FA9DAD986BD25"
-            };
-            for (int index = 0; index < keys.Length; index++)
-            {
-                string key = keys[index];
                 UpdateProfileRow(
                     database,
-                    FindRow(profile, "Registry", key),
+                    rows[index],
                     "Registry",
                     delegate(MsiProfileRow row) {
-                        row.Values[IndexOf(row, "Key")] =
-                            string.Equals(
-                                key,
-                                "regFC4DCF9969288D5B232FA9DAD986BD25",
-                                StringComparison.Ordinal)
-                            ? plan.CrptRegistryKey
-                            : plan.EquironRegistryKey;
+                        row.Values[IndexOf(row, "Key")] = replacement;
                     });
             }
         }
@@ -275,12 +270,11 @@ namespace EsmTspiot.ServiceProvisioner
 
         private static void DisableSequenceAction(
             Database database,
-            LocalModuleMsiCapabilityProfile profile,
-            string action)
+            MsiProfileRow action)
         {
             UpdateProfileRow(
                 database,
-                FindRow(profile, "InstallExecuteSequence", action),
+                action,
                 "Action",
                 delegate(MsiProfileRow row) {
                     row.Values[IndexOf(row, "Condition")] = "1=0";
@@ -479,23 +473,6 @@ namespace EsmTspiot.ServiceProvisioner
             result.Append(" FROM `").Append(table).Append("` WHERE `")
                 .Append(keyColumn).Append("` = ?");
             return result.ToString();
-        }
-
-        private static MsiProfileRow FindRow(
-            LocalModuleMsiCapabilityProfile profile,
-            string table,
-            string key)
-        {
-            for (int index = 0; index < profile.Rows.Count; index++)
-            {
-                MsiProfileRow row = profile.Rows[index];
-                if (string.Equals(row.Table, table, StringComparison.Ordinal) &&
-                    string.Equals(row.Key, key, StringComparison.Ordinal))
-                {
-                    return row;
-                }
-            }
-            return null;
         }
 
         private static int IndexOf(MsiProfileRow row, string column)

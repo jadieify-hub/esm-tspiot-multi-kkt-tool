@@ -51,7 +51,7 @@ namespace EsmTspiot.ServiceProvisioner
             VerifiedLocalModulePackage source = null;
             try
             {
-                source = LocalModulePackageVerifier.SupportedVersion2617()
+                source = LocalModulePackageVerifier.Supported()
                     .VerifyAndLock(request.LocalModuleInstallerSelection);
                 string machineRoot = Path.Combine(
                     Environment.GetFolderPath(

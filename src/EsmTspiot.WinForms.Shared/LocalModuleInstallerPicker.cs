@@ -17,10 +17,8 @@ namespace EsmTspiot.WinForms.Shared
         {
             using (OpenFileDialog dialog = new OpenFileDialog())
             {
-                dialog.Title = "Выберите установщик ЛМ ЧЗ";
-                dialog.Filter =
-                    "Поддерживаемый ЛМ ЧЗ (regime-2.6.1-7.msi)|" +
-                    "regime-2.6.1-7.msi|Windows Installer (*.msi)|*.msi";
+                dialog.Title = "Выберите установщик ЛМ ЧЗ от ЦРПТ";
+                dialog.Filter = "Windows Installer (*.msi)|*.msi";
                 dialog.CheckFileExists = true;
                 dialog.CheckPathExists = true;
                 dialog.Multiselect = false;
@@ -43,42 +41,66 @@ namespace EsmTspiot.WinForms.Shared
                 throw new InvalidDataException(
                     "Выберите обычный локальный MSI-файл не через ссылку.");
             }
-            string sha256 = ComputeSha256(fullPath);
-            if (!string.Equals(
-                    file.Name,
-                    SupportedLocalModulePackageIdentity.FileName,
-                    StringComparison.Ordinal) ||
-                file.Length != SupportedLocalModulePackageIdentity.ByteLength ||
-                !CanonicalLmPlanHasher.FixedTimeEqualsHex(
-                    sha256,
-                    SupportedLocalModulePackageIdentity.Sha256))
+
+            string signerSubject;
+            string signerThumbprint;
+            ReadSigner(fullPath, out signerSubject, out signerThumbprint);
+
+            LocalModuleInstallerSelection selection =
+                new LocalModuleInstallerSelection
+                {
+                    SourcePath = fullPath,
+                    FileName = file.Name,
+                    ByteLength = file.Length,
+                    Sha256 = ComputeSha256(fullPath),
+                    ProductName = LocalModuleMsiPropertyReader
+                        .ReadRequiredProperty(fullPath, "ProductName"),
+                    ProductVersion = LocalModuleMsiPropertyReader
+                        .ReadRequiredProperty(fullPath, "ProductVersion"),
+                    ProductCode = LocalModuleMsiPropertyReader
+                        .ReadRequiredProperty(fullPath, "ProductCode"),
+                    UpgradeCode = LocalModuleMsiPropertyReader
+                        .ReadRequiredProperty(fullPath, "UpgradeCode"),
+                    SignerSubject = signerSubject,
+                    SignerThumbprint = signerThumbprint,
+                    LicenseNoticeAccepted = false
+                };
+
+            ValidationResult policy =
+                LocalModulePackagePolicy.Evaluate(selection);
+            if (!policy.IsValid)
             {
                 throw new InvalidDataException(
-                    "Этот MSI не совпадает с проверенным regime-2.6.1-7.msi.");
+                    "Это не пакет ЛМ ЧЗ от ЦРПТ. " + policy.JoinMessages());
             }
+            return selection;
+        }
 
-            X509Certificate certificate =
-                X509Certificate.CreateFromSignedFile(fullPath);
-            using (X509Certificate2 signer = certificate == null
-                ? null
-                : new X509Certificate2(certificate))
+        private static void ReadSigner(
+            string fullPath,
+            out string subject,
+            out string thumbprint)
+        {
+            X509Certificate certificate;
+            try
             {
-                if (signer == null ||
-                    !SupportedLocalModulePackageIdentity
-                        .MatchesSignerSubject(signer.Subject) ||
-                    !string.Equals(
-                        signer.Thumbprint,
-                        SupportedLocalModulePackageIdentity.SignerThumbprint,
-                        StringComparison.OrdinalIgnoreCase))
-                {
-                    throw new InvalidDataException(
-                        "Цифровая подпись MSI не совпадает с проверенным пакетом.");
-                }
+                certificate = X509Certificate.CreateFromSignedFile(fullPath);
             }
-
-            return SupportedLocalModulePackageIdentity.Create(
-                fullPath,
-                false);
+            catch (CryptographicException)
+            {
+                throw new InvalidDataException(
+                    "MSI не подписан или подпись нечитаема.");
+            }
+            if (certificate == null)
+            {
+                throw new InvalidDataException(
+                    "MSI не подписан или подпись нечитаема.");
+            }
+            using (X509Certificate2 signer = new X509Certificate2(certificate))
+            {
+                subject = signer.Subject ?? string.Empty;
+                thumbprint = signer.Thumbprint ?? string.Empty;
+            }
         }
 
         private static string ComputeSha256(string path)

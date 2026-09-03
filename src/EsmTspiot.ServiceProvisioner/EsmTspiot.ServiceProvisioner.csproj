@@ -17,6 +17,5 @@
     <PackageReference Include="WixToolset.Dtf.WindowsInstaller.Package" Version="4.0.6" />
     <Reference Include="System.Runtime.Serialization" />
     <Reference Include="System.ServiceProcess" />
-    <EmbeddedResource Include="Profiles\local-module-msi-2.6.1-7-profile.json" />
   </ItemGroup>
 </Project>

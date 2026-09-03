@@ -66,15 +66,15 @@ namespace EsmTspiot.ServiceProvisioner
         internal static WindowsLocalModuleMsiProvisioningPlatform
             CreateForInstalledProducts(string machineRoot)
         {
-            LocalModuleInstallerSelection identity =
-                LocalModulePackageVerifier.CreateSupportedIdentity();
             WindowsInstallerPackageMetadata metadata =
                 new WindowsInstallerPackageMetadata
                 {
-                    ProductName = identity.ProductName,
-                    ProductVersion = identity.ProductVersion,
-                    ProductCode = identity.ProductCode,
-                    UpgradeCode = identity.UpgradeCode,
+                    ProductName =
+                        SupportedLocalModulePackageIdentity.ProductName,
+                    ProductVersion = string.Empty,
+                    ProductCode = string.Empty,
+                    UpgradeCode =
+                        SupportedLocalModulePackageIdentity.UpgradeCode,
                     PackageCode = "{00000000-0000-0000-0000-000000000000}"
                 };
             PathSafety pathSafety = new PathSafety();
@@ -173,17 +173,23 @@ namespace EsmTspiot.ServiceProvisioner
             for (int index = 0; index < products.Count; index++)
             {
                 InstalledLocalModuleProduct product = products[index];
-                bool sameCode = string.Equals(product.ProductCode,
-                    expected.ProductCode, StringComparison.OrdinalIgnoreCase);
+                bool sameCode = expected.ProductCode.Length != 0 &&
+                    string.Equals(product.ProductCode,
+                        expected.ProductCode,
+                        StringComparison.OrdinalIgnoreCase);
                 bool sameRoot = PathsEqual(product.InstallLocation, installRoot);
                 if (!sameCode && !sameRoot) continue;
                 anyProduct = true;
-                exactProduct |= sameCode && sameRoot &&
+                bool sameName = expected.ProductName.Length == 0 ||
                     string.Equals(product.DisplayName, expected.ProductName,
-                        StringComparison.Ordinal) &&
-                    string.Equals(product.DisplayVersion,
-                        _metadata.ProductVersion,
                         StringComparison.Ordinal);
+                bool sameVersion = expected.ProductVersion.Length == 0 ||
+                    string.Equals(product.DisplayVersion,
+                        expected.ProductVersion,
+                        StringComparison.Ordinal);
+                bool codeAccepted = expected.ProductCode.Length == 0 || sameCode;
+                exactProduct |= codeAccepted && sameRoot && sameName &&
+                    sameVersion;
             }
 
             LocalModuleInstalledLayout layout = LocalModuleInstalledLayout.Create(
@@ -280,6 +286,7 @@ namespace EsmTspiot.ServiceProvisioner
                     request.DatabasePort,
                     _metadata.ProductCode,
                     _metadata.PackageCode,
+                    _metadata.ProductVersion,
                     installRoot,
                     true,
                     false,
@@ -296,6 +303,7 @@ namespace EsmTspiot.ServiceProvisioner
                 request.DatabasePort,
                 identity.ProductCode.ToString("B").ToUpperInvariant(),
                 identity.PackageCode.ToString("B").ToUpperInvariant(),
+                _metadata.ProductVersion,
                 installRoot,
                 true,
                 false,
@@ -326,6 +334,7 @@ namespace EsmTspiot.ServiceProvisioner
                 RequireInstalled(
                     manifest.ProductCode,
                     _metadata.ProductName,
+                    _metadata.ProductVersion,
                     installRoot);
                 return;
             }
@@ -378,6 +387,7 @@ namespace EsmTspiot.ServiceProvisioner
             RequireInstalled(
                 manifest.ProductCode,
                 identity.ProductName,
+                _metadata.ProductVersion,
                 installRoot);
         }
 
@@ -389,17 +399,24 @@ namespace EsmTspiot.ServiceProvisioner
                 throw new InvalidOperationException(
                     "Only the exact vendor base may be preserved as pre-existing.");
             string installRoot = InstallRoot(request);
-            RequireInstalled(
-                _metadata.ProductCode,
-                _metadata.ProductName,
+            // Версия установленного вендором ЛМ может быть старше выбранного
+            // пакета: она фиксируется как есть, ничего не переустанавливается.
+            InstalledLocalModuleProduct installed = _products.Find(
+                string.Empty,
+                SupportedLocalModulePackageIdentity.ProductName,
+                string.Empty,
                 installRoot);
+            if (installed == null)
+                throw new InvalidOperationException(
+                    "Установленный базовый ЛМ ЧЗ в каталоге не найден.");
             return LocalModuleMsiManifest.Create(
                 request.Inn,
                 0,
                 request.ApiPort,
                 request.DatabasePort,
-                _metadata.ProductCode,
-                _metadata.PackageCode,
+                installed.ProductCode,
+                "{00000000-0000-0000-0000-000000000000}",
+                installed.DisplayVersion,
                 installRoot,
                 false,
                 true,
@@ -679,45 +696,64 @@ namespace EsmTspiot.ServiceProvisioner
             LocalModuleMsiProvisioningItemRequest request,
             LocalModuleMsiManifest manifest)
         {
+            // Имя базового продукта задаёт вендор и может измениться в новой
+            // версии, поэтому опорой служат ProductCode и каталог установки.
             if (manifest != null)
                 return new ProductExpectation
                 {
                     ProductCode = manifest.ProductCode,
                     ProductName = request.CloneOrdinal == 0
-                        ? _metadata.ProductName
+                        ? string.Empty
                         : "Локальный модуль Честный Знак экземпляр " +
-                            request.CloneOrdinal.ToString()
+                            request.CloneOrdinal.ToString(),
+                    ProductVersion = manifest.ProductVersion ?? string.Empty
                 };
+            string version = _metadata.ProductVersion ?? string.Empty;
             if (request.CloneOrdinal == 0)
+                // Базовый ЛМ вендора принимается любой версии: точный
+                // ProductCode фиксируется при взятии его под учёт.
                 return new ProductExpectation
                 {
-                    ProductCode = _metadata.ProductCode,
-                    ProductName = _metadata.ProductName
+                    ProductCode = string.Empty,
+                    ProductName =
+                        SupportedLocalModulePackageIdentity.ProductName,
+                    ProductVersion = string.Empty
+                };
+            string cloneName = "Локальный модуль Честный Знак экземпляр " +
+                request.CloneOrdinal.ToString();
+            if (version.Length == 0)
+                return new ProductExpectation
+                {
+                    ProductCode = string.Empty,
+                    ProductName = cloneName,
+                    ProductVersion = string.Empty
                 };
             LocalModuleMsiCloneIdentity identity =
                 new LocalModuleMsiIdentityFactory(delegate {
                     return new Guid("f0000000-0000-4000-8000-000000000001");
                 }).Create(
-                    _metadata.ProductVersion,
+                    version,
                     request.Inn,
                     request.CloneOrdinal);
             return new ProductExpectation
             {
                 ProductCode = identity.ProductCode.ToString("B")
                     .ToUpperInvariant(),
-                ProductName = identity.ProductName
+                ProductName = identity.ProductName,
+                ProductVersion = version
             };
         }
 
         private void RequireInstalled(
             string productCode,
             string productName,
+            string productVersion,
             string installRoot)
         {
             if (_products.FindExact(
                     productCode,
                     productName,
-                    _metadata.ProductVersion,
+                    productVersion,
                     installRoot) == null)
                 throw new InvalidOperationException(
                     "Windows Installer did not confirm the exact LM product.");
@@ -762,6 +798,7 @@ namespace EsmTspiot.ServiceProvisioner
         {
             internal string ProductCode { get; set; }
             internal string ProductName { get; set; }
+            internal string ProductVersion { get; set; }
         }
     }
 }

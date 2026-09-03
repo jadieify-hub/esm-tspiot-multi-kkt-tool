@@ -11,8 +11,6 @@
     <PackageReference Include="WixToolset.Dtf.WindowsInstaller.Package" Version="4.0.6" />
     <None Include="Fixtures\official-lm-profile-sanitized.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Fixtures\local-module-2.6.1-sanitized.json" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="..\..\src\EsmTspiot.ServiceProvisioner\Profiles\local-module-msi-2.6.1-7-profile.json"
-          Link="Fixtures\local-module-msi-2.6.1-7-profile.json"
-          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Fixtures\local-module-msi-2.6.1-7-profile.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

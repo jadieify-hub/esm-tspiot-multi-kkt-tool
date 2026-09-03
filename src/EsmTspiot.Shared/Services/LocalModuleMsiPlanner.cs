@@ -70,7 +70,8 @@ namespace EsmTspiot.Shared.Services
                     {
                         plan.ValidationMessages.Add(
                             "Сохранённое назначение ЛМ для ИНН " + group.Inn +
-                            " конфликтует с чужим listener.");
+                            " конфликтует с чужим владельцем портов: " +
+                            DescribeListenerOwners(assignment, safeListeners) + ".");
                         continue;
                     }
                     plan.Assignments.Add(Copy(assignment));
@@ -120,6 +121,7 @@ namespace EsmTspiot.Shared.Services
                     plan.ValidationMessages.Add(
                         "Порты ЛМ для ИНН " + group.Inn +
                         " конфликтуют с другим назначением.");
+                    reservedOrdinals.Add(ordinal);
                     continue;
                 }
                 bool listenerConflict = ordinal == 0 && baseInventory.IsInstalled
@@ -128,7 +130,9 @@ namespace EsmTspiot.Shared.Services
                 if (listenerConflict)
                 {
                     plan.ValidationMessages.Add(
-                        "Порты ЛМ для ИНН " + group.Inn + " уже заняты.");
+                        "Порты ЛМ для ИНН " + group.Inn + " уже заняты: " +
+                        DescribeListenerOwners(assignment, safeListeners) + ".");
+                    reservedOrdinals.Add(ordinal);
                     continue;
                 }
                 assignedPorts.Add(assignment.ApiPort);
@@ -359,6 +363,39 @@ namespace EsmTspiot.Shared.Services
                 if (!occupied) return ordinal;
             }
             return 0;
+        }
+
+        private static string DescribeListenerOwners(
+            LocalModuleMsiAssignment assignment,
+            IList<TcpListenerSnapshotItem> listeners)
+        {
+            List<string> parts = new List<string>();
+            AppendListenerOwner(parts, assignment.ApiPort, listeners);
+            AppendListenerOwner(parts, assignment.DatabasePort, listeners);
+            if (parts.Count == 0)
+            {
+                return "порты " + assignment.ApiPort.ToString() +
+                    " и " + assignment.DatabasePort.ToString();
+            }
+            return string.Join("; ", parts.ToArray());
+        }
+
+        private static void AppendListenerOwner(
+            IList<string> parts,
+            int port,
+            IList<TcpListenerSnapshotItem> listeners)
+        {
+            for (int index = 0; index < listeners.Count; index++)
+            {
+                TcpListenerSnapshotItem listener = listeners[index];
+                if (listener == null || listener.Port != port) continue;
+                string owner = Trim(listener.OwnerServiceName);
+                parts.Add("порт " + port.ToString() +
+                    (listener.IsOwnerVerified && owner.Length > 0
+                        ? " (служба " + owner + ")"
+                        : " (владелец не определён)"));
+                return;
+            }
         }
 
         private static bool HasForeignListener(

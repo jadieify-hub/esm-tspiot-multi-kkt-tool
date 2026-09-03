@@ -11,7 +11,7 @@ namespace EsmTspiot.ServiceProvisioner
     [DataContract]
     internal sealed class LocalModuleMsiManifest
     {
-        internal const int CurrentSchemaVersion = 4;
+        internal const int CurrentSchemaVersion = 5;
         internal const string ExpectedOwnershipMarker =
             "KRS.MultiKKT.LocalModuleMsi.Product.v1";
 
@@ -74,6 +74,16 @@ namespace EsmTspiot.ServiceProvisioner
         [DataMember(Order = 19)]
         internal int PreviousDatabaseStartMode { get; set; }
 
+        // Версия установленного продукта фиксируется на том, что реально
+        // стоит в системе: базовый ЛМ вендора может быть любой версии.
+        [DataMember(Order = 20)]
+        internal string ProductVersion { get; set; }
+
+        // Путь erl.exe, на который выписано правило сети: каталог erts-*
+        // меняется вместе с версией пакета.
+        [DataMember(Order = 21)]
+        internal string FirewallProgramPath { get; set; }
+
         internal bool CanRemove
         {
             get { return InstalledByApplication && !PreExisting; }
@@ -86,6 +96,7 @@ namespace EsmTspiot.ServiceProvisioner
             int databasePort,
             string productCode,
             string packageCode,
+            string productVersion,
             string installRoot,
             bool installedByApplication,
             bool preExisting,
@@ -101,6 +112,9 @@ namespace EsmTspiot.ServiceProvisioner
                 DatabasePort = databasePort,
                 ProductCode = NormalizeGuid(productCode, "productCode"),
                 PackageCode = NormalizeGuid(packageCode, "packageCode"),
+                ProductVersion = productVersion == null
+                    ? string.Empty
+                    : productVersion.Trim(),
                 InstallRoot = NormalizeRoot(installRoot),
                 InstalledByApplication = installedByApplication,
                 PreExisting = preExisting,
@@ -110,6 +124,7 @@ namespace EsmTspiot.ServiceProvisioner
                     CultureInfo.InvariantCulture),
                 FirewallRuleName = string.Empty,
                 FirewallRuleHash = string.Empty,
+                FirewallProgramPath = string.Empty,
                 StartModeAdjusted = false,
                 PreviousApiStartMode = 0,
                 PreviousDatabaseStartMode = 0,
@@ -142,6 +157,7 @@ namespace EsmTspiot.ServiceProvisioner
                     "Firewall rule ownership does not match the manifest.");
             FirewallRuleName = rule.RuleName;
             FirewallRuleHash = rule.ExpectedFieldHash;
+            FirewallProgramPath = rule.ProgramPath;
             ManifestSha256 = ComputeSha256(this);
         }
 
@@ -171,6 +187,7 @@ namespace EsmTspiot.ServiceProvisioner
                 manifest.DatabasePort.ToString(CultureInfo.InvariantCulture),
                 manifest.ProductCode,
                 manifest.PackageCode,
+                manifest.ProductVersion ?? string.Empty,
                 manifest.InstallRoot,
                 manifest.InstalledByApplication ? "1" : "0",
                 manifest.PreExisting ? "1" : "0",
@@ -182,7 +199,8 @@ namespace EsmTspiot.ServiceProvisioner
                 manifest.PreviousApiStartMode.ToString(
                     CultureInfo.InvariantCulture),
                 manifest.PreviousDatabaseStartMode.ToString(
-                    CultureInfo.InvariantCulture)
+                    CultureInfo.InvariantCulture),
+                manifest.FirewallProgramPath ?? string.Empty
             });
             byte[] digest;
             using (SHA256 algorithm = SHA256.Create())
@@ -223,6 +241,7 @@ namespace EsmTspiot.ServiceProvisioner
                 !LocalModuleManagedIdentity.IsLowerHex(
                     manifest.OwnershipNonce,
                     32) ||
+                manifest.ProductVersion == null ||
                 string.IsNullOrWhiteSpace(manifest.UpdatedUtc))
                 throw new InvalidDataException(
                     "Local-module MSI manifest is invalid.");
@@ -242,6 +261,16 @@ namespace EsmTspiot.ServiceProvisioner
                       64))))
                 throw new InvalidDataException(
                     "Local-module MSI firewall ownership is invalid.");
+            string firewallProgram = manifest.FirewallProgramPath ?? string.Empty;
+            if ((firewallName.Length == 0) != (firewallProgram.Length == 0) ||
+                (firewallProgram.Length != 0 &&
+                 (!Path.IsPathRooted(firewallProgram) ||
+                  !string.Equals(
+                      Path.GetFileName(firewallProgram),
+                      "erl.exe",
+                      StringComparison.OrdinalIgnoreCase))))
+                throw new InvalidDataException(
+                    "Local-module MSI firewall program path is invalid.");
             if (manifest.StartModeAdjusted
                 ? (!IsStartMode(manifest.PreviousApiStartMode) ||
                    !IsStartMode(manifest.PreviousDatabaseStartMode))

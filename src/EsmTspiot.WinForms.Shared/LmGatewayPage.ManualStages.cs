@@ -186,16 +186,7 @@ namespace EsmTspiot.WinForms.Shared
                 throw new InvalidOperationException(
                     "Выберите официальный MSI ЛМ ЧЗ (кнопка «Выбрать MSI...»).");
             RequireUsableLocalModulePlan(plan);
-            string volume = SelectInstallVolume(
-                plan,
-                inventory,
-                inventory.BaseInventory.InstallDirectory);
-            if (volume == null)
-            {
-                _statusLabel.Text = "Установка ЛМ ЧЗ отложена оператором.";
-                Log(_statusLabel.Text + "\r\n");
-                return;
-            }
+            string volume = ResolveInstallVolume(plan, inventory);
             if (!string.IsNullOrEmpty(volume))
             {
                 plan = LocalModuleMsiPlanner.Build(

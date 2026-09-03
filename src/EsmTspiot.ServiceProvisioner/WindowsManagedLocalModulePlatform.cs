@@ -124,7 +124,7 @@ namespace EsmTspiot.ServiceProvisioner
                     request.InstallerSelection,
                     request.OperationId);
                 localModulePackage = LocalModulePackageVerifier
-                    .SupportedVersion2617()
+                    .Supported()
                     .VerifyAndLock(selection);
                 LocalModuleManifestStore manifests =
                     LocalModuleManifestStore.CreateMachineStore(

@@ -46,6 +46,19 @@ namespace EsmTspiot.Shared.Services
             return root;
         }
 
+        public static string GetSystemVolumeRoot()
+        {
+            string system = Environment.GetFolderPath(
+                Environment.SpecialFolder.System);
+            if (string.IsNullOrWhiteSpace(system))
+            {
+                throw new ArgumentException(
+                    "Local module installation requires a known system volume.",
+                    "system");
+            }
+            return GetVolumeRoot(system);
+        }
+
         public static bool IsCanonicalVolumeRoot(string value)
         {
             if (string.IsNullOrWhiteSpace(value) ||

@@ -26,13 +26,13 @@ namespace EsmTspiot.ServiceProvisioner
         private const string AutomaticStartCondition =
             "AUTOSERVICE AND NOT Installed AND NOT REMOVE";
 
-        private static readonly string[] DemandStartActions =
+        internal static readonly string[] DemandStartActions =
         {
             "NotAutoStartlRegimeService",
             "NotAutoStartlYeniseiService"
         };
 
-        private static readonly string[] AutomaticStartActions =
+        internal static readonly string[] AutomaticStartActions =
         {
             "StartRegimeService",
             "StartYeniseiService"

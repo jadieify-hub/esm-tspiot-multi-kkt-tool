@@ -357,8 +357,7 @@ namespace EsmTspiot.ServiceProvisioner
                 LocalModuleFirewallRule expected =
                     LocalModuleFirewallRule.Create(
                         manifest.OwnershipNonce,
-                        Path.Combine(manifest.InstallRoot,
-                            "erts-13.0.4", "bin", "erl.exe"),
+                        manifest.FirewallProgramPath,
                         request.ApiPort,
                         request.RemoteAddress);
                 if (!string.Equals(expected.ExpectedFieldHash,

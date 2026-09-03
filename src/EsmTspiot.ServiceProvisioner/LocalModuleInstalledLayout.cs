@@ -25,6 +25,7 @@ namespace EsmTspiot.ServiceProvisioner
         internal string DatabaseVmArgsPath { get; private set; }
         internal string ErlIniPath { get; private set; }
         internal string ErtsBinPath { get; private set; }
+        internal bool ErtsDiscovered { get; private set; }
 
         internal static LocalModuleInstalledLayout Create(
             string installRoot,
@@ -49,7 +50,11 @@ namespace EsmTspiot.ServiceProvisioner
             string apiName = LocalModuleMsiIdentity.ApiServiceName(cloneOrdinal);
             string databaseName =
                 LocalModuleMsiIdentity.DatabaseServiceName(cloneOrdinal);
-            string erts = Path.Combine(root, "erts-13.0.4", "bin");
+            string ertsName = FindErtsDirectoryName(root);
+            string erts = Path.Combine(
+                root,
+                ertsName.Length == 0 ? "erts" : ertsName,
+                "bin");
             return new LocalModuleInstalledLayout
             {
                 InstallRoot = root,
@@ -70,8 +75,40 @@ namespace EsmTspiot.ServiceProvisioner
                 DatabaseVmArgsPath = Path.Combine(
                     root, "yenisei", "etc", "vm.args"),
                 ErlIniPath = Path.Combine(erts, "erl.ini"),
-                ErtsBinPath = erts
+                ErtsBinPath = erts,
+                ErtsDiscovered = ertsName.Length != 0
             };
+        }
+
+        // Каталог рантайма называется erts-<версия> и меняется вместе с
+        // версией вендорского пакета, поэтому имя ищется на диске.
+        private static string FindErtsDirectoryName(string root)
+        {
+            string[] candidates;
+            try
+            {
+                if (!Directory.Exists(root)) return string.Empty;
+                candidates = Directory.GetDirectories(root, "erts-*");
+            }
+            catch (Exception exception)
+            {
+                if (exception is IOException ||
+                    exception is UnauthorizedAccessException)
+                    return string.Empty;
+                throw;
+            }
+            string found = string.Empty;
+            for (int index = 0; index < candidates.Length; index++)
+            {
+                if (!Directory.Exists(Path.Combine(candidates[index], "bin")))
+                    continue;
+                if (found.Length != 0)
+                    throw new InvalidDataException(
+                        "В каталоге ЛМ несколько рантаймов erts-*; " +
+                        "нужный определить невозможно.");
+                found = Path.GetFileName(candidates[index]);
+            }
+            return found;
         }
 
         internal string ServiceName(LocalModuleProcessRole role)

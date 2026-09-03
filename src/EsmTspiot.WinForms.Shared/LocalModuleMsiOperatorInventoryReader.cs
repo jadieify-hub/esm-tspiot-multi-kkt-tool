@@ -213,29 +213,46 @@ namespace EsmTspiot.WinForms.Shared
                 using (RegistryKey root = RegistryKey.OpenBaseKey(
                     RegistryHive.LocalMachine,
                     views[index]))
-                using (RegistryKey product = root.OpenSubKey(
-                    @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\" +
-                    SupportedLocalModulePackageIdentity.ProductCode,
+                using (RegistryKey uninstall = root.OpenSubKey(
+                    @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+                    false))
+                {
+                    if (uninstall == null) continue;
+                    string location = FindVendorLocation(uninstall);
+                    if (location.Length > 0) return location;
+                }
+            }
+            return string.Empty;
+        }
+
+        // Базовый ЛМ опознаётся по имени продукта вендора в любой версии:
+        // точный ProductCode и номер версии намеренно не фиксируются.
+        private static string FindVendorLocation(RegistryKey uninstall)
+        {
+            string[] names = uninstall.GetSubKeyNames();
+            for (int index = 0; index < names.Length; index++)
+            {
+                Guid productCode;
+                if (!Guid.TryParseExact(names[index], "B", out productCode))
+                    continue;
+                using (RegistryKey product = uninstall.OpenSubKey(
+                    names[index],
                     false))
                 {
                     if (product == null) continue;
-                    string name = Convert.ToString(product.GetValue("DisplayName"));
-                    string version = Convert.ToString(
-                        product.GetValue("DisplayVersion"));
+                    string name = Convert.ToString(
+                        product.GetValue("DisplayName"));
                     string location = Convert.ToString(
                         product.GetValue("InstallLocation"));
-                    if (string.Equals(
+                    if (!string.Equals(
                             name,
                             SupportedLocalModulePackageIdentity.ProductName,
-                            StringComparison.Ordinal) &&
-                        string.Equals(
-                            version,
-                            SupportedLocalModulePackageIdentity.ProductVersion,
-                            StringComparison.Ordinal) &&
-                        !string.IsNullOrWhiteSpace(location) &&
-                        Path.IsPathRooted(location))
-                        return Path.GetFullPath(location)
-                            .TrimEnd(Path.DirectorySeparatorChar);
+                            StringComparison.Ordinal) ||
+                        string.IsNullOrWhiteSpace(location) ||
+                        !Path.IsPathRooted(location))
+                        continue;
+                    return Path.GetFullPath(location)
+                        .TrimEnd(Path.DirectorySeparatorChar);
                 }
             }
             return string.Empty;
