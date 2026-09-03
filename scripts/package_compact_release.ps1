@@ -75,7 +75,7 @@ $sourceDtfWindowsInstaller = Join-Path $helperOutput "WixToolset.Dtf.WindowsInst
 $sourceDtfWindowsInstallerPackage = Join-Path $helperOutput "WixToolset.Dtf.WindowsInstaller.Package.dll"
 $sourceDtfCompression = Join-Path $helperOutput "WixToolset.Dtf.Compression.dll"
 $sourceDtfCompressionCab = Join-Path $helperOutput "WixToolset.Dtf.Compression.Cab.dll"
-$fieldGuide = Join-Path $repositoryRoot "docs\testing\2026-09-01-field-acceptance-1.6.4.0.md"
+$fieldGuide = Join-Path $repositoryRoot "docs\testing\2026-09-03-field-acceptance-full-contour.md"
 $stagedMain = Join-Path $stageRoot "MultiKKT-ESM-TSPioT.exe"
 $stagedHelper = Join-Path $stageRoot "Provisioner\EsmTspiot.ServiceProvisioner.exe"
 
@@ -119,10 +119,10 @@ Author: Ruslan Kerusov
    C:\Program Files\KRS\MultiKKT
    Inherited ACLs must not grant ordinary users write access.
 3. From Downloads, Desktop or another user-writable directory, the application deliberately blocks Windows-service mutations.
-4. Install the official ESM LM Controller 1.6.4.0 before controller setup. Its vendor binary is discovered and verified in the installed location; it is not included in this archive.
+4. Install the official ESM LM Controller 1.6.4.0 before controller setup and keep the official LM CHZ installer regime-2.6.1-7.msi at hand. Vendor binaries are discovered and verified in their installed or original locations; they are not included in this archive.
 5. This archive contains no ESP/CHZ vendor binaries, extracted runtime, credentials, LM CHZ database or managed Erlang runtime.
 6. Before a real installation, follow FIELD_TEST_1.6.4.0.md.
-7. Registration and controller setup are independent. A controller or binding failure never rolls back a KKT that ESM has already registered. LM CHZ installation and initialization are intentionally deferred to a later supported workflow.
+7. Registration, controllers and LM CHZ are independent stages. A controller, LM or binding failure never rolls back a KKT that ESM has already registered. LM CHZ instances are installed from the operator-supplied official MSI, one per INN with automatic start; the contour is reported complete only after ESM confirms every binding. LM business initialization is intentionally left to ESM or the operator.
 8. Provisioner contains unmodified WiX Toolset DTF 4.0.6 libraries licensed under the Microsoft Reciprocal License (MS-RL). See THIRD-PARTY-NOTICES.txt.
 
 Run: MultiKKT-ESM-TSPioT.exe
