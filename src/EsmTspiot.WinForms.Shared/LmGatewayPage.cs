@@ -624,5 +624,35 @@ namespace EsmTspiot.WinForms.Shared
             }
         }
 
+        // Всё, что требует прав, выполняет отдельный elevated-помощник, и до
+        // его ответа журнал молчит: со стороны это неотличимо от зависания.
+        // Пока идёт ожидание, стадия сама отмечается в журнале.
+        private const int HeartbeatMilliseconds = 20000;
+
+        private async Task<T> WithHeartbeatAsync<T>(
+            string stageName,
+            Task<T> work)
+        {
+            if (work == null) throw new ArgumentNullException("work");
+            DateTime started = DateTime.UtcNow;
+            Log(stageName + ": начато, работает разовый помощник с правами " +
+                "администратора; журнал пополнится по завершении стадии.\r\n");
+            while (true)
+            {
+                Task finished = await Task.WhenAny(
+                    work,
+                    Task.Delay(HeartbeatMilliseconds)).ConfigureAwait(true);
+                if (ReferenceEquals(finished, work))
+                {
+                    break;
+                }
+                TimeSpan elapsed = DateTime.UtcNow - started;
+                Log(stageName + ": идёт работа, прошло " +
+                    ((int)elapsed.TotalMinutes).ToString() + " мин " +
+                    elapsed.Seconds.ToString("00") + " с.\r\n");
+            }
+            return await work.ConfigureAwait(true);
+        }
+
     }
 }

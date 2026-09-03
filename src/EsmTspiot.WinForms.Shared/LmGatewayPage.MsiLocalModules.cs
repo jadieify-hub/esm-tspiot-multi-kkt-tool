@@ -112,9 +112,11 @@ namespace EsmTspiot.WinForms.Shared
                                 LmServiceOperation.RemoveAllMsiLocalModules,
                                 localModules);
                         LmServiceProvisioningBatchResult msi =
-                            await _localModuleMsiProvisioner.RunAsync(
-                                request,
-                                operationCancellation).ConfigureAwait(true);
+                            await WithHeartbeatAsync(
+                                "Удаление ЛМ ЧЗ",
+                                _localModuleMsiProvisioner.RunAsync(
+                                    request,
+                                    operationCancellation)).ConfigureAwait(true);
                         for (int index = 0;
                             index < msi.LocalModuleMsiItems.Count;
                             index++)
@@ -436,9 +438,11 @@ namespace EsmTspiot.WinForms.Shared
             _statusLabel.Text =
                 "Проверка MSI и установка независимых ЛМ; подтвердите UAC...";
             LmServiceProvisioningBatchResult result =
-                await _localModuleMsiProvisioner.RunEnsureAsync(
-                    request,
-                    cancellation).ConfigureAwait(true);
+                await WithHeartbeatAsync(
+                    "ЛМ ЧЗ",
+                    _localModuleMsiProvisioner.RunEnsureAsync(
+                        request,
+                        cancellation)).ConfigureAwait(true);
             int succeeded = 0;
             int failed = 0;
             for (int index = 0;
