@@ -6,6 +6,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
+using System.Threading;
 using EsmTspiot.Shared.Services;
 
 namespace EsmTspiot.ServiceProvisioner
@@ -212,11 +213,68 @@ namespace EsmTspiot.ServiceProvisioner
             return false;
         }
 
+        // WinVerifyTrust строит цепочку сертификатов через системную службу
+        // «Криптография», а та ходит в сеть за промежуточными сертификатами и
+        // списками отзыва. На кассовой машине с закрытым или очень медленным
+        // интернетом этот вызов не возвращается вовсе: процесс стоит с нулевой
+        // загрузкой, ожидая ответа службы по RPC. Поэтому сначала проверяем по
+        // локальному кэшу без обращений в сеть, и только если цепочка так не
+        // сходится, даём ровно одну попытку с сетью — вся проверка при этом
+        // ограничена по времени.
+        private const uint RevocationCheckNone = 0x00000010;
+        private const uint CacheOnlyUrlRetrieval = 0x00001000;
+        private const int AuthenticodeTimeoutMilliseconds = 45000;
+
         private static bool VerifyAuthenticode(string path)
+        {
+            bool verified = false;
+            Exception failure = null;
+            Thread worker = new Thread(delegate()
+            {
+                try
+                {
+                    verified = VerifyAuthenticodeWithFallback(path);
+                }
+                catch (Exception error)
+                {
+                    failure = error;
+                }
+            });
+            worker.IsBackground = true;
+            worker.Start();
+            if (!worker.Join(AuthenticodeTimeoutMilliseconds))
+            {
+                throw new TimeoutException(
+                    "Проверка подписи файла не завершилась за отведённое время: " +
+                    "системе не удалось построить цепочку сертификатов. " +
+                    "Дайте машине доступ в интернет либо установите " +
+                    "промежуточные сертификаты вендора и повторите.");
+            }
+            if (failure != null)
+            {
+                throw new InvalidOperationException(
+                    "Проверка подписи файла завершилась ошибкой.",
+                    failure);
+            }
+            return verified;
+        }
+
+        private static bool VerifyAuthenticodeWithFallback(string path)
+        {
+            if (VerifyAuthenticodeOnce(
+                    path,
+                    CacheOnlyUrlRetrieval | RevocationCheckNone))
+            {
+                return true;
+            }
+            return VerifyAuthenticodeOnce(path, 0);
+        }
+
+        private static bool VerifyAuthenticodeOnce(string path, uint providerFlags)
         {
             Guid policy = new Guid("00AAC56B-CD44-11D0-8CC2-00C04FC295EE");
             WinTrustFileInfo fileInfo = new WinTrustFileInfo(path);
-            WinTrustData data = new WinTrustData(fileInfo);
+            WinTrustData data = new WinTrustData(fileInfo, providerFlags);
             try
             {
                 return WinVerifyTrust(IntPtr.Zero, ref policy, ref data) == 0;
@@ -295,7 +353,7 @@ namespace EsmTspiot.ServiceProvisioner
             private uint ProviderFlags;
             private uint UiContext;
 
-            internal WinTrustData(WinTrustFileInfo fileInfo)
+            internal WinTrustData(WinTrustFileInfo fileInfo, uint providerFlags)
             {
                 StructSize = (uint)Marshal.SizeOf(typeof(WinTrustData));
                 PolicyCallbackData = IntPtr.Zero;
@@ -308,7 +366,7 @@ namespace EsmTspiot.ServiceProvisioner
                 StateAction = 0;
                 StateData = IntPtr.Zero;
                 UrlReference = IntPtr.Zero;
-                ProviderFlags = 0;
+                ProviderFlags = providerFlags;
                 UiContext = 0;
             }
 

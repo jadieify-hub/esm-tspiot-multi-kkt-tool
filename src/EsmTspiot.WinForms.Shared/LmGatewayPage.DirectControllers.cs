@@ -115,10 +115,12 @@ namespace EsmTspiot.WinForms.Shared
             _statusLabel.Text =
                 "Создание независимых служб контроллеров; подтвердите UAC...";
             LmServiceProvisioningBatchResult provisioned =
-                await _serviceProvisioner.EnsureDirectControllersAsync(
-                    requests,
-                    Guid.NewGuid().ToString("N"),
-                    cancellation).ConfigureAwait(true);
+                await WithHeartbeatAsync(
+                    "Контроллеры",
+                    _serviceProvisioner.EnsureDirectControllersAsync(
+                        requests,
+                        Guid.NewGuid().ToString("N"),
+                        cancellation)).ConfigureAwait(true);
             for (int index = 0; index < provisioned.Items.Count; index++)
             {
                 LmServiceProvisioningItemResult item = provisioned.Items[index];
