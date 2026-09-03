@@ -11,9 +11,23 @@ namespace EsmTspiot.ServiceProvisioner
         LocalModuleMsiDatabaseSnapshot Read(string lockedMsiPath);
     }
 
+    /// <summary>
+    /// Снимок структуры MSI ЛМ. Строки отбираются по смыслу, а не по
+    /// сгенерированным идентификаторам конкретной версии пакета: имена
+    /// файлов конфигурации, таблицы Registry/RegLocator/AppSearch/Upgrade
+    /// и действия читаются целиком, а нужные строки выбирает
+    /// <see cref="LocalModuleMsiCapabilityResolver"/>.
+    /// </summary>
     internal sealed class LocalModuleMsiProfileReader :
         ILocalModuleMsiProfileReader
     {
+        internal static readonly string[] ConfigurationFileNames =
+        {
+            "local.ini.dist",
+            "vm.args.dist",
+            "default.ini"
+        };
+
         public LocalModuleMsiDatabaseSnapshot Read(string lockedMsiPath)
         {
             string path = Path.GetFullPath(lockedMsiPath);
@@ -43,7 +57,7 @@ namespace EsmTspiot.ServiceProvisioner
             catch (Exception)
             {
                 throw new InvalidDataException(
-                    "MSI structural profile could not be read safely.");
+                    "Структуру MSI ЛМ не удалось прочитать безопасно.");
             }
         }
 
@@ -113,12 +127,7 @@ namespace EsmTspiot.ServiceProvisioner
                 "Registry",
                 new[] { "Registry", "Root", "Key", "Name", "Value", "Component_" },
                 2,
-                new[]
-                {
-                    "RegimeInstallDir",
-                    "RegimeInstallDirRoot",
-                    "regFC4DCF9969288D5B232FA9DAD986BD25"
-                },
+                null,
                 false);
             ReadRows(
                 database,
@@ -126,7 +135,7 @@ namespace EsmTspiot.ServiceProvisioner
                 "RegLocator",
                 new[] { "Signature_", "Root", "Key", "Name", "Type" },
                 2,
-                new[] { "RegimeInstallDirRegistry" },
+                null,
                 false);
             ReadRows(
                 database,
@@ -134,58 +143,28 @@ namespace EsmTspiot.ServiceProvisioner
                 "AppSearch",
                 new[] { "Property", "Signature_" },
                 1,
-                new[] { "APPLICATIONFOLDER|RegimeInstallDirRegistry" },
+                null,
                 true);
             ReadRows(
                 database,
                 result,
                 "Upgrade",
-                new[] { "UpgradeCode", "VersionMin", "VersionMax", "Language", "Attributes", "Remove", "ActionProperty" },
-                2,
-                new[] { "{9449123B-61C4-40DE-AA6C-1BB9AA02EB67}" },
-                false);
-            ReadRows(
-                database,
-                result,
-                "File",
-                new[] { "File", "Component_", "FileName", "FileSize", "Attributes", "Sequence" },
-                2,
                 new[]
                 {
-                    "fil4D9BD38000F7BBE9FA37B3949730CD45",
-                    "filB64169385D3728F85488BA683E5B1809",
-                    "fil6C2420445C448A9D193F9397AB772B3F",
-                    "fil8B086431A47A790C3CAEE2AA56EF7E1C",
-                    "fil0C0BA2BF1CF3006FEE6418B1FBB8A2DC"
+                    "UpgradeCode", "VersionMin", "VersionMax", "Language",
+                    "Attributes", "Remove", "ActionProperty"
                 },
+                2,
+                null,
                 false);
+            ReadConfigurationFileRows(database, result);
             ReadRows(
                 database,
                 result,
                 "CustomAction",
                 new[] { "Action", "Type", "Source", "Target" },
                 2,
-                new[]
-                {
-                    "SetInstallYeniseiService",
-                    "SetInstallRegimeService",
-                    "SetSetStartPriorityYenisei",
-                    "SetSetStartPriorityRegime",
-                    "SetSetYeniseiServiceLog",
-                    "SetSetRegimeServiceLog",
-                    "SetNotAutoStartlYeniseiService",
-                    "SetNotAutoStartlRegimeService",
-                    "SetSetAppExitYenisei",
-                    "SetSetAppExitRegime",
-                    "SetStartYeniseiService",
-                    "SetStartRegimeService",
-                    "SetStopYeniseiService",
-                    "SetStopRegimeService",
-                    "SetRemoveYeniseiService",
-                    "SetRemoveRegimeService",
-                    "SetStopEPMD",
-                    "StopEPMD"
-                },
+                null,
                 false);
             ReadRows(
                 database,
@@ -193,18 +172,56 @@ namespace EsmTspiot.ServiceProvisioner
                 "InstallExecuteSequence",
                 new[] { "Action", "Condition", "Sequence" },
                 2,
-                new[]
-                {
-                    "InstallAutoApdater",
-                    "UninstallAutoApdater",
-                    "RemoveAll",
-                    "StopEPMD",
-                    "NotAutoStartlYeniseiService",
-                    "NotAutoStartlRegimeService",
-                    "StartYeniseiService",
-                    "StartRegimeService"
-                },
+                null,
                 false);
+        }
+
+        // Файлы конфигурации опознаются по длинному имени, а не по
+        // сгенерированному идентификатору File, который меняется от версии
+        // к версии вендорского пакета.
+        private static void ReadConfigurationFileRows(
+            Database database,
+            LocalModuleMsiDatabaseSnapshot result)
+        {
+            string[] columns =
+            {
+                "File", "Component_", "FileName", "FileSize", "Attributes",
+                "Sequence"
+            };
+            HashSet<string> wanted = new HashSet<string>(
+                ConfigurationFileNames,
+                StringComparer.OrdinalIgnoreCase);
+            using (View view = database.OpenView(BuildSelect("File", columns)))
+            {
+                view.Execute();
+                Record record;
+                while ((record = view.Fetch()) != null)
+                {
+                    using (record)
+                    {
+                        string fileName = GetString(record, 3);
+                        if (!wanted.Contains(LongFileName(fileName))) continue;
+                        MsiProfileRow row = new MsiProfileRow
+                        {
+                            Table = "File",
+                            Key = GetString(record, 1)
+                        };
+                        for (int field = 2; field <= columns.Length; field++)
+                        {
+                            row.Columns.Add(columns[field - 1]);
+                            row.Values.Add(GetString(record, field));
+                        }
+                        result.Rows.Add(row);
+                    }
+                }
+            }
+        }
+
+        internal static string LongFileName(string value)
+        {
+            string text = value == null ? string.Empty : value.Trim();
+            int separator = text.IndexOf('|');
+            return separator < 0 ? text : text.Substring(separator + 1);
         }
 
         private static void ReadRows(
@@ -216,9 +233,9 @@ namespace EsmTspiot.ServiceProvisioner
             string[] allowedKeys,
             bool compositeKey)
         {
-            HashSet<string> allowed = new HashSet<string>(
-                allowedKeys,
-                StringComparer.Ordinal);
+            HashSet<string> allowed = allowedKeys == null
+                ? null
+                : new HashSet<string>(allowedKeys, StringComparer.Ordinal);
             using (View view = database.OpenView(BuildSelect(table, columns)))
             {
                 view.Execute();
@@ -230,7 +247,7 @@ namespace EsmTspiot.ServiceProvisioner
                         string key = compositeKey
                             ? GetString(record, 1) + "|" + GetString(record, 2)
                             : GetString(record, 1);
-                        if (!allowed.Contains(key)) continue;
+                        if (allowed != null && !allowed.Contains(key)) continue;
                         MsiProfileRow row = new MsiProfileRow
                         {
                             Table = table,

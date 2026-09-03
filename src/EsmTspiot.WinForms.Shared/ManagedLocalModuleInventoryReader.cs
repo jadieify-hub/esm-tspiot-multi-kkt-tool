@@ -290,7 +290,7 @@ namespace EsmTspiot.WinForms.Shared
                 ApiPort = module.ApiPort,
                 DatabasePort = module.DatabasePort,
                 EpmdPort = module.EpmdPort,
-                RuntimeVersion = SupportedLocalModulePackageIdentity.ProductVersion
+                RuntimeVersion = SupportedLocalModulePackageIdentity.LegacyManagedRuntimeVersion
             };
         }
 

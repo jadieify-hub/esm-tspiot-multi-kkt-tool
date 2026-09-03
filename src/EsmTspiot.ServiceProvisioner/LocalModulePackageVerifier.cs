@@ -40,54 +40,49 @@ namespace EsmTspiot.ServiceProvisioner
         }
     }
 
+    /// <summary>
+    /// Пакет опознаётся как ЛМ ЧЗ по подписи ЦРПТ, UpgradeCode и структуре, а
+    /// не по номеру версии: новая минорная версия вендора принимается без
+    /// правки приложения. Конкретный файл при этом остаётся зафиксированным:
+    /// имя, размер, SHA-256 и отпечаток подписанта сверяются с тем, что видел
+    /// оператор при выборе.
+    /// </summary>
     internal sealed class LocalModulePackageVerifier
     {
-        private readonly LocalModuleInstallerSelection _expected;
         private readonly IWindowsInstallerPackageReader _packageReader;
         private readonly IFileTrustVerifier _trustVerifier;
         private readonly IPathSafety _pathSafety;
-        private readonly ILocalModuleMsiCapabilityRegistry _capabilityRegistry;
+        private readonly ILocalModuleMsiCapabilityResolver _capabilityResolver;
         private readonly ILocalModuleMsiProfileReader _profileReader;
 
         internal LocalModulePackageVerifier(
-            LocalModuleInstallerSelection expected,
             IWindowsInstallerPackageReader packageReader,
             IFileTrustVerifier trustVerifier,
             IPathSafety pathSafety,
-            ILocalModuleMsiCapabilityRegistry capabilityRegistry,
+            ILocalModuleMsiCapabilityResolver capabilityResolver,
             ILocalModuleMsiProfileReader profileReader)
         {
-            if (expected == null) throw new ArgumentNullException("expected");
             if (packageReader == null) throw new ArgumentNullException("packageReader");
             if (trustVerifier == null) throw new ArgumentNullException("trustVerifier");
             if (pathSafety == null) throw new ArgumentNullException("pathSafety");
-            if (capabilityRegistry == null)
-                throw new ArgumentNullException("capabilityRegistry");
+            if (capabilityResolver == null)
+                throw new ArgumentNullException("capabilityResolver");
             if (profileReader == null) throw new ArgumentNullException("profileReader");
-            _expected = Clone(expected);
             _packageReader = packageReader;
             _trustVerifier = trustVerifier;
             _pathSafety = pathSafety;
-            _capabilityRegistry = capabilityRegistry;
+            _capabilityResolver = capabilityResolver;
             _profileReader = profileReader;
         }
 
-        internal static LocalModulePackageVerifier SupportedVersion2617()
+        internal static LocalModulePackageVerifier Supported()
         {
             return new LocalModulePackageVerifier(
-                CreateSupportedIdentity(),
                 new WindowsInstallerPackageReader(),
                 new WinTrustVerifier(),
                 new PathSafety(),
-                new LocalModuleMsiCapabilityRegistry(),
+                new LocalModuleMsiCapabilityResolver(),
                 new LocalModuleMsiProfileReader());
-        }
-
-        internal static LocalModuleInstallerSelection CreateSupportedIdentity()
-        {
-            return SupportedLocalModulePackageIdentity.Create(
-                string.Empty,
-                true);
         }
 
         internal VerifiedLocalModulePackage VerifyAndLock(
@@ -99,13 +94,11 @@ namespace EsmTspiot.ServiceProvisioner
             {
                 throw new InvalidDataException(shape.JoinMessages());
             }
-            ValidationResult expected =
-                ProvisioningRequestValidator.ValidateLocalModuleInstallerSelection(
-                    WithSourcePath(_expected, selection.SourcePath),
-                    selection);
-            if (!expected.IsValid)
+            ValidationResult vendor = LocalModulePackagePolicy.Evaluate(selection);
+            if (!vendor.IsValid)
             {
-                throw new InvalidDataException(expected.JoinMessages());
+                throw new InvalidDataException(
+                    "Это не пакет ЛМ ЧЗ от ЦРПТ. " + vendor.JoinMessages());
             }
 
             string sourcePath = Path.GetFullPath(selection.SourcePath);
@@ -135,20 +128,24 @@ namespace EsmTspiot.ServiceProvisioner
                 if (!trust.IsTrusted || trust.Observed == null)
                 {
                     throw new InvalidDataException(
-                        trust.ErrorMessage ?? "Local-module MSI trust verification failed.");
+                        trust.ErrorMessage ??
+                        "Проверка подписи MSI ЛМ не пройдена.");
                 }
                 ValidateObservedTrust(selection, trust.Observed);
 
-                LocalModuleMsiCapabilityProfile profile =
-                    _capabilityRegistry.FindExact(metadata, trust.Observed);
                 LocalModuleMsiDatabaseSnapshot databaseSnapshot =
                     _profileReader.Read(sourcePath);
+                LocalModuleMsiCapabilityProfile profile =
+                    _capabilityResolver.Resolve(
+                        metadata,
+                        trust.Observed,
+                        databaseSnapshot);
                 IList<MsiProfileMismatch> mismatches =
                     databaseSnapshot.Compare(profile);
                 if (mismatches.Count > 0)
                 {
                     StringBuilder message = new StringBuilder(
-                        "Local-module MSI structural profile mismatch: ");
+                        "Структура MSI ЛМ разошлась с выведенным профилем: ");
                     for (int index = 0; index < mismatches.Count; index++)
                     {
                         if (index > 0) message.Append("; ");
@@ -175,6 +172,8 @@ namespace EsmTspiot.ServiceProvisioner
             }
         }
 
+        // Значения сверяются с тем, что оператор видел при выборе файла: между
+        // выбором и запуском с правами администратора файл меняться не должен.
         private static void ValidateMetadata(
             LocalModuleInstallerSelection selection,
             WindowsInstallerPackageMetadata observed)
@@ -186,7 +185,8 @@ namespace EsmTspiot.ServiceProvisioner
                 !string.Equals(selection.UpgradeCode, observed.UpgradeCode, StringComparison.OrdinalIgnoreCase))
             {
                 throw new InvalidDataException(
-                    "MSI ProductName, ProductVersion, ProductCode or UpgradeCode does not match the confirmed package.");
+                    "ProductName, ProductVersion, ProductCode или UpgradeCode " +
+                    "выбранного MSI изменились после подтверждения.");
             }
         }
 
@@ -209,7 +209,8 @@ namespace EsmTspiot.ServiceProvisioner
                 !observed.RequireCodeSigningEku)
             {
                 throw new InvalidDataException(
-                    "Local-module MSI hash, size or Authenticode signer does not match the confirmed package.");
+                    "Хеш, размер или подписант выбранного MSI ЛМ изменились " +
+                    "после подтверждения.");
             }
         }
 
@@ -245,34 +246,6 @@ namespace EsmTspiot.ServiceProvisioner
                 SignerSubject = selection.SignerSubject,
                 SignerThumbprint = selection.SignerThumbprint,
                 RequireCodeSigningEku = true
-            };
-        }
-
-        private static LocalModuleInstallerSelection WithSourcePath(
-            LocalModuleInstallerSelection source,
-            string sourcePath)
-        {
-            LocalModuleInstallerSelection result = Clone(source);
-            result.SourcePath = sourcePath;
-            return result;
-        }
-
-        private static LocalModuleInstallerSelection Clone(
-            LocalModuleInstallerSelection source)
-        {
-            return new LocalModuleInstallerSelection
-            {
-                SourcePath = source.SourcePath,
-                FileName = source.FileName,
-                ByteLength = source.ByteLength,
-                Sha256 = source.Sha256,
-                ProductName = source.ProductName,
-                ProductVersion = source.ProductVersion,
-                ProductCode = source.ProductCode,
-                UpgradeCode = source.UpgradeCode,
-                SignerSubject = source.SignerSubject,
-                SignerThumbprint = source.SignerThumbprint,
-                LicenseNoticeAccepted = source.LicenseNoticeAccepted
             };
         }
     }

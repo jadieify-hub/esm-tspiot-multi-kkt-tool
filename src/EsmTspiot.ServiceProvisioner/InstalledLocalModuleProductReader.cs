@@ -78,6 +78,47 @@ namespace EsmTspiot.ServiceProvisioner
             return match;
         }
 
+        // Пустое значение означает "любой": базовый ЛМ вендора опознаётся по
+        // имени продукта и каталогу, без привязки к версии и ProductCode.
+        internal InstalledLocalModuleProduct Find(
+            string productCode,
+            string displayName,
+            string displayVersion,
+            string installLocation)
+        {
+            string product = string.IsNullOrEmpty(productCode)
+                ? string.Empty
+                : NormalizeProductCode(productCode);
+            InstalledLocalModuleProduct match = null;
+            IList<InstalledLocalModuleProduct> installed = ReadAll();
+            for (int index = 0; index < installed.Count; index++)
+            {
+                InstalledLocalModuleProduct current = installed[index];
+                if (product.Length != 0 && !string.Equals(
+                        NormalizeProductCode(current.ProductCode),
+                        product,
+                        StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (!string.IsNullOrEmpty(displayName) && !string.Equals(
+                        current.DisplayName,
+                        displayName,
+                        StringComparison.Ordinal))
+                    continue;
+                if (!string.IsNullOrEmpty(displayVersion) && !string.Equals(
+                        current.DisplayVersion,
+                        displayVersion,
+                        StringComparison.Ordinal))
+                    continue;
+                if (!PathsEqual(current.InstallLocation, installLocation))
+                    continue;
+                if (match != null)
+                    throw new InvalidDataException(
+                        "Installed local-module product identity is duplicated.");
+                match = current;
+            }
+            return match;
+        }
+
         private static void Append(
             IList<InstalledLocalModuleProduct> destination,
             IList<InstalledLocalModuleProduct> source)

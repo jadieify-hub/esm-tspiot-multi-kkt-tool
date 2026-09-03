@@ -32,14 +32,31 @@ namespace EsmTspiot.ServiceProvisioner
 
                 plan.ExpectedConfigFiles.Clear();
                 stage = "generate isolated configuration files";
+                IDictionary<string, string> configFiles =
+                    LocalModuleConfigBytes.MapConfigurationFiles(
+                        source.CapabilityProfile);
+                List<LocalModuleConfigRole> roles =
+                    new List<LocalModuleConfigRole>();
                 for (int index = 0; index < sourceCabinets.Files.Count; index++)
                 {
                     MsiFilePayloadSnapshot file = sourceCabinets.Files[index];
-                    if (!LocalModuleConfigBytes.IsGenerated(file.FileId)) continue;
+                    string longFileName;
+                    if (!configFiles.TryGetValue(file.FileId, out longFileName))
+                        continue;
                     string filePath = Path.Combine(extracted, file.FileId);
+                    byte[] original = File.ReadAllBytes(filePath);
+                    LocalModuleConfigRole role = LocalModuleConfigBytes.Classify(
+                        longFileName,
+                        original);
+                    if (role == LocalModuleConfigRole.None) continue;
+                    if (roles.Contains(role))
+                        throw new InvalidDataException(
+                            "В пакете несколько файлов конфигурации одного назначения.");
+                    roles.Add(role);
                     byte[] generated = LocalModuleConfigBytes.Transform(
+                        role,
                         file.FileId,
-                        File.ReadAllBytes(filePath),
+                        original,
                         plan);
                     File.WriteAllBytes(filePath, generated);
                     plan.ExpectedConfigFiles.Add(file.FileId, generated);
@@ -47,26 +64,18 @@ namespace EsmTspiot.ServiceProvisioner
                 if (plan.ExpectedConfigFiles.Count != 4)
                 {
                     throw new InvalidDataException(
-                        "Exactly four mutable local-module config files must be generated.");
+                        "Должны быть подготовлены ровно четыре файла конфигурации ЛМ.");
                 }
 
-                string firstCab = Path.Combine(workspace, "media1.cab");
-                string secondCab = Path.Combine(workspace, "Disk1.cab");
-                stage = "pack first cabinet";
-                PackCabinet(
-                    firstCab,
+                stage = "pack cabinets";
+                IDictionary<string, string> packedCabinets = PackCabinets(
+                    workspace,
                     extracted,
-                    sourceCabinets.CabinetMembers["media1.cab"]);
-                stage = "pack second cabinet";
-                PackCabinet(
-                    secondCab,
-                    extracted,
-                    sourceCabinets.CabinetMembers["Disk1.cab"]);
+                    sourceCabinets);
                 stage = "update output MSI database";
                 UpdateOutputDatabase(
                     transformedMsiPath,
-                    firstCab,
-                    secondCab,
+                    packedCabinets,
                     plan,
                     extracted);
                 return sourcePayload;
@@ -162,17 +171,42 @@ namespace EsmTspiot.ServiceProvisioner
             new CabInfo(cabinetPath).PackFiles(sourceRoot, members, members);
         }
 
+        // Число встроенных cab-архивов берётся из самого пакета: вендор может
+        // изменить их количество и имена в новой версии.
+        private static IDictionary<string, string> PackCabinets(
+            string workspace,
+            string extractedRoot,
+            LocalModuleCabinetSnapshot sourceCabinets)
+        {
+            Dictionary<string, string> result =
+                new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (KeyValuePair<string, IList<string>> cabinet in
+                sourceCabinets.CabinetMembers)
+            {
+                string cabinetPath = Path.Combine(workspace, cabinet.Key);
+                PackCabinet(cabinetPath, extractedRoot, cabinet.Value);
+                result.Add(cabinet.Key, cabinetPath);
+            }
+            if (result.Count == 0)
+            {
+                throw new InvalidDataException(
+                    "В пакете нет встроенных cab-архивов.");
+            }
+            return result;
+        }
+
         private static void UpdateOutputDatabase(
             string path,
-            string firstCab,
-            string secondCab,
+            IDictionary<string, string> packedCabinets,
             LocalModuleMsiTransformPlan plan,
             string extractedRoot)
         {
             using (Database database = new Database(path, DatabaseOpenMode.Transact))
             {
-                UpdateStream(database, "media1.cab", firstCab);
-                UpdateStream(database, "Disk1.cab", secondCab);
+                foreach (KeyValuePair<string, string> cabinet in packedCabinets)
+                {
+                    UpdateStream(database, cabinet.Key, cabinet.Value);
+                }
                 foreach (KeyValuePair<string, byte[]> item in
                     plan.ExpectedConfigFiles)
                 {
@@ -437,71 +471,149 @@ namespace EsmTspiot.ServiceProvisioner
         }
     }
 
+    internal enum LocalModuleConfigRole
+    {
+        None = 0,
+        ApiLocalIni = 1,
+        ApiVmArgs = 2,
+        DatabaseLocalIni = 3,
+        DatabaseVmArgs = 4
+    }
+
+    /// <summary>
+    /// Шаблоны конфигурации опознаются по имени файла и вендорским значениям
+    /// по умолчанию внутри, а не по идентификатору File конкретной версии.
+    /// </summary>
     internal static class LocalModuleConfigBytes
     {
-        private static readonly string[] ConfigIds =
-        {
-            "fil4D9BD38000F7BBE9FA37B3949730CD45",
-            "filB64169385D3728F85488BA683E5B1809",
-            "fil8B086431A47A790C3CAEE2AA56EF7E1C",
-            "fil0C0BA2BF1CF3006FEE6418B1FBB8A2DC"
-        };
+        private const string ApiLocalIniName = "local.ini.dist";
+        private const string VmArgsName = "vm.args.dist";
+        private const string ApiPortMarker = "port = 5995";
+        private const string ApiDatabaseUrlMarker =
+            "db_url = http://127.0.0.1:5984";
+        private const string DatabasePortMarker = "port = 5984";
+        private const string DatabaseBindMarker = "bind_address = 0.0.0.0";
+        private const string ApiNodeMarker = "-name regime@127.0.0.1";
+        private const string DatabaseNodeMarker = "-name yenisei@127.0.0.1";
 
-        internal static bool IsGenerated(string fileId)
+        internal static IDictionary<string, string> MapConfigurationFiles(
+            LocalModuleMsiCapabilityProfile profile)
         {
-            for (int index = 0; index < ConfigIds.Length; index++)
-                if (ConfigIds[index] == fileId) return true;
-            return false;
+            if (profile == null) throw new ArgumentNullException("profile");
+            Dictionary<string, string> result =
+                new Dictionary<string, string>(StringComparer.Ordinal);
+            for (int index = 0; index < profile.Rows.Count; index++)
+            {
+                MsiProfileRow row = profile.Rows[index];
+                if (row == null || !string.Equals(
+                        row.Table,
+                        "File",
+                        StringComparison.Ordinal))
+                {
+                    continue;
+                }
+                string name = LocalModuleMsiProfileReader.LongFileName(
+                    row.Value("FileName"));
+                if (!result.ContainsKey(row.Key)) result.Add(row.Key, name);
+            }
+            return result;
+        }
+
+        internal static LocalModuleConfigRole Classify(
+            string longFileName,
+            byte[] content)
+        {
+            string text;
+            try
+            {
+                text = new UTF8Encoding(false, true).GetString(content);
+            }
+            catch (ArgumentException)
+            {
+                return LocalModuleConfigRole.None;
+            }
+            if (string.Equals(
+                    longFileName,
+                    ApiLocalIniName,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                if (Contains(text, ApiPortMarker) &&
+                    Contains(text, ApiDatabaseUrlMarker))
+                    return LocalModuleConfigRole.ApiLocalIni;
+                if (Contains(text, DatabasePortMarker) &&
+                    Contains(text, DatabaseBindMarker))
+                    return LocalModuleConfigRole.DatabaseLocalIni;
+                return LocalModuleConfigRole.None;
+            }
+            if (string.Equals(
+                    longFileName,
+                    VmArgsName,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                if (Contains(text, ApiNodeMarker))
+                    return LocalModuleConfigRole.ApiVmArgs;
+                if (Contains(text, DatabaseNodeMarker))
+                    return LocalModuleConfigRole.DatabaseVmArgs;
+                return LocalModuleConfigRole.None;
+            }
+            return LocalModuleConfigRole.None;
         }
 
         internal static byte[] Transform(
+            LocalModuleConfigRole role,
             string fileId,
             byte[] source,
             LocalModuleMsiTransformPlan plan)
         {
             UTF8Encoding utf8 = new UTF8Encoding(false, true);
             string text = utf8.GetString(source);
-            if (fileId == ConfigIds[0])
+            if (role == LocalModuleConfigRole.ApiLocalIni)
             {
                 text = ReplaceOnce(
                     fileId,
                     text,
-                    "port = 5995",
+                    ApiPortMarker,
                     "port = " + plan.ApiPort);
                 text = ReplaceOnce(
                     fileId,
                     text,
-                    "db_url = http://127.0.0.1:5984",
+                    ApiDatabaseUrlMarker,
                     "db_url = http://127.0.0.1:" + plan.DatabasePort);
             }
-            else if (fileId == ConfigIds[1])
+            else if (role == LocalModuleConfigRole.ApiVmArgs)
                 text = ReplaceOnce(
                     fileId,
                     text,
-                    "-name regime@127.0.0.1",
+                    ApiNodeMarker,
                     "-name " + plan.ApiNodeName);
-            else if (fileId == ConfigIds[2])
+            else if (role == LocalModuleConfigRole.DatabaseLocalIni)
             {
                 text = ReplaceOnce(
                     fileId,
                     text,
-                    "port = 5984",
+                    DatabasePortMarker,
                     "port = " + plan.DatabasePort);
                 text = ReplaceOnce(
                     fileId,
                     text,
-                    "bind_address = 0.0.0.0",
+                    DatabaseBindMarker,
                     "bind_address = 127.0.0.1");
             }
-            else if (fileId == ConfigIds[3])
+            else if (role == LocalModuleConfigRole.DatabaseVmArgs)
                 text = ReplaceOnce(
                     fileId,
                     text,
-                    "-name yenisei@127.0.0.1",
+                    DatabaseNodeMarker,
                     "-name " + plan.DatabaseNodeName);
             else
-                throw new InvalidDataException("Unexpected generated config identity.");
+                throw new InvalidDataException(
+                    "Неизвестное назначение файла конфигурации ЛМ.");
             return utf8.GetBytes(text);
+        }
+
+        private static bool Contains(string text, string marker)
+        {
+            return text.IndexOf(marker, StringComparison.Ordinal) >= 0;
         }
 
         private static string ReplaceOnce(

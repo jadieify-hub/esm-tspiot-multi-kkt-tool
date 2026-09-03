@@ -330,7 +330,7 @@ namespace EsmTspiot.ServiceProvisioner
             LocalModuleFirewallRule.Create(
                 new string('a', 32),
                 Path.Combine(request.InstallVolumeRoot,
-                    "Program Files", "Regime", "erts-13.0.4", "bin", "erl.exe"),
+                    "Program Files", "Regime", "erts", "bin", "erl.exe"),
                 request.ApiPort,
                 request.RemoteAddress);
         }

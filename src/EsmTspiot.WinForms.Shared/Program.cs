@@ -71,7 +71,7 @@ namespace EsmTspiot.WinForms.Shared
                 return "(имя не определено)";
             }
             // Assembly failures report a display name such as
-            // "EsmTspiot.Shared, Version=11.2.0.0, Culture=neutral, ...".
+            // "EsmTspiot.Shared, Version=11.3.0.0, Culture=neutral, ...".
             int comma = fileName.IndexOf(',');
             string simpleName = comma > 0 ? fileName.Substring(0, comma).Trim() : fileName;
             if (simpleName.IndexOfAny(new char[] { '\\', '/', ':' }) < 0 &&

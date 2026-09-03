@@ -1,7 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.Serialization.Json;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
+using EsmTspiot.Shared.Models;
+using EsmTspiot.Shared.Services;
 using WixToolset.Dtf.Compression.Cab;
 using WixToolset.Dtf.WindowsInstaller;
 
@@ -40,8 +45,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             string msiPath = Path.Combine(root, "source.msi");
             string idtRoot = Path.Combine(root, "idt");
             Directory.CreateDirectory(idtRoot);
-            LocalModuleMsiCapabilityProfile profile =
-                LocalModuleMsiCapabilityRegistry.LoadSupportedProfile();
+            LocalModuleMsiCapabilityProfile profile = LoadFixtureProfile();
             Dictionary<string, byte[]> payloads = CreatePayloads();
             profile.FileRowCount = 6;
             profile.MsiFileHashRowCount = 6;
@@ -110,6 +114,96 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 throw new InvalidOperationException(
                     "Synthetic MSI stage failed: " + stage + ".",
                     exception);
+            }
+        }
+
+        // Образец подтверждения оператора: значения соответствуют пакету
+        // 2.6.1-7 и нужны только там, где файл на диск не кладётся.
+        internal static LocalModuleInstallerSelection SampleSelection(
+            string sourcePath)
+        {
+            return new LocalModuleInstallerSelection
+            {
+                SourcePath = sourcePath ?? string.Empty,
+                FileName = "regime-2.6.1-7.msi",
+                ByteLength = 51007488,
+                Sha256 = "68a9633cefc912c2c1defae40d1c8f43" +
+                    "3bb794ee66060b822f0895410ab6c5c6",
+                ProductName =
+                    SupportedLocalModulePackageIdentity.ProductName,
+                ProductVersion = "2.6.1",
+                ProductCode = "{556FD8AD-43A3-4645-BC54-EBF3043ADF82}",
+                UpgradeCode =
+                    SupportedLocalModulePackageIdentity.UpgradeCode,
+                SignerSubject =
+                    SupportedLocalModulePackageIdentity.SignerSubject,
+                SignerThumbprint =
+                    "6BA5F6BBE4BE27658253C78889334D0E24858C19",
+                LicenseNoticeAccepted = true
+            };
+        }
+
+        // Подтверждение собирается по настоящему файлу — так же, как это
+        // делает окно выбора MSI в приложении.
+        internal static LocalModuleInstallerSelection DescribeSelection(
+            string sourcePath)
+        {
+            string fullPath = Path.GetFullPath(sourcePath);
+            FileInfo info = new FileInfo(fullPath);
+            WindowsInstallerPackageMetadata metadata =
+                new WindowsInstallerPackageReader().Read(fullPath);
+            X509Certificate2 certificate = new X509Certificate2(
+                X509Certificate.CreateFromSignedFile(fullPath));
+            return new LocalModuleInstallerSelection
+            {
+                SourcePath = fullPath,
+                FileName = Path.GetFileName(fullPath),
+                ByteLength = info.Length,
+                Sha256 = ComputeFileSha256(fullPath),
+                ProductName = metadata.ProductName,
+                ProductVersion = metadata.ProductVersion,
+                ProductCode = metadata.ProductCode,
+                UpgradeCode = metadata.UpgradeCode,
+                SignerSubject = certificate.Subject,
+                SignerThumbprint = certificate.Thumbprint,
+                LicenseNoticeAccepted = true
+            };
+        }
+
+        private static string ComputeFileSha256(string path)
+        {
+            using (FileStream stream = File.OpenRead(path))
+            using (SHA256 algorithm = SHA256.Create())
+            {
+                byte[] hash = algorithm.ComputeHash(stream);
+                StringBuilder result = new StringBuilder(hash.Length * 2);
+                for (int index = 0; index < hash.Length; index++)
+                {
+                    result.Append(hash[index].ToString("x2"));
+                }
+                return result.ToString();
+            }
+        }
+
+        // Снимок структуры реального пакета 2.6.1-7 используется только как
+        // образец для синтетического MSI: в приложении профиль выводится из
+        // выбранного оператором файла.
+        internal static LocalModuleMsiCapabilityProfile LoadFixtureProfile()
+        {
+            string path = Path.Combine(
+                AppDomain.CurrentDomain.BaseDirectory,
+                "Fixtures",
+                "local-module-msi-2.6.1-7-profile.json");
+            using (FileStream stream = File.OpenRead(path))
+            {
+                LocalModuleMsiCapabilityProfile profile =
+                    (LocalModuleMsiCapabilityProfile)
+                    new DataContractJsonSerializer(
+                        typeof(LocalModuleMsiCapabilityProfile))
+                        .ReadObject(stream);
+                profile.SchemaVersion =
+                    LocalModuleMsiCapabilityResolver.DerivedSchemaVersion;
+                return profile;
             }
         }
 

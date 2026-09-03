@@ -1,46 +1,27 @@
-using EsmTspiot.Shared.Models;
+using System;
 
 namespace EsmTspiot.Shared.Services
 {
+    /// <summary>
+    /// Устойчивые признаки пакета ЛМ ЧЗ от ЦРПТ. Точный хеш, размер, версия,
+    /// ProductCode, PackageCode и отпечаток сертификата намеренно не
+    /// фиксируются: пакет опознаётся по издателю, UpgradeCode и структуре,
+    /// чтобы очередная версия вендора не выводила утилиту из строя.
+    /// </summary>
     public static class SupportedLocalModulePackageIdentity
     {
-        public const string FileName = "regime-2.6.1-7.msi";
-        public const long ByteLength = 51007488;
-        public const string Sha256 =
-            "68a9633cefc912c2c1defae40d1c8f433bb794ee66060b822f0895410ab6c5c6";
         public const string ProductName = "Локальный модуль Честный Знак";
-        public const string ProductVersion = "2.6.1";
-        public const string ProductCode =
-            "{556FD8AD-43A3-4645-BC54-EBF3043ADF82}";
         public const string UpgradeCode =
             "{9449123B-61C4-40DE-AA6C-1BB9AA02EB67}";
         public const string SignerSubject =
             "CN=ООО ЦЕНТР РАЗВИТИЯ ПЕРСПЕКТИВНЫХ ТЕХНОЛОГИЙ, " +
             "O=ООО ЦЕНТР РАЗВИТИЯ ПЕРСПЕКТИВНЫХ ТЕХНОЛОГИЙ";
-        public const string SignerThumbprint =
-            "6BA5F6BBE4BE27658253C78889334D0E24858C19";
         public const string ApiLogin = "admin";
         public const string ApiPassword = "admin";
 
-        public static LocalModuleInstallerSelection Create(
-            string sourcePath,
-            bool licenseNoticeAccepted)
-        {
-            return new LocalModuleInstallerSelection
-            {
-                SourcePath = sourcePath ?? string.Empty,
-                FileName = FileName,
-                ByteLength = ByteLength,
-                Sha256 = Sha256,
-                ProductName = ProductName,
-                ProductVersion = ProductVersion,
-                ProductCode = ProductCode,
-                UpgradeCode = UpgradeCode,
-                SignerSubject = SignerSubject,
-                SignerThumbprint = SignerThumbprint,
-                LicenseNoticeAccepted = licenseNoticeAccepted
-            };
-        }
+        // Версия рантайма для устаревшего управляемого пути: он не ставит
+        // пакет и опирается на распакованный вендорный набор 2.6.1.
+        public const string LegacyManagedRuntimeVersion = "2.6.1";
 
         public static bool MatchesSignerSubject(string observedSubject)
         {
@@ -50,6 +31,23 @@ namespace EsmTspiot.Shared.Services
                 ContainsRdn(
                     observedSubject,
                     "O=ООО ЦЕНТР РАЗВИТИЯ ПЕРСПЕКТИВНЫХ ТЕХНОЛОГИЙ");
+        }
+
+        public static bool MatchesUpgradeCode(string observedUpgradeCode)
+        {
+            Guid observed;
+            Guid expected;
+            if (!Guid.TryParseExact(
+                    observedUpgradeCode == null
+                        ? string.Empty
+                        : observedUpgradeCode.Trim(),
+                    "B",
+                    out observed) ||
+                !Guid.TryParseExact(UpgradeCode, "B", out expected))
+            {
+                return false;
+            }
+            return observed == expected;
         }
 
         private static bool ContainsRdn(
@@ -66,7 +64,7 @@ namespace EsmTspiot.Shared.Services
                 if (string.Equals(
                     parts[index].Trim(),
                     expectedRdn,
-                    System.StringComparison.Ordinal))
+                    StringComparison.Ordinal))
                 {
                     return true;
                 }

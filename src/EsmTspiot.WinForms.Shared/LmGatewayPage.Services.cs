@@ -886,7 +886,7 @@ namespace EsmTspiot.WinForms.Shared
             IList<ManagedLocalModuleProvisioningItemRequest> items =
                 ManagedLocalModuleRequestBuilder.Build(
                     plan,
-                    SupportedLocalModulePackageIdentity.ProductVersion);
+                    _localModuleInstallerSelection.ProductVersion);
             for (int index = 0; index < items.Count; index++)
             {
                 request.ManagedLocalModules.Add(items[index]);

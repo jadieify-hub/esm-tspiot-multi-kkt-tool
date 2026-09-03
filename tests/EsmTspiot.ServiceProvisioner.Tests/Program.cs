@@ -117,7 +117,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Local module verifier rejects package identity or signer mismatch", LocalModuleVerifierRejectsPackageIdentityOrSignerMismatch);
             Run("Local module MSI profile accepts exact sanitized snapshot", LocalModuleMsiProfileAcceptsExactSanitizedSnapshot);
             Run("Local module MSI profile reports every structural mismatch safely", LocalModuleMsiProfileReportsEveryStructuralMismatchSafely);
-            Run("Local module MSI registry rejects unknown exact identity", LocalModuleMsiRegistryRejectsUnknownExactIdentity);
+            Run("Local module MSI profile is derived from the selected package", LocalModuleMsiProfileIsDerivedFromSelectedPackage);
             Run("Local module MSI structure is read only after trust", LocalModuleMsiStructureIsReadOnlyAfterTrust);
             Run("Local module installer properties are pinned by the vendor profile", LocalModuleInstallerPropertiesArePinnedByVendorProfile);
             Run("Local module configuration rejects missing API credentials", LocalModuleConfigurationRejectsMissingApiCredentials);
@@ -133,6 +133,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Installed local module config exposes only a cookie digest", InstalledLocalModuleConfigExposesOnlyCookieDigest);
             Run("Installed local module services start stop and own listeners", InstalledLocalModuleServicesStartStopAndOwnListeners);
             Run("Local module firewall manager owns only an exact API rule", LocalModuleFirewallManagerOwnsOnlyExactApiRule);
+            Run("Local module layout discovers the erts runtime", LocalModuleLayoutDiscoversErtsRuntime);
             Run("MSI local module ensure is idempotent and recovers cleanup", MsiLocalModuleEnsureIsIdempotentAndRecoversCleanup);
             Run("MSI local module removal preserves base and compensates EPMD", MsiLocalModuleRemovalPreservesBaseAndCompensatesEpmd);
             Run("MSI local module ensure enables automatic start for an adopted base", MsiLocalModuleEnsureEnablesAutomaticStartForAdoptedBase);
@@ -176,6 +177,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Legacy migration retries partial cleanup and honors cancellation", LegacyMigrationRetriesPartialCleanupAndHonorsCancellation);
             Run("ESM instance YAML patches unique structural ldbControl", EsmInstanceYamlPatchesUniqueStructuralLdbControl);
             Run("ESM instance YAML rejects duplicate anchors and aliases", EsmInstanceYamlRejectsDuplicateAnchorsAndAliases);
+            Run("ESM instance YAML supports block sequences and rejects ambiguity", EsmInstanceYamlSupportsBlockSequencesAndRejectsAmbiguity);
             Run("ESM instance config transaction backs up restores and defers", EsmInstanceConfigTransactionBacksUpRestoresAndDefers);
             Run("SCM handles are disposed on every failure", ScmHandlesAreDisposedOnEveryFailure);
             Run("SCM configures restricted service SID", ScmConfiguresRestrictedServiceSid);
@@ -262,10 +264,9 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             try
             {
                 LocalModuleInstallerSelection selection =
-                    LocalModulePackageVerifier.CreateSupportedIdentity();
-                selection.SourcePath = sourcePath;
+                    MsiTestPackageFactory.DescribeSelection(sourcePath);
                 using (VerifiedLocalModulePackage package =
-                    LocalModulePackageVerifier.SupportedVersion2617()
+                    LocalModulePackageVerifier.Supported()
                         .VerifyAndLock(selection))
                 {
                     Console.WriteLine(
@@ -289,10 +290,9 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             try
             {
                 LocalModuleInstallerSelection selection =
-                    LocalModulePackageVerifier.CreateSupportedIdentity();
-                selection.SourcePath = sourcePath;
+                    MsiTestPackageFactory.DescribeSelection(sourcePath);
                 using (VerifiedLocalModulePackage package =
-                    LocalModulePackageVerifier.SupportedVersion2617()
+                    LocalModulePackageVerifier.Supported()
                         .VerifyAndLock(selection))
                 {
                     LocalModuleMsiCloneIdentity identity =
@@ -336,22 +336,31 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             try
             {
                 LocalModuleInstallerSelection selection =
-                    LocalModulePackageVerifier.CreateSupportedIdentity();
-                selection.SourcePath = sourcePath;
+                    MsiTestPackageFactory.DescribeSelection(sourcePath);
                 using (VerifiedLocalModulePackage package =
-                    LocalModulePackageVerifier.SupportedVersion2617()
+                    LocalModulePackageVerifier.Supported()
                         .VerifyAndLock(selection))
                 {
                     LocalModuleCabinetSnapshot snapshot =
                         LocalModuleCabinetTools.Extract(sourcePath, directory);
+                    IDictionary<string, string> configNames =
+                        LocalModuleConfigBytes.MapConfigurationFiles(
+                            package.CapabilityProfile);
                     for (int index = 0; index < snapshot.Files.Count; index++)
                     {
                         MsiFilePayloadSnapshot file = snapshot.Files[index];
-                        if (!LocalModuleConfigBytes.IsGenerated(file.FileId))
+                        string configName;
+                        if (!configNames.TryGetValue(file.FileId, out configName))
+                            continue;
+                        string configPath =
+                            Path.Combine(directory, file.FileId);
+                        if (LocalModuleConfigBytes.Classify(
+                                configName,
+                                File.ReadAllBytes(configPath)) ==
+                            LocalModuleConfigRole.None)
                             continue;
                         Console.WriteLine("CONFIG " + file.FileId);
-                        string[] lines = File.ReadAllLines(
-                            Path.Combine(directory, file.FileId));
+                        string[] lines = File.ReadAllLines(configPath);
                         for (int line = 0; line < lines.Length; line++)
                         {
                             string trimmed = lines[line].Trim();
@@ -1098,7 +1107,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     CreateLocalModuleTrustExpectation(selection),
                     true);
                 LocalModulePackageVerifier verifier = CreateTestLocalModulePackageVerifier(
-                    selection,
                     reader,
                     trust,
                     new FakePathSafety(true));
@@ -1151,7 +1159,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
                 using (VerifiedLocalModulePackage package =
                     CreateTestLocalModulePackageVerifier(
-                        selection,
                         new FakeWindowsInstallerPackageReader(
                             CreateLocalModulePackageMetadata()),
                         new FakeFileTrustVerifier(observed, true),
@@ -1235,7 +1242,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 wrongProduct.ProductCode = "{00000000-0000-0000-0000-000000000000}";
                 AssertThrows<InvalidDataException>(delegate {
                     CreateTestLocalModulePackageVerifier(
-                        selection,
                         new FakeWindowsInstallerPackageReader(wrongProduct),
                         new FakeFileTrustVerifier(CreateLocalModuleTrustExpectation(selection), true),
                         new FakePathSafety(true)).VerifyAndLock(selection).Dispose();
@@ -1245,7 +1251,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 wrongVersion.ProductVersion = "2.6.2";
                 AssertThrows<InvalidDataException>(delegate {
                     CreateTestLocalModulePackageVerifier(
-                        selection,
                         new FakeWindowsInstallerPackageReader(wrongVersion),
                         new FakeFileTrustVerifier(CreateLocalModuleTrustExpectation(selection), true),
                         new FakePathSafety(true)).VerifyAndLock(selection).Dispose();
@@ -1255,7 +1260,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 wrongSigner.SignerSubject = "CN=Unexpected Signer";
                 AssertThrows<InvalidDataException>(delegate {
                     CreateTestLocalModulePackageVerifier(
-                        selection,
                         new FakeWindowsInstallerPackageReader(CreateLocalModulePackageMetadata()),
                         new FakeFileTrustVerifier(wrongSigner, true),
                         new FakePathSafety(true)).VerifyAndLock(selection).Dispose();
@@ -1266,7 +1270,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 substitutedFile.Sha256 = new string('c', 64);
                 AssertThrows<InvalidDataException>(delegate {
                     CreateTestLocalModulePackageVerifier(
-                        selection,
                         new FakeWindowsInstallerPackageReader(CreateLocalModulePackageMetadata()),
                         new FakeFileTrustVerifier(substitutedFile, true),
                         new FakePathSafety(true)).VerifyAndLock(selection).Dispose();
@@ -1276,7 +1279,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 staleSelection.Sha256 = new string('b', 64);
                 AssertThrows<InvalidDataException>(delegate {
                     CreateTestLocalModulePackageVerifier(
-                        selection,
                         new FakeWindowsInstallerPackageReader(CreateLocalModulePackageMetadata()),
                         new FakeFileTrustVerifier(CreateLocalModuleTrustExpectation(selection), true),
                         new FakePathSafety(true)).VerifyAndLock(staleSelection).Dispose();
@@ -1337,8 +1339,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                             items[index].Inn + ".");
 
                 LocalModuleInstallerSelection installer =
-                    LocalModulePackageVerifier.CreateSupportedIdentity();
-                installer.SourcePath = sourcePath;
+                    MsiTestPackageFactory.DescribeSelection(sourcePath);
                 LmServiceProvisioningBatchRequest request =
                     new LmServiceProvisioningBatchRequest
                     {
@@ -1788,52 +1789,65 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 "SetStopEPMD");
         }
 
-        private static void LocalModuleMsiRegistryRejectsUnknownExactIdentity()
+        private static void LocalModuleMsiProfileIsDerivedFromSelectedPackage()
         {
             LocalModuleMsiCapabilityProfile fixture =
                 LoadLocalModuleMsiCapabilityFixture();
-            LocalModuleMsiCapabilityRegistry registry =
-                new LocalModuleMsiCapabilityRegistry();
+            LocalModuleMsiDatabaseSnapshot snapshot =
+                CreateLocalModuleMsiSnapshot(fixture);
             WindowsInstallerPackageMetadata metadata =
                 CreateLocalModulePackageMetadata();
             metadata.PackageCode = fixture.PackageCode;
-            TrustedFileExpectation trust = new TrustedFileExpectation
-            {
-                FileName = fixture.FileName,
-                ByteLength = fixture.ByteLength,
-                Sha256 = fixture.Sha256,
-                SignerThumbprint = fixture.SignerThumbprint,
-                RequireCodeSigningEku = true
-            };
+            TrustedFileExpectation trust =
+                CreateLocalModuleResolverTrust(fixture);
+            LocalModuleMsiCapabilityResolver resolver =
+                new LocalModuleMsiCapabilityResolver();
 
-            LocalModuleMsiCapabilityProfile supported =
-                registry.FindExact(metadata, trust);
-            AssertEqual(fixture.PackageCode, supported.PackageCode,
-                "The known exact PackageCode must resolve its capability profile.");
+            LocalModuleMsiCapabilityProfile derived =
+                resolver.Resolve(metadata, trust, snapshot);
+            AssertEqual(0, snapshot.Compare(derived).Count,
+                "Выведенный профиль должен совпадать с самим пакетом.");
+            AssertEqual(metadata.ProductCode, derived.ProductCode,
+                "Профиль должен фиксировать ProductCode выбранного файла.");
+            AssertEqual(fixture.Sha256, derived.Sha256,
+                "Профиль должен фиксировать хеш выбранного файла.");
 
-            string[] identityNames = { "ProductCode", "PackageCode", "UpgradeCode" };
-            for (int index = 0; index < identityNames.Length; index++)
-            {
-                WindowsInstallerPackageMetadata unknown = metadata.Clone();
-                if (identityNames[index] == "ProductCode")
-                {
-                    unknown.ProductCode = "{00000000-0000-0000-0000-000000000001}";
-                }
-                else if (identityNames[index] == "PackageCode")
-                {
-                    unknown.PackageCode = "{00000000-0000-0000-0000-000000000002}";
-                }
-                else
-                {
-                    unknown.UpgradeCode = "{00000000-0000-0000-0000-000000000003}";
-                }
-                InvalidDataException error = CaptureException<InvalidDataException>(delegate {
-                    registry.FindExact(unknown, trust);
-                });
-                AssertContains(error.Message, "unsupported-profile");
-                AssertFalse(error.Message.IndexOf("00000000", StringComparison.Ordinal) >= 0,
-                    "Unsupported-profile diagnostics must not echo unknown identities.");
-            }
+            WindowsInstallerPackageMetadata newer = metadata.Clone();
+            newer.ProductVersion = "2.7.0";
+            newer.ProductCode = "{11111111-2222-3333-4444-555555555555}";
+            newer.PackageCode = "{66666666-7777-8888-9999-AAAAAAAAAAAA}";
+            LocalModuleMsiCapabilityProfile upgraded =
+                resolver.Resolve(newer, trust, snapshot);
+            AssertEqual("2.7.0", upgraded.ProductVersion,
+                "Следующая версия ЛМ ЧЗ должна приниматься без правки приложения.");
+
+            TrustedFileExpectation foreignSigner =
+                CreateLocalModuleResolverTrust(fixture);
+            foreignSigner.SignerSubject = "CN=Другой поставщик";
+            AssertThrows<InvalidDataException>(delegate {
+                resolver.Resolve(metadata, foreignSigner, snapshot);
+            }, "MSI без подписи ЦРПТ должен отвергаться.");
+
+            WindowsInstallerPackageMetadata foreignUpgrade = metadata.Clone();
+            foreignUpgrade.UpgradeCode =
+                "{00000000-0000-0000-0000-000000000009}";
+            AssertThrows<InvalidDataException>(delegate {
+                resolver.Resolve(foreignUpgrade, trust, snapshot);
+            }, "MSI с чужим UpgradeCode должен отвергаться.");
+
+            LocalModuleMsiDatabaseSnapshot renamed =
+                CreateLocalModuleMsiSnapshot(fixture);
+            RenameSnapshotService(renamed, "yenisei", "couchdb");
+            AssertThrows<InvalidDataException>(delegate {
+                resolver.Resolve(metadata, trust, renamed);
+            }, "Пакет с другим набором служб должен отвергаться до клонирования.");
+
+            LocalModuleMsiDatabaseSnapshot withoutFolder =
+                CreateLocalModuleMsiSnapshot(fixture);
+            RemoveSnapshotRow(withoutFolder, "Directory", "APPLICATIONFOLDER");
+            AssertThrows<InvalidDataException>(delegate {
+                resolver.Resolve(metadata, trust, withoutFolder);
+            }, "Пакет без каталога установки должен отвергаться.");
         }
 
         private static void LocalModuleMsiStructureIsReadOnlyAfterTrust()
@@ -1852,14 +1866,13 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     new FakeLocalModuleMsiProfileReader(
                         CreateLocalModuleMsiSnapshot(profile));
                 LocalModulePackageVerifier verifier = new LocalModulePackageVerifier(
-                    selection,
                     new FakeWindowsInstallerPackageReader(
                         CreateLocalModulePackageMetadata()),
                     new FakeFileTrustVerifier(
                         CreateLocalModuleTrustExpectation(selection),
                         false),
                     new FakePathSafety(true),
-                    new FakeLocalModuleMsiCapabilityRegistry(profile),
+                    new FakeLocalModuleMsiCapabilityResolver(profile),
                     structuralReader);
 
                 AssertThrows<InvalidDataException>(delegate {
@@ -1999,16 +2012,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
         private static LocalModuleMsiCapabilityProfile
             LoadLocalModuleMsiCapabilityFixture()
         {
-            string path = Path.Combine(
-                AppDomain.CurrentDomain.BaseDirectory,
-                "Fixtures",
-                "local-module-msi-2.6.1-7-profile.json");
-            using (FileStream stream = File.OpenRead(path))
-            {
-                return (LocalModuleMsiCapabilityProfile)
-                    new DataContractJsonSerializer(
-                        typeof(LocalModuleMsiCapabilityProfile)).ReadObject(stream);
-            }
+            return MsiTestPackageFactory.LoadFixtureProfile();
         }
 
         private static void LocalModuleMsiCloneIdentityIsStableExceptPackageCode()
@@ -2618,6 +2622,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                         5984,
                         "{10000000-0000-0000-0000-000000000001}",
                         "{20000000-0000-0000-0000-000000000001}",
+                        "1.5.2",
                         @"D:\Program Files\Regime",
                         false,
                         true,
@@ -2687,6 +2692,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                         5984,
                         "{30000000-0000-0000-0000-000000000001}",
                         "{40000000-0000-0000-0000-000000000001}",
+                        "2.6.1",
                         @"D:\Program Files\Regime",
                         true,
                         false,
@@ -2702,6 +2708,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                         5984,
                         "{50000000-0000-0000-0000-000000000001}",
                         "{60000000-0000-0000-0000-000000000001}",
+                        "2.6.1",
                         @"D:\Program Files\Regime",
                         false,
                         true,
@@ -2918,12 +2925,35 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
         private static void LocalModuleFirewallManagerOwnsOnlyExactApiRule()
         {
+            string directory = CreateTemporaryDirectory();
+            try
+            {
+                LocalModuleFirewallManagerOwnsOnlyExactApiRule(directory);
+            }
+            finally
+            {
+                Directory.Delete(directory, true);
+            }
+        }
+
+        private static void LocalModuleFirewallManagerOwnsOnlyExactApiRule(
+            string directory)
+        {
+            string installRoot = Path.Combine(directory, "Regime1");
+            Directory.CreateDirectory(
+                Path.Combine(installRoot, "erts-13.0.4", "bin"));
             LocalModuleInstalledLayout layout =
                 LocalModuleInstalledLayout.Create(
-                    @"D:\Program Files\Regime1",
+                    installRoot,
                     1,
                     6995,
                     7984);
+            AssertTrue(layout.ErtsDiscovered,
+                "Каталог рантайма ЛМ должен находиться на диске.");
+            AssertEqual(
+                Path.Combine(installRoot, "erts-13.0.4", "bin"),
+                layout.ErtsBinPath,
+                "Правило сети должно указывать на найденный рантайм.");
             FakeWindowsFirewallApi api = new FakeWindowsFirewallApi();
             LocalModuleFirewallManager manager =
                 new LocalModuleFirewallManager(api);
@@ -2985,6 +3015,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 7984,
                 "{10000000-0000-0000-0000-000000000001}",
                 "{20000000-0000-0000-0000-000000000001}",
+                "2.6.1",
                 layout.InstallRoot,
                 true,
                 false,
@@ -3001,6 +3032,52 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 manifest.FirewallRuleHash);
             AssertEqual(2, api.RemoveCount,
                 "Manifest identity must authorize exact owned removal.");
+        }
+
+        private static void LocalModuleLayoutDiscoversErtsRuntime()
+        {
+            string directory = CreateTemporaryDirectory();
+            try
+            {
+                string upgraded = Path.Combine(directory, "Regime");
+                Directory.CreateDirectory(
+                    Path.Combine(upgraded, "erts-15.2.1", "bin"));
+                LocalModuleInstalledLayout layout =
+                    LocalModuleInstalledLayout.Create(upgraded, 0, 5995, 5984);
+                AssertTrue(layout.ErtsDiscovered,
+                    "Рантайм новой версии ЛМ должен опознаваться по каталогу.");
+                AssertEqual(
+                    Path.Combine(upgraded, "erts-15.2.1", "bin"),
+                    layout.ErtsBinPath,
+                    "Номер версии рантайма не должен быть зашит в приложение.");
+
+                string missing = Path.Combine(directory, "Regime2");
+                Directory.CreateDirectory(missing);
+                LocalModuleInstalledLayout blind =
+                    LocalModuleInstalledLayout.Create(missing, 2, 7995, 8984);
+                AssertFalse(blind.ErtsDiscovered,
+                    "Без каталога рантайма разметка должна это признавать.");
+                AssertThrows<InvalidDataException>(delegate {
+                    new LocalModuleFirewallManager(
+                        new FakeWindowsFirewallApi()).EnsureApiRule(
+                            blind,
+                            new string('e', 32),
+                            null);
+                }, "Без найденного рантайма правило сети не выписывается.");
+
+                string ambiguous = Path.Combine(directory, "Regime3");
+                Directory.CreateDirectory(
+                    Path.Combine(ambiguous, "erts-13.0.4", "bin"));
+                Directory.CreateDirectory(
+                    Path.Combine(ambiguous, "erts-15.2.1", "bin"));
+                AssertThrows<InvalidDataException>(delegate {
+                    LocalModuleInstalledLayout.Create(ambiguous, 3, 8995, 9984);
+                }, "Два рантайма в каталоге ЛМ должны останавливать работу.");
+            }
+            finally
+            {
+                Directory.Delete(directory, true);
+            }
         }
 
         private static void MsiLocalModuleEnsureIsIdempotentAndRecoversCleanup()
@@ -3741,8 +3818,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             CreateMsiProtocolRequest()
         {
             LocalModuleInstallerSelection installer =
-                LocalModulePackageVerifier.CreateSupportedIdentity();
-            installer.SourcePath = @"D:\regime-2.6.1-7.msi";
+                MsiTestPackageFactory.SampleSelection(
+                    @"D:\regime-2.6.1-7.msi");
             LmServiceProvisioningBatchRequest request =
                 new LmServiceProvisioningBatchRequest
                 {
@@ -4337,7 +4414,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     new FakePathSafety(true),
                     "S-1-5-21-111-222-333-1001");
                 LocalModuleInstallerSelection package =
-                    LocalModulePackageVerifier.CreateSupportedIdentity();
+                    MsiTestPackageFactory.SampleSelection(string.Empty);
                 LocalModuleCapabilityProfile capability =
                     LocalModuleCapabilityProfile.Resolve("2.6.1");
                 string runtimeNonce = "11111111111111111111111111111111";
@@ -4495,7 +4572,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 LocalModuleRuntimeManifest verified =
                     installer.VerifyExistingRuntime(
                         runtime.RuntimeId,
-                        LocalModulePackageVerifier.CreateSupportedIdentity(),
+                        MsiTestPackageFactory.SampleSelection(string.Empty),
                         LocalModuleCapabilityProfile.Resolve("2.6.1"));
 
                 AssertEqual(runtime.RuntimeId, verified.RuntimeId,
@@ -4507,7 +4584,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 AssertThrows<InvalidDataException>(delegate {
                     installer.VerifyExistingRuntime(
                         runtime.RuntimeId,
-                        LocalModulePackageVerifier.CreateSupportedIdentity(),
+                        MsiTestPackageFactory.SampleSelection(string.Empty),
                         LocalModuleCapabilityProfile.Resolve("2.6.1"));
                 }, "A reused runtime must be rehashed before any service is started.");
             }
@@ -4552,7 +4629,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     LocalModuleCapabilityProfile capability =
                         LocalModuleCapabilityProfile.Resolve("2.6.1");
                     LocalModuleInstallerSelection package =
-                        LocalModulePackageVerifier.CreateSupportedIdentity();
+                        MsiTestPackageFactory.SampleSelection(string.Empty);
                     LocalModuleVerifiedRuntimeImage image = new LocalModuleVerifiedRuntimeImage(
                         sourceRoot,
                         capability.CapabilityId,
@@ -7245,25 +7322,40 @@ namespace EsmTspiot.ServiceProvisioner.Tests
         private static void EsmInstanceYamlPatchesUniqueStructuralLdbControl()
         {
             string source =
-                "settings:\r\n" +
-                "  common:\r\n" +
-                "    mode: prod\r\n" +
-                "  ldbControl:\r\n" +
-                "      password: admin # must stay untouched\r\n" +
-                "      RESTPort: 5063\r\n" +
-                "      url: 0.0.0.0\r\n" +
-                "      gRPCPort: 50063 # vendor default\r\n" +
-                "dkkt:\r\n" +
-                "  port: 4042\r\n";
+                "defaultconfig:\r\n" +
+                "    settings:\r\n" +
+                "        ldbControl:\r\n" +
+                "            gRPCPort: 50063\r\n" +
+                "            RESTPort: 5063\r\n" +
+                "            url: 0.0.0.0\r\n" +
+                "            login: admin\r\n" +
+                "            password: admin # must stay untouched\r\n" +
+                "            version: \"\"\r\n" +
+                "        dkkt:\r\n" +
+                "            port:\r\n" +
+                "                - 4042\r\n" +
+                "            timeout: 30\r\n" +
+                "        gisMT:\r\n" +
+                "            params:\r\n" +
+                "                config:\r\n" +
+                "                    CdnCodesCheckTimeoutGISValue: null\r\n" +
+                "                    url: https://rsapi.crpt.ru/api?a=1&b=2\r\n" +
+                "        notes: |\r\n" +
+                "            free text: not yaml\r\n" +
+                "            - not a sequence\r\n" +
+                "filepath: C:\\ProgramData\\esp\\esm\\um\r\n";
             string patched = EsmInstanceControllerConfigPatcher.Patch(
                 source,
                 50064,
                 5064);
-            AssertContains(patched, "gRPCPort: 50064 # vendor default");
-            AssertContains(patched, "RESTPort: 5064");
-            AssertContains(patched, "url: 127.0.0.1");
+            AssertContains(patched, "            gRPCPort: 50064\r\n");
+            AssertContains(patched, "            RESTPort: 5064\r\n");
+            AssertContains(patched, "            url: 127.0.0.1\r\n");
             AssertContains(patched, "password: admin # must stay untouched");
-            AssertContains(patched, "dkkt:\r\n  port: 4042");
+            AssertContains(patched, "            port:\r\n                - 4042\r\n");
+            AssertContains(patched, "url: https://rsapi.crpt.ru/api?a=1&b=2");
+            AssertContains(patched, "            - not a sequence\r\n");
+            AssertContains(patched, "filepath: C:\\ProgramData\\esp\\esm\\um");
             AssertEqual(patched, EsmInstanceControllerConfigPatcher.Patch(
                 patched,
                 50064,
@@ -7293,6 +7385,67 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     50063,
                     5063);
             }, "YAML aliases and merge keys must be rejected.");
+        }
+
+        private static void EsmInstanceYamlSupportsBlockSequencesAndRejectsAmbiguity()
+        {
+            string sequences =
+                "services:\n" +
+                "  - name: regime\n" +
+                "    port: 5995\n" +
+                "  - name: yenisei\n" +
+                "    port: 6984\n" +
+                "settings:\n" +
+                "  ldbControl:\n" +
+                "    gRPCPort: 1\n" +
+                "    RESTPort: 2\n" +
+                "    url: 0.0.0.0\n";
+            string patchedSequences = EsmInstanceControllerConfigPatcher.Patch(
+                sequences,
+                50063,
+                5063);
+            AssertContains(patchedSequences, "  - name: regime\n    port: 5995\n");
+            AssertContains(patchedSequences, "  - name: yenisei\n    port: 6984\n");
+            AssertContains(patchedSequences, "    gRPCPort: 50063\n");
+            AssertContains(patchedSequences, "    RESTPort: 5063\n");
+            AssertContains(patchedSequences, "    url: 127.0.0.1\n");
+
+            AssertThrows<InvalidDataException>(delegate
+            {
+                EsmInstanceControllerConfigPatcher.Patch(
+                    "first:\n  settings:\n    ldbControl:\n      gRPCPort: 1\n      RESTPort: 2\n      url: x\n" +
+                    "second:\n  settings:\n    ldbControl:\n      gRPCPort: 3\n      RESTPort: 4\n      url: y\n",
+                    50063,
+                    5063);
+            }, "Several ldbControl nodes must be rejected.");
+            AssertThrows<InvalidDataException>(delegate
+            {
+                EsmInstanceControllerConfigPatcher.Patch(
+                    "settings:\n  other:\n    gRPCPort: 1\n    RESTPort: 2\n    url: x\n",
+                    50063,
+                    5063);
+            }, "A missing ldbControl node must be rejected.");
+            AssertThrows<InvalidDataException>(delegate
+            {
+                EsmInstanceControllerConfigPatcher.Patch(
+                    "settings:\n  ldbControl:\n    gRPCPort:\n      value: 1\n    RESTPort: 2\n    url: x\n",
+                    50063,
+                    5063);
+            }, "A nested block instead of a scalar must be rejected.");
+            AssertThrows<InvalidDataException>(delegate
+            {
+                EsmInstanceControllerConfigPatcher.Patch(
+                    "settings:\n\tldbControl:\n\t\tgRPCPort: 1\n\t\tRESTPort: 2\n\t\turl: x\n",
+                    50063,
+                    5063);
+            }, "Tab indentation must be rejected.");
+            AssertThrows<InvalidDataException>(delegate
+            {
+                EsmInstanceControllerConfigPatcher.Patch(
+                    "---\nsettings:\n  ldbControl:\n    gRPCPort: 1\n    RESTPort: 2\n    url: x\n---\nother: 1\n",
+                    50063,
+                    5063);
+            }, "Multiple YAML documents must be rejected.");
         }
 
         private static void EsmInstanceConfigTransactionBacksUpRestoresAndDefers()
@@ -8674,7 +8827,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 ProductVersion = "2.6.1",
                 ProductCode = "{556FD8AD-43A3-4645-BC54-EBF3043ADF82}",
                 UpgradeCode = "{9449123B-61C4-40DE-AA6C-1BB9AA02EB67}",
-                SignerSubject = "CN=Test CRPT",
+                SignerSubject =
+                    SupportedLocalModulePackageIdentity.SignerSubject,
                 SignerThumbprint = "6BA5F6BBE4BE27658253C78889334D0E24858C19",
                 LicenseNoticeAccepted = true
             };
@@ -8712,7 +8866,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
         }
 
         private static LocalModulePackageVerifier CreateTestLocalModulePackageVerifier(
-            LocalModuleInstallerSelection expected,
             IWindowsInstallerPackageReader packageReader,
             IFileTrustVerifier trustVerifier,
             IPathSafety pathSafety)
@@ -8720,13 +8873,69 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             LocalModuleMsiCapabilityProfile profile =
                 LoadLocalModuleMsiCapabilityFixture();
             return new LocalModulePackageVerifier(
-                expected,
                 packageReader,
                 trustVerifier,
                 pathSafety,
-                new FakeLocalModuleMsiCapabilityRegistry(profile),
+                new FakeLocalModuleMsiCapabilityResolver(profile),
                 new FakeLocalModuleMsiProfileReader(
                     CreateLocalModuleMsiSnapshot(profile)));
+        }
+
+        private static TrustedFileExpectation CreateLocalModuleResolverTrust(
+            LocalModuleMsiCapabilityProfile fixture)
+        {
+            return new TrustedFileExpectation
+            {
+                FileName = fixture.FileName,
+                ByteLength = fixture.ByteLength,
+                Sha256 = fixture.Sha256,
+                FileVersion = string.Empty,
+                ProductVersion = string.Empty,
+                ProductName = string.Empty,
+                CompanyName = string.Empty,
+                Machine = PeMachine.Unknown,
+                SignerSubject =
+                    SupportedLocalModulePackageIdentity.SignerSubject,
+                SignerThumbprint = fixture.SignerThumbprint,
+                RequireCodeSigningEku = true
+            };
+        }
+
+        private static void RenameSnapshotService(
+            LocalModuleMsiDatabaseSnapshot snapshot,
+            string source,
+            string replacement)
+        {
+            for (int index = 0; index < snapshot.Rows.Count; index++)
+            {
+                MsiProfileRow row = snapshot.Rows[index];
+                if (!string.Equals(row.Table, "CustomAction",
+                        StringComparison.Ordinal))
+                    continue;
+                for (int column = 0; column < row.Columns.Count; column++)
+                {
+                    if (!string.Equals(row.Columns[column], "Target",
+                            StringComparison.Ordinal))
+                        continue;
+                    row.Values[column] = (row.Values[column] ?? string.Empty)
+                        .Replace("\"" + source + "\"",
+                            "\"" + replacement + "\"");
+                }
+            }
+        }
+
+        private static void RemoveSnapshotRow(
+            LocalModuleMsiDatabaseSnapshot snapshot,
+            string table,
+            string key)
+        {
+            for (int index = snapshot.Rows.Count - 1; index >= 0; index--)
+            {
+                MsiProfileRow row = snapshot.Rows[index];
+                if (string.Equals(row.Table, table, StringComparison.Ordinal) &&
+                    string.Equals(row.Key, key, StringComparison.Ordinal))
+                    snapshot.Rows.RemoveAt(index);
+            }
         }
 
         private static TrustedFileExpectation CreateLocalModuleTrustExpectation(
@@ -8804,7 +9013,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 pathSafety,
                 initiatingSid);
             LocalModuleInstallerSelection package =
-                LocalModulePackageVerifier.CreateSupportedIdentity();
+                MsiTestPackageFactory.SampleSelection(string.Empty);
             LocalModuleCapabilityProfile capability =
                 LocalModuleCapabilityProfile.Resolve("2.6.1");
             string runtimeNonce = "55555555555555555555555555555555";
@@ -11042,6 +11251,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                         request.CloneOrdinal.ToString("000000000000") + "}",
                     "{20000000-0000-0000-0000-" +
                         request.CloneOrdinal.ToString("000000000000") + "}",
+                    "2.6.1",
                     root,
                     installedByApplication,
                     preExisting,
@@ -11149,20 +11359,21 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             }
         }
 
-        private sealed class FakeLocalModuleMsiCapabilityRegistry :
-            ILocalModuleMsiCapabilityRegistry
+        private sealed class FakeLocalModuleMsiCapabilityResolver :
+            ILocalModuleMsiCapabilityResolver
         {
             private readonly LocalModuleMsiCapabilityProfile _profile;
 
-            internal FakeLocalModuleMsiCapabilityRegistry(
+            internal FakeLocalModuleMsiCapabilityResolver(
                 LocalModuleMsiCapabilityProfile profile)
             {
                 _profile = profile;
             }
 
-            public LocalModuleMsiCapabilityProfile FindExact(
+            public LocalModuleMsiCapabilityProfile Resolve(
                 WindowsInstallerPackageMetadata metadata,
-                TrustedFileExpectation trust)
+                TrustedFileExpectation trust,
+                LocalModuleMsiDatabaseSnapshot snapshot)
             {
                 return _profile;
             }

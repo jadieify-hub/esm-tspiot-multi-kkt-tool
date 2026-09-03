@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Security.Principal;
 using System.Text;
 using System.Threading;
@@ -250,20 +251,8 @@ namespace EsmTspiot.WinForms.Shared
                     "Не удалось построить план ЛМ ЧЗ: " +
                     string.Join("; ", plan.ValidationMessages));
 
-            string requestedVolume = SelectInstallVolume(
-                plan,
-                inventory,
-                inventory.BaseInventory.InstallDirectory);
-            if (requestedVolume == null)
-            {
-                outcome.LocalModulesDeferred = true;
-                outcome.LocalModulesFailed = CountNewAssignments(
-                    plan,
-                    inventory);
-                Log("Установка ЛМ ЧЗ отложена оператором; контроллеры " +
-                    "будут настроены по сохранённому плану.\r\n");
-            }
-            else if (!string.IsNullOrEmpty(requestedVolume))
+            string requestedVolume = ResolveInstallVolume(plan, inventory);
+            if (!string.IsNullOrEmpty(requestedVolume))
             {
                 plan = LocalModuleMsiPlanner.Build(
                     registeredKkts,
@@ -273,7 +262,7 @@ namespace EsmTspiot.WinForms.Shared
                     inventory.Listeners);
                 if (!plan.IsValid)
                     throw new InvalidOperationException(
-                        "Выбранный диск не подходит для ЛМ ЧЗ: " +
+                        "Системный диск не подходит для ЛМ ЧЗ: " +
                         string.Join("; ", plan.ValidationMessages));
             }
 
@@ -297,8 +286,7 @@ namespace EsmTspiot.WinForms.Shared
                     },
                     async delegate(CancellationToken operationCancellation)
                     {
-                        if (requestedVolume == null ||
-                            _localModuleInstallerSelection == null)
+                        if (_localModuleInstallerSelection == null)
                         {
                             outcome.LocalModulesDeferred = true;
                             outcome.LocalModulesFailed = Math.Max(
@@ -363,10 +351,9 @@ namespace EsmTspiot.WinForms.Shared
             return outcome;
         }
 
-        private string SelectInstallVolume(
+        private string ResolveInstallVolume(
             LocalModuleMsiPlan plan,
-            LocalModuleMsiOperatorInventorySnapshot inventory,
-            string baseInstallDirectory)
+            LocalModuleMsiOperatorInventorySnapshot inventory)
         {
             int newClones = 0;
             int newProducts = 0;
@@ -379,17 +366,30 @@ namespace EsmTspiot.WinForms.Shared
                 if (assignment.CloneOrdinal > 0) newClones++;
             }
             if (newProducts == 0) return string.Empty;
-            using (LocalModuleInstallVolumeDialog dialog =
-                new LocalModuleInstallVolumeDialog(
-                    LocalModuleInstallRootPolicy.GetVolumeRoot(
-                        baseInstallDirectory),
+
+            string systemVolume = LocalModuleInstallRootPolicy.GetSystemVolumeRoot();
+            long free = new DriveInfo(systemVolume).AvailableFreeSpace;
+            LocalModuleDiskSpaceProjection projection =
+                LocalModuleDiskSpacePolicy.Evaluate(
                     newClones,
-                    newProducts))
+                    newProducts,
+                    free,
+                    free);
+            long required = projection.InstallVolumeRequiredBytes +
+                projection.SystemVolumeRequiredBytes;
+            if (free < required)
             {
-                return dialog.ShowDialog(this) == DialogResult.OK
-                    ? dialog.SelectedVolumeRoot
-                    : null;
+                throw new InvalidOperationException(
+                    "На системном диске " + systemVolume +
+                    " недостаточно места для ЛМ ЧЗ: нужно не менее " +
+                    (required / 1048576L).ToString(CultureInfo.InvariantCulture) +
+                    " МиБ, свободно " +
+                    (free / 1048576L).ToString(CultureInfo.InvariantCulture) +
+                    " МиБ.");
             }
+            Log("Новые ЛМ ЧЗ будут установлены на системный диск " +
+                systemVolume + ".\r\n");
+            return systemVolume;
         }
 
         private async Task<bool> EnsureMsiLocalModulesAsync(
@@ -400,6 +400,8 @@ namespace EsmTspiot.WinForms.Shared
             if (MessageBox.Show(
                     this,
                     "Будет установлен один независимый ЛМ ЧЗ на каждый ИНН; " +
+                        "новые ЛМ ставятся на системный диск, уже установленный " +
+                        "базовый ЛМ остаётся в своём каталоге; " +
                         "службам ЛМ будет включён автозапуск (базовому ЛМ — тоже, " +
                         "с возвратом прежнего режима при удалении). " +
                         "Подтвердите право использовать пакет ЛМ и продолжить.",
@@ -509,15 +511,5 @@ namespace EsmTspiot.WinForms.Shared
             return null;
         }
 
-        private static int CountNewAssignments(
-            LocalModuleMsiPlan plan,
-            LocalModuleMsiOperatorInventorySnapshot inventory)
-        {
-            int result = 0;
-            for (int index = 0; index < plan.Assignments.Count; index++)
-                if (FindInventoryItem(inventory, plan.Assignments[index].Inn) == null)
-                    result++;
-            return result;
-        }
     }
 }

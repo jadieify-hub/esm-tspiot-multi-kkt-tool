@@ -20,6 +20,10 @@ namespace EsmTspiot.ServiceProvisioner
             string remoteAddress)
         {
             if (layout == null) throw new ArgumentNullException("layout");
+            if (!layout.ErtsDiscovered)
+                throw new InvalidDataException(
+                    "Каталог рантайма erts-* локального модуля не найден; " +
+                    "правило сети не выписывается вслепую.");
             LocalModuleFirewallRule expected = LocalModuleFirewallRule.Create(
                 ownershipId,
                 Path.Combine(layout.ErtsBinPath, "erl.exe"),

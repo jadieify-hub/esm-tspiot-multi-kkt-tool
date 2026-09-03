@@ -108,6 +108,8 @@ namespace EsmTspiot.Shared.Tests
             Run("MSI local module planner uses actual base and clone ports", MsiLocalModulePlannerUsesActualBaseAndClonePorts);
             Run("MSI local module planner preserves saved ordinals", MsiLocalModulePlannerPreservesSavedOrdinals);
             Run("MSI local module root policy accepts only fixed Program Files volumes", MsiLocalModuleRootPolicyAcceptsOnlyFixedProgramFilesVolumes);
+            Run("MSI local module planner reserves ordinals and names port owners", MsiLocalModulePlannerReservesOrdinalsAndNamesPortOwners);
+            Run("MSI local module package policy pins the vendor, not the version", MsiLocalModulePackagePolicyPinsVendorNotVersion);
             Run("MSI local module disk budget reports both volumes", MsiLocalModuleDiskBudgetReportsBothVolumes);
 #if !NETFRAMEWORK
             Run("MSI local module operator inventory restores stable assignments", MsiLocalModuleOperatorInventoryRestoresStableAssignments);
@@ -1914,6 +1916,147 @@ namespace EsmTspiot.Shared.Tests
                     DriveType.Fixed,
                     FileAttributes.Directory),
                 "A plain fixed local volume is supported.");
+            AssertEqual(
+                Path.GetPathRoot(Environment.SystemDirectory),
+                LocalModuleInstallRootPolicy.GetSystemVolumeRoot(),
+                "New local modules must always target the system volume.");
+        }
+
+        private static void MsiLocalModulePackagePolicyPinsVendorNotVersion()
+        {
+            LocalModuleInstallerSelection next = CreateLmPackageSelection();
+            next.ProductVersion = "2.7.3";
+            next.ProductCode = "{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}";
+            next.Sha256 = new string('c', 64);
+            next.ByteLength = 60000000;
+            next.FileName = "regime-2.7.3-1.msi";
+            ValidationResult accepted = LocalModulePackagePolicy.Evaluate(next);
+            AssertTrue(accepted.IsValid,
+                "Следующая версия ЛМ ЧЗ от ЦРПТ должна приниматься.");
+            AssertEqual(0, accepted.Warnings.Count,
+                "У пакета того же продукта не должно быть замечаний.");
+
+            LocalModuleInstallerSelection subjectWithEmail =
+                CreateLmPackageSelection();
+            subjectWithEmail.SignerSubject =
+                "E=support@example.invalid, " +
+                SupportedLocalModulePackageIdentity.SignerSubject + ", C=RU";
+            AssertTrue(
+                LocalModulePackagePolicy.Evaluate(subjectWithEmail).IsValid,
+                "Дополнительные поля субъекта сертификата не должны мешать.");
+
+            LocalModuleInstallerSelection foreignSigner =
+                CreateLmPackageSelection();
+            foreignSigner.SignerSubject = "CN=Другой поставщик, O=Другой";
+            ValidationResult signerRejected =
+                LocalModulePackagePolicy.Evaluate(foreignSigner);
+            AssertFalse(signerRejected.IsValid,
+                "Пакет без подписи ЦРПТ должен отвергаться.");
+            AssertContains(signerRejected.JoinMessages(), "подписан не ЦРПТ");
+
+            LocalModuleInstallerSelection foreignUpgrade =
+                CreateLmPackageSelection();
+            foreignUpgrade.UpgradeCode =
+                "{11111111-2222-3333-4444-555555555555}";
+            ValidationResult upgradeRejected =
+                LocalModulePackagePolicy.Evaluate(foreignUpgrade);
+            AssertFalse(upgradeRejected.IsValid,
+                "Пакет с чужим UpgradeCode должен отвергаться.");
+            AssertContains(upgradeRejected.JoinMessages(), "UpgradeCode");
+
+            LocalModuleInstallerSelection renamed = CreateLmPackageSelection();
+            renamed.ProductName = "Локальный модуль ЧЗ (новое имя)";
+            ValidationResult renamedResult =
+                LocalModulePackagePolicy.Evaluate(renamed);
+            AssertTrue(renamedResult.IsValid,
+                "Переименование продукта вендором не должно быть отказом.");
+            AssertEqual(1, renamedResult.Warnings.Count,
+                "Переименование продукта должно оставаться замечанием.");
+        }
+
+        private static LocalModuleInstallerSelection CreateLmPackageSelection()
+        {
+            return new LocalModuleInstallerSelection
+            {
+                SourcePath = @"D:\packages\regime-2.6.1-7.msi",
+                FileName = "regime-2.6.1-7.msi",
+                ByteLength = 51007488,
+                Sha256 = new string('a', 64),
+                ProductName =
+                    SupportedLocalModulePackageIdentity.ProductName,
+                ProductVersion = "2.6.1",
+                ProductCode = "{556FD8AD-43A3-4645-BC54-EBF3043ADF82}",
+                UpgradeCode =
+                    SupportedLocalModulePackageIdentity.UpgradeCode,
+                SignerSubject =
+                    SupportedLocalModulePackageIdentity.SignerSubject,
+                SignerThumbprint = new string('b', 40),
+                LicenseNoticeAccepted = true
+            };
+        }
+
+        private static void MsiLocalModulePlannerReservesOrdinalsAndNamesPortOwners()
+        {
+            string systemVolume = Path.GetPathRoot(Environment.SystemDirectory);
+            LocalModuleMsiPlan plan = LocalModuleMsiPlanner.Build(
+                new List<LmGatewayKkt>
+                {
+                    CreateLmKkt("00105700000001", "1234567894"),
+                    CreateLmKkt("00105700000002", "7707083893")
+                },
+                new List<LocalModuleMsiAssignment>(),
+                new LocalModuleBaseInventory
+                {
+                    IsInstalled = true,
+                    InstallDirectory = Path.Combine(systemVolume, "Program Files", "Regime"),
+                    ApiPort = 5995,
+                    DatabasePort = 5984,
+                    WasInstalledByApplication = false
+                },
+                null,
+                new List<TcpListenerSnapshotItem>
+                {
+                    new TcpListenerSnapshotItem(5995, "postgres", true)
+                });
+
+            AssertEqual(1, plan.Assignments.Count,
+                "Only the second INN can be planned when the base ports are taken.");
+            AssertEqual("7707083893", plan.Assignments[0].Inn,
+                "The blocked INN must not consume the free clone ordinal.");
+            AssertEqual(1, plan.Assignments[0].CloneOrdinal,
+                "A failed base assignment must reserve ordinal 0 for nobody else.");
+            AssertEqual(1, plan.ValidationMessages.Count,
+                "A single blocked INN must produce exactly one message.");
+            AssertContains(plan.ValidationMessages[0], "1234567894");
+            AssertContains(plan.ValidationMessages[0], "порт 5995");
+            AssertContains(plan.ValidationMessages[0], "служба postgres");
+
+            LocalModuleMsiPlan unknownOwner = LocalModuleMsiPlanner.Build(
+                new List<LmGatewayKkt>
+                {
+                    CreateLmKkt("00105700000001", "1234567894")
+                },
+                new List<LocalModuleMsiAssignment>(),
+                new LocalModuleBaseInventory
+                {
+                    IsInstalled = true,
+                    InstallDirectory = Path.Combine(systemVolume, "Program Files", "Regime"),
+                    ApiPort = 5995,
+                    DatabasePort = 5984,
+                    WasInstalledByApplication = false
+                },
+                null,
+                new List<TcpListenerSnapshotItem>
+                {
+                    new TcpListenerSnapshotItem(5984, string.Empty, false)
+                });
+
+            AssertEqual(0, unknownOwner.Assignments.Count,
+                "A taken database port must block the base assignment too.");
+            AssertEqual(1, unknownOwner.ValidationMessages.Count,
+                "A single blocked INN must produce exactly one message.");
+            AssertContains(unknownOwner.ValidationMessages[0], "порт 5984");
+            AssertContains(unknownOwner.ValidationMessages[0], "владелец не определён");
         }
 
         private static void MsiLocalModulePlannerPreservesSavedOrdinals()
