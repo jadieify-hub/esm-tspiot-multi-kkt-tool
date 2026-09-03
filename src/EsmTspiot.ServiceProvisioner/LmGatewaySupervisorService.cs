@@ -234,7 +234,7 @@ namespace EsmTspiot.ServiceProvisioner
 
         private static LmControllerChildProcess CreateVerifiedChild(string serviceName)
         {
-            ControllerCapabilityProfile profile = ControllerCapabilityProfile.SupportedVersion1640();
+            ControllerCapabilityProfile profile = ControllerCapabilityProfile.Supported();
             PathSafety pathSafety = new PathSafety();
             VerifiedProvisionerBinary.ResolveCurrent(pathSafety);
             string serviceSid = RestrictedServiceSid.Resolve(serviceName);

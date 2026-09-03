@@ -32,8 +32,7 @@ namespace EsmTspiot.ServiceProvisioner
             if (profile == null) throw new ArgumentNullException("profile");
             if (writer == null) throw new ArgumentNullException("writer");
             if (pathSafety == null) throw new ArgumentNullException("pathSafety");
-            if (!string.Equals(profile.Version, "1.6.4.0", StringComparison.Ordinal) ||
-                !string.Equals(
+            if (                !string.Equals(
                     profile.VendorProfileRelativePath,
                     Path.Combine("ESP", "lmcontroller"),
                     StringComparison.Ordinal))

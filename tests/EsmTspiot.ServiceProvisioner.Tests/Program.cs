@@ -160,7 +160,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Official controller locator enforces full product trust", OfficialControllerLocatorEnforcesFullProductTrust);
             Run("Official controller locator requires installed product registration", OfficialControllerLocatorRequiresInstalledProductRegistration);
             Run("Installed controller product requires exact registry values", InstalledControllerProductRequiresExactRegistryValues);
-            Run("Supported controller profile pins version 1.6.4.0", SupportedControllerProfilePinsVersion1640);
+            Run("Supported controller profile pins the vendor, not the version", SupportedControllerProfilePinsVendorNotVersion);
             Run("Official installer verifier locks verifies and stages atomically", OfficialInstallerVerifierLocksVerifiesAndStagesAtomically);
             Run("Official installer verifier rejects filename signer version or hash mismatch", OfficialInstallerVerifierRejectsFilenameSignerVersionOrHashMismatch);
             Run("Supported installer uses the fixed NSIS silent switch", SupportedInstallerUsesFixedNsisSilentSwitch);
@@ -180,6 +180,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("ESM instance YAML supports block sequences and rejects ambiguity", EsmInstanceYamlSupportsBlockSequencesAndRejectsAmbiguity);
             Run("ESM instance config transaction backs up restores and defers", EsmInstanceConfigTransactionBacksUpRestoresAndDefers);
             Run("ESM instance service is startable but never mutable", EsmInstanceServiceIsStartableButNeverMutable);
+            Run("ESM instance config recovers from an aborted operation", EsmInstanceConfigRecoversFromAbortedOperation);
             Run("SCM handles are disposed on every failure", ScmHandlesAreDisposedOnEveryFailure);
             Run("SCM configures restricted service SID", ScmConfiguresRestrictedServiceSid);
             Run("Supervisor replaces only child ProgramData", SupervisorReplacesOnlyChildProgramData);
@@ -4808,13 +4809,13 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
         private static void DirectControllerScmDefinitionUsesOnlyVerifiedVendorBinary()
         {
-            ControllerCapabilityProfile profile = ControllerCapabilityProfile.SupportedVersion1640();
+            ControllerCapabilityProfile profile = ControllerCapabilityProfile.Supported();
             VerifiedControllerBinary binary = new VerifiedControllerBinary
             {
                 FullPath = @"C:\Program Files\ESP\LMController\bin\lmcontroller.exe",
                 Version = "1.6.4.0",
-                Sha256 = profile.ControllerBinary.Sha256,
-                SignerThumbprint = profile.ControllerBinary.SignerThumbprint,
+                Sha256 = new string('a', 64),
+                SignerThumbprint = ControllerSignerThumbprint,
                 Machine = PeMachine.Amd64
             };
             DirectControllerServiceDefinitionFactory factory =
@@ -4850,7 +4851,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
         private static void DirectControllerScmDefinitionRejectsSupervisorRules()
         {
-            ControllerCapabilityProfile profile = ControllerCapabilityProfile.SupportedVersion1640();
+            ControllerCapabilityProfile profile = ControllerCapabilityProfile.Supported();
             DirectControllerServiceDefinitionFactory factory =
                 new DirectControllerServiceDefinitionFactory(
                     profile,
@@ -4858,8 +4859,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     {
                         FullPath = @"C:\Program Files\ESP\LMController\bin\lmcontroller.exe",
                         Version = "1.6.4.0",
-                        Sha256 = profile.ControllerBinary.Sha256,
-                        SignerThumbprint = profile.ControllerBinary.SignerThumbprint,
+                        Sha256 = new string('a', 64),
+                        SignerThumbprint = ControllerSignerThumbprint,
                         Machine = PeMachine.Amd64
                     });
             WindowsServiceDefinition definition = factory.Create(
@@ -5062,7 +5063,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
                 AssertFalse(result.IsSuccess,
                     "A trusted file without an exact installed-product record must fail closed.");
-                AssertContains(result.ErrorMessage, "installed product");
+                AssertContains(result.ErrorMessage,
+                    "Установленный контроллер ЛМ ЧЗ от ЕСП");
             }
             finally
             {
@@ -5079,57 +5081,86 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 "Registry value matching must be isolated for deterministic verification.");
 
             ControllerCapabilityProfile profile =
-                ControllerCapabilityProfile.SupportedVersion1640();
-            object[] exact =
+                ControllerCapabilityProfile.Supported();
+            object[][] accepted =
             {
-                profile,
-                "ЕСП Контроллер ЛМ ЧЗ",
-                "1.6.4.0",
-                profile.InstallRoot + Path.DirectorySeparatorChar
+                new object[]
+                {
+                    profile,
+                    "ЕСП Контроллер ЛМ ЧЗ",
+                    "1.6.4.0",
+                    profile.InstallRoot + Path.DirectorySeparatorChar
+                },
+                new object[]
+                {
+                    profile, "ЕСП Контроллер ЛМ ЧЗ", "1.6.4.0.375", profile.InstallRoot
+                },
+                new object[]
+                {
+                    profile, "ЕСП Контроллер ЛМ ЧЗ", "2.0.0.1", profile.InstallRoot
+                }
             };
-            AssertTrue((bool)matches.Invoke(null, exact),
-                "The exact installed-product tuple must be accepted.");
+            for (int index = 0; index < accepted.Length; index++)
+            {
+                AssertTrue((bool)matches.Invoke(null, accepted[index]),
+                    "Очередная версия контроллера от ЕСП должна приниматься.");
+            }
 
             object[][] mismatches =
             {
                 new object[] { profile, "Another product", "1.6.4.0", profile.InstallRoot },
-                new object[] { profile, "ЕСП Контроллер ЛМ ЧЗ", "1.6.3.2", profile.InstallRoot },
+                new object[] { profile, "ЕСП Контроллер ЛМ ЧЗ", string.Empty, profile.InstallRoot },
+                new object[] { profile, "ЕСП Контроллер ЛМ ЧЗ", null, profile.InstallRoot },
                 new object[] { profile, "ЕСП Контроллер ЛМ ЧЗ", "1.6.4.0", profile.InstallRoot + "-other" }
             };
             for (int index = 0; index < mismatches.Length; index++)
             {
                 AssertFalse((bool)matches.Invoke(null, mismatches[index]),
-                    "Every installed-product value is part of the trust boundary.");
+                    "Имя продукта, наличие версии и каталог остаются границей доверия.");
             }
         }
 
-        private static void SupportedControllerProfilePinsVersion1640()
+        private static void SupportedControllerProfilePinsVendorNotVersion()
         {
             ControllerCapabilityProfile profile =
-                ControllerCapabilityProfile.SupportedVersion1640();
+                ControllerCapabilityProfile.Supported();
 
-            AssertEqual("1.6.4.0", profile.Version,
-                "Only the characterized controller release may be selected.");
-            AssertEqual(14668016L, profile.ControllerBinary.ByteLength,
-                "The installed AMD64 controller binary length must be pinned exactly.");
-            AssertEqual(
-                "0a25b29a39b100fe461eb3ffa06a6b18f2b474f337efdba9f7a9ca89740ffd0a",
-                profile.ControllerBinary.Sha256,
-                "The installed AMD64 controller binary hash must be pinned exactly.");
-            AssertFalse(string.Equals(
-                    profile.ControllerBinary.Sha256,
-                    "9ce34999ea965e01d8328895bb1776e7b44edabf72fc51bee121ec5091746214",
-                    StringComparison.OrdinalIgnoreCase),
-                "The old 1.6.3.2 binary must be rejected even at the official path.");
-            AssertEqual(PeMachine.Amd64, profile.ControllerBinary.Machine,
-                "The installed controller is AMD64 even though the NSIS installer is I386.");
-            AssertEqual(string.Empty, profile.ControllerBinary.FileVersion,
-                "The installed controller binary intentionally has no file version metadata.");
-            AssertEqual(string.Empty, profile.ControllerBinary.ProductName,
-                "The installed controller binary intentionally has no product name metadata.");
-            AssertEqual("1CD26372850FE30F1559821CF5D318591695271A",
-                profile.ControllerBinary.SignerThumbprint,
-                "The existing JSC ESP code-signing identity must remain pinned.");
+            AssertEqual(string.Empty, profile.Version,
+                "Версия контроллера не пинуется: принимается любая сборка ЕСП.");
+            AssertEqual(0L, profile.ControllerBinary.ByteLength,
+                "Размер бинарника меняется от сборки к сборке.");
+            AssertEqual(string.Empty, profile.ControllerBinary.Sha256,
+                "Хеш бинарника меняется от сборки к сборке.");
+            AssertEqual(string.Empty, profile.ControllerBinary.SignerThumbprint,
+                "Отпечаток сертификата меняется при перевыпуске.");
+            AssertEqual(PeMachine.Unknown, profile.ControllerBinary.Machine,
+                "Разрядность бинарника не является границей доверия.");
+            AssertEqual("lmcontroller.exe", profile.ControllerBinary.FileName,
+                "Имя исполняемого файла контроллера остаётся закреплённым.");
+            AssertTrue(profile.ControllerBinary.RequireCodeSigningEku,
+                "Подпись контроллера обязана иметь назначение Code Signing.");
+            AssertContains(profile.ControllerBinary.SignerSubject, "JSC ESP");
+
+            AssertEqual(string.Empty, profile.Installer.FileName,
+                "Имя установщика содержит версию и потому не пинуется.");
+            AssertEqual(0L, profile.Installer.ByteLength,
+                "Размер установщика меняется от сборки к сборке.");
+            AssertEqual(string.Empty, profile.Installer.Sha256,
+                "Хеш установщика меняется от сборки к сборке.");
+            AssertEqual(string.Empty, profile.Installer.FileVersion,
+                "Версия установщика меняется от сборки к сборке.");
+            AssertEqual(string.Empty, profile.Installer.SignerThumbprint,
+                "Отпечаток сертификата установщика не пинуется.");
+            AssertEqual(PeMachine.Unknown, profile.Installer.Machine,
+                "Разрядность установщика не является границей доверия.");
+            AssertEqual("ЕСП Контроллер ЛМ ЧЗ", profile.Installer.ProductName,
+                "Имя продукта вендор не меняет и оно остаётся закреплённым.");
+            AssertEqual("ЕСП", profile.Installer.CompanyName,
+                "Издатель остаётся закреплённым.");
+            AssertTrue(profile.Installer.RequireCodeSigningEku,
+                "Подпись установщика обязана иметь назначение Code Signing.");
+            AssertContains(profile.Installer.SignerSubject, "JSC ESP");
+
             PropertyInfo serviceSidType = typeof(ControllerCapabilityProfile).GetProperty(
                 "ServiceSidType",
                 BindingFlags.Instance | BindingFlags.NonPublic);
@@ -5138,21 +5169,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             AssertEqual(
                 WindowsServiceSidType.None,
                 (WindowsServiceSidType)serviceSidType.GetValue(profile, null),
-                "The official 1.6.4.0 service has no SERVICE_SID_INFO value.");
-            AssertEqual("esm-lm-controller_1.6.4.0-windows-setup.exe", profile.Installer.FileName,
-                "The exact official 1.6.4.0 installer filename must be pinned.");
-            AssertEqual(11088544L, profile.Installer.ByteLength,
-                "The official 1.6.4.0 installer length must be pinned exactly.");
-            AssertEqual(
-                "2f97da8b93b6f7bc820385f5b70feab0ce7cbe2c6dbc25c0bca2348928bb3192",
-                profile.Installer.Sha256,
-                "The official 1.6.4.0 installer hash must be pinned exactly.");
-            AssertEqual("1.6.4.0", profile.Installer.FileVersion,
-                "The official package file version must identify release 1.6.4.0.");
-            AssertEqual(PeMachine.I386, profile.Installer.Machine,
-                "The characterized NSIS bootstrap executable is I386.");
+                "У штатной службы контроллера нет значения SERVICE_SID_INFO.");
         }
-
         private static void OfficialInstallerVerifierLocksVerifiesAndStagesAtomically()
         {
             string root = CreateTemporaryDirectory();
@@ -5255,7 +5273,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
         private static void SupportedInstallerUsesFixedNsisSilentSwitch()
         {
             ControllerCapabilityProfile profile =
-                ControllerCapabilityProfile.SupportedVersion1640();
+                ControllerCapabilityProfile.Supported();
 
             AssertEqual("/S", profile.InstallerArguments,
                 "The verified NSIS package must use its case-sensitive silent switch.");
@@ -5439,7 +5457,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             string expectedPath = @"C:\Program Files\KRS\MultiKKT\Provisioner\EsmTspiot.ServiceProvisioner.exe";
             LmGatewaySupervisorService service = new LmGatewaySupervisorService(
                 api,
-                ControllerCapabilityProfile.SupportedVersion1640(),
+                ControllerCapabilityProfile.Supported(),
                 VerifiedProvisionerBinary.CreateForTesting(expectedPath));
 
             service.EnsureConfigured("00105700000001");
@@ -7494,6 +7512,150 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 "Имя службы должно собираться обратно без изменений.");
         }
 
+        private static void EsmInstanceConfigRecoversFromAbortedOperation()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                string esmRoot = Path.Combine(root, "ESP", "ESM", "um");
+                Directory.CreateDirectory(esmRoot);
+                string serial = "00105700000003";
+                string configPath = Path.Combine(esmRoot, "config_" + serial + ".yml");
+                string original =
+                    "settings:\n  ldbControl:\n    password: admin\n" +
+                    "    gRPCPort: 50063\n    RESTPort: 5063\n    url: 127.0.0.1\n" +
+                    "dkkt:\n  port: 4042\n";
+                File.WriteAllText(configPath, original, new UTF8Encoding(false));
+                DirectControllerManifestStore manifests =
+                    new DirectControllerManifestStore(
+                        Path.Combine(root, "DirectControllers"),
+                        new FakePathSafety(true),
+                        null,
+                        Path.Combine(root, "ProgramData"));
+                DirectControllerManifest manifest = DirectControllerManifest.Create(
+                    serial,
+                    "7701234567",
+                    2,
+                    "1.6.4.0",
+                    new string('c', 64),
+                    manifests.GetProfileEnvironmentRoot(2),
+                    Guid.NewGuid().ToString("N"),
+                    DirectControllerLifecycleState.Preparing);
+                manifests.Write(manifest);
+                FakeWindowsServiceApi services = new FakeWindowsServiceApi();
+                EsmInstanceConfigManager manager = new EsmInstanceConfigManager(
+                    esmRoot,
+                    manifests,
+                    services,
+                    new AtomicFileWriter(),
+                    delegate { });
+
+                // Служба экземпляра ЕСМ недоступна: остановка падает уже после
+                // того, как манифест записал «применено». Полевой отказ.
+                bool refused = false;
+                try
+                {
+                    manager.ApplyAndRestart(manifests.Read(serial), false);
+                }
+                catch (InvalidDataException)
+                {
+                    refused = true;
+                }
+                AssertTrue(refused,
+                    "Отсутствующая служба экземпляра ЕСМ обязана быть ошибкой.");
+                AssertEqual(original, File.ReadAllText(configPath, Encoding.UTF8),
+                    "Несостоявшееся применение не должно менять конфигурацию ЕСМ.");
+                AssertFalse(File.Exists(manifests.GetEsmConfigBackupPath(serial)),
+                    "Резервная копия несостоявшегося применения не должна оставаться.");
+                DirectControllerManifest afterFailure = manifests.Read(serial);
+                AssertTrue(
+                    string.IsNullOrEmpty(afterFailure.EsmConfigAppliedSha256) &&
+                    string.IsNullOrEmpty(afterFailure.EsmConfigOriginalSha256),
+                    "Признак применения обязан сниматься, иначе следующий прогон " +
+                    "упрётся в защиту от перезаписи чужих правок.");
+
+                // Состояние, оставленное прежней сборкой: манифест ссылается на
+                // конфигурацию, которой на диске уже нет (ЕСМ пересоздал её при
+                // перерегистрации ККТ).
+                DirectControllerManifest stale = manifests.Read(serial);
+                stale.EsmConfigOriginalSha256 = new string('d', 64);
+                stale.EsmConfigAppliedSha256 = new string('e', 64);
+                stale.UpdatedUtc = DateTime.UtcNow.ToString("o");
+                manifests.Write(stale);
+                services.SetRecord(new WindowsServiceRecord
+                {
+                    ServiceName = "esm-cm-" + serial,
+                    State = WindowsServiceState.Running,
+                    ProcessId = 909
+                });
+                bool guarded = false;
+                try
+                {
+                    manager.ApplyAndRestart(manifests.Read(serial), false);
+                }
+                catch (InvalidDataException)
+                {
+                    guarded = true;
+                }
+                AssertTrue(guarded,
+                    "Без признака оборванной операции чужую правку трогать нельзя.");
+                AssertEqual(original, File.ReadAllText(configPath, Encoding.UTF8),
+                    "Отказ обязан оставлять конфигурацию ЕСМ нетронутой.");
+
+                AssertEqual(
+                    EsmInstanceConfigApplyState.Applied,
+                    manager.ApplyAndRestart(manifests.Read(serial), true),
+                    "После оборванной операции настройка обязана перепривязываться " +
+                    "к текущей конфигурации ЕСМ.");
+                AssertContains(File.ReadAllText(configPath, Encoding.UTF8),
+                    "gRPCPort: 50064");
+                DirectControllerManifest applied = manifests.Read(serial);
+                AssertEqual(
+                    Sha256Hex(File.ReadAllBytes(configPath)),
+                    applied.EsmConfigAppliedSha256,
+                    "Манифест обязан ссылаться на то, что действительно записано.");
+                AssertTrue(File.Exists(manifests.GetEsmConfigBackupPath(serial)),
+                    "Перепривязка обязана заново сохранить исходный файл.");
+
+                // Теперь конфигурацию правили вручную: перезаписывать её вслепую
+                // нельзя, но и снятие комплекта блокировать нечем.
+                File.WriteAllText(
+                    configPath,
+                    File.ReadAllText(configPath, Encoding.UTF8) + "extra: 1\n",
+                    new UTF8Encoding(false));
+                AssertFalse(
+                    manager.RestoreAndRestart(manifests.Read(serial)),
+                    "Незнакомую конфигурацию ЕСМ нельзя восстанавливать вслепую.");
+                AssertContains(File.ReadAllText(configPath, Encoding.UTF8), "extra: 1");
+                AssertTrue(File.Exists(manifests.GetEsmConfigBackupPath(serial)),
+                    "Резервная копия остаётся оператору, раз мы её больше не сторожим.");
+                DirectControllerManifest disowned = manifests.Read(serial);
+                AssertTrue(
+                    string.IsNullOrEmpty(disowned.EsmConfigAppliedSha256) &&
+                    string.IsNullOrEmpty(disowned.EsmConfigOriginalSha256),
+                    "Снятие комплекта не должно упираться в чужую правку.");
+            }
+            finally
+            {
+                DeleteTestTreeWithReadOnlyFiles(root);
+            }
+        }
+
+        private static string Sha256Hex(byte[] value)
+        {
+            using (System.Security.Cryptography.SHA256 hash =
+                System.Security.Cryptography.SHA256.Create())
+            {
+                byte[] digest = hash.ComputeHash(value);
+                StringBuilder builder = new StringBuilder(digest.Length * 2);
+                for (int index = 0; index < digest.Length; index++)
+                {
+                    builder.Append(digest[index].ToString("x2"));
+                }
+                return builder.ToString();
+            }
+        }
+
         private static void EsmInstanceConfigTransactionBacksUpRestoresAndDefers()
         {
             string root = CreateTemporaryDirectory();
@@ -7542,7 +7704,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
                 AssertEqual(
                     EsmInstanceConfigApplyState.Applied,
-                    manager.ApplyAndRestart(manifest),
+                    manager.ApplyAndRestart(manifest, false),
                     "The instance config must be applied transactionally.");
                 AssertContains(File.ReadAllText(configPath), "gRPCPort: 50064");
                 AssertTrue(File.Exists(manifests.GetEsmConfigBackupPath(serial)),
@@ -7569,7 +7731,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 manifests.Write(absent);
                 AssertEqual(
                     EsmInstanceConfigApplyState.Deferred,
-                    manager.ApplyAndRestart(absent),
+                    manager.ApplyAndRestart(absent, false),
                     "An instance config that is not created yet must defer without mutation.");
             }
             finally
@@ -7602,7 +7764,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
                 FakePathSafety paths = new FakePathSafety(true);
                 new DirectControllerCaStager(
-                    ControllerCapabilityProfile.SupportedVersion1640(),
+                    ControllerCapabilityProfile.Supported(),
                     new AtomicFileWriter(),
                     paths,
                     officialRoot).Stage(cloneRoot);
@@ -7655,7 +7817,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 File.SetAttributes(cloneKey, FileAttributes.ReadOnly);
 
                 new DirectControllerCaStager(
-                    ControllerCapabilityProfile.SupportedVersion1640(),
+                    ControllerCapabilityProfile.Supported(),
                     new AtomicFileWriter(),
                     new FakePathSafety(true),
                     officialRoot).Stage(cloneRoot);
@@ -7704,10 +7866,10 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     Guid.NewGuid().ToString("N"),
                     DirectControllerLifecycleState.Preparing);
                 DirectControllerProfileStore store = new DirectControllerProfileStore(
-                    ControllerCapabilityProfile.SupportedVersion1640(),
+                    ControllerCapabilityProfile.Supported(),
                     manifests,
                     new DirectControllerCaStager(
-                        ControllerCapabilityProfile.SupportedVersion1640(),
+                        ControllerCapabilityProfile.Supported(),
                         new AtomicFileWriter(),
                         paths,
                         officialRoot),
@@ -7820,7 +7982,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     null,
                     Path.Combine(root, "ProgramData"));
                 ControllerCapabilityProfile profile =
-                    ControllerCapabilityProfile.SupportedVersion1640();
+                    ControllerCapabilityProfile.Supported();
                 DirectControllerProfileStore profiles = new DirectControllerProfileStore(
                     profile,
                     manifests,
@@ -7850,10 +8012,10 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     new VerifiedControllerBinary
                     {
                         FullPath = @"C:\Program Files\ESP\LMController\bin\lmcontroller.exe",
-                        Version = profile.Version,
-                        Sha256 = profile.ControllerBinary.Sha256,
-                        SignerThumbprint = profile.ControllerBinary.SignerThumbprint,
-                        Machine = profile.ControllerBinary.Machine
+                        Version = "1.6.4.0",
+                        Sha256 = new string('a', 64),
+                        SignerThumbprint = ControllerSignerThumbprint,
+                        Machine = PeMachine.Amd64
                     },
                     manifests,
                     profiles,
@@ -7915,7 +8077,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     "lmcontroller.exe",
                     binary,
                     installer,
-                    "ProgramData");
+                    "ProgramFiles");
 
                 AssertThrows<NotSupportedException>(delegate {
                     new OfficialLmProfileAdapter(
@@ -7924,7 +8086,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                             root, new FakePathSafety(true), "S-1-5-21-111-222-333-1001"),
                         new AtomicFileWriter(),
                         new FakeWindowsServiceApi());
-                }, "An uncharacterized controller version must be rejected before profile access.");
+                }, "Неописанная схема профиля контроллера должна отвергаться до доступа к файлам.");
             }
             finally
             {
@@ -7937,7 +8099,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             FakeWindowsServiceApi serviceApi = null)
         {
             return new OfficialLmProfileAdapter(
-                ControllerCapabilityProfile.SupportedVersion1640(),
+                ControllerCapabilityProfile.Supported(),
                 new ManagedServiceManifestStore(
                     root,
                     new FakePathSafety(true),
@@ -8630,7 +8792,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
         {
             return new LmGatewaySupervisorService(
                 api,
-                ControllerCapabilityProfile.SupportedVersion1640(),
+                ControllerCapabilityProfile.Supported(),
                 VerifiedProvisionerBinary.CreateForTesting(
                     @"C:\Program Files\KRS\MultiKKT\Provisioner\EsmTspiot.ServiceProvisioner.exe"));
         }
@@ -8640,7 +8802,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             FakeControllerChildRuntime runtime)
         {
             return new LmControllerChildProcess(
-                ControllerCapabilityProfile.SupportedVersion1640(),
+                ControllerCapabilityProfile.Supported(),
                 new VerifiedControllerBinary
                 {
                     FullPath = @"C:\Program Files\ESP\LMController\bin\lmcontroller.exe",
@@ -10180,6 +10342,9 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             }
         }
 
+        private const string ControllerSignerThumbprint =
+            "1CD26372850FE30F1559821CF5D318591695271A";
+
         private static void RequireLifecycleServiceName(string serviceName)
         {
             if (!WindowsServiceApi.IsLifecycleServiceName(serviceName))
@@ -10515,14 +10680,19 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 _matches = matches;
             }
 
-            public ValidationResult Verify(ControllerCapabilityProfile profile)
+            public InstalledControllerProductResult Verify(
+                ControllerCapabilityProfile profile)
             {
                 ValidationResult result = new ValidationResult();
                 if (!_matches)
                 {
                     result.Add("Official controller installed product does not match.");
                 }
-                return result;
+                return new InstalledControllerProductResult
+                {
+                    Validation = result,
+                    DisplayVersion = _matches ? "1.6.4.0.375" : string.Empty
+                };
             }
         }
 

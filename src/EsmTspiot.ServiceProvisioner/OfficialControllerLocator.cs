@@ -83,10 +83,11 @@ namespace EsmTspiot.ServiceProvisioner
                 return Failure(pathValidation.JoinMessages());
             }
 
-            ValidationResult installedProduct = _installedProductVerifier.Verify(_profile);
-            if (!installedProduct.IsValid)
+            InstalledControllerProductResult installedProduct =
+                _installedProductVerifier.Verify(_profile);
+            if (!installedProduct.Validation.IsValid)
             {
-                return Failure(installedProduct.JoinMessages());
+                return Failure(installedProduct.Validation.JoinMessages());
             }
 
             FileTrustResult trust = _trustVerifier.Verify(candidate, _profile.ControllerBinary);
@@ -101,7 +102,7 @@ namespace EsmTspiot.ServiceProvisioner
                 Binary = new VerifiedControllerBinary
                 {
                     FullPath = Path.GetFullPath(candidate),
-                    Version = _profile.Version,
+                    Version = installedProduct.DisplayVersion,
                     Sha256 = trust.Observed.Sha256,
                     SignerThumbprint = trust.Observed.SignerThumbprint,
                     Machine = trust.Observed.Machine

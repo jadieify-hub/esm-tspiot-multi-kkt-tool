@@ -233,6 +233,22 @@ namespace EsmTspiot.WinForms.Shared
                 throw new InvalidOperationException(
                     "В ЕСМ нет зарегистрированных ККТ для настройки.");
 
+            // Выбор пакета живёт на вкладке «ЛМ ЧЗ», а полный прогон
+            // запускают с другой вкладки: без этого вопроса ЛМ ЧЗ
+            // молча пропускается, и это выясняется только в журнале.
+            if (_localModuleInstallerSelection == null &&
+                MessageBox.Show(
+                    this,
+                    "Официальный MSI ЛМ ЧЗ ещё не выбран, поэтому установка " +
+                        "ЛМ ЧЗ будет пропущена." + Environment.NewLine +
+                        "Выбрать файл сейчас?",
+                    "Полная автоматическая настройка",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question) == DialogResult.Yes)
+            {
+                SelectLocalModuleInstaller(this);
+            }
+
             FullAutomaticLocalSetupOutcome outcome =
                 new FullAutomaticLocalSetupOutcome();
             _lastAutomaticLocalModulesReady = 0;

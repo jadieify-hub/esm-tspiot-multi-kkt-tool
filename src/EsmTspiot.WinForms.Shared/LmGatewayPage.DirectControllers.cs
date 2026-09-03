@@ -75,7 +75,7 @@ namespace EsmTspiot.WinForms.Shared
             }
             outcome.ExpectedKktCount = registeredKkts.Count;
 
-            _statusLabel.Text = "Подготовка плана прямых контроллеров 1.6.4.0...";
+            _statusLabel.Text = "Подготовка плана прямых контроллеров ЛМ ЧЗ...";
             DirectControllerPlan plan =
                 new DirectControllerOperatorInventoryReader().BuildPlan(
                     registeredKkts,

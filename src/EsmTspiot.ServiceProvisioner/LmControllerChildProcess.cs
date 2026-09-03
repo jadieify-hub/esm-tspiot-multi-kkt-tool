@@ -83,7 +83,9 @@ namespace EsmTspiot.ServiceProvisioner
             _profileRoot = Path.GetFullPath(profileRoot);
             _environmentReader = environmentReader;
             _runtime = runtime;
-            if (!string.Equals(_binary.Version, _profile.Version, StringComparison.Ordinal) ||
+            // Версия контроллера берётся из установленного продукта и с
+            // профилем не сверяется: важно, что она вообще опознана.
+            if (string.IsNullOrWhiteSpace(_binary.Version) ||
                 !string.Equals(_profile.TerminalArguments, string.Empty, StringComparison.Ordinal))
             {
                 throw new InvalidDataException("Controller binary or terminal contract is unsupported.");

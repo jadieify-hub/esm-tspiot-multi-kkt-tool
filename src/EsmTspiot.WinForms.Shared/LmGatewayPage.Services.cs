@@ -83,7 +83,7 @@ namespace EsmTspiot.WinForms.Shared
         {
             GroupBox group = new GroupBox
             {
-                Text = "Независимые контроллеры ЕСМ 1.6.4.0",
+                Text = "Независимые контроллеры ЛМ ЧЗ",
                 Dock = DockStyle.Fill,
                 AutoSize = true,
                 Margin = new Padding(0, 0, 0, 6)
@@ -101,7 +101,7 @@ namespace EsmTspiot.WinForms.Shared
             table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             Label description = new Label
             {
-                Text = "Используется установленный официальный контроллер 1.6.4.0. " +
+                Text = "Используется установленный официальный контроллер ЛМ ЧЗ от ЕСП. " +
                     "Для каждой ККТ создаётся отдельная служба; ЛМ ЧЗ можно " +
                     "установить и инициализировать позже.",
                 AutoSize = true,
@@ -166,7 +166,7 @@ namespace EsmTspiot.WinForms.Shared
             _officialControllerStatusLabel.AutoSize = true;
             _officialControllerStatusLabel.Dock = DockStyle.Fill;
             _officialControllerStatusLabel.Text =
-                "Состояние установленного официального контроллера 1.6.4.0 " +
+                "Состояние установленного официального контроллера ЛМ ЧЗ " +
                 "будет проверено при обновлении.";
             group.Controls.Add(_officialControllerStatusLabel);
             return group;
@@ -1118,7 +1118,7 @@ namespace EsmTspiot.WinForms.Shared
             if (!string.IsNullOrEmpty(_serviceInventoryWarning))
             {
                 _officialControllerStatusLabel.Text =
-                    "Предварительное состояние контроллера 1.6.4.0 прочитать не удалось. " +
+                    "Предварительное состояние контроллера ЛМ ЧЗ прочитать не удалось. " +
                     "Разовый helper повторит проверку перед настройкой.";
                 return;
             }
@@ -1126,14 +1126,14 @@ namespace EsmTspiot.WinForms.Shared
             if (display.OfficialControllers.Count == 0)
             {
                 _officialControllerStatusLabel.Text =
-                    "Официальный контроллер 1.6.4.0 не найден. " +
+                    "Официальный контроллер ЛМ ЧЗ от ЕСП не найден. " +
                     "Установите его штатным пакетом поставщика.";
                 return;
             }
 
             LmServiceInventoryItem official = display.OfficialControllers[0];
             _officialControllerStatusLabel.Text =
-                "Официальный контроллер 1.6.4.0 установлен, состояние: " +
+                "Официальный контроллер ЛМ ЧЗ от ЕСП установлен, состояние: " +
                 GetServiceStatusText(official) + "." +
                 " Для первой ККТ используется эта штатная служба." +
                 (display.OfficialControllers.Count > 1

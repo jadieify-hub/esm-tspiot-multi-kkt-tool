@@ -72,7 +72,10 @@ namespace EsmTspiot.ServiceProvisioner
         internal bool ListenerUsesDualStackIpv6Wildcard { get; private set; }
         internal IDictionary<string, CapabilityFactProvenance> Provenance { get; private set; }
 
-        internal static ControllerCapabilityProfile SupportedVersion1640()
+        // Контроллер опознаётся по подписи ЕСП, имени продукта и структуре
+        // установки, а не по номеру версии: очередная сборка вендора должна
+        // приниматься без правки программы.
+        internal static ControllerCapabilityProfile Supported()
         {
             string programFiles64 = Environment.GetEnvironmentVariable("ProgramW6432");
             if (string.IsNullOrWhiteSpace(programFiles64))
@@ -82,7 +85,7 @@ namespace EsmTspiot.ServiceProvisioner
 
             ControllerCapabilityProfile profile = new ControllerCapabilityProfile
             {
-                Version = "1.6.4.0",
+                Version = string.Empty,
                 InstalledProductName = "ЕСП Контроллер ЛМ ЧЗ",
                 InstallRoot = Path.Combine(programFiles64, "ESP", "LMController"),
                 ControllerRelativePath = Path.Combine("bin", "lmcontroller.exe"),
@@ -111,29 +114,29 @@ namespace EsmTspiot.ServiceProvisioner
                 ControllerBinary = new TrustedFileExpectation
                 {
                     FileName = "lmcontroller.exe",
-                    ByteLength = 14668016,
-                    Sha256 = "0a25b29a39b100fe461eb3ffa06a6b18f2b474f337efdba9f7a9ca89740ffd0a",
+                    ByteLength = 0,
+                    Sha256 = string.Empty,
                     FileVersion = string.Empty,
                     ProductVersion = string.Empty,
                     ProductName = string.Empty,
                     CompanyName = string.Empty,
-                    Machine = PeMachine.Amd64,
+                    Machine = PeMachine.Unknown,
                     SignerSubject = SignerSubjectValue,
-                    SignerThumbprint = SignerThumbprintValue,
+                    SignerThumbprint = string.Empty,
                     RequireCodeSigningEku = true
                 },
                 Installer = new TrustedFileExpectation
                 {
-                    FileName = "esm-lm-controller_1.6.4.0-windows-setup.exe",
-                    ByteLength = 11088544,
-                    Sha256 = "2f97da8b93b6f7bc820385f5b70feab0ce7cbe2c6dbc25c0bca2348928bb3192",
-                    FileVersion = "1.6.4.0",
+                    FileName = string.Empty,
+                    ByteLength = 0,
+                    Sha256 = string.Empty,
+                    FileVersion = string.Empty,
                     ProductVersion = string.Empty,
                     ProductName = "ЕСП Контроллер ЛМ ЧЗ",
                     CompanyName = "ЕСП",
-                    Machine = PeMachine.I386,
+                    Machine = PeMachine.Unknown,
                     SignerSubject = SignerSubjectValue,
-                    SignerThumbprint = SignerThumbprintValue,
+                    SignerThumbprint = string.Empty,
                     RequireCodeSigningEku = true
                 }
             };
