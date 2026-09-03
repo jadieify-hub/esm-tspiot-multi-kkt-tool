@@ -94,8 +94,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Provisioning protocol rejects unknown schema or operation", ProvisioningProtocolRejectsUnknownSchemaOrOperation);
             Run("Production helper rejects retired supervisor entry points", ProductionHelperRejectsRetiredSupervisorEntryPoints);
             Run("Provisioning protocol rejects unsafe item", ProvisioningProtocolRejectsUnsafeItem);
-            Run("Provisioning pipe authenticates exact protected peer images", ProvisioningPipeAuthenticatesExactProtectedPeerImages);
-            Run("Provisioning pipe accepts protected main images independently of filename", ProvisioningPipeAcceptsProtectedMainImageIndependentlyOfFilename);
+            Run("Provisioning pipe authenticates exact peer images from any folder", ProvisioningPipeAuthenticatesExactPeerImages);
+            Run("Provisioning pipe accepts main images independently of filename", ProvisioningPipeAcceptsMainImageIndependentlyOfFilename);
             Run("Provisioning protocol rejects plan hash mismatch", ProvisioningProtocolRejectsPlanHashMismatch);
             Run("Direct controller protocol v2 accepts canonical batch", DirectControllerProtocolV2AcceptsCanonicalBatch);
             Run("Direct controller protocol v2 rejects stale schema and duplicates", DirectControllerProtocolV2RejectsStaleSchemaAndDuplicates);
@@ -805,21 +805,16 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 "The two local listeners must not share one port.");
         }
 
-        private static void ProvisioningPipeAuthenticatesExactProtectedPeerImages()
+        private static void ProvisioningPipeAuthenticatesExactPeerImages()
         {
             ProvisioningPeerEvidence server = CreateValidServerEvidence();
             AssertTrue(ProvisioningPipePeerAuthenticator.ValidateServer(server).IsValid,
-                "Expected exact protected main process to authenticate.");
+                "Expected the exact main process to authenticate from a user folder.");
 
             ProvisioningPeerEvidence wrongServerImage = CloneEvidence(server);
             wrongServerImage.ActualImagePath = @"C:\Temp\MultiKKT.exe";
             AssertFalse(ProvisioningPipePeerAuthenticator.ValidateServer(wrongServerImage).IsValid,
                 "Same-SID server with another image must fail.");
-
-            ProvisioningPeerEvidence writableServer = CloneEvidence(server);
-            writableServer.IsImagePathProtected = false;
-            AssertFalse(ProvisioningPipePeerAuthenticator.ValidateServer(writableServer).IsValid,
-                "A peer image under an unprotected path must fail.");
 
             ProvisioningPeerEvidence unlimitedServer = CloneEvidence(server);
             unlimitedServer.MaxServerInstances = -1;
@@ -849,7 +844,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 "Over-the-shoulder elevation under another account must fail.");
         }
 
-        private static void ProvisioningPipeAcceptsProtectedMainImageIndependentlyOfFilename()
+        private static void ProvisioningPipeAcceptsMainImageIndependentlyOfFilename()
         {
             MethodInfo method = typeof(NativePeerEvidenceReader).GetMethod(
                 "IsAllowedMainImage",
@@ -8895,13 +8890,11 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             {
                 ExpectedSid = "S-1-5-21-111-222-333-1001",
                 ActualSid = "S-1-5-21-111-222-333-1001",
-                ExpectedImagePath = @"C:\Program Files\KRS\MultiKKT\MultiKKT.exe",
-                ActualImagePath = @"C:\Program Files\KRS\MultiKKT\MultiKKT.exe",
+                ExpectedImagePath = @"C:\Users\operator\Downloads\MultiKKT\MultiKKT.exe",
+                ActualImagePath = @"C:\Users\operator\Downloads\MultiKKT\MultiKKT.exe",
                 ExpectedProcessId = 0,
                 ActualProcessId = 3100,
-                IsImagePathProtected = true,
                 HasExpectedMetadata = true,
-                HasReparseComponent = false,
                 IsHighIntegrity = false,
                 MaxServerInstances = 1,
                 IsSecondServerAttempt = false
@@ -8918,9 +8911,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 ActualImagePath = source.ActualImagePath,
                 ExpectedProcessId = source.ExpectedProcessId,
                 ActualProcessId = source.ActualProcessId,
-                IsImagePathProtected = source.IsImagePathProtected,
                 HasExpectedMetadata = source.HasExpectedMetadata,
-                HasReparseComponent = source.HasReparseComponent,
                 IsHighIntegrity = source.IsHighIntegrity,
                 MaxServerInstances = source.MaxServerInstances,
                 IsSecondServerAttempt = source.IsSecondServerAttempt

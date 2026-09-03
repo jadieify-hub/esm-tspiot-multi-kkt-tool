@@ -5,7 +5,6 @@ using System.IO;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Runtime.Serialization.Json;
-using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text;
 using System.Threading;
@@ -231,9 +230,7 @@ namespace EsmTspiot.ServiceProvisioner
                 ActualImagePath = Path.GetFullPath(actualPath),
                 ActualProcessId = (int)serverPid,
                 ExpectedProcessId = 0,
-                IsImagePathProtected = PeerImagePathSafety.IsProtected(actualPath),
                 HasExpectedMetadata = expectedMetadata,
-                HasReparseComponent = PeerImagePathSafety.HasReparseComponent(actualPath),
                 IsHighIntegrity = false,
                 MaxServerInstances = maxInstances > int.MaxValue ? -1 : (int)maxInstances,
                 IsSecondServerAttempt = false
@@ -407,38 +404,6 @@ namespace EsmTspiot.ServiceProvisioner
             catch (ObjectDisposedException)
             {
             }
-        }
-    }
-
-    internal static class PeerImagePathSafety
-    {
-        internal static bool IsProtected(string imagePath)
-        {
-            try
-            {
-                string fullPath = Path.GetFullPath(imagePath);
-                string directory = Path.GetDirectoryName(fullPath);
-                return PathSafety.IsSecurityProtected(
-                        new FileInfo(fullPath).GetAccessControl(),
-                        null) &&
-                    PathSafety.IsSecurityProtected(
-                        new DirectoryInfo(directory).GetAccessControl(),
-                        null);
-            }
-            catch (Exception ex)
-            {
-                if (ex is IOException || ex is UnauthorizedAccessException || ex is SystemException)
-                {
-                    return false;
-                }
-                throw;
-            }
-        }
-
-        internal static bool HasReparseComponent(string path)
-        {
-            string root = Path.GetPathRoot(Path.GetFullPath(path));
-            return PathSafety.HasReparseComponent(path, root);
         }
     }
 }

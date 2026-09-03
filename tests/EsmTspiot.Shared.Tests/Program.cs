@@ -205,7 +205,8 @@ namespace EsmTspiot.Shared.Tests
             Run("Display log trimmer preserves the newest half", DisplayLogTrimmerPreservesNewestHalf);
             Run("File log sink persists text without blocking", FileLogSinkPersistsTextWithoutBlocking);
 #if !NETFRAMEWORK
-            Run("Provisioner ACL accepts standard Program Files", ProvisionerAclAcceptsStandardProgramFiles);
+            Run("Provisioner closure list parses names and hashes", ProvisionerClosureListParsesNamesAndHashes);
+            Run("Provisioner launcher names the missing helper file without location rules", ProvisionerLauncherNamesMissingHelperFileWithoutLocationRules);
             Run("Provisioner accepts full administrator without split UAC", ProvisionerAcceptsFullAdministratorWithoutSplitUac);
             Run("Provisioner can inspect the current administrative token", ProvisionerCanInspectCurrentAdministrativeToken);
             Run("Provisioner client creates a supported protected pipe", ProvisionerClientCreatesSupportedProtectedPipe);
@@ -5378,16 +5379,45 @@ namespace EsmTspiot.Shared.Tests
         }
 
 #if !NETFRAMEWORK
-        private static void ProvisionerAclAcceptsStandardProgramFiles()
+        private static void ProvisionerClosureListParsesNamesAndHashes()
         {
-            string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-            MethodInfo method = typeof(ProvisionerProcessLauncher).GetMethod(
-                "HasProtectedAcl",
-                BindingFlags.NonPublic | BindingFlags.Static);
-            AssertTrue(method != null, "Expected the production ACL check.");
-            bool result = (bool)method.Invoke(null, new object[] { programFiles });
-            AssertTrue(result,
-                "A standard Program Files ACL with an inherit-only CREATOR OWNER ACE must be accepted.");
+            string first = new string('a', 64);
+            string second = new string('b', 64);
+            IList<KeyValuePair<string, string>> closure =
+                ProvisionerProcessLauncher.ParseExpectedClosure(
+                    "EsmTspiot.Shared.dll=" + first +
+                    "|WixToolset.Dtf.Compression.dll=" + second);
+            AssertEqual(2, closure.Count, "Expected two closure entries.");
+            AssertEqual("EsmTspiot.Shared.dll", closure[0].Key, "First closure name.");
+            AssertEqual(first, closure[0].Value, "First closure hash.");
+            AssertEqual("WixToolset.Dtf.Compression.dll", closure[1].Key, "Second closure name.");
+            AssertEqual(second, closure[1].Value, "Second closure hash.");
+            AssertEqual(0, ProvisionerProcessLauncher.ParseExpectedClosure(string.Empty).Count,
+                "An empty list must parse to no entries.");
+            bool rejected = false;
+            try
+            {
+                ProvisionerProcessLauncher.ParseExpectedClosure("EsmTspiot.Shared.dll=short");
+            }
+            catch (InvalidDataException)
+            {
+                rejected = true;
+            }
+            AssertTrue(rejected, "A malformed hash must be rejected.");
+            AssertEqual(1, ProvisionerProcessLauncher.ParseExpectedClosure(
+                ProvisionerIntegrity.ExpectedClosureSha256).Count,
+                "The test stub closure must parse.");
+        }
+
+        private static void ProvisionerLauncherNamesMissingHelperFileWithoutLocationRules()
+        {
+            string reason;
+            bool available = new ProvisionerProcessLauncher().CanLaunch(out reason);
+            AssertFalse(available, "No helper is present next to the test host.");
+            AssertContains(reason, "EsmTspiot.ServiceProvisioner.exe");
+            AssertContains(reason, "Распакуйте архив целиком");
+            AssertFalse(reason.IndexOf("Program Files", StringComparison.OrdinalIgnoreCase) >= 0,
+                "Portable mode must not demand Program Files: " + reason);
         }
 
         private static void ProvisionerAcceptsFullAdministratorWithoutSplitUac()

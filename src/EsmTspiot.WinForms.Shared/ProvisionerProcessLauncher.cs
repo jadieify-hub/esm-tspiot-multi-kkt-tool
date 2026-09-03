@@ -1,14 +1,13 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
-using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
-using EsmTspiot.WindowsSecurity;
 
 namespace EsmTspiot.WinForms.Shared
 {
@@ -43,20 +42,11 @@ namespace EsmTspiot.WinForms.Shared
         {
             try
             {
-                if (!File.Exists(_helperPath))
+                string missingFile = FindMissingClosureFile();
+                if (missingFile != null)
                 {
-                    reason = "Защищенный helper не найден в папке Provisioner.";
-                    return false;
-                }
-                if (!IsUnderProgramFiles(_applicationRoot) ||
-                    HasReparseComponent(_applicationRoot) ||
-                    HasReparseComponent(_helperPath) ||
-                    !HasProtectedAcl(_applicationRoot) ||
-                    !HasProtectedAcl(Path.GetDirectoryName(_helperPath)) ||
-                    !HasProtectedAcl(_helperPath))
-                {
-                    reason = "Для операций со службами распакуйте проверенный пакет в " +
-                        @"C:\Program Files\KRS\MultiKKT от имени администратора.";
+                    reason = "В папке Provisioner рядом с программой нет файла " +
+                        missingFile + ". Распакуйте архив целиком.";
                     return false;
                 }
                 if (!HasAdministrativeToken())
@@ -70,7 +60,10 @@ namespace EsmTspiot.WinForms.Shared
             }
             catch (Exception ex)
             {
-                reason = "Проверка helper не пройдена: " + ex.GetType().Name + ".";
+                reason = "Проверка helper не пройдена: " +
+                    (ex is InvalidDataException
+                        ? ex.Message
+                        : ex.GetType().Name + ".");
                 return false;
             }
         }
@@ -146,6 +139,24 @@ namespace EsmTspiot.WinForms.Shared
             {
                 throw new InvalidDataException("SHA-256 helper не совпадает со встроенным значением.");
             }
+            IList<KeyValuePair<string, string>> closure =
+                ParseExpectedClosure(ProvisionerIntegrity.ExpectedClosureSha256);
+            if (closure.Count == 0)
+            {
+                throw new InvalidDataException("Встроенный список файлов helper пуст.");
+            }
+            string helperDirectory = Path.GetDirectoryName(_helperPath);
+            for (int index = 0; index < closure.Count; index++)
+            {
+                string closurePath = Path.Combine(helperDirectory, closure[index].Key);
+                if (!File.Exists(closurePath) ||
+                    !FixedTimeEquals(closure[index].Value, ComputeSha256(closurePath)))
+                {
+                    throw new InvalidDataException(
+                        "SHA-256 файла Provisioner\\" + closure[index].Key +
+                        " не совпадает со встроенным значением.");
+                }
+            }
             FileVersionInfo helper = FileVersionInfo.GetVersionInfo(_helperPath);
             FileVersionInfo main = FileVersionInfo.GetVersionInfo(
                 Process.GetCurrentProcess().MainModule.FileName);
@@ -160,60 +171,62 @@ namespace EsmTspiot.WinForms.Shared
             }
         }
 
-        private static bool IsUnderProgramFiles(string path)
+        // The embedded list has the form "name=SHA256|name=SHA256"; it is
+        // generated at build time from the exact helper closure.
+        internal static IList<KeyValuePair<string, string>> ParseExpectedClosure(
+            string value)
         {
-            string full = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar) +
-                Path.DirectorySeparatorChar;
-            string[] roots =
+            List<KeyValuePair<string, string>> result =
+                new List<KeyValuePair<string, string>>();
+            if (string.IsNullOrEmpty(value))
             {
-                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
-                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
-                Environment.GetEnvironmentVariable("ProgramW6432")
-            };
-            for (int index = 0; index < roots.Length; index++)
-            {
-                if (!string.IsNullOrWhiteSpace(roots[index]))
-                {
-                    string root = Path.GetFullPath(roots[index])
-                        .TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-                    if (full.StartsWith(root, StringComparison.OrdinalIgnoreCase))
-                    {
-                        return true;
-                    }
-                }
+                return result;
             }
-            return false;
+            string[] entries = value.Split('|');
+            for (int index = 0; index < entries.Length; index++)
+            {
+                string entry = entries[index].Trim();
+                if (entry.Length == 0)
+                {
+                    continue;
+                }
+                int separator = entry.IndexOf('=');
+                if (separator <= 0 || separator == entry.Length - 1)
+                {
+                    throw new InvalidDataException(
+                        "Встроенный список файлов helper повреждён.");
+                }
+                string name = entry.Substring(0, separator).Trim();
+                string hash = entry.Substring(separator + 1).Trim();
+                if (name.Length == 0 ||
+                    name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ||
+                    hash.Length != 64)
+                {
+                    throw new InvalidDataException(
+                        "Встроенный список файлов helper повреждён.");
+                }
+                result.Add(new KeyValuePair<string, string>(name, hash));
+            }
+            return result;
         }
 
-        private static bool HasReparseComponent(string path)
+        private string FindMissingClosureFile()
         {
-            string current = Path.GetFullPath(path);
-            string root = Path.GetPathRoot(current).TrimEnd(Path.DirectorySeparatorChar);
-            while (!string.IsNullOrEmpty(current))
+            if (!File.Exists(_helperPath))
             {
-                if ((File.Exists(current) || Directory.Exists(current)) &&
-                    (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
-                {
-                    return true;
-                }
-                if (string.Equals(
-                    current.TrimEnd(Path.DirectorySeparatorChar),
-                    root,
-                    StringComparison.OrdinalIgnoreCase))
-                {
-                    break;
-                }
-                current = Path.GetDirectoryName(current);
+                return Path.GetFileName(_helperPath);
             }
-            return false;
-        }
-
-        private static bool HasProtectedAcl(string path)
-        {
-            FileSystemSecurity security = File.Exists(path)
-                ? (FileSystemSecurity)new FileInfo(path).GetAccessControl()
-                : new DirectoryInfo(path).GetAccessControl();
-            return ProtectedAclPolicy.IsProtected(security, null);
+            IList<KeyValuePair<string, string>> closure =
+                ParseExpectedClosure(ProvisionerIntegrity.ExpectedClosureSha256);
+            string helperDirectory = Path.GetDirectoryName(_helperPath);
+            for (int index = 0; index < closure.Count; index++)
+            {
+                if (!File.Exists(Path.Combine(helperDirectory, closure[index].Key)))
+                {
+                    return closure[index].Key;
+                }
+            }
+            return null;
         }
 
         private static bool HasAdministrativeToken()

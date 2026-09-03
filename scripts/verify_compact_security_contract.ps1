@@ -76,6 +76,29 @@ if ($expectedHelperHash -ne $actualHelperHash) {
     throw 'The packaged main executable does not trust the packaged helper hash.'
 }
 
+$closureField = $integrityType.GetField(
+    'ExpectedClosureSha256',
+    [Reflection.BindingFlags]'Static,NonPublic')
+$expectedClosure = [string]$closureField.GetRawConstantValue()
+$closureEntries = @($expectedClosure -split '\|' | Where-Object { $_ })
+$expectedClosureNames = @($expectedProvisionerFiles |
+    Where-Object { $_ -ne 'EsmTspiot.ServiceProvisioner.exe' } |
+    Sort-Object)
+$actualClosureNames = @($closureEntries |
+    ForEach-Object { ($_ -split '=', 2)[0] } |
+    Sort-Object)
+if (($expectedClosureNames -join "`n") -ne ($actualClosureNames -join "`n")) {
+    throw "The packaged main executable embeds an unexpected helper closure list: $($actualClosureNames -join ', ')."
+}
+foreach ($entry in $closureEntries) {
+    $parts = $entry -split '=', 2
+    $closurePath = Join-Path $provisionerRoot $parts[0]
+    $closureHash = (Get-FileHash -LiteralPath $closurePath -Algorithm SHA256).Hash
+    if ($closureHash -ne $parts[1]) {
+        throw "The packaged main executable does not trust the packaged helper file: $($parts[0])"
+    }
+}
+
 $mainInfo = [Diagnostics.FileVersionInfo]::GetVersionInfo($mainPath)
 $helperInfo = [Diagnostics.FileVersionInfo]::GetVersionInfo($helperPath)
 if ($mainInfo.CompanyName -ne 'KRS' -or
