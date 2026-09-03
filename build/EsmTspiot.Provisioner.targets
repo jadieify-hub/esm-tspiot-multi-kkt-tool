@@ -35,9 +35,14 @@
     <GetFileHash Files="$(ProvisionerExe)" Algorithm="SHA256">
       <Output TaskParameter="Items" ItemName="_ProvisionerHashItem" />
     </GetFileHash>
+    <GetFileHash Files="$(ProvisionerShared);$(ProvisionerDtfWindowsInstaller);$(ProvisionerDtfWindowsInstallerPackage);$(ProvisionerDtfCompression);$(ProvisionerDtfCompressionCab)"
+                 Algorithm="SHA256">
+      <Output TaskParameter="Items" ItemName="_ProvisionerClosureHashItem" />
+    </GetFileHash>
     <PropertyGroup>
       <_ProvisionerHash>@(_ProvisionerHashItem-&gt;'%(FileHash)')</_ProvisionerHash>
-      <_ProvisionerCode>namespace EsmTspiot.WinForms.Shared { internal static class ProvisionerIntegrity { internal const string ExpectedSha256 = &quot;$(_ProvisionerHash)&quot;%3B } }</_ProvisionerCode>
+      <_ProvisionerClosureHashes>@(_ProvisionerClosureHashItem-&gt;'%(Filename)%(Extension)=%(FileHash)', '|')</_ProvisionerClosureHashes>
+      <_ProvisionerCode>namespace EsmTspiot.WinForms.Shared { internal static class ProvisionerIntegrity { internal const string ExpectedSha256 = &quot;$(_ProvisionerHash)&quot;%3B internal const string ExpectedClosureSha256 = &quot;$(_ProvisionerClosureHashes)&quot;%3B } }</_ProvisionerCode>
     </PropertyGroup>
     <WriteLinesToFile File="$(ProvisionerIntegritySource)"
                       Lines="$(_ProvisionerCode)"

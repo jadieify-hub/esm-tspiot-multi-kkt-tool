@@ -115,10 +115,8 @@ Publisher and owner: KRS
 Author: Ruslan Kerusov
 
 1. Verify the SHA-256 checksums before use.
-2. To manage Windows services, an administrator must extract the complete archive to:
-   C:\Program Files\KRS\MultiKKT
-   Inherited ACLs must not grant ordinary users write access.
-3. From Downloads, Desktop or another user-writable directory, the application deliberately blocks Windows-service mutations.
+2. Extract the complete archive to any local folder (Downloads, Desktop, a USB stick) and run it from there. Keep EsmTspiot.Shared.dll and the Provisioner folder next to the executable; a lone EXE does not start. There is no installer and nothing is copied into system folders.
+3. Before every Windows-service operation the application checks that all helper files are present, that their SHA-256 match the values embedded in the main executable and that the versions match. UAC is requested only for service operations.
 4. Install the official ESM LM Controller 1.6.4.0 before controller setup and keep the official LM CHZ installer regime-2.6.1-7.msi at hand. Vendor binaries are discovered and verified in their installed or original locations; they are not included in this archive.
 5. This archive contains no ESP/CHZ vendor binaries, extracted runtime, credentials, LM CHZ database or managed Erlang runtime.
 6. Before a real installation, follow FIELD_TEST_1.6.4.0.md.

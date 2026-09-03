@@ -11,9 +11,7 @@ namespace EsmTspiot.ServiceProvisioner
         internal string ActualImagePath { get; set; }
         internal int ExpectedProcessId { get; set; }
         internal int ActualProcessId { get; set; }
-        internal bool IsImagePathProtected { get; set; }
         internal bool HasExpectedMetadata { get; set; }
-        internal bool HasReparseComponent { get; set; }
         internal bool IsHighIntegrity { get; set; }
         internal int MaxServerInstances { get; set; }
         internal bool IsSecondServerAttempt { get; set; }
@@ -53,10 +51,6 @@ namespace EsmTspiot.ServiceProvisioner
                     StringComparison.OrdinalIgnoreCase))
             {
                 result.Add("Образ pipe peer не совпадает с ожидаемым EXE.");
-            }
-            if (!evidence.IsImagePathProtected || evidence.HasReparseComponent)
-            {
-                result.Add("Образ pipe peer находится в незащищенном пути или в reparse-цепочке.");
             }
             if (!evidence.HasExpectedMetadata)
             {
