@@ -186,10 +186,24 @@ try {
     if (-not $smoke.WaitForInputIdle(10000)) {
         throw "Compact Legacy smoke did not become interactive."
     }
-    Start-Sleep -Milliseconds 500
-    $smoke.Refresh()
-    if ($smoke.HasExited -or -not $smoke.Responding -or $smoke.MainWindowHandle -eq 0) {
-        throw "Compact Legacy smoke did not open a responsive main window."
+    # The main window is created shortly after the message loop becomes idle;
+    # on a busy build machine that takes over a second, so poll instead of
+    # sampling once.
+    $smokeDeadline = [DateTime]::UtcNow.AddSeconds(15)
+    $smokeReady = $false
+    while ([DateTime]::UtcNow -lt $smokeDeadline) {
+        Start-Sleep -Milliseconds 250
+        $smoke.Refresh()
+        if ($smoke.HasExited) {
+            throw "Compact Legacy smoke exited during startup with code $($smoke.ExitCode)."
+        }
+        if ($smoke.Responding -and $smoke.MainWindowHandle -ne 0) {
+            $smokeReady = $true
+            break
+        }
+    }
+    if (-not $smokeReady) {
+        throw "Compact Legacy smoke did not open a responsive main window within 15 seconds."
     }
 }
 finally {
