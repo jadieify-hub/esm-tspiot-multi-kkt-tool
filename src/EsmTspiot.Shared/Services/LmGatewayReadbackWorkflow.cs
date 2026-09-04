@@ -192,11 +192,12 @@ namespace EsmTspiot.Shared.Services
                     // ИНН обслуживает клон на 6995 и штатный ЕСМ показывал
                     // его как «Готов к работе». Отказом контура это быть не
                     // может — только строкой оператору.
-                    endpointNote = " ЕСМ сообщает адрес ЛМ " +
+                    endpointNote = " ЕСМ показывает адрес ЛМ " +
                         observation.LmAddress + ":" + observation.LmPort +
-                        "; по плану этой ККТ отвечает ЛМ " +
-                        Trim(expectedLmAddress) + ":" + Trim(expectedLmPort) +
-                        ".";
+                        " — это его модуль по умолчанию; эту ККТ обслуживает " +
+                        "ЛМ " + Trim(expectedLmAddress) + ":" +
+                        Trim(expectedLmPort) + " через её контроллер. " +
+                        "Расхождение адресов здесь ошибкой не является.";
                 }
             }
 
