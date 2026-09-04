@@ -40,8 +40,6 @@ namespace EsmTspiot.Shared.Services
             // Состояние «ЛМ ещё не инициализирован» проверяется раньше сверки
             // адреса: до инициализации ЕСМ отдаёт в lm.ip/lm.port значения по
             // умолчанию, и несовпадение порта в этот момент ничего не значит.
-            if (IsLocalModuleFault(observation.LmStatus))
-                return LmContourReadbackState.Attention;
             if (observation.IdentityMatches && observation.HasLmConfiguration &&
                 IsLocalModulePending(observation.LmStatus))
                 return LmContourReadbackState.LocalModuleNotInitialized;
@@ -87,54 +85,38 @@ namespace EsmTspiot.Shared.Services
                     ? "привязка подтверждена ЕСМ (" + observation.LmAddress +
                         ":" + observation.LmPort + "); "
                     : "привязка принята ЕСМ; ") +
-                    "ЛМ ЧЗ ещё не инициализирован — ЕСМ сообщает: " +
-                    reported + ". Адрес ЛМ ЕСМ покажет после инициализации.";
+                    "ЛМ ЧЗ пока не работает — ЕСМ сообщает: " + reported +
+                    ". Инициализация модуля идёт в фоне и занимает часы; " +
+                    "контур это не задерживает.";
             }
             string details = observation == null
                 ? string.Empty
                 : (observation.Details ?? string.Empty).Trim();
             if (state == LmContourReadbackState.Attention)
-            {
-                if (IsLocalModuleFault(observation.LmStatus))
-                    return prefix + "ЕСМ сообщает об ошибке ЛМ ЧЗ: " +
-                        (observation.LmStatus ?? string.Empty).Trim() +
-                        ". Это не код ожидания инициализации — проверьте " +
-                        "модуль.";
                 return prefix + "требуется проверка: " + details;
-            }
             return prefix + "ЕСМ недоступен для контрольного чтения: " + details;
         }
 
         /// <summary>
-        /// ЕСМ сообщает, что локальный модуль ещё не готов к работе: идёт
-        /// инициализация или модуль отвечает ошибкой до неё. Инициализация ЛМ
-        /// вне задачи утилиты, поэтому это строка оператору, а не отказ
-        /// контура.
+        /// ЕСМ сообщает, что локальный модуль ещё не работает: идёт
+        /// инициализация, модуль не настроен или отвечает ошибкой. Контур
+        /// настраивается независимо от этого: инициализация ЛМ идёт в фоне и
+        /// занимает часы, поэтому статус модуля — строка оператору, а не
+        /// критерий готовности. Ужесточать список кодов бессмысленно: любой
+        /// незнакомый код здесь означает ровно то же — модуль пока не
+        /// работает, а контур это не останавливает.
         /// </summary>
         public static bool IsLocalModulePending(string status)
         {
             string value = (status ?? string.Empty).Trim();
             if (value.Length == 0)
                 return false;
-            return value.StartsWith("init", StringComparison.OrdinalIgnoreCase) ||
+            return value.StartsWith("error", StringComparison.OrdinalIgnoreCase) ||
+                value.StartsWith("init", StringComparison.OrdinalIgnoreCase) ||
                 value.Equals("not_initialized", StringComparison.OrdinalIgnoreCase) ||
                 value.Equals("not_configured", StringComparison.OrdinalIgnoreCase) ||
                 DirectControllerSetupPolicy.IsDeferredLocalModuleWarning(value);
         }
 
-        /// <summary>
-        /// ЕСМ сообщает об ошибке ЛМ кодом, которого нет среди состояний
-        /// ожидания. До 2026-09-04 ожиданием считалась любая строка,
-        /// начинающаяся с error, и фатальная ошибка модуля завершала полный
-        /// автомат зелёным результатом. В поле встречались только 2025 и
-        /// 2055, они и остаются ожиданием; остальное — повод оператору
-        /// посмотреть на модуль.
-        /// </summary>
-        public static bool IsLocalModuleFault(string status)
-        {
-            string value = (status ?? string.Empty).Trim();
-            return value.StartsWith("error", StringComparison.OrdinalIgnoreCase) &&
-                !IsLocalModulePending(value);
-        }
     }
 }

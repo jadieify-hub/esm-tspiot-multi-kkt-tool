@@ -3333,13 +3333,13 @@ namespace EsmTspiot.Shared.Tests
                 LmContourReadbackPolicy.IsAcceptable(
                     LmContourReadbackPolicy.Classify(observation)),
                 "Deferred LM initialization stays acceptable for the contour.");
-            AssertContains(observation.Details, "не инициализирован");
+            AssertContains(observation.Details, "пока не работает");
             AssertFalse(
                 observation.Details.Contains("ожидалось"),
                 "The port comparison must be postponed until initialization.");
             AssertContains(
                 LmContourReadbackPolicy.Describe(observation),
-                "ЛМ ЧЗ ещё не инициализирован");
+                "ЛМ ЧЗ пока не работает");
         }
 
         private static void LmBindingAcceptsWhileLocalModuleInitializes()
@@ -5475,32 +5475,33 @@ namespace EsmTspiot.Shared.Tests
                     LmContourReadbackState.LocalModuleNotInitialized),
                 "A confirmed binding with an uninitialized LM is acceptable.");
             string pendingLine = LmContourReadbackPolicy.Describe(uninitialized);
-            AssertTrue(pendingLine.IndexOf("не инициализирован", StringComparison.Ordinal) >= 0 &&
+            AssertTrue(pendingLine.IndexOf("пока не работает", StringComparison.Ordinal) >= 0 &&
                 pendingLine.IndexOf("error 2025", StringComparison.Ordinal) >= 0,
-                "The pending line must explain that the LM awaits initialization and quote ESM.");
+                "The pending line must say the module is not up yet and quote ESM.");
 
-            LmGatewayReadbackObservation otherError = CreateContourObservation("error 1234");
-            AssertEqual(LmContourReadbackState.Attention,
-                LmContourReadbackPolicy.Classify(otherError),
-                "An LM error code outside the known waiting states needs attention.");
-            AssertFalse(LmContourReadbackPolicy.IsAcceptable(
-                    LmContourReadbackPolicy.Classify(otherError)),
-                "A contour cannot report success while ESM reports an unknown LM error.");
-            AssertContains(
-                LmContourReadbackPolicy.Describe(otherError),
-                "error 1234");
-            AssertEqual(LmContourReadbackState.LocalModuleNotInitialized,
-                LmContourReadbackPolicy.Classify(
-                    CreateContourObservation("error 2055")),
-                "Code 2055 stays a waiting state.");
-            AssertEqual(LmContourReadbackState.LocalModuleNotInitialized,
-                LmContourReadbackPolicy.Classify(
-                    CreateContourObservation("initialization")),
-                "Initialization stays a waiting state.");
-            AssertEqual(LmContourReadbackState.LocalModuleNotInitialized,
-                LmContourReadbackPolicy.Classify(
-                    CreateContourObservation("not_configured")),
-                "not_configured stays a waiting state.");
+            // Настройка кассового места не зависит от состояния ЛМ:
+            // инициализация идёт в фоне часами. Любой доклад ЕСМ о модуле —
+            // строка оператору, контур от неё не блокируется, но текст обязан
+            // показывать код как есть.
+            string[] moduleStates = new string[]
+            {
+                "error 1234", "error 2055", "initialization",
+                "initialization_failed", "not_configured", "not_initialized"
+            };
+            for (int index = 0; index < moduleStates.Length; index++)
+            {
+                LmGatewayReadbackObservation reportedState =
+                    CreateContourObservation(moduleStates[index]);
+                AssertEqual(LmContourReadbackState.LocalModuleNotInitialized,
+                    LmContourReadbackPolicy.Classify(reportedState),
+                    "An LM state ESM reports never blocks the contour.");
+                AssertTrue(LmContourReadbackPolicy.IsAcceptable(
+                        LmContourReadbackPolicy.Classify(reportedState)),
+                    "A configured contour stays acceptable whatever the LM reports.");
+                AssertContains(
+                    LmContourReadbackPolicy.Describe(reportedState),
+                    moduleStates[index]);
+            }
 
             // Полевой прогон 2026-09-04: ЕСМ сообщил ЛМ 127.0.0.1:5995 обеим
             // ККТ, включая ту, чей ИНН обслуживает клон на 6995, и сам же
@@ -5529,8 +5530,8 @@ namespace EsmTspiot.Shared.Tests
                 LmContourReadbackPolicy.Classify(unconfigured),
                 "An LM that ESM reached but reports as not configured awaits initialization.");
             AssertTrue(LmContourReadbackPolicy.Describe(unconfigured).IndexOf(
-                    "не инициализирован", StringComparison.Ordinal) >= 0,
-                "The line must say the LM awaits initialization, not that the binding is missing.");
+                    "пока не работает", StringComparison.Ordinal) >= 0,
+                "The line must say the module is not up, not that the binding is missing.");
 
             LmGatewayReadbackObservation unbound =
                 CreateContourObservation("not_configured");
@@ -5616,6 +5617,16 @@ namespace EsmTspiot.Shared.Tests
                 "The launcher must open the verified closure before starting it.");
             AssertTrue(MethodBodyCalls(launch, openVerified),
                 "Launch must hold the verified files open until Process.Start.");
+
+            // Помощник догружает свои сборки уже после старта, поэтому
+            // блокировки живут до его завершения, а не до Process.Start.
+            MethodInfo release = typeof(ProvisionerProcessLauncher).GetMethod(
+                "ReleaseWhenHelperExits",
+                BindingFlags.NonPublic | BindingFlags.Static);
+            AssertTrue(release != null,
+                "The launcher must tie its locks to the helper lifetime.");
+            AssertTrue(MethodBodyCalls(launch, release),
+                "Launch must keep the verified files locked while the helper runs.");
 
             MethodInfo openLocked = typeof(ProvisionerProcessLauncher).GetMethod(
                 "OpenLocked",
