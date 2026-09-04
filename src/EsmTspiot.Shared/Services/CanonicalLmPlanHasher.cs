@@ -26,18 +26,7 @@ namespace EsmTspiot.Shared.Services
             Append(canonical, "schema", request.SchemaVersion.ToString(CultureInfo.InvariantCulture));
             Append(canonical, "operation", ((int)request.Operation).ToString(CultureInfo.InvariantCulture));
 
-            if (request.Operation == LmServiceOperation.EnsureBatch)
-            {
-                int count = request.Items == null ? 0 : request.Items.Count;
-                Append(canonical, "item-count", count.ToString(CultureInfo.InvariantCulture));
-                for (int index = 0; index < count; index++)
-                {
-                    LmServiceProvisioningItemRequest item = request.Items[index];
-                    Append(canonical, "item-index", index.ToString(CultureInfo.InvariantCulture));
-                    AppendEnsureItem(canonical, item);
-                }
-            }
-            else if (request.Operation == LmServiceOperation.InstallControllerVersion)
+            if (request.Operation == LmServiceOperation.InstallControllerVersion)
             {
                 AppendInstaller(canonical, request.InstallerSelection);
                 Append(canonical, "warning", InstallerWarning);
@@ -196,15 +185,6 @@ namespace EsmTspiot.Shared.Services
                 }
             }
             return true;
-        }
-
-        private static void AppendEnsureItem(StringBuilder canonical, LmServiceProvisioningItemRequest item)
-        {
-            Append(canonical, "kkt", item == null ? null : item.KktSerial);
-            Append(canonical, "grpc", item == null ? null : item.GrpcPort.ToString(CultureInfo.InvariantCulture));
-            Append(canonical, "rest", item == null ? null : item.RestPort.ToString(CultureInfo.InvariantCulture));
-            Append(canonical, "target-address", item == null ? null : item.TargetAddress);
-            Append(canonical, "target-port", item == null ? null : item.TargetPort.ToString(CultureInfo.InvariantCulture));
         }
 
         private static void AppendInstaller(StringBuilder canonical, LmControllerInstallerSelection selection)
