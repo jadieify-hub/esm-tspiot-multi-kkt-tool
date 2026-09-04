@@ -179,10 +179,10 @@ namespace EsmTspiot.Shared.Services
                     {
                         observation.EndpointMatches = null;
                         observation.Details =
-                            "ЛМ ЧЗ ещё не инициализирован — ЕСМ сообщает: " +
-                            Trim(observation.LmStatus) + ". До инициализации ЕСМ " +
-                            "не показывает фактический адрес ЛМ, поэтому сверка " +
-                            "порта отложена.";
+                            "ЛМ ЧЗ пока не работает — ЕСМ сообщает: " +
+                            Trim(observation.LmStatus) + ". Пока модуль не " +
+                            "поднялся, ЕСМ не показывает фактический адрес ЛМ, " +
+                            "поэтому сверка порта отложена.";
                         return observation;
                     }
 
