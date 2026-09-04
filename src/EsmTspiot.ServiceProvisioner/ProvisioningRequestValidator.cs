@@ -49,7 +49,13 @@ namespace EsmTspiot.ServiceProvisioner
 
             if (request.Operation == LmServiceOperation.EnsureBatch)
             {
-                ValidateEnsure(request, result);
+                // Пакетное создание управляемых служб ЛМ-шлюза снято:
+                // контроллеры создаёт прямой путь, ЛМ ставит вендорный MSI.
+                // Номер операции занят навсегда, чтобы старый вызов не попал
+                // в новую операцию, а сам запрос отвергается на входе.
+                result.Add(
+                    "Операция создания управляемых служб ЛМ ЧЗ " +
+                    "больше не поддерживается.");
             }
             else if (request.Operation == LmServiceOperation.InstallControllerVersion)
             {
@@ -442,70 +448,6 @@ namespace EsmTspiot.ServiceProvisioner
             return result;
         }
 
-        private static void ValidateEnsure(
-            LmServiceProvisioningBatchRequest request,
-            ValidationResult result)
-        {
-            int count = request.Items == null ? 0 : request.Items.Count;
-            if (count < 1 || count > MaximumBatchSize)
-            {
-                result.Add("Операция EnsureBatch должна содержать от 1 до 32 ККТ.");
-            }
-            if (request.InstallerSelection != null ||
-                request.RemovalConfirmation != null ||
-                request.CleanupConfirmation != null ||
-                HasRemovalConfirmations(request) ||
-                HasLocalModulePayload(request))
-            {
-                result.Add("EnsureBatch не принимает payload другой операции.");
-            }
-
-            HashSet<string> serials = new HashSet<string>(StringComparer.Ordinal);
-            HashSet<int> ports = new HashSet<int>();
-            for (int index = 0; index < count; index++)
-            {
-                LmServiceProvisioningItemRequest item = request.Items[index];
-                if (item == null)
-                {
-                    result.Add("Строка EnsureBatch не задана.");
-                    continue;
-                }
-
-                try
-                {
-                    LmServiceIdentity.CreateName(item.KktSerial);
-                }
-                catch (ArgumentException)
-                {
-                    result.Add("Серийный номер ККТ должен содержать 14 ASCII-цифр.");
-                }
-
-                if (!serials.Add(item.KktSerial ?? string.Empty))
-                {
-                    result.Add("В EnsureBatch повторяется серийный номер ККТ.");
-                }
-                ValidateLocalPort(item.GrpcPort, "gRPC", ports, result);
-                ValidateLocalPort(item.RestPort, "REST", ports, result);
-
-                ValidationResult targetValidation = LmGatewayInputValidator.ValidateTarget(
-                    new LmGatewayTarget(item.TargetAddress, item.TargetPort));
-                CopyValidation(targetValidation, result);
-                if (targetValidation.IsValid)
-                {
-                    string normalizedAddress;
-                    bool isLoopback;
-                    LmGatewayInputValidator.TryNormalizeTargetAddress(
-                        item.TargetAddress,
-                        out normalizedAddress,
-                        out isLoopback);
-                    if (!string.Equals(item.TargetAddress, normalizedAddress, StringComparison.Ordinal))
-                    {
-                        result.Add("Адрес целевого ЛМ в EnsureBatch должен быть в канонической форме.");
-                    }
-                }
-            }
-        }
-
         private static void ValidateInstall(
             LmServiceProvisioningBatchRequest request,
             ValidationResult result)
@@ -748,23 +690,6 @@ namespace EsmTspiot.ServiceProvisioner
             }
         }
 
-        private static void ValidateLocalPort(
-            int port,
-            string role,
-            HashSet<int> occupied,
-            ValidationResult result)
-        {
-            if (port < 1 || port > 65535)
-            {
-                result.Add(role + "-порт должен быть в диапазоне 1-65535.");
-                return;
-            }
-            if (!occupied.Add(port))
-            {
-                result.Add("Локальный порт " + port.ToString() + " повторяется в batch.");
-            }
-        }
-
         private static void ValidateOrdinal(
             int ordinal,
             string role,
@@ -922,12 +847,5 @@ namespace EsmTspiot.ServiceProvisioner
             return true;
         }
 
-        private static void CopyValidation(ValidationResult source, ValidationResult destination)
-        {
-            for (int index = 0; index < source.Messages.Count; index++)
-            {
-                destination.Add(source.Messages[index]);
-            }
-        }
     }
 }

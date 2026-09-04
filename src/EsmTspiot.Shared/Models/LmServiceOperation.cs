@@ -10,6 +10,8 @@ namespace EsmTspiot.Shared.Models
         [EnumMember]
         InstallControllerVersion = 1,
         [EnumMember]
+        // Снято: помощник больше не создаёт управляемые службы ЛМ-шлюза.
+        // Номер занят, чтобы старый запрос не попал в другую операцию.
         EnsureBatch = 2,
         [EnumMember]
         RemoveManaged = 3,

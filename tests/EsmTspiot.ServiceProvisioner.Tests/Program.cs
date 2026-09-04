@@ -91,14 +91,14 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             }
 
             Run("DTF dependency closure is exact and vendor free", DtfDependencyClosureIsExactAndVendorFree);
-            Run("Provisioning protocol accepts bounded ensure batch", ProvisioningProtocolAcceptsBoundedEnsureBatch);
-            Run("Provisioning protocol rejects oversized or duplicate batch", ProvisioningProtocolRejectsOversizedOrDuplicateBatch);
-            Run("Provisioning protocol rejects unknown schema or operation", ProvisioningProtocolRejectsUnknownSchemaOrOperation);
             Run("Production helper rejects retired supervisor entry points", ProductionHelperRejectsRetiredSupervisorEntryPoints);
-            Run("Provisioning protocol rejects unsafe item", ProvisioningProtocolRejectsUnsafeItem);
             Run("Provisioning pipe authenticates exact peer images from any folder", ProvisioningPipeAuthenticatesExactPeerImages);
             Run("Provisioning pipe accepts main images independently of filename", ProvisioningPipeAcceptsMainImageIndependentlyOfFilename);
+            Run("Provisioning protocol accepts bounded batch", ProvisioningProtocolAcceptsBoundedBatch);
+            Run("Provisioning protocol rejects unknown schema or operation", ProvisioningProtocolRejectsUnknownSchemaOrOperation);
             Run("Provisioning protocol rejects plan hash mismatch", ProvisioningProtocolRejectsPlanHashMismatch);
+            Run("Managed gateway batch operation is retired", ManagedGatewayBatchOperationIsRetired);
+            Run("Journal store keeps independent rows per KKT", JournalStoreKeepsIndependentRowsPerKkt);
             Run("Direct controller protocol v2 accepts canonical batch", DirectControllerProtocolV2AcceptsCanonicalBatch);
             Run("Direct controller protocol v2 rejects stale schema and duplicates", DirectControllerProtocolV2RejectsStaleSchemaAndDuplicates);
             Run("Direct controller protocol exposes no paths commands or secrets", DirectControllerProtocolExposesNoPathsCommandsOrSecrets);
@@ -215,23 +215,9 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Direct controller manifest safely upgrades legacy target port", DirectControllerManifestSafelyUpgradesLegacyTargetPort);
             Run("Windows direct controller platform creates and removes exact clone", WindowsDirectControllerPlatformCreatesAndRemovesExactClone);
             Run("LM profile adapter detects unsupported controller version", LmProfileAdapterDetectsUnsupportedControllerVersion);
-            Run("Ensure creates profile service and listeners in order", EnsureCreatesProfileServiceAndListenersInOrder);
-            Run("Ensure is no op for matching ready service", EnsureIsNoOpForMatchingReadyService);
-            Run("Ensure starts matching stopped service", EnsureStartsMatchingStoppedService);
-            Run("Ensure safely updates owned mismatched service", EnsureSafelyUpdatesOwnedMismatchedService);
-            Run("Ensure blocks unknown existing service", EnsureBlocksUnknownExistingService);
-            Run("Ensure rechecks and holds exact exclusive endpoints until start", EnsureRechecksAndHoldsExactExclusiveEndpointsUntilStart);
-            Run("Ensure rejects listener owned by another process", EnsureRejectsListenerOwnedByAnotherProcess);
-            Run("Ensure leaves failed new service stopped for diagnosis", EnsureLeavesFailedNewServiceStoppedForDiagnosis);
-            Run("Ensure writes manifest only after confirmed stages", EnsureWritesManifestOnlyAfterConfirmedStages);
-            Run("Ensure journal recovers every simulated crash stage", EnsureJournalRecoversEverySimulatedCrashStage);
-            Run("Ensure serializes concurrent ensure remove and cleanup", EnsureSerializesConcurrentMutations);
-            Run("Ensure batch continues failures and honors cancel boundary", EnsureBatchContinuesFailuresAndHonorsCancelBoundary);
-            Run("Ensure batch rejects stale operation result", EnsureBatchRejectsStaleOperationResult);
             Run("Install version marks every managed instance verification pending before launch", InstallVersionMarksEveryManagedInstanceVerificationPendingBeforeLaunch);
             Run("Install version never runs a substituted or unlocked installer", InstallVersionNeverRunsSubstitutedOrUnlockedInstaller);
             Run("Install version leaves services stopped when verification fails", InstallVersionLeavesServicesStoppedWhenVerificationFails);
-            Run("Ensure clears version pending only after recreated artifacts are ready", EnsureClearsVersionPendingOnlyAfterRecreatedArtifactsAreReady);
             Run("Remove deletes only fully owned freshly confirmed service", RemoveDeletesOnlyFullyOwnedFreshlyConfirmedService);
             Run("Remove all managed processes every confirmed service in one batch", RemoveAllManagedProcessesEveryConfirmedServiceInOneBatch);
             Run("Remove blocks official base service", RemoveBlocksOfficialBaseService);
@@ -710,18 +696,16 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 : current + Environment.NewLine + next;
         }
 
-        private static void ProvisioningProtocolAcceptsBoundedEnsureBatch()
+        private static void ProvisioningProtocolAcceptsBoundedBatch()
         {
-            LmServiceProvisioningBatchRequest request = CreateEnsureRequest(3);
+            LmServiceProvisioningBatchRequest request = CreateDirectControllerRequest(
+                3, LmServiceOperation.EnsureDirectControllers);
 
             ValidationResult validation = ProvisioningRequestValidator.Validate(request);
 
             AssertTrue(validation.IsValid, validation.JoinMessages());
-            AssertEqual(3, request.Items.Count, "Expected all per-KKT items in one bounded batch.");
-
-            LmServiceProvisioningBatchRequest maximum = CreateEnsureRequest(32);
-            AssertTrue(ProvisioningRequestValidator.Validate(maximum).IsValid,
-                "A batch of exactly 32 items must be accepted.");
+            AssertEqual(3, request.DirectControllers.Count,
+                "Expected all per-KKT rows in one bounded batch.");
 
             LmServiceProvisioningBatchRequest roundTripped;
             DataContractJsonSerializer serializer =
@@ -736,8 +720,31 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             }
             AssertTrue(ProvisioningRequestValidator.Validate(roundTripped).IsValid,
                 "The explicit data-contract schema must survive JSON transport.");
-            AssertEqual(request.Items.Count, roundTripped.Items.Count,
+            AssertEqual(request.DirectControllers.Count, roundTripped.DirectControllers.Count,
                 "Transport must retain every requested KKT row.");
+
+            LmServiceProvisioningBatchRequest oversized =
+                CreateRequest(LmServiceOperation.RemoveAllManaged);
+            for (int index = 0; index < ProvisioningRequestValidator.MaximumBatchSize + 1; index++)
+            {
+                oversized.RemovalConfirmations.Add(new LmRemovalConfirmation
+                {
+                    KktSerial = "001057000000" + (index + 1).ToString("00"),
+                    GrpcPort = 55001 + index,
+                    RestPort = 15001 + index,
+                    ManifestFingerprint = new LmManifestFingerprint
+                    {
+                        Sha256 = new string('a', 64)
+                    },
+                    RetainedEsmWarningAccepted = true
+                });
+            }
+            oversized.PlanHash = CanonicalLmPlanHasher.Compute(oversized);
+            ValidationResult oversizedValidation =
+                ProvisioningRequestValidator.Validate(oversized);
+            AssertFalse(oversizedValidation.IsValid,
+                "A batch larger than 32 rows must be rejected.");
+            AssertContains(oversizedValidation.JoinMessages(), "32");
 
             AssertTrue(ProvisioningRequestValidator.Validate(CreateRemovalRequest()).IsValid,
                 "A single immutable removal confirmation must be accepted.");
@@ -745,35 +752,17 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 "A single displayed CleanupPending projection must be accepted.");
         }
 
-        private static void ProvisioningProtocolRejectsOversizedOrDuplicateBatch()
-        {
-            LmServiceProvisioningBatchRequest oversized = CreateEnsureRequest(33);
-            ValidationResult oversizedValidation = ProvisioningRequestValidator.Validate(oversized);
-            AssertFalse(oversizedValidation.IsValid, "A batch larger than 32 items must be rejected.");
-            AssertContains(oversizedValidation.JoinMessages(), "32");
-
-            LmServiceProvisioningBatchRequest duplicateKkt = CreateEnsureRequest(2);
-            duplicateKkt.Items[1].KktSerial = duplicateKkt.Items[0].KktSerial;
-            duplicateKkt.PlanHash = CanonicalLmPlanHasher.Compute(duplicateKkt);
-            AssertFalse(ProvisioningRequestValidator.Validate(duplicateKkt).IsValid,
-                "Duplicate KKT identities must be rejected.");
-
-            LmServiceProvisioningBatchRequest duplicateCrossColumnPort = CreateEnsureRequest(2);
-            duplicateCrossColumnPort.Items[1].RestPort = duplicateCrossColumnPort.Items[0].GrpcPort;
-            duplicateCrossColumnPort.PlanHash = CanonicalLmPlanHasher.Compute(duplicateCrossColumnPort);
-            AssertFalse(ProvisioningRequestValidator.Validate(duplicateCrossColumnPort).IsValid,
-                "A local port duplicated across columns must be rejected.");
-        }
-
         private static void ProvisioningProtocolRejectsUnknownSchemaOrOperation()
         {
-            LmServiceProvisioningBatchRequest unknownSchema = CreateEnsureRequest(1);
-            unknownSchema.SchemaVersion = 2;
+            LmServiceProvisioningBatchRequest unknownSchema = CreateDirectControllerRequest(
+                1, LmServiceOperation.EnsureDirectControllers);
+            unknownSchema.SchemaVersion = 3;
             unknownSchema.PlanHash = CanonicalLmPlanHasher.Compute(unknownSchema);
             AssertFalse(ProvisioningRequestValidator.Validate(unknownSchema).IsValid,
                 "Unknown schema versions must fail closed.");
 
-            LmServiceProvisioningBatchRequest unknownOperation = CreateEnsureRequest(1);
+            LmServiceProvisioningBatchRequest unknownOperation = CreateDirectControllerRequest(
+                1, LmServiceOperation.EnsureDirectControllers);
             unknownOperation.Operation = (LmServiceOperation)999;
             unknownOperation.PlanHash = CanonicalLmPlanHasher.Compute(unknownOperation);
             AssertFalse(ProvisioningRequestValidator.Validate(unknownOperation).IsValid,
@@ -790,25 +779,63 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 "Additional command-line data must be rejected.");
         }
 
-        private static void ProvisioningProtocolRejectsUnsafeItem()
+        private static void ProvisioningProtocolRejectsPlanHashMismatch()
         {
-            LmServiceProvisioningBatchRequest unsafeSerial = CreateEnsureRequest(1);
-            unsafeSerial.Items[0].KktSerial = "0010570000000A";
-            unsafeSerial.PlanHash = CanonicalLmPlanHasher.Compute(unsafeSerial);
-            AssertFalse(ProvisioningRequestValidator.Validate(unsafeSerial).IsValid,
-                "Unsafe KKT serial must be rejected.");
+            LmServiceProvisioningBatchRequest request = CreateDirectControllerRequest(
+                1, LmServiceOperation.EnsureDirectControllers);
+            request.DirectControllers[0].TargetLocalModulePort++;
 
-            LmServiceProvisioningBatchRequest unsafeTarget = CreateEnsureRequest(1);
-            unsafeTarget.Items[0].TargetAddress = "https://lm.example/path";
-            unsafeTarget.PlanHash = CanonicalLmPlanHasher.Compute(unsafeTarget);
-            AssertFalse(ProvisioningRequestValidator.Validate(unsafeTarget).IsValid,
-                "A URL must not be accepted where a plain target address is required.");
+            ValidationResult validation = ProvisioningRequestValidator.Validate(request);
 
-            LmServiceProvisioningBatchRequest unsafePorts = CreateEnsureRequest(1);
-            unsafePorts.Items[0].RestPort = unsafePorts.Items[0].GrpcPort;
-            unsafePorts.PlanHash = CanonicalLmPlanHasher.Compute(unsafePorts);
-            AssertFalse(ProvisioningRequestValidator.Validate(unsafePorts).IsValid,
-                "The two local listeners must not share one port.");
+            AssertFalse(validation.IsValid, "A changed displayed plan must invalidate its confirmation hash.");
+            AssertContains(validation.JoinMessages(), "SHA-256");
+        }
+
+        private static void ManagedGatewayBatchOperationIsRetired()
+        {
+            LmServiceProvisioningBatchRequest request = CreateEnsureRequest(1);
+
+            ValidationResult validation = ProvisioningRequestValidator.Validate(request);
+
+            AssertFalse(validation.IsValid,
+                "The retired managed gateway batch must be rejected.");
+            AssertContains(validation.JoinMessages(), "управляемых служб ЛМ ЧЗ");
+        }
+
+        private static void JournalStoreKeepsIndependentRowsPerKkt()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                ProvisioningOperationJournalStore store =
+                    new ProvisioningOperationJournalStore(root, new FakePathSafety(true));
+                string operationId = Guid.NewGuid().ToString("N");
+                store.Write(CreateTestJournal(operationId, "00105700000001", 55000, 15000));
+                store.Write(CreateTestJournal(operationId, "00105700000002", 55001, 15001));
+
+                AssertEqual(
+                    "00105700000001",
+                    store.Read(operationId, "00105700000001").KktSerial,
+                    "Batch journals must not overwrite the first KKT under one operation id.");
+                AssertEqual(
+                    "00105700000002",
+                    store.Read(operationId, "00105700000002").KktSerial,
+                    "Batch journals must retain an independent second KKT record.");
+                AssertTrue(store.GetFingerprint(operationId, "00105700000001").Length == 64,
+                    "A journal-only recovery projection needs a stable confirmation fingerprint.");
+                store.DeleteForKkt("00105700000001");
+                AssertEqual(
+                    "00105700000002",
+                    store.Read(operationId, "00105700000002").KktSerial,
+                    "Completing one KKT must not delete another row's journal.");
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
         }
 
         private static void ProvisioningPipeAuthenticatesExactPeerImages()
@@ -876,17 +903,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             AssertTrue(renamed,
                 "A renamed image in the exact protected application directory must be accepted.");
             AssertFalse(outside, "An image outside the application directory must remain rejected.");
-        }
-
-        private static void ProvisioningProtocolRejectsPlanHashMismatch()
-        {
-            LmServiceProvisioningBatchRequest request = CreateEnsureRequest(1);
-            request.Items[0].TargetPort++;
-
-            ValidationResult validation = ProvisioningRequestValidator.Validate(request);
-
-            AssertFalse(validation.IsValid, "A changed displayed plan must invalidate its confirmation hash.");
-            AssertContains(validation.JoinMessages(), "SHA-256");
         }
 
         private static void RemoveAllProtocolAcceptsOnlyConfirmedManagedBatch()
@@ -7786,322 +7802,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             return result.ToString();
         }
 
-        private static void EnsureCreatesProfileServiceAndListenersInOrder()
-        {
-            FakeLmProvisioningPlatform platform = new FakeLmProvisioningPlatform();
-            LmServiceProvisioningBatchResult result = new LmServiceProvisioner(platform)
-                .EnsureBatch(CreateEnsureRequest(1), NeverCancelLmProvisioning.Instance);
-
-            AssertEqual(LmServiceProvisioningStatus.Succeeded, result.Items[0].Status,
-                "A fully confirmed new service must succeed.");
-            AssertEventOrder(platform.Events,
-                "MachineLock", "ItemLock:00105700000001", "Reconcile:00105700000001",
-                "VerifyController", "Reserve:00105700000001", "Journal:Preparing",
-                "Profile:00105700000001", "Journal:ProfileReady", "Configure:00105700000001",
-                "Journal:ServiceReady", "ReleasePorts:00105700000001", "Start:00105700000001",
-                "Journal:Started", "Probe:00105700000001", "Manifest:00105700000001",
-                "CompleteJournal:00105700000001");
-        }
-
-        private static void EnsureIsNoOpForMatchingReadyService()
-        {
-            FakeLmProvisioningPlatform platform = new FakeLmProvisioningPlatform();
-            platform.SetState("00105700000001", LmProvisioningObservedState.MatchingReady);
-
-            LmServiceProvisioningBatchResult result = new LmServiceProvisioner(platform)
-                .EnsureBatch(CreateEnsureRequest(1), NeverCancelLmProvisioning.Instance);
-
-            AssertEqual(LmServiceProvisioningStatus.Succeeded, result.Items[0].Status,
-                "A matching ready service must be reported unchanged.");
-            AssertContains(result.Items[0].Message, "изменений");
-            AssertFalse(platform.ContainsEventPrefix("Reserve:") ||
-                        platform.ContainsEventPrefix("Configure:") ||
-                        platform.ContainsEventPrefix("Start:"),
-                "A matching ready service must not be mutated.");
-        }
-
-        private static void EnsureStartsMatchingStoppedService()
-        {
-            FakeLmProvisioningPlatform platform = new FakeLmProvisioningPlatform();
-            platform.SetState("00105700000001", LmProvisioningObservedState.MatchingStopped);
-
-            LmServiceProvisioningBatchResult result = new LmServiceProvisioner(platform)
-                .EnsureBatch(CreateEnsureRequest(1), NeverCancelLmProvisioning.Instance);
-
-            AssertEqual(LmServiceProvisioningStatus.Succeeded, result.Items[0].Status,
-                "A matching stopped service must start and pass readiness.");
-            AssertTrue(platform.ContainsEventPrefix("Start:"), "Expected StartService.");
-            AssertFalse(platform.ContainsEventPrefix("Configure:"),
-                "An exact stopped service needs no SCM rewrite.");
-        }
-
-        private static void EnsureSafelyUpdatesOwnedMismatchedService()
-        {
-            FakeLmProvisioningPlatform platform = new FakeLmProvisioningPlatform();
-            platform.SetState("00105700000001", LmProvisioningObservedState.OwnedMismatch);
-
-            LmServiceProvisioningBatchResult result = new LmServiceProvisioner(platform)
-                .EnsureBatch(CreateEnsureRequest(1), NeverCancelLmProvisioning.Instance);
-
-            AssertEqual(LmServiceProvisioningStatus.Succeeded, result.Items[0].Status,
-                "An owned mismatch must be updated transactionally.");
-            AssertEventOrder(platform.Events, "Stop:00105700000001", "Reserve:00105700000001",
-                "Profile:00105700000001", "Configure:00105700000001",
-                "ReleasePorts:00105700000001", "Start:00105700000001");
-        }
-
-        private static void EnsureBlocksUnknownExistingService()
-        {
-            FakeLmProvisioningPlatform platform = new FakeLmProvisioningPlatform();
-            platform.SetState("00105700000001", LmProvisioningObservedState.Foreign);
-
-            LmServiceProvisioningBatchResult result = new LmServiceProvisioner(platform)
-                .EnsureBatch(CreateEnsureRequest(1), NeverCancelLmProvisioning.Instance);
-
-            AssertEqual(LmServiceProvisioningStatus.RequiresAttention, result.Items[0].Status,
-                "A foreign service at the derived name must block mutation.");
-            AssertFalse(platform.ContainsEventPrefix("Stop:") ||
-                        platform.ContainsEventPrefix("Configure:"),
-                "Unknown ownership must not trigger stop or update.");
-        }
-
-        private static void EnsureRechecksAndHoldsExactExclusiveEndpointsUntilStart()
-        {
-            FakeLmProvisioningPlatform platform = new FakeLmProvisioningPlatform();
-            platform.RequireReservationReleasedBeforeStart = true;
-
-            LmServiceProvisioningBatchResult result = new LmServiceProvisioner(platform)
-                .EnsureBatch(CreateEnsureRequest(1), NeverCancelLmProvisioning.Instance);
-
-            AssertEqual(LmServiceProvisioningStatus.Succeeded, result.Items[0].Status,
-                "The exact dual-stack reservation must be released only at the start boundary.");
-            AssertTrue(platform.ReservationHeldDuringProfileAndScm,
-                "Both listener ports must remain exclusively held through profile and SCM mutation.");
-
-            int first = FindUnusedDualStackPort();
-            int second = FindUnusedDualStackPort(first);
-            using (ExclusiveTcpPortReservation reservation =
-                ExclusiveTcpPortReservation.AcquireDualStackWildcard(first, second))
-            {
-                AssertThrows<SocketException>(
-                    delegate { BindAndClose(AddressFamily.InterNetwork, first, false); },
-                    "The reservation must occupy the IPv4 side of the dual-stack endpoint.");
-                AssertThrows<SocketException>(
-                    delegate { BindAndClose(AddressFamily.InterNetworkV6, second, false); },
-                    "The reservation must occupy the IPv6 side of the dual-stack endpoint.");
-            }
-
-            using (Socket ipv4Owner = CreateExclusiveSocket(AddressFamily.InterNetwork, true))
-            {
-                ipv4Owner.Bind(new IPEndPoint(IPAddress.Any, 0));
-                int occupied = ((IPEndPoint)ipv4Owner.LocalEndPoint).Port;
-                int peer = FindUnusedDualStackPort(occupied);
-                AssertThrows<SocketException>(
-                    delegate
-                    {
-                        using (ExclusiveTcpPortReservation ignored =
-                            ExclusiveTcpPortReservation.AcquireDualStackWildcard(occupied, peer))
-                        {
-                        }
-                    },
-                    "An existing IPv4 listener must block a dual-stack reservation.");
-            }
-
-            using (Socket ipv6Owner = CreateExclusiveSocket(AddressFamily.InterNetworkV6, false))
-            {
-                ipv6Owner.Bind(new IPEndPoint(IPAddress.IPv6Any, 0));
-                int occupied = ((IPEndPoint)ipv6Owner.LocalEndPoint).Port;
-                int peer = FindUnusedDualStackPort(occupied);
-                AssertThrows<SocketException>(
-                    delegate
-                    {
-                        using (ExclusiveTcpPortReservation ignored =
-                            ExclusiveTcpPortReservation.AcquireDualStackWildcard(occupied, peer))
-                        {
-                        }
-                    },
-                    "An existing IPv6 listener must block a dual-stack reservation.");
-            }
-        }
-
-        private static void EnsureRejectsListenerOwnedByAnotherProcess()
-        {
-            FakeLmProvisioningPlatform platform = new FakeLmProvisioningPlatform();
-            platform.Readiness = LmReadinessResult.Failed("listener belongs to another process");
-
-            LmServiceProvisioningBatchResult result = new LmServiceProvisioner(platform)
-                .EnsureBatch(CreateEnsureRequest(1), NeverCancelLmProvisioning.Instance);
-
-            AssertEqual(LmServiceProvisioningStatus.Failed, result.Items[0].Status,
-                "Foreign listener ownership must fail readiness.");
-            AssertContains(result.Items[0].Message, "listener");
-
-            using (Socket listener = CreateExclusiveSocket(
-                AddressFamily.InterNetworkV6,
-                true))
-            {
-                listener.Bind(new IPEndPoint(IPAddress.IPv6Any, 0));
-                listener.Listen(1);
-                int port = ((IPEndPoint)listener.LocalEndPoint).Port;
-                IList<int> owners = new TcpListenerOwnerReader()
-                    .FindListenerProcessIds(port);
-                AssertTrue(
-                    owners.Contains(System.Diagnostics.Process.GetCurrentProcess().Id),
-                    "The IP Helper reader must map an IPv6 dual-stack listener to its owner PID.");
-            }
-        }
-
-        private static void EnsureLeavesFailedNewServiceStoppedForDiagnosis()
-        {
-            FakeLmProvisioningPlatform platform = new FakeLmProvisioningPlatform();
-            platform.Readiness = LmReadinessResult.Failed("readiness timeout");
-
-            new LmServiceProvisioner(platform).EnsureBatch(
-                CreateEnsureRequest(1), NeverCancelLmProvisioning.Instance);
-
-            AssertTrue(platform.ContainsEventPrefix("Stop:"),
-                "A failed new service must receive a normal stop request.");
-            AssertFalse(platform.ContainsEventPrefix("Delete:"),
-                "A failed new service must remain for diagnosis and reconciliation.");
-            AssertTrue(platform.Events.Contains("Journal:Failed"),
-                "A terminal failure journal must remain.");
-        }
-
-        private static void EnsureWritesManifestOnlyAfterConfirmedStages()
-        {
-            FakeLmProvisioningPlatform platform = new FakeLmProvisioningPlatform();
-            new LmServiceProvisioner(platform).EnsureBatch(
-                CreateEnsureRequest(1), NeverCancelLmProvisioning.Instance);
-
-            AssertTrue(platform.Events.IndexOf("Probe:00105700000001") <
-                       platform.Events.IndexOf("Manifest:00105700000001"),
-                "Manifest ownership must be committed only after readiness.");
-            AssertTrue(platform.Events.IndexOf("Manifest:00105700000001") <
-                       platform.Events.IndexOf("CompleteJournal:00105700000001"),
-                "The crash journal must be removed last.");
-        }
-
-        private static void EnsureJournalRecoversEverySimulatedCrashStage()
-        {
-            string[] stages = { "Profile", "Configure", "Start", "Manifest" };
-            for (int index = 0; index < stages.Length; index++)
-            {
-                FakeLmProvisioningPlatform platform = new FakeLmProvisioningPlatform();
-                platform.ThrowOnceAtPrefix = stages[index] + ":";
-                LmServiceProvisioningBatchRequest request = CreateEnsureRequest(1);
-                new LmServiceProvisioner(platform).EnsureBatch(
-                    request, NeverCancelLmProvisioning.Instance);
-                platform.ThrowOnceAtPrefix = null;
-                platform.Events.Clear();
-
-                new LmServiceProvisioner(platform).EnsureBatch(
-                    request, NeverCancelLmProvisioning.Instance);
-
-                AssertTrue(platform.Events.IndexOf("Reconcile:00105700000001") >= 0,
-                    "Every resumed stage must reconcile its journal first.");
-                AssertTrue(platform.Events.IndexOf("Reconcile:00105700000001") <
-                           platform.Events.IndexOf("VerifyController"),
-                    "Recovery must precede fresh mutation after " + stages[index] + ".");
-            }
-
-            string root = CreateTemporaryDirectory();
-            try
-            {
-                ProvisioningOperationJournalStore store =
-                    new ProvisioningOperationJournalStore(root, new FakePathSafety(true));
-                string operationId = Guid.NewGuid().ToString("N");
-                ProvisioningOperationJournal first = CreateTestJournal(
-                    operationId,
-                    "00105700000001",
-                    55000,
-                    15000);
-                ProvisioningOperationJournal second = CreateTestJournal(
-                    operationId,
-                    "00105700000002",
-                    55001,
-                    15001);
-                store.Write(first);
-                store.Write(second);
-
-                AssertEqual(
-                    "00105700000001",
-                    store.Read(operationId, "00105700000001").KktSerial,
-                    "Batch journals must not overwrite the first KKT under one operation id.");
-                AssertEqual(
-                    "00105700000002",
-                    store.Read(operationId, "00105700000002").KktSerial,
-                    "Batch journals must retain an independent second KKT record.");
-                AssertTrue(store.GetFingerprint(operationId, "00105700000001").Length == 64,
-                    "A journal-only recovery projection needs a stable confirmation fingerprint.");
-                store.DeleteForKkt("00105700000001");
-                AssertEqual(
-                    "00105700000002",
-                    store.Read(operationId, "00105700000002").KktSerial,
-                    "Completing one KKT must not delete another row's journal.");
-            }
-            finally
-            {
-                if (Directory.Exists(root))
-                {
-                    Directory.Delete(root, true);
-                }
-            }
-        }
-
-        private static void EnsureSerializesConcurrentMutations()
-        {
-            FakeLmProvisioningPlatform platform = new FakeLmProvisioningPlatform();
-            new LmServiceProvisioner(platform).EnsureBatch(
-                CreateEnsureRequest(2), NeverCancelLmProvisioning.Instance);
-
-            AssertEqual(1, platform.MaximumMachineLockDepth,
-                "Only one machine mutation boundary may be held.");
-            AssertEqual(1, platform.MaximumItemLockDepth,
-                "Only one per-KKT mutation boundary may be held at a time.");
-            AssertEqual(0, platform.CurrentMachineLockDepth,
-                "Machine lock must be released after the batch.");
-            AssertEqual(0, platform.CurrentItemLockDepth,
-                "Item lock must be released after each KKT.");
-        }
-
-        private static void EnsureBatchContinuesFailuresAndHonorsCancelBoundary()
-        {
-            FakeLmProvisioningPlatform continuing = new FakeLmProvisioningPlatform();
-            continuing.FailSerial = "00105700000001";
-            LmServiceProvisioningBatchResult continued = new LmServiceProvisioner(continuing)
-                .EnsureBatch(CreateEnsureRequest(2), NeverCancelLmProvisioning.Instance);
-            AssertEqual(LmServiceProvisioningStatus.Failed, continued.Items[0].Status,
-                "The injected item failure must be preserved.");
-            AssertEqual(LmServiceProvisioningStatus.Succeeded, continued.Items[1].Status,
-                "A failed row must not hide or skip the next row.");
-
-            FakeLmProvisioningPlatform cancelling = new FakeLmProvisioningPlatform();
-            CancelAfterCompletedItems cancel = new CancelAfterCompletedItems(cancelling, 1);
-            LmServiceProvisioningBatchResult cancelled = new LmServiceProvisioner(cancelling)
-                .EnsureBatch(CreateEnsureRequest(3), cancel);
-            AssertEqual(LmServiceProvisioningStatus.Succeeded, cancelled.Items[0].Status,
-                "The current item must finish before cancellation.");
-            AssertEqual(LmServiceProvisioningStatus.Cancelled, cancelled.Items[1].Status,
-                "The first untouched item must be cancelled.");
-            AssertEqual(LmServiceProvisioningStatus.Cancelled, cancelled.Items[2].Status,
-                "Every remaining untouched item must be cancelled.");
-        }
-
-        private static void EnsureBatchRejectsStaleOperationResult()
-        {
-            FakeLmProvisioningPlatform platform = new FakeLmProvisioningPlatform();
-            LmServiceProvisioningBatchRequest request = CreateEnsureRequest(1);
-            request.PlanHash = new string('f', 64);
-
-            LmServiceProvisioningBatchResult result = new LmServiceProvisioner(platform)
-                .EnsureBatch(request, NeverCancelLmProvisioning.Instance);
-
-            AssertEqual(LmServiceProvisioningStatus.Failed, result.Status,
-                "A stale canonical operation hash must fail before locks or SCM.");
-            AssertEqual(0, platform.Events.Count,
-                "A stale request must not reach the mutation platform.");
-        }
-
         private static void InstallVersionMarksEveryManagedInstanceVerificationPendingBeforeLaunch()
         {
             FakeLmProvisioningPlatform platform = new FakeLmProvisioningPlatform();
@@ -8154,24 +7854,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             AssertTrue(platform.ContainsEventPrefix("Stop:"), "Managed services must be stopped first.");
             AssertFalse(platform.ContainsEventPrefix("Start:"),
                 "Verification failure must never restart an old managed instance.");
-        }
-
-        private static void EnsureClearsVersionPendingOnlyAfterRecreatedArtifactsAreReady()
-        {
-            FakeLmProvisioningPlatform success = new FakeLmProvisioningPlatform();
-            success.SetState("00105700000001", LmProvisioningObservedState.VersionPending);
-            new LmServiceProvisioner(success).EnsureBatch(
-                CreateEnsureRequest(1), NeverCancelLmProvisioning.Instance);
-            AssertTrue(success.ContainsEventPrefix("Manifest:"),
-                "A ready recreated instance may replace VersionVerificationPending.");
-
-            FakeLmProvisioningPlatform failure = new FakeLmProvisioningPlatform();
-            failure.SetState("00105700000001", LmProvisioningObservedState.VersionPending);
-            failure.Readiness = LmReadinessResult.Failed("not ready");
-            new LmServiceProvisioner(failure).EnsureBatch(
-                CreateEnsureRequest(1), NeverCancelLmProvisioning.Instance);
-            AssertFalse(failure.ContainsEventPrefix("Manifest:"),
-                "A failed recreate must retain VersionVerificationPending ownership state.");
         }
 
         private static void RemoveDeletesOnlyFullyOwnedFreshlyConfirmedService()
