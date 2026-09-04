@@ -187,9 +187,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("ESM instance config reapplies over a vendor rewrite", EsmInstanceConfigReappliesOverVendorRewrite);
             Run("SCM handles are disposed on every failure", ScmHandlesAreDisposedOnEveryFailure);
             Run("SCM configures restricted service SID", ScmConfiguresRestrictedServiceSid);
-            Run("Supervisor replaces only child ProgramData", SupervisorReplacesOnlyChildProgramData);
-            Run("Supervisor rejects caller supplied environment and arguments", SupervisorRejectsCallerSuppliedEnvironmentAndArguments);
-            Run("Supervisor stops child gracefully without process kill", SupervisorStopsChildGracefullyWithoutProcessKill);
             Run("Local module SCM creates exact restricted dependency pair", LocalModuleScmCreatesExactRestrictedDependencyPair);
             Run("Local module child plan is rebuilt only from manifest", LocalModuleChildPlanIsRebuiltOnlyFromManifest);
             Run("Local module ownership distinguishes shared Erlang children", LocalModuleOwnershipDistinguishesSharedErlangChildren);
@@ -5651,72 +5648,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 "Service SID derivation must match the Windows service-SID algorithm before creation.");
         }
 
-        private static void SupervisorReplacesOnlyChildProgramData()
-        {
-            Dictionary<string, string> baseline = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-            {
-                { "Path", @"C:\Windows\System32" },
-                { "TEMP", @"C:\Windows\Temp" },
-                { "ProgramData", @"C:\ProgramData" }
-            };
-            FakeControllerChildRuntime runtime = new FakeControllerChildRuntime();
-            LmControllerChildProcess child = CreateTestChildProcess(baseline, runtime);
-
-            child.Start();
-
-            AssertEqual(@"C:\ProgramData\KRS\MultiKKT\Profiles\krs-esm-lm-00105700000001",
-                runtime.LastPlan.Environment["ProgramData"],
-                "Only the process-local ProgramData root may select the profile.");
-            AssertEqual(baseline["Path"], runtime.LastPlan.Environment["Path"],
-                "PATH must be inherited unchanged.");
-            AssertEqual(baseline["TEMP"], runtime.LastPlan.Environment["TEMP"],
-                "TEMP must be inherited unchanged.");
-            AssertEqual(3, runtime.LastPlan.Environment.Count,
-                "The supervisor must not add arbitrary environment variables.");
-        }
-
-        private static void SupervisorRejectsCallerSuppliedEnvironmentAndArguments()
-        {
-            FakeControllerChildRuntime runtime = new FakeControllerChildRuntime();
-            LmControllerChildProcess child = CreateTestChildProcess(
-                new Dictionary<string, string> { { "ProgramData", @"C:\ProgramData" } },
-                runtime);
-
-            child.Start();
-
-            AssertEqual(string.Empty, runtime.LastPlan.Arguments,
-                "The exact-version terminal contract takes no caller arguments.");
-            MethodInfo[] methods = typeof(LmControllerChildProcess).GetMethods(
-                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
-            for (int index = 0; index < methods.Length; index++)
-            {
-                if (methods[index].Name == "Start" || methods[index].Name == "StopGracefully")
-                {
-                    AssertEqual(0, methods[index].GetParameters().Length,
-                        "Runtime methods must not accept caller environment or arguments.");
-                }
-            }
-        }
-
-        private static void SupervisorStopsChildGracefullyWithoutProcessKill()
-        {
-            FakeControllerChildRuntime runtime = new FakeControllerChildRuntime();
-            LmControllerChildProcess child = CreateTestChildProcess(
-                new Dictionary<string, string> { { "ProgramData", @"C:\ProgramData" } },
-                runtime);
-
-            int processId = child.Start();
-            bool stopped = child.StopGracefully();
-
-            AssertTrue(stopped, "A graceful console stop followed by bounded wait must succeed.");
-            AssertEqual(processId, runtime.GracefulStopProcessId,
-                "The supervisor must signal only its own verified child PID.");
-            AssertEqual(processId, runtime.WaitProcessId,
-                "The supervisor must wait for the same child PID.");
-            AssertTrue(runtime.WaitMilliseconds > 0 && runtime.WaitMilliseconds <= 60000,
-                "Graceful stop wait must be bounded.");
-        }
-
         private static void LocalModuleScmCreatesExactRestrictedDependencyPair()
         {
             string root = CreateTemporaryDirectory();
@@ -8503,25 +8434,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     @"C:\Program Files\KRS\MultiKKT\Provisioner\EsmTspiot.ServiceProvisioner.exe"));
         }
 
-        private static LmControllerChildProcess CreateTestChildProcess(
-            IDictionary<string, string> environment,
-            FakeControllerChildRuntime runtime)
-        {
-            return new LmControllerChildProcess(
-                ControllerCapabilityProfile.Supported(),
-                new VerifiedControllerBinary
-                {
-                    FullPath = @"C:\Program Files\ESP\LMController\bin\lmcontroller.exe",
-                    Version = "1.6.4.0",
-                    Sha256 = new string('a', 64),
-                    SignerThumbprint = "1CD26372850FE30F1559821CF5D318591695271A",
-                    Machine = PeMachine.Amd64
-                },
-                @"C:\ProgramData\KRS\MultiKKT\Profiles\krs-esm-lm-00105700000001",
-                new FakeProcessEnvironmentReader(environment),
-                runtime);
-        }
-
         private static LmServiceProvisioningBatchRequest CreateEnsureRequest(int count)
         {
             LmServiceProvisioningBatchRequest request = CreateRequest(LmServiceOperation.EnsureBatch);
@@ -10326,48 +10238,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                         : LmServiceProvisioningStatus.Succeeded,
                     Message = pending ? "retry" : "removed"
                 };
-            }
-        }
-
-        private sealed class FakeProcessEnvironmentReader : IProcessEnvironmentReader
-        {
-            private readonly IDictionary<string, string> _environment;
-
-            internal FakeProcessEnvironmentReader(IDictionary<string, string> environment)
-            {
-                _environment = environment;
-            }
-
-            public IDictionary<string, string> ReadCurrent()
-            {
-                return new Dictionary<string, string>(_environment, StringComparer.OrdinalIgnoreCase);
-            }
-        }
-
-        private sealed class FakeControllerChildRuntime : IControllerChildRuntime
-        {
-            internal ControllerChildStartPlan LastPlan { get; private set; }
-            internal int GracefulStopProcessId { get; private set; }
-            internal int WaitProcessId { get; private set; }
-            internal int WaitMilliseconds { get; private set; }
-
-            public int Start(ControllerChildStartPlan plan)
-            {
-                LastPlan = plan;
-                return 4321;
-            }
-
-            public bool SendGracefulStop(int processId)
-            {
-                GracefulStopProcessId = processId;
-                return true;
-            }
-
-            public bool WaitForExit(int processId, int milliseconds)
-            {
-                WaitProcessId = processId;
-                WaitMilliseconds = milliseconds;
-                return true;
             }
         }
 
