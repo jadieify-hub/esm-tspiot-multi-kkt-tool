@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -231,27 +231,6 @@ namespace EsmTspiot.WinForms.Shared
                 }
             }, true);
             List<int> result = new List<int>(owners);
-            result.Sort();
-            return result;
-        }
-
-        internal IList<int> FindPorts(int first, int last)
-        {
-            if (first < 1 || last > 65535 || first > last)
-            {
-                throw new ArgumentOutOfRangeException("first");
-            }
-            HashSet<int> ports = new HashSet<int>();
-            Action<int, int> collect = delegate(int hostPort, int processId)
-            {
-                if (hostPort >= first && hostPort <= last && processId > 0)
-                {
-                    ports.Add(hostPort);
-                }
-            };
-            ReadTable(AddressFamilyInet, collect, false);
-            ReadTable(AddressFamilyInet6, collect, true);
-            List<int> result = new List<int>(ports);
             result.Sort();
             return result;
         }

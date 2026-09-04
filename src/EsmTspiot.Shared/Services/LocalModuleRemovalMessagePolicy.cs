@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 
 namespace EsmTspiot.Shared.Services
 {
@@ -18,6 +18,7 @@ namespace EsmTspiot.Shared.Services
                     ? "Базовый ЛМ, существовавший до автоматической настройки, " +
                         "останется установленным. "
                     : string.Empty) +
+                "Штатная служба esm-lm-controller останется установленной. " +
                 "Продолжить?";
         }
     }
