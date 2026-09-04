@@ -234,6 +234,19 @@ namespace EsmTspiot.WinForms.Shared
             return _localModuleInstallerSelection != null;
         }
 
+        /// <summary>
+        /// Требует выбранный официальный MSI ЛМ ЧЗ и открывает выбор файла,
+        /// если он не задан. Без него автомат раньше проходил весь контур и
+        /// молча оставлял кассу без локального модуля, а выяснялось это
+        /// только в итоговом окне.
+        /// </summary>
+        public bool RequireLocalModuleInstaller(IWin32Window owner)
+        {
+            if (_localModuleInstallerSelection != null) return true;
+            SelectLocalModuleInstaller(owner);
+            return _localModuleInstallerSelection != null;
+        }
+
         public bool SelectRequiredInstallers(IWin32Window owner)
         {
             if (_installerSelection == null &&

@@ -239,18 +239,10 @@ namespace EsmTspiot.WinForms.Shared
             // Выбор пакета живёт на вкладке «ЛМ ЧЗ», а полный прогон
             // запускают с другой вкладки: без этого вопроса ЛМ ЧЗ
             // молча пропускается, и это выясняется только в журнале.
-            if (_localModuleInstallerSelection == null &&
-                MessageBox.Show(
-                    this,
-                    "Официальный MSI ЛМ ЧЗ ещё не выбран, поэтому установка " +
-                        "ЛМ ЧЗ будет пропущена." + Environment.NewLine +
-                        "Выбрать файл сейчас?",
-                    "Полная автоматическая настройка",
-                    MessageBoxButtons.YesNo,
-                    MessageBoxIcon.Question) == DialogResult.Yes)
-            {
-                SelectLocalModuleInstaller(this);
-            }
+            if (!RequireLocalModuleInstaller(this))
+                throw new InvalidOperationException(
+                    "Не выбран официальный MSI ЛМ ЧЗ. Укажите файл кнопкой " +
+                    "«Выбрать MSI...» и повторите настройку.");
 
             FullAutomaticLocalSetupOutcome outcome =
                 new FullAutomaticLocalSetupOutcome();
