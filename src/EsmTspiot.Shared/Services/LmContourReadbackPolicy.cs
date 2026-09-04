@@ -23,11 +23,10 @@ namespace EsmTspiot.Shared.Services
             DirectControllerAssignment assignment)
         {
             if (assignment == null) return null;
-            // ЕСМ в /api/v2/info сообщает endpoint локального модуля, а не
-            // порт контроллера, через который мы его привязали. Сверка с
-            // gRPC-портом объявляла «требуется проверка» на исправно
-            // привязанной ККТ и противоречила самой привязке, которая на том
-            // же прогоне подтверждалась по адресу ЛМ.
+            // Целевой ЛМ по плану. Он нужен для строки оператору: сверять
+            // с ним ответ ЕСМ нельзя — в lm.ip/lm.port штатный ЕСМ отдаёт
+            // свой модуль по умолчанию (в поле 5995 на обеих кассах), а
+            // связку каждой ККТ ведёт через её контроллер.
             return new LmGatewayTarget(
                 ControllerAddress,
                 assignment.TargetLocalModulePort);
@@ -65,9 +64,16 @@ namespace EsmTspiot.Shared.Services
             if (state == LmContourReadbackState.Verified)
             {
                 string status = (observation.LmStatus ?? string.Empty).Trim();
-                return prefix + "ЕСМ подтвердил привязку к контроллеру " +
-                    observation.LmAddress + ":" + observation.LmPort +
-                    (status.Length == 0 ? string.Empty : "; ЛМ: " + status) + ".";
+                bool endpointDiffers = observation.EndpointMatches.HasValue &&
+                    !observation.EndpointMatches.Value;
+                return prefix + "привязка подтверждена ЕСМ" +
+                    (status.Length == 0 ? string.Empty : "; ЛМ: " + status) +
+                    "." + (endpointDiffers
+                        ? " ЕСМ сообщает адрес ЛМ " + observation.LmAddress +
+                            ":" + observation.LmPort +
+                            " — это его модуль по умолчанию, фактическую " +
+                            "связку он ведёт через контроллер."
+                        : string.Empty);
             }
             if (state == LmContourReadbackState.LocalModuleNotInitialized)
             {

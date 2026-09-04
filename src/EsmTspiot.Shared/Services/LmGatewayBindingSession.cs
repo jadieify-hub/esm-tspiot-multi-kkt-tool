@@ -248,14 +248,15 @@ namespace EsmTspiot.Shared.Services
                 }
                 row.ObservedLmAddress = Trim(observation.LmAddress);
                 row.ObservedLmPort = Trim(observation.LmPort);
+                if (observation.IdentityMatches && observation.HasLmConfiguration &&
+                    LmContourReadbackPolicy.IsLocalModulePending(observation.LmStatus))
+                {
+                    row.LastBindingStatus = LmGatewayBindingStatus.BindingObserved;
+                    continue;
+                }
                 if (observation.IsVerified)
                 {
                     row.LastBindingStatus = LmGatewayBindingStatus.BindingVerified;
-                    continue;
-                }
-                if (observation.IdentityMatches && !observation.EndpointMatches.HasValue)
-                {
-                    row.LastBindingStatus = LmGatewayBindingStatus.BindingObserved;
                     continue;
                 }
 

@@ -252,7 +252,13 @@ namespace EsmTspiot.WinForms.Shared
             for (int index = 0; index < readback.Count; index++)
             {
                 LmGatewayReadbackObservation observation = readback[index];
-                if (observation != null && observation.IsVerified)
+                if (observation != null && observation.IsAvailable &&
+                    observation.IdentityMatches && observation.HasLmConfiguration &&
+                    LmContourReadbackPolicy.IsLocalModulePending(observation.LmStatus))
+                {
+                    observedReadback++;
+                }
+                else if (observation != null && observation.IsVerified)
                 {
                     verifiedReadback++;
                 }
@@ -263,10 +269,6 @@ namespace EsmTspiot.WinForms.Shared
                 else if (!observation.HasLmConfiguration)
                 {
                     notConfiguredReadback++;
-                }
-                else if (observation.IdentityMatches && !observation.EndpointMatches.HasValue)
-                {
-                    observedReadback++;
                 }
                 else
                 {
