@@ -42,7 +42,7 @@ namespace EsmTspiot.ServiceProvisioner
                 ".",
                 pipeName,
                 PipeDirection.InOut,
-                PipeOptions.None);
+                ClientPipeOptions);
             try
             {
                 stream.Connect(timeoutMilliseconds);
@@ -61,6 +61,14 @@ namespace EsmTspiot.ServiceProvisioner
                 throw;
             }
         }
+
+        // Канал обязан быть асинхронным с обеих сторон. На синхронном
+        // дескрипторе Windows выстраивает операции ввода-вывода в очередь:
+        // пока поток отмены помощника висит на чтении, запись ответа не
+        // проходит. Помощник в этом случае доделывает всю работу за секунды,
+        // а окно видит только таймер — до тех пор, пока в канал что-нибудь
+        // не придёт, например сообщение об отмене от оператора.
+        internal const PipeOptions ClientPipeOptions = PipeOptions.Asynchronous;
 
         internal T ReadMessage<T>()
         {
