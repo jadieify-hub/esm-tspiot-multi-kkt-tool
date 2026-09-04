@@ -1,13 +1,11 @@
-using System;
+﻿using System;
 using EsmTspiot.Shared.Services;
 
 namespace EsmTspiot.ServiceProvisioner
 {
     internal enum ProvisionerMode
     {
-        ElevatedOperation = 1,
-        Supervisor = 2,
-        LocalModuleSupervisor = 3
+        ElevatedOperation = 1
     }
 
     internal sealed class ProvisionerCommandLine

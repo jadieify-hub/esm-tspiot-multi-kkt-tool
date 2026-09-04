@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -73,69 +73,6 @@ namespace EsmTspiot.ServiceProvisioner
         int Start(ManagedChildStartPlan plan);
         bool SendGracefulStop(int processId);
         bool WaitForExit(int processId, int milliseconds);
-    }
-
-    internal sealed class ManagedChildProcess
-    {
-        private readonly IManagedChildRuntime _runtime;
-        private readonly ManagedChildStartPlan _plan;
-        private readonly int _gracefulStopTimeoutMilliseconds;
-        private int _processId;
-
-        internal ManagedChildProcess(
-            IManagedChildRuntime runtime,
-            ManagedChildStartPlan plan,
-            int gracefulStopTimeoutMilliseconds)
-        {
-            if (runtime == null) throw new ArgumentNullException("runtime");
-            if (plan == null) throw new ArgumentNullException("plan");
-            if (gracefulStopTimeoutMilliseconds < 1 ||
-                gracefulStopTimeoutMilliseconds > 60000)
-            {
-                throw new ArgumentOutOfRangeException("gracefulStopTimeoutMilliseconds");
-            }
-            _runtime = runtime;
-            _plan = plan;
-            _gracefulStopTimeoutMilliseconds = gracefulStopTimeoutMilliseconds;
-        }
-
-        internal int ProcessId { get { return _processId; } }
-
-        internal int Start()
-        {
-            if (_processId != 0)
-            {
-                throw new InvalidOperationException("Managed child is already started.");
-            }
-            int processId = _runtime.Start(_plan);
-            if (processId <= 0)
-            {
-                throw new InvalidOperationException("Managed child did not return a valid PID.");
-            }
-            _processId = processId;
-            return processId;
-        }
-
-        internal bool StopGracefully()
-        {
-            if (_processId == 0) return true;
-            int processId = _processId;
-            if (!_runtime.SendGracefulStop(processId)) return false;
-            bool exited = _runtime.WaitForExit(
-                processId,
-                _gracefulStopTimeoutMilliseconds);
-            if (exited) _processId = 0;
-            return exited;
-        }
-
-        internal bool WaitForExit()
-        {
-            if (_processId == 0) return true;
-            int processId = _processId;
-            bool exited = _runtime.WaitForExit(processId, Timeout.Infinite);
-            if (exited) _processId = 0;
-            return exited;
-        }
     }
 
     internal sealed class NativeManagedChildRuntime : IManagedChildRuntime
