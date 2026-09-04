@@ -125,6 +125,13 @@ namespace EsmTspiot.ServiceProvisioner
             _manifests.Write(manifest);
             if (string.Equals(currentHash, appliedHash, StringComparison.OrdinalIgnoreCase))
             {
+                // Конфигурация уже наша, но прошлый заход мог оборваться между
+                // остановкой службы и её запуском: при убитом процессе catch
+                // ниже не отрабатывает, и экземпляр ЕСМ остаётся лежать — для
+                // магазина это неработающая касса. Поэтому «уже применено»
+                // всегда доводит службу до запущенного состояния.
+                EnsureInstanceRunning(
+                    EsmInstanceServiceIdentity.CreateName(manifest.KktSerial));
                 return EsmInstanceConfigApplyState.AlreadyApplied;
             }
 
@@ -305,6 +312,26 @@ namespace EsmTspiot.ServiceProvisioner
             }
             throw new TimeoutException(
                 "Служба экземпляра ЕСМ не запустилась после изменения конфигурации.");
+        }
+
+        /// <summary>
+        /// Поднимает экземпляр ЕСМ, если он не работает. Ошибку запуска не
+        /// глотает: молчаливое «уже применено» поверх лежащей службы — ровно
+        /// тот случай, когда программа объявляет успех при отказе.
+        /// </summary>
+        private void EnsureInstanceRunning(string serviceName)
+        {
+            WindowsServiceRecord service = _services.Query(serviceName);
+            if (service == null) return;
+            if (service.State == WindowsServiceState.Running &&
+                service.ProcessId > 0)
+            {
+                return;
+            }
+            ProvisionerStepTrace.Write(
+                "экземпляр ЕСМ " + serviceName +
+                " остановлен при уже применённой конфигурации — запускаем");
+            StartInstance(serviceName, true);
         }
 
         private void TryStartInstance(string serviceName, bool shouldRun)

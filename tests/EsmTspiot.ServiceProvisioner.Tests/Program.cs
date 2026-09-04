@@ -167,6 +167,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("WinTrust marshals the action GUID as one native pointer", WinTrustMarshalsActionGuidAsOneNativePointer);
             Run("Manifest path is derived only from KKT serial", ManifestPathIsDerivedOnlyFromKktSerial);
             Run("Manifest and profile stores reject reparse points", ManifestAndProfileStoresRejectReparsePoints);
+            Run("Protected directory refuses a reparse path before touching it",
+                ProtectedDirectoryRefusesReparsePathBeforeTouchingIt);
             Run("Manifest is atomic credential free and projects cleanup state", ManifestIsAtomicCredentialFreeAndProjectsCleanupState);
             Run("Manifest ownership mismatch blocks mutation", ManifestOwnershipMismatchBlocksMutation);
             Run("SCM adapter derives service name internally", ScmAdapterDerivesServiceNameInternally);
@@ -5203,6 +5205,74 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             }
         }
 
+        /// <summary>
+        /// Каталог под junction не должен ни создаваться, ни получать наш ACL:
+        /// смена прав на подставленной цепочке — это смена прав на чужом
+        /// каталоге.
+        /// </summary>
+        private static void ProtectedDirectoryRefusesReparsePathBeforeTouchingIt()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                string target = Path.Combine(root, "target");
+                Directory.CreateDirectory(target);
+                string link = Path.Combine(root, "link");
+                if (!TryCreateJunction(link, target))
+                {
+                    // Junction создать не удалось — проверять нечего.
+                    return;
+                }
+
+                string nested = Path.Combine(link, "MultiKKT");
+                PathSafety pathSafety = new PathSafety();
+                AssertThrows<InvalidDataException>(delegate
+                {
+                    pathSafety.EnsureProtectedDirectory(
+                        nested,
+                        ProtectedDirectoryKind.Inventory,
+                        null,
+                        null);
+                }, "A protected directory may not be created under a junction.");
+                AssertFalse(
+                    Directory.Exists(Path.Combine(target, "MultiKKT")),
+                    "The directory must not be created before the check.");
+            }
+            finally
+            {
+                // Junction снимается первой: рекурсивное удаление проходит
+                // сквозь неё и упирается в отказ доступа.
+                try { Directory.Delete(Path.Combine(root, "link")); }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+                try { Directory.Delete(root, true); }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
+        }
+
+        private static bool TryCreateJunction(string link, string target)
+        {
+            ProcessStartInfo startInfo = new ProcessStartInfo("cmd.exe",
+                "/c mklink /J " + Quote(link) + " " + Quote(target));
+            startInfo.UseShellExecute = false;
+            startInfo.CreateNoWindow = true;
+            startInfo.RedirectStandardOutput = true;
+            startInfo.RedirectStandardError = true;
+            using (Process process = Process.Start(startInfo))
+            {
+                process.StandardOutput.ReadToEnd();
+                process.StandardError.ReadToEnd();
+                process.WaitForExit();
+            }
+            return Directory.Exists(link);
+        }
+
+        private static string Quote(string value)
+        {
+            return "\"" + value + "\"";
+        }
+
         private static void ManifestAndProfileStoresRejectReparsePoints()
         {
             string root = CreateTemporaryDirectory();
@@ -6965,6 +7035,25 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     Sha256Hex(Encoding.UTF8.GetBytes(firstBackup)),
                     manifests.Read(serial).EsmConfigOriginalSha256,
                     "Манифест обязан ссылаться на сохранённую точку возврата.");
+
+                // Обрыв процесса между остановкой службы и её запуском:
+                // на диске уже наша конфигурация, а экземпляр ЕСМ стоит.
+                // Повторный заход обязан его поднять, а не отчитаться
+                // «уже применено» поверх неработающей кассы.
+                services.SetRecord(new WindowsServiceRecord
+                {
+                    ServiceName = "esm-cm-" + serial,
+                    State = WindowsServiceState.Stopped,
+                    ProcessId = 0
+                });
+                AssertEqual(
+                    EsmInstanceConfigApplyState.AlreadyApplied,
+                    manager.ApplyAndRestart(manifests.Read(serial)),
+                    "Совпадающая конфигурация остаётся применённой.");
+                AssertEqual(
+                    WindowsServiceState.Running,
+                    services.Query("esm-cm-" + serial).State,
+                    "Прерванный перезапуск обязан быть доведён до конца.");
 
                 // Теперь конфигурацию правили вручную: перезаписывать её вслепую
                 // нельзя, но и снятие комплекта блокировать нечем.
