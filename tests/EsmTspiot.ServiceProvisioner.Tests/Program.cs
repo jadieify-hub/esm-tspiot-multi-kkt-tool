@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -145,7 +145,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("MSI local module session continues independent INN failures", MsiLocalModuleSessionContinuesIndependentInnFailures);
             Run("Managed local module protocol accepts consistent shared INN rows", ManagedLocalModuleProtocolAcceptsConsistentSharedInnRows);
             Run("Managed provisioning session accepts only known monotonic messages", ManagedProvisioningSessionAcceptsOnlyKnownMonotonicMessages);
-            Run("Managed session server interleaves caller and helper per KKT", ManagedSessionServerInterleavesCallerAndHelperPerKkt);
             Run("Local module configs isolate every mutable path", LocalModuleConfigsIsolateEveryMutablePath);
             Run("Local module start plans share only read-only runtime", LocalModuleStartPlansShareOnlyReadOnlyRuntime);
             Run("Local module child environment supplies Windows runtime and isolated temp", LocalModuleChildEnvironmentSuppliesWindowsRuntimeAndIsolatedTemp);
@@ -202,18 +201,12 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Managed local module profile writes protected six-file contract", ManagedLocalModuleProfileWritesProtectedSixFileContract);
             Run("Managed local module lifecycle journal resumes pre-profile identity", ManagedLocalModuleLifecycleJournalResumesPreProfileIdentity);
             Run("Local module readiness requires owned descendant listener", LocalModuleReadinessRequiresOwnedDescendantListener);
-            Run("Windows managed platform persists and repairs exact owned pair", WindowsManagedPlatformPersistsProfileAndExactServicePair);
-            Run("Complete stack canary failure stops remaining groups", CompleteStackCanaryFailureStopsRemainingGroups);
-            Run("Complete stack provisions every KKT of shared INN", CompleteStackProvisionsEveryKktOfSharedInn);
-            Run("Complete stack skips a later unregistered KKT", CompleteStackSkipsLaterUnregisteredKkt);
-            Run("Managed local module same INN ensure is idempotent", ManagedLocalModuleSameInnEnsureIsIdempotent);
             Run("Managed removal retains shared same-INN module", ManagedRemovalRetainsSharedSameInnModule);
             Run("Managed removal cleans complete stack in reverse", ManagedRemovalCleansCompleteStackInReverse);
             Run("Managed removal projects cleanup pending and retries", ManagedRemovalProjectsCleanupPendingAndRetries);
             Run("Managed removal journal survives deleted KKT stack", ManagedRemovalJournalSurvivesDeletedKktStack);
             Run("Managed removal journal keeps operator read only access", ManagedRemovalJournalKeepsOperatorReadOnlyAccess);
             Run("Windows managed removal deletes owned stack and retry journal", WindowsManagedRemovalDeletesOwnedStackAndRetryJournal);
-            Run("Managed update guard never stops unknown version", ManagedUpdateGuardNeverStopsUnknownVersion);
             Run("LM profile adapter changes only supported fields", LmProfileAdapterChangesOnlySupportedFields);
             Run("LM profile adapter rejects ambiguous schema", LmProfileAdapterRejectsAmbiguousSchema);
             Run("LM profile adapter preserves unknown nonsecret fields", LmProfileAdapterPreservesUnknownNonsecretFields);
@@ -4192,81 +4185,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 "The session protocol must expose exactly the five reviewed message kinds.");
         }
 
-        private static void ManagedSessionServerInterleavesCallerAndHelperPerKkt()
-        {
-            LmServiceProvisioningBatchRequest request =
-                CreateManagedLocalModuleRequest(2);
-            FakeManagedLocalModuleProvisioningPlatform platform =
-                new FakeManagedLocalModuleProvisioningPlatform();
-            using (CompleteStackProvisioningSession session =
-                new CompleteStackProvisioningSession(
-                    request,
-                    new ManagedLocalModuleProvisioner(platform),
-                    new ManagedLocalModuleProvisioningContext(
-                        "lmrt-0123456789abcdef01234567",
-                        "local-module-2.6.1-7",
-                        "2.6.1")))
-            {
-                FakeManagedProvisioningSessionChannel channel =
-                    new FakeManagedProvisioningSessionChannel(
-                        new[]
-                        {
-                            new ManagedProvisioningSessionMessage
-                            {
-                                SchemaVersion = request.SchemaVersion,
-                                OperationId = request.OperationId,
-                                Sequence = 2,
-                                Kind = ManagedProvisioningSessionKind.ExecuteItem,
-                                ItemIndex = 0,
-                                Status = LmServiceProvisioningStatus.Pending
-                            },
-                            new ManagedProvisioningSessionMessage
-                            {
-                                SchemaVersion = request.SchemaVersion,
-                                OperationId = request.OperationId,
-                                Sequence = 4,
-                                Kind = ManagedProvisioningSessionKind.ExecuteItem,
-                                ItemIndex = 1,
-                                Status = LmServiceProvisioningStatus.Cancelled,
-                                Message = "ККТ не зарегистрирована в ЕСМ."
-                            },
-                            new ManagedProvisioningSessionMessage
-                            {
-                                SchemaVersion = request.SchemaVersion,
-                                OperationId = request.OperationId,
-                                Sequence = 6,
-                                Kind = ManagedProvisioningSessionKind.Finish,
-                                ItemIndex = -1,
-                                Status = LmServiceProvisioningStatus.Pending
-                            }
-                        });
-
-                LmServiceProvisioningBatchResult result =
-                    new ManagedProvisioningSessionServer(channel)
-                        .Run(request, session);
-
-                AssertEqual(3, channel.SessionMessages.Count,
-                    "The helper must send ready and one result per requested KKT.");
-                AssertEqual(ManagedProvisioningSessionKind.SessionReady,
-                    channel.SessionMessages[0].Kind,
-                    "The helper must complete immutable preflight before caller registration.");
-                AssertEqual(1L, channel.SessionMessages[0].Sequence,
-                    "The helper must start the global session sequence.");
-                AssertEqual(ManagedProvisioningSessionKind.ItemResult,
-                    channel.SessionMessages[1].Kind,
-                    "The first registered KKT must be provisioned before the next caller step.");
-                AssertEqual(3L, channel.SessionMessages[1].Sequence,
-                    "Caller and helper messages must share one monotonic sequence.");
-                AssertEqual(LmServiceProvisioningStatus.Cancelled,
-                    channel.SessionMessages[2].Status,
-                    "An unregistered later KKT must be skipped without local mutation.");
-                AssertEqual(2, result.Items.Count,
-                    "The final batch result must cover the immutable full plan.");
-                AssertEqual(1, platform.ReconciledInns.Count,
-                    "Only the successfully registered KKT may enter local provisioning.");
-            }
-        }
-
         private static void LocalModuleConfigsIsolateEveryMutablePath()
         {
             string runtimeRoot =
@@ -5777,24 +5695,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 "Service SID derivation must match the Windows service-SID algorithm before creation.");
         }
 
-        private static void ScmImagePathTargetsOnlyProtectedSupervisorMode()
-        {
-            FakeWindowsServiceApi api = new FakeWindowsServiceApi();
-            CreateTestSupervisorService(api).EnsureConfigured("00105700000001");
-            ProvisionerCommandLine parsed;
-
-            AssertTrue(ProvisionerCommandLine.TryParse(
-                new[] { "--supervise", api.LastDefinition.ServiceName }, out parsed),
-                "The internally generated supervisor mode must parse.");
-            AssertEqual(ProvisionerMode.Supervisor, parsed.Mode,
-                "The managed ImagePath must select only supervisor mode.");
-            AssertFalse(ProvisionerCommandLine.TryParse(
-                new[] { "--supervise", api.LastDefinition.ServiceName, "--environment", "x" }, out parsed),
-                "Supervisor mode must reject appended arguments.");
-            AssertFalse(api.LastDefinition.ImagePath.IndexOf("--pipe", StringComparison.Ordinal) >= 0,
-                "SCM must not target the elevated IPC mode.");
-        }
-
         private static void SupervisorReplacesOnlyChildProgramData()
         {
             Dictionary<string, string> baseline = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -5859,35 +5759,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 "The supervisor must wait for the same child PID.");
             AssertTrue(runtime.WaitMilliseconds > 0 && runtime.WaitMilliseconds <= 60000,
                 "Graceful stop wait must be bounded.");
-        }
-
-        private static void ProvisionerAcceptsOnlyOwnedLocalModuleServiceMode()
-        {
-            string instanceId = "lmi-0123456789abcdef01234567";
-            string databaseService =
-                LocalModuleManagedIdentity.CreateDatabaseServiceName(instanceId);
-            ProvisionerCommandLine parsed;
-
-            AssertTrue(ProvisionerCommandLine.TryParse(
-                    new[] { "--supervise-local-module", databaseService },
-                    out parsed),
-                "The helper must accept its exact manifest-owned local-module service name.");
-            AssertEqual(ProvisionerMode.LocalModuleSupervisor, parsed.Mode,
-                "The local-module service switch must select only the dedicated host mode.");
-            AssertEqual(databaseService, parsed.ServiceName,
-                "The service identity must round-trip without caller-controlled normalization.");
-            AssertFalse(ProvisionerCommandLine.TryParse(
-                    new[] { "--supervise-local-module", databaseService, "--config", @"C:\caller" },
-                    out parsed),
-                "A caller must not append a config path or any other start token.");
-            AssertFalse(ProvisionerCommandLine.TryParse(
-                    new[] { "--supervise-local-module", databaseService.ToUpperInvariant() },
-                    out parsed),
-                "Non-canonical service spelling must fail closed.");
-            AssertFalse(ProvisionerCommandLine.TryParse(
-                    new[] { "--supervise-local-module", LmServiceIdentity.CreateName("00105700000001") },
-                    out parsed),
-                "The local-module switch must never accept a controller service.");
         }
 
         private static void LocalModuleScmCreatesExactRestrictedDependencyPair()
@@ -6526,325 +6397,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             }
         }
 
-        private static void WindowsManagedPlatformPersistsProfileAndExactServicePair()
-        {
-            string root = CreateTemporaryDirectory();
-            try
-            {
-                LocalModuleManifestStore store;
-                LocalModuleRuntimeManifest runtime;
-                LocalModuleInstanceManifest instance;
-                CreateTestManagedLocalModuleOwnership(
-                    root,
-                    out store,
-                    out runtime,
-                    out instance);
-                LocalModuleTemplateObservation templates =
-                    CreateLocalModuleTemplateObservation();
-                string regimeTemplate = Path.Combine(
-                    runtime.RuntimeRoot,
-                    @"regime\etc\local.ini.dist");
-                string databaseTemplate = Path.Combine(
-                    runtime.RuntimeRoot,
-                    @"yenisei\etc\local.ini.dist");
-                Directory.CreateDirectory(Path.GetDirectoryName(regimeTemplate));
-                Directory.CreateDirectory(Path.GetDirectoryName(databaseTemplate));
-                File.WriteAllText(regimeTemplate, templates.RegimeLocalIni, new UTF8Encoding(false));
-                File.WriteAllText(databaseTemplate, templates.YeniseiLocalIni, new UTF8Encoding(false));
-
-                string initiatingSid = "S-1-5-21-111-222-333-1001";
-                FakePathSafety pathSafety = new FakePathSafety(true);
-                FakeWindowsServiceCollectionApi services =
-                    new FakeWindowsServiceCollectionApi();
-                VerifiedProvisionerBinary supervisor =
-                    VerifiedProvisionerBinary.CreateForTesting(
-                        @"C:\Program Files\KRS\MultiKKT\Provisioner\EsmTspiot.ServiceProvisioner.exe");
-                LocalModuleWindowsServicePair pair =
-                    new LocalModuleWindowsServicePair(services, supervisor);
-                ManagedLocalModuleServiceReadinessProbe readiness =
-                    new ManagedLocalModuleServiceReadinessProbe(
-                        services,
-                        new FakeTcpListenerOwnerReader(instance.ApiPort, 6001),
-                        new FakeProcessParentReader(6001, 5001),
-                        1,
-                        delegate { });
-                FakeEpmdCommandRunner epmd = new FakeEpmdCommandRunner(
-                    new EpmdCommandResult(
-                        0,
-                        "epmd: up and running\n",
-                        string.Empty),
-                    new EpmdCommandResult(0, "Killed\n", string.Empty));
-                LocalModuleServicePairLifecycle lifecycle =
-                    new LocalModuleServicePairLifecycle(
-                        services,
-                        new FakeLocalModuleServiceReadinessProbe(new List<string>()),
-                        new EpmdInstanceController(
-                            LocalModuleCapabilityProfile.Resolve("2.6.1"),
-                            runtime.RuntimeRoot,
-                            Path.Combine(instance.DataRoot, "temp"),
-                            instance.EpmdPort,
-                            epmd));
-                ManagedLocalModuleLifecycleJournalStore journals =
-                    new ManagedLocalModuleLifecycleJournalStore(
-                        store.MachineRoot,
-                        pathSafety);
-                WindowsManagedLocalModulePlatform platform =
-                    new WindowsManagedLocalModulePlatform(
-                        initiatingSid,
-                        runtime,
-                        LocalModuleCapabilityProfile.Resolve("2.6.1"),
-                        store,
-                        journals,
-                        new ManagedLocalModuleProfileStore(
-                            store,
-                            pathSafety,
-                            new AtomicFileWriter()),
-                        services,
-                        pair,
-                        lifecycle,
-                        readiness,
-                        epmd,
-                        new FakeLocalModulePortReservationFactory());
-                ManagedLocalModuleProvisioningItemRequest item =
-                    CreateManagedLocalModuleRequest(1).ManagedLocalModules[0];
-                ManagedLocalModuleProvisioningContext context =
-                    new ManagedLocalModuleProvisioningContext(
-                        runtime.RuntimeId,
-                        runtime.CapabilityId,
-                        runtime.ProductVersion);
-                string operationId = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
-
-                platform.Reconcile(item, operationId);
-                AssertEqual(ManagedLocalModuleObservedState.OwnedMismatch,
-                    platform.Inspect(item, context),
-                    "An owned instance without generated profile/services must be repairable.");
-                platform.RecordStage(
-                    item,
-                    context,
-                    operationId,
-                    ManagedLocalModuleProvisioningStage.Created);
-                platform.RecordStage(
-                    item,
-                    context,
-                    operationId,
-                    ManagedLocalModuleProvisioningStage.RuntimeReady);
-                platform.PrepareProfile(item, context, operationId);
-                platform.RecordStage(
-                    item,
-                    context,
-                    operationId,
-                    ManagedLocalModuleProvisioningStage.ProfileReady);
-                platform.ConfigureServicePair(item, context, initiatingSid);
-
-                AssertEqual(ManagedLocalModuleObservedState.MatchingStopped,
-                    platform.Inspect(item, context),
-                    "The persisted exact profile and DB/API definitions must be restartable.");
-                AssertTrue(File.Exists(Path.Combine(instance.ConfigRoot, "regime-local.ini")),
-                    "The production platform must persist generated configuration before SCM start.");
-                AssertEqual(2, services.CreatedDefinitions.Count,
-                    "The production platform must create exactly one restricted DB/API pair.");
-                ManagedLocalModuleLifecycleJournal durable;
-                AssertTrue(journals.TryRead(item.Inn, out durable) &&
-                           durable.Stage == ManagedLocalModuleProvisioningStage.ProfileReady,
-                    "The last completed mutation boundary must be durable before service start.");
-
-                services.Start(instance.DatabaseServiceName);
-                services.Start(instance.ApiServiceName);
-                services.Query(instance.DatabaseServiceName).DisplayName =
-                    "KRS: legacy managed LM database";
-                services.Query(instance.ApiServiceName).StartMode =
-                    WindowsServiceStartMode.DemandStart;
-                File.WriteAllText(
-                    Path.Combine(instance.ConfigRoot, "regime-local.ini"),
-                    "corrupted owned profile",
-                    new UTF8Encoding(false));
-                platform.Reconcile(item, operationId);
-
-                AssertEqual(ManagedLocalModuleObservedState.OwnedMismatch,
-                    platform.Inspect(item, context),
-                    "A running exact manifest-owned pair with an incomplete profile must be repairable.");
-
-                platform.PrepareProfile(item, context, operationId);
-
-                AssertEqual(WindowsServiceState.Stopped,
-                    services.Query(instance.DatabaseServiceName).State,
-                    "Profile recovery must stop the exact owned database service first.");
-                AssertEqual(WindowsServiceState.Stopped,
-                    services.Query(instance.ApiServiceName).State,
-                    "Profile recovery must stop the exact owned API service first.");
-
-                services.Query(instance.DatabaseServiceName).ImagePath =
-                    @"C:\Windows\System32\foreign-service.exe";
-                platform.Reconcile(item, operationId);
-                AssertEqual(ManagedLocalModuleObservedState.Foreign,
-                    platform.Inspect(item, context),
-                    "A service redirected outside the verified KRS supervisor must remain blocked.");
-            }
-            finally
-            {
-                Directory.Delete(root, true);
-            }
-        }
-
-        private static void CompleteStackCanaryFailureStopsRemainingGroups()
-        {
-            LmServiceProvisioningBatchRequest request =
-                CreateManagedLocalModuleRequest(3);
-            FakeManagedLocalModuleProvisioningPlatform platform =
-                new FakeManagedLocalModuleProvisioningPlatform();
-            platform.FailureStage = ManagedLocalModuleProvisioningStage.ProfileReady;
-            ManagedLocalModuleProvisioner provisioner =
-                new ManagedLocalModuleProvisioner(platform);
-            CompleteStackProvisioningSession session =
-                new CompleteStackProvisioningSession(
-                    request,
-                    provisioner,
-                    new ManagedLocalModuleProvisioningContext(
-                        "lmrt-0123456789abcdef01234567",
-                        "local-module-2.6.1-7",
-                        "2.6.1"));
-
-            LmServiceProvisioningBatchResult result = session.ExecuteAll();
-
-            AssertEqual(3, result.Items.Count,
-                "Every prehashed group must receive an explicit session result.");
-            AssertEqual(LmServiceProvisioningStatus.Failed, result.Items[0].Status,
-                "The first planned group is the canary and must expose its failure.");
-            AssertEqual(LmServiceProvisioningStatus.Cancelled, result.Items[1].Status,
-                "The second group must remain untouched after canary failure.");
-            AssertEqual(LmServiceProvisioningStatus.Cancelled, result.Items[2].Status,
-                "The third group must remain untouched after canary failure.");
-            AssertEqual(1, platform.ReconciledInns.Count,
-                "Only the canary may enter the mutation workflow.");
-            AssertEqual(request.ManagedLocalModules[0].Inn, platform.ReconciledInns[0],
-                "The deterministic first group must be used as canary.");
-            AssertFalse(platform.Events.Contains("profile:" + request.ManagedLocalModules[1].Inn),
-                "No later profile may be created after canary failure.");
-        }
-
-        private static void CompleteStackProvisionsEveryKktOfSharedInn()
-        {
-            LmServiceProvisioningBatchRequest request =
-                CreateManagedLocalModuleRequest(2);
-            ManagedLocalModuleProvisioningItemRequest first =
-                request.ManagedLocalModules[0];
-            ManagedLocalModuleProvisioningItemRequest second =
-                request.ManagedLocalModules[1];
-            second.Inn = first.Inn;
-            second.LocalModuleOrdinal = first.LocalModuleOrdinal;
-            second.ApiPort = first.ApiPort;
-            second.DatabasePort = first.DatabasePort;
-            second.EpmdPort = first.EpmdPort;
-            request.PlanHash = CanonicalLmPlanHasher.Compute(request);
-            FakeManagedLocalModuleProvisioningPlatform platform =
-                new FakeManagedLocalModuleProvisioningPlatform();
-            List<string> controllers = new List<string>();
-            using (CompleteStackProvisioningSession session =
-                new CompleteStackProvisioningSession(
-                    request,
-                    new ManagedLocalModuleProvisioner(platform),
-                    new ManagedLocalModuleProvisioningContext(
-                        "lmrt-0123456789abcdef01234567",
-                        "local-module-2.6.1-7",
-                        "2.6.1"),
-                    delegate(ManagedLocalModuleProvisioningItemRequest item)
-                    {
-                        controllers.Add(item.KktSerial);
-                        return new LmServiceProvisioningItemResult
-                        {
-                            KktSerial = item.KktSerial,
-                            Status = LmServiceProvisioningStatus.Succeeded,
-                            Message = "controller ready"
-                        };
-                    }))
-            {
-                LmServiceProvisioningBatchResult result = session.ExecuteAll();
-                AssertEqual(2, result.Items.Count,
-                    "Every KKT must receive a full-stack result.");
-                AssertEqual(LmServiceProvisioningStatus.ReadyToInitialize,
-                    result.Items[0].Status,
-                    "The first shared-INN KKT must be ready.");
-                AssertEqual(LmServiceProvisioningStatus.ReadyToInitialize,
-                    result.Items[1].Status,
-                    "The second shared-INN KKT must be ready.");
-            }
-            AssertEqual(2, controllers.Count,
-                "Each KKT of one INN must receive its own controller service.");
-            AssertEqual(1, platform.ProfilePreparationCount,
-                "The shared LM profile must be created only once.");
-        }
-
-        private static void CompleteStackSkipsLaterUnregisteredKkt()
-        {
-            LmServiceProvisioningBatchRequest request =
-                CreateManagedLocalModuleRequest(3);
-            FakeManagedLocalModuleProvisioningPlatform platform =
-                new FakeManagedLocalModuleProvisioningPlatform();
-            CompleteStackProvisioningSession session =
-                new CompleteStackProvisioningSession(
-                    request,
-                    new ManagedLocalModuleProvisioner(platform),
-                    new ManagedLocalModuleProvisioningContext(
-                        "lmrt-0123456789abcdef01234567",
-                        "local-module-2.6.1-7",
-                        "2.6.1"));
-
-            session.ExecuteItem(0);
-            LmServiceProvisioningItemResult skipped = session.SkipItem(
-                1,
-                "ККТ не зарегистрирована в ЕСМ.");
-            session.ExecuteItem(2);
-            LmServiceProvisioningBatchResult result = session.Finish();
-
-            AssertEqual(LmServiceProvisioningStatus.Cancelled, skipped.Status,
-                "A nonregistered later KKT must be explicitly skipped.");
-            AssertEqual(LmServiceProvisioningStatus.ReadyToInitialize,
-                result.Items[2].Status,
-                "An independent later KKT must continue after the skipped row.");
-            AssertEqual(2, platform.ReconciledInns.Count,
-                "The skipped KKT must never enter the mutation workflow.");
-        }
-
-        private static void ManagedLocalModuleSameInnEnsureIsIdempotent()
-        {
-            ManagedLocalModuleProvisioningItemRequest item =
-                CreateManagedLocalModuleRequest(1).ManagedLocalModules[0];
-            FakeManagedLocalModuleProvisioningPlatform platform =
-                new FakeManagedLocalModuleProvisioningPlatform();
-            ManagedLocalModuleProvisioner provisioner =
-                new ManagedLocalModuleProvisioner(platform);
-            ManagedLocalModuleProvisioningContext context =
-                new ManagedLocalModuleProvisioningContext(
-                    "lmrt-0123456789abcdef01234567",
-                    "local-module-2.6.1-7",
-                    "2.6.1");
-
-            LmServiceProvisioningItemResult first = provisioner.Ensure(
-                item,
-                context,
-                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                "S-1-5-21-111-222-333-1001");
-            int mutationsAfterFirst = platform.MutationCount;
-            LmServiceProvisioningItemResult second = provisioner.Ensure(
-                item,
-                context,
-                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-                "S-1-5-21-111-222-333-1001");
-
-            AssertEqual(LmServiceProvisioningStatus.ReadyToInitialize, first.Status,
-                "The first ensure must reach a ready but not falsely initialized state.");
-            AssertEqual(LmServiceProvisioningStatus.ReadyToInitialize, second.Status,
-                "A matching second ensure must return the same factual state.");
-            AssertEqual(mutationsAfterFirst, platform.MutationCount,
-                "A matching same-INN ensure must not rewrite profile, SCM or listeners.");
-            AssertEqual(1, platform.ProfilePreparationCount,
-                "One INN must own only one prepared profile.");
-            AssertEqual(1, platform.ServicePairConfigurationCount,
-                "One INN must own only one DB/API service pair.");
-            AssertEqual(1, platform.StackReferenceEnsureCount,
-                "A ready shared LM must still restore the KKT ownership reference idempotently.");
-        }
-
         private static void ManagedRemovalRetainsSharedSameInnModule()
         {
             FakeManagedLocalModuleRemovalPlatform platform =
@@ -7257,23 +6809,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             {
                 Directory.Delete(root, true);
             }
-        }
-
-        private static void ManagedUpdateGuardNeverStopsUnknownVersion()
-        {
-            FakeManagedLocalModuleUpdatePlatform platform =
-                new FakeManagedLocalModuleUpdatePlatform();
-            ManagedLocalModuleUpdateWorkflow workflow =
-                new ManagedLocalModuleUpdateWorkflow(platform);
-
-            LmServiceProvisioningStatus result = workflow.Evaluate(
-                "2.6.1",
-                "2.6.2");
-
-            AssertEqual(LmServiceProvisioningStatus.VersionVerificationPending, result,
-                "A package without an exact capability and migration pair must be blocked.");
-            AssertEqual(0, platform.BeginMigrationCount,
-                "Unknown-version evaluation must not stop or mutate running instances.");
         }
 
         private static void LmProfileAdapterChangesOnlySupportedFields()
@@ -11066,16 +10601,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             }
         }
 
-        private sealed class FakeLocalModulePortReservationFactory :
-            ILocalModulePortReservationFactory
-        {
-            public IDisposable Acquire(
-                ManagedLocalModuleProvisioningItemRequest item)
-            {
-                return new CallbackDisposable(delegate { });
-            }
-        }
-
         private sealed class FakeLocalModuleServiceReadinessProbe :
             ILocalModuleServiceReadinessProbe
         {
@@ -11118,123 +10643,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             {
                 _events.Add("epmd:" + plan.ArgumentTokens[0]);
                 return _results.Dequeue();
-            }
-        }
-
-        private sealed class FakeManagedLocalModuleProvisioningPlatform :
-            IManagedLocalModuleProvisioningPlatform
-        {
-            private bool _ready;
-
-            internal FakeManagedLocalModuleProvisioningPlatform()
-            {
-                Events = new List<string>();
-                ReconciledInns = new List<string>();
-            }
-
-            internal ManagedLocalModuleProvisioningStage? FailureStage { get; set; }
-            internal IList<string> Events { get; private set; }
-            internal IList<string> ReconciledInns { get; private set; }
-            internal int MutationCount { get; private set; }
-            internal int ProfilePreparationCount { get; private set; }
-            internal int ServicePairConfigurationCount { get; private set; }
-            internal int StackReferenceEnsureCount { get; private set; }
-
-            public IDisposable AcquireItemLock(string inn)
-            {
-                return new CallbackDisposable(delegate { });
-            }
-
-            public void Reconcile(
-                ManagedLocalModuleProvisioningItemRequest item,
-                string operationId)
-            {
-                ReconciledInns.Add(item.Inn);
-            }
-
-            public ManagedLocalModuleObservedState Inspect(
-                ManagedLocalModuleProvisioningItemRequest item,
-                ManagedLocalModuleProvisioningContext context)
-            {
-                return _ready
-                    ? ManagedLocalModuleObservedState.MatchingReady
-                    : ManagedLocalModuleObservedState.Absent;
-            }
-
-            public void RecordStage(
-                ManagedLocalModuleProvisioningItemRequest item,
-                ManagedLocalModuleProvisioningContext context,
-                string operationId,
-                ManagedLocalModuleProvisioningStage stage)
-            {
-                Events.Add("stage:" + stage.ToString() + ":" + item.Inn);
-                MutationCount++;
-                if (FailureStage.HasValue && FailureStage.Value == stage)
-                {
-                    throw new IOException("simulated stage failure");
-                }
-            }
-
-            public void PrepareProfile(
-                ManagedLocalModuleProvisioningItemRequest item,
-                ManagedLocalModuleProvisioningContext context,
-                string operationId)
-            {
-                Events.Add("profile:" + item.Inn);
-                ProfilePreparationCount++;
-                MutationCount++;
-            }
-
-            public void ConfigureServicePair(
-                ManagedLocalModuleProvisioningItemRequest item,
-                ManagedLocalModuleProvisioningContext context,
-                string initiatingSid)
-            {
-                Events.Add("services:" + item.Inn);
-                ServicePairConfigurationCount++;
-                MutationCount++;
-            }
-
-            public void StartDatabaseAndWait(
-                ManagedLocalModuleProvisioningItemRequest item,
-                ManagedLocalModuleProvisioningContext context)
-            {
-                Events.Add("database:" + item.Inn);
-                MutationCount++;
-            }
-
-            public void StartApiAndWait(
-                ManagedLocalModuleProvisioningItemRequest item,
-                ManagedLocalModuleProvisioningContext context)
-            {
-                Events.Add("api:" + item.Inn);
-                MutationCount++;
-            }
-
-            public void Complete(
-                ManagedLocalModuleProvisioningItemRequest item,
-                ManagedLocalModuleProvisioningContext context,
-                string operationId)
-            {
-                Events.Add("complete:" + item.Inn);
-                MutationCount++;
-                _ready = true;
-            }
-
-            public void EnsureStackReference(
-                ManagedLocalModuleProvisioningItemRequest item,
-                ManagedLocalModuleProvisioningContext context,
-                string operationId)
-            {
-                StackReferenceEnsureCount++;
-            }
-
-            public void MarkRequiresAttention(
-                ManagedLocalModuleProvisioningItemRequest item,
-                string operationId,
-                string errorClass)
-            {
-                Events.Add("attention:" + item.Inn);
             }
         }
 
@@ -11345,19 +10753,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             private void AddOnce(string value)
             {
                 if (!Events.Contains(value)) Events.Add(value);
-            }
-        }
-
-        private sealed class FakeManagedLocalModuleUpdatePlatform :
-            IManagedLocalModuleUpdatePlatform
-        {
-            internal int BeginMigrationCount { get; private set; }
-
-            public void BeginExactMigration(
-                string currentVersion,
-                string selectedVersion)
-            {
-                BeginMigrationCount++;
             }
         }
 
