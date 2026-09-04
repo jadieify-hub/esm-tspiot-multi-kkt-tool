@@ -484,6 +484,22 @@ namespace EsmTspiot.Shared.Tests
                 TimeSpan.FromMilliseconds(50));
         }
 
+        /// <summary>
+        /// Для проверок самого опроса бюджет должен быть заведомо больше его
+        /// стоимости: на холодном net48-раннере CI первая попытка вместе с JIT
+        /// съедала все 600 мс, опрос обрывался после одной итерации, и тест
+        /// падал не по существу. Бюджет здесь — верхняя граница, а не время
+        /// прогона: тест завершается, как только ЕСМ сообщает привязку.
+        /// </summary>
+        private static LmGatewayBindingWorkflow NewPollingBindingWorkflow(
+            ITspiotApiClient api)
+        {
+            return new LmGatewayBindingWorkflow(
+                api,
+                TimeSpan.FromSeconds(30),
+                TimeSpan.FromMilliseconds(1));
+        }
+
         private static void UnknownHttpErrorShowsServiceResponseBody()
         {
             // Полевой случай: ЕСМ отвечал HTTP 500 на привязку, а в журнале
@@ -3228,7 +3244,7 @@ namespace EsmTspiot.Shared.Tests
                 "00105700000001", "1234567894")));
             api.LmInfoResponses.Enqueue(Success(CreateLmInfoJson(
                 "00105700000001", "1234567894", "127.0.0.1", 5995)));
-            LmGatewayBindingWorkflow workflow = NewFastBindingWorkflow(api);
+            LmGatewayBindingWorkflow workflow = NewPollingBindingWorkflow(api);
 
             LmGatewayBindingOutcome outcome = workflow.ExecuteAsync(
                 "http://127.0.0.1:51077",
