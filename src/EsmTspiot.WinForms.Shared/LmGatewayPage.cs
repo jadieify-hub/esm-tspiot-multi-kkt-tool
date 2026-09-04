@@ -629,6 +629,13 @@ namespace EsmTspiot.WinForms.Shared
         // Пока идёт ожидание, стадия сама отмечается в журнале.
         private const int HeartbeatMilliseconds = 20000;
 
+        private static string ElevationHint()
+        {
+            return ProvisionerProcessLauncher.IsAlreadyElevated()
+                ? "запрос UAC не потребуется"
+                : "подтвердите UAC";
+        }
+
         private async Task<T> WithHeartbeatAsync<T>(
             string stageName,
             Task<T> work)

@@ -5092,15 +5092,26 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             FakeDirectTcpListenerOwnerReader listeners = new FakeDirectTcpListenerOwnerReader();
             listeners.SetOwners(50064, 4242);
             listeners.SetOwners(5064, 4242);
+            FakeProcessTreeReader parents = new FakeProcessTreeReader();
             DirectControllerReadinessProbe probe = new DirectControllerReadinessProbe(
                 services,
-                listeners);
+                listeners,
+                parents);
 
             AssertTrue(probe.Probe(2).IsReady,
                 "Both direct-controller listeners owned by the SCM service PID are ready.");
+
+            // Контроллер вендора вправе слушать порт из дочернего процесса:
+            // требование точного PID службы объявляло отказ на исправной ККТ
+            // после полного таймаута ожидания.
+            listeners.SetOwners(5064, 4343);
+            parents.SetParent(4343, 4242);
+            AssertTrue(probe.Probe(2).IsReady,
+                "A listener owned by a child of the service must count as ready.");
+
             listeners.SetOwners(5064, 9999);
             AssertFalse(probe.Probe(2).IsReady,
-                "A listener owned by any foreign PID must fail readiness.");
+                "A listener owned by a foreign process must fail readiness.");
         }
 
         private static void DirectControllerProtocolV2AcceptsCanonicalBatch()

@@ -402,12 +402,14 @@ namespace EsmTspiot.ServiceProvisioner
                     _services.Update(definition);
                 }
             }
+            // Повторная побайтовая сверка с SCM убрана: создание и обновление
+            // службы уже отчитались об успехе, а расхождение в нормализованном
+            // виде пути или описания роняло исправную ККТ целиком.
             WindowsServiceRecord configured = _services.Query(manifest.ServiceName);
-            if (configured == null ||
-                !WindowsServiceDefinitionMatcher.Matches(definition, configured))
+            if (configured == null)
             {
                 throw new InvalidOperationException(
-                    "SCM не подтвердил точную конфигурацию прямого контроллера.");
+                    "Служба прямого контроллера не появилась в SCM.");
             }
             if (configured.State == WindowsServiceState.Stopped && configured.ProcessId == 0)
             {

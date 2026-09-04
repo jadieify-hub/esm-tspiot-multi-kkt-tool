@@ -229,6 +229,19 @@ namespace EsmTspiot.WinForms.Shared
             return null;
         }
 
+        // Помощник поднимается через runas. Если программа уже запущена от
+        // администратора, окна UAC не будет вообще, и обещать оператору
+        // подтверждение нельзя: он ждёт запрос, которого не появится, и
+        // считает, что стадия замерла.
+        internal static bool IsAlreadyElevated()
+        {
+            using (WindowsIdentity identity = WindowsIdentity.GetCurrent())
+            {
+                return new WindowsPrincipal(identity).IsInRole(
+                    WindowsBuiltInRole.Administrator);
+            }
+        }
+
         private static bool HasAdministrativeToken()
         {
             using (WindowsIdentity identity = WindowsIdentity.GetCurrent(

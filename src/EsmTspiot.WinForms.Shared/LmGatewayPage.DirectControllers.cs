@@ -113,7 +113,8 @@ namespace EsmTspiot.WinForms.Shared
             }
 
             _statusLabel.Text =
-                "Создание независимых служб контроллеров; подтвердите UAC...";
+                "Создание независимых служб контроллеров; " +
+                ElevationHint() + "...";
             LmServiceProvisioningBatchResult provisioned =
                 await WithHeartbeatAsync(
                     "Контроллеры",
