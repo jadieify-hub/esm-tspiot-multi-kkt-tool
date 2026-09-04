@@ -98,8 +98,12 @@ namespace EsmTspiot.Shared.Services
             string requestedVolumeRoot,
             string baseInstallDirectory)
         {
+            // По умолчанию клон ставится на системный диск, а не туда, где
+            // лежит базовый ЛМ. Вендор мог поставить базовый на любой том, и
+            // наследование его диска приводило к тому, что наш клон молча
+            // уезжал, например, на D:, хотя оператор об этом не просил.
             string candidate = string.IsNullOrWhiteSpace(requestedVolumeRoot)
-                ? GetVolumeRoot(baseInstallDirectory)
+                ? GetSystemVolumeRoot()
                 : requestedVolumeRoot.Trim();
             if (!IsCanonicalVolumeRoot(candidate))
             {

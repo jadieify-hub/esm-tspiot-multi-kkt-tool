@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Pipes;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
@@ -11,6 +12,7 @@ using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
+using System.Threading;
 using EsmTspiot.ServiceProvisioner;
 using EsmTspiot.Shared.Models;
 using EsmTspiot.Shared.Services;
@@ -175,6 +177,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("SCM adapter uses exact verified image path", ScmAdapterUsesExactVerifiedImagePath);
             Run("SCM adapter enforces restrictive service DACL", ScmAdapterEnforcesRestrictiveServiceDacl);
             Run("SCM adapter never force kills process", ScmAdapterNeverForceKillsProcess);
+            Run("Helper answers while its cancellation reader waits", HelperAnswersWhileItsCancellationReaderWaits);
             Run("Legacy terminator rejects PID reuse and foreign identity", LegacyTerminatorRejectsPidReuseAndForeignIdentity);
             Run("Legacy migration retries partial cleanup and honors cancellation", LegacyMigrationRetriesPartialCleanupAndHonorsCancellation);
             Run("ESM instance YAML patches unique structural ldbControl", EsmInstanceYamlPatchesUniqueStructuralLdbControl);
@@ -5646,6 +5649,74 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                         api.LastDefinition.SecurityDescriptor.Sddl.IndexOf(";;;IU)", StringComparison.Ordinal) >= 0 ||
                         api.LastDefinition.SecurityDescriptor.Sddl.IndexOf(";;;WD)", StringComparison.Ordinal) >= 0,
                 "Interactive or broad user trustees must not control the service.");
+        }
+
+        // Полевой отказ, который три раза выглядел как зависание: помощник
+        // доделывал обе ККТ за двадцать секунд, а окно показывало только
+        // таймер, пока оператор не нажимал «Остановить» — после чего оба
+        // результата приходили разом со статусом Succeeded. Причина не в
+        // работе, а в канале: на синхронном дескрипторе Windows выстраивает
+        // ввод-вывод в очередь, и висящее чтение потока отмены не пускало
+        // запись ответа. Канал помощника обязан быть асинхронным.
+        private static void HelperAnswersWhileItsCancellationReaderWaits()
+        {
+            string pipeName = Guid.NewGuid().ToString("N");
+            using (NamedPipeServerStream server = new NamedPipeServerStream(
+                pipeName,
+                PipeDirection.InOut,
+                1,
+                PipeTransmissionMode.Byte,
+                PipeOptions.Asynchronous))
+            using (NamedPipeClientStream helper = new NamedPipeClientStream(
+                ".",
+                pipeName,
+                PipeDirection.InOut,
+                NamedPipeProvisioningChannel.ClientPipeOptions))
+            {
+                IAsyncResult pending = server.BeginWaitForConnection(null, null);
+                helper.Connect(5000);
+                server.EndWaitForConnection(pending);
+
+                // Окно в это время ждёт ответ на своём конце канала.
+                ManualResetEventSlim delivered = new ManualResetEventSlim(false);
+                int received = -1;
+                Thread caller = new Thread(delegate()
+                {
+                    try { received = server.ReadByte(); delivered.Set(); }
+                    catch (Exception) { }
+                });
+                caller.IsBackground = true;
+                caller.Start();
+
+                // Поток отмены помощника висит на чтении того же канала:
+                // сообщения об отмене может не быть никогда.
+                Thread cancellationReader = new Thread(delegate()
+                {
+                    try { helper.ReadByte(); }
+                    catch (Exception) { }
+                });
+                cancellationReader.IsBackground = true;
+                cancellationReader.Start();
+                Thread.Sleep(250);
+
+                Exception writeFailure = null;
+                Thread answering = new Thread(delegate()
+                {
+                    try { helper.WriteByte(42); helper.Flush(); }
+                    catch (Exception error) { writeFailure = error; }
+                });
+                answering.IsBackground = true;
+                answering.Start();
+
+                AssertTrue(delivered.Wait(5000),
+                    "The helper must answer while its cancellation reader is " +
+                    "still waiting on the same pipe. " +
+                    (writeFailure == null
+                        ? "Ответ не дошёл до вызывающей стороны."
+                        : writeFailure.GetType().Name + ": " + writeFailure.Message));
+                AssertEqual(42, received,
+                    "The answer must reach the caller unchanged.");
+            }
         }
 
         private static void ScmAdapterNeverForceKillsProcess()
