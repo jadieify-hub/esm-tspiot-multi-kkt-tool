@@ -442,6 +442,14 @@ namespace EsmTspiot.Shared.Tests
             string body = "{\"error\":{\"code\":1012,\"text\":\"Служба с таким именем не создана\"}}";
 
             AssertTrue(ServiceRecoveryCommandBuilder.IsManualServiceRecoveryError(body), "Expected 1012 to be detected.");
+            string boundaryScript = ServiceRecoveryCommandBuilder.BuildPowerShellScript(
+                "00106200609570", "5040", "5041", "controlModule.exe");
+            AssertContains(boundaryScript, "function Test-ServiceArgument");
+            AssertFalse(
+                boundaryScript.IndexOf(
+                    "$currentPath.Contains($expectedPort)",
+                    StringComparison.Ordinal) >= 0,
+                "Port comparison by substring matches a longer port such as 50401.");
 
             string message = TspiotErrorDecoder.Decode(400, body);
             AssertContains(message, "Ошибка 1012");
@@ -5472,9 +5480,27 @@ namespace EsmTspiot.Shared.Tests
                 "The pending line must explain that the LM awaits initialization and quote ESM.");
 
             LmGatewayReadbackObservation otherError = CreateContourObservation("error 1234");
-            AssertEqual(LmContourReadbackState.LocalModuleNotInitialized,
+            AssertEqual(LmContourReadbackState.Attention,
                 LmContourReadbackPolicy.Classify(otherError),
-                "Any LM-level error behind a confirmed endpoint is an initialization matter.");
+                "An LM error code outside the known waiting states needs attention.");
+            AssertFalse(LmContourReadbackPolicy.IsAcceptable(
+                    LmContourReadbackPolicy.Classify(otherError)),
+                "A contour cannot report success while ESM reports an unknown LM error.");
+            AssertContains(
+                LmContourReadbackPolicy.Describe(otherError),
+                "error 1234");
+            AssertEqual(LmContourReadbackState.LocalModuleNotInitialized,
+                LmContourReadbackPolicy.Classify(
+                    CreateContourObservation("error 2055")),
+                "Code 2055 stays a waiting state.");
+            AssertEqual(LmContourReadbackState.LocalModuleNotInitialized,
+                LmContourReadbackPolicy.Classify(
+                    CreateContourObservation("initialization")),
+                "Initialization stays a waiting state.");
+            AssertEqual(LmContourReadbackState.LocalModuleNotInitialized,
+                LmContourReadbackPolicy.Classify(
+                    CreateContourObservation("not_configured")),
+                "not_configured stays a waiting state.");
 
             // Полевой прогон 2026-09-04: ЕСМ сообщил ЛМ 127.0.0.1:5995 обеим
             // ККТ, включая ту, чей ИНН обслуживает клон на 6995, и сам же
