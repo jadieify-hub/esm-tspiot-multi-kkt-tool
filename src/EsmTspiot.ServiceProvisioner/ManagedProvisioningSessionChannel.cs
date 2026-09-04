@@ -1,4 +1,4 @@
-﻿using EsmTspiot.Shared.Models;
+using EsmTspiot.Shared.Models;
 
 namespace EsmTspiot.ServiceProvisioner
 {
