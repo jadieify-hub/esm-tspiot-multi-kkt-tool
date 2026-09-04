@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -4878,9 +4878,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     Array.ConvertAll(
                         Directory.GetFiles(root, "*.json", SearchOption.AllDirectories),
                         File.ReadAllText));
-                AssertFalse(allJson.IndexOf("admin", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                    allJson.IndexOf("password", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                    allJson.IndexOf("newPassword", StringComparison.OrdinalIgnoreCase) >= 0,
+                AssertFalse(ContainsCredentialText(allJson, root),
                     "Direct manifests and inventory must contain no controller credentials.");
 
                 AssertThrows<InvalidDataException>(delegate {
@@ -7233,8 +7231,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 AssertContains(yaml, "gRPCPort: 50064");
                 AssertContains(yaml, "RESTPort: 5064");
                 AssertContains(yaml, "port: 7595");
-                AssertFalse(yaml.IndexOf("admin", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                            yaml.IndexOf("password", StringComparison.OrdinalIgnoreCase) >= 0,
+                AssertFalse(ContainsCredentialText(yaml, environmentRoot),
                     "The local controller profile must not persist ESM binding credentials.");
                 string vendorRoot = Path.GetDirectoryName(configPath);
                 AssertTrue(File.Exists(Path.Combine(vendorRoot, "ca.crt")) &&
@@ -8374,6 +8371,32 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// «В файле нет учётных данных» проверялось поиском подстрок admin и
+        /// password по всему тексту. На раннере CI временный каталог лежит в
+        /// C:\Users\runneradmin\..., этот путь попадал в конфигурацию как
+        /// каталог журналов, и проверка объявляла учётными данными имя
+        /// пользователя машины. Пути окружения из проверки исключаются: их
+        /// задаёт машина, а не мы; JSON хранит их с удвоенными разделителями,
+        /// поэтому убираются обе формы.
+        /// </summary>
+        private static bool ContainsCredentialText(
+            string text,
+            string environmentPath)
+        {
+            string value = text ?? string.Empty;
+            if (!string.IsNullOrEmpty(environmentPath))
+            {
+                value = value.Replace(
+                    environmentPath.Replace("\\", "\\\\"),
+                    string.Empty);
+                value = value.Replace(environmentPath, string.Empty);
+            }
+
+            return value.IndexOf("admin", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                value.IndexOf("password", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         private static void Run(string name, Action action)

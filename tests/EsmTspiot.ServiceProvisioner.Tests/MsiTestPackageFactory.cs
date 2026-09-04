@@ -90,10 +90,21 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 new WindowsInstallerPackageReader().Read(msiPath);
             LocalModuleMsiDatabaseSnapshot snapshot =
                 new LocalModuleMsiProfileReader().Read(msiPath);
-            if (snapshot.Compare(profile).Count != 0)
+            IList<MsiProfileMismatch> mismatches = snapshot.Compare(profile);
+            if (mismatches.Count != 0)
             {
+                // Без перечня расхождений эта осечка неотличима от любой
+                // другой: в CI она сообщала только сам факт, и причину
+                // приходилось искать вслепую.
+                string[] described = new string[mismatches.Count];
+                for (int index = 0; index < mismatches.Count; index++)
+                {
+                    described[index] = mismatches[index].ToString();
+                }
+
                 throw new InvalidDataException(
-                    "Synthetic MSI does not match its test profile.");
+                    "Synthetic MSI does not match its test profile: " +
+                    string.Join("; ", described));
             }
             FileStream sourceLock = new FileStream(
                 msiPath,
