@@ -84,6 +84,9 @@ namespace EsmTspiot.WinForms.Shared
                 WorkingDirectory = Path.GetDirectoryName(_helperPath),
                 WindowStyle = ProcessWindowStyle.Hidden
             };
+            // Файлы остаются открытыми до самого запуска: проверка и запуск
+            // обязаны говорить об одном и том же содержимом.
+            IList<FileStream> locked = OpenVerifiedClosure();
             try
             {
                 Process process = Process.Start(startInfo);
@@ -100,6 +103,10 @@ namespace EsmTspiot.WinForms.Shared
                     throw new OperationCanceledException("Запрос UAC отменен пользователем.", ex);
                 }
                 throw;
+            }
+            finally
+            {
+                CloseAll(locked);
             }
         }
 
@@ -133,30 +140,91 @@ namespace EsmTspiot.WinForms.Shared
 
         private void VerifyHelperIdentity()
         {
-            string expectedHash = ProvisionerIntegrity.ExpectedSha256;
-            if (string.IsNullOrEmpty(expectedHash) || expectedHash.Length != 64 ||
-                !FixedTimeEquals(expectedHash, ComputeSha256(_helperPath)))
+            CloseAll(OpenVerifiedClosure());
+        }
+
+        /// <summary>
+        /// Открывает helper и весь его набор файлов на чтение с запретом
+        /// записи, удаления и переименования и считает SHA-256 прямо из этих
+        /// потоков. Раньше хэши считались по пути, файлы отпускались, и запуск
+        /// открывал helper заново: в портативной поставке любой процесс
+        /// пользователя успевал подменить проверенный файл между проверкой и
+        /// запуском, а подставленный код стартовал с правами администратора
+        /// без запроса UAC — окно закрывается удержанием файлов до старта.
+        /// Возвращённые потоки закрывает вызывающий.
+        /// </summary>
+        private IList<FileStream> OpenVerifiedClosure()
+        {
+            List<FileStream> opened = new List<FileStream>();
+            try
             {
-                throw new InvalidDataException("SHA-256 helper не совпадает со встроенным значением.");
-            }
-            IList<KeyValuePair<string, string>> closure =
-                ParseExpectedClosure(ProvisionerIntegrity.ExpectedClosureSha256);
-            if (closure.Count == 0)
-            {
-                throw new InvalidDataException("Встроенный список файлов helper пуст.");
-            }
-            string helperDirectory = Path.GetDirectoryName(_helperPath);
-            for (int index = 0; index < closure.Count; index++)
-            {
-                string closurePath = Path.Combine(helperDirectory, closure[index].Key);
-                if (!File.Exists(closurePath) ||
-                    !FixedTimeEquals(closure[index].Value, ComputeSha256(closurePath)))
+                string expectedHash = ProvisionerIntegrity.ExpectedSha256;
+                FileStream helperStream = OpenLocked(_helperPath);
+                opened.Add(helperStream);
+                if (string.IsNullOrEmpty(expectedHash) || expectedHash.Length != 64 ||
+                    !FixedTimeEquals(expectedHash, ComputeSha256(helperStream)))
                 {
-                    throw new InvalidDataException(
-                        "SHA-256 файла Provisioner\\" + closure[index].Key +
-                        " не совпадает со встроенным значением.");
+                    throw new InvalidDataException("SHA-256 helper не совпадает со встроенным значением.");
+                }
+                IList<KeyValuePair<string, string>> closure =
+                    ParseExpectedClosure(ProvisionerIntegrity.ExpectedClosureSha256);
+                if (closure.Count == 0)
+                {
+                    throw new InvalidDataException("Встроенный список файлов helper пуст.");
+                }
+                string helperDirectory = Path.GetDirectoryName(_helperPath);
+                for (int index = 0; index < closure.Count; index++)
+                {
+                    string closurePath = Path.Combine(helperDirectory, closure[index].Key);
+                    if (!File.Exists(closurePath))
+                    {
+                        throw new InvalidDataException(
+                            "Файл Provisioner\\" + closure[index].Key + " отсутствует.");
+                    }
+                    FileStream closureStream = OpenLocked(closurePath);
+                    opened.Add(closureStream);
+                    if (!FixedTimeEquals(closure[index].Value, ComputeSha256(closureStream)))
+                    {
+                        throw new InvalidDataException(
+                            "SHA-256 файла Provisioner\\" + closure[index].Key +
+                            " не совпадает со встроенным значением.");
+                    }
+                }
+                VerifyHelperMetadata();
+                return opened;
+            }
+            catch
+            {
+                CloseAll(opened);
+                throw;
+            }
+        }
+
+        // FileShare.Read: остальным остаётся только чтение — записать,
+        // удалить или переименовать файл, пока он открыт, невозможно.
+        private static FileStream OpenLocked(string path)
+        {
+            return new FileStream(
+                path,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read);
+        }
+
+        private static void CloseAll(IList<FileStream> streams)
+        {
+            if (streams == null) return;
+            for (int index = 0; index < streams.Count; index++)
+            {
+                if (streams[index] != null)
+                {
+                    streams[index].Dispose();
                 }
             }
+        }
+
+        private void VerifyHelperMetadata()
+        {
             FileVersionInfo helper = FileVersionInfo.GetVersionInfo(_helperPath);
             FileVersionInfo main = FileVersionInfo.GetVersionInfo(
                 Process.GetCurrentProcess().MainModule.FileName);
@@ -405,11 +473,17 @@ namespace EsmTspiot.WinForms.Shared
 
         private static string ComputeSha256(string path)
         {
-            using (FileStream stream = new FileStream(
-                path,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.Read))
+            using (FileStream stream = OpenLocked(path))
+            {
+                return ComputeSha256(stream);
+            }
+        }
+
+        // Хэш снимается с уже открытого файла: пересчитывать его по пути
+        // значило бы проверять один файл, а запускать другой.
+        private static string ComputeSha256(Stream stream)
+        {
+            stream.Seek(0, SeekOrigin.Begin);
             using (SHA256 algorithm = SHA256.Create())
             {
                 byte[] digest = algorithm.ComputeHash(stream);
