@@ -84,9 +84,14 @@ namespace EsmTspiot.WinForms.Shared
                 WorkingDirectory = Path.GetDirectoryName(_helperPath),
                 WindowStyle = ProcessWindowStyle.Hidden
             };
-            // Файлы остаются открытыми до самого запуска: проверка и запуск
-            // обязаны говорить об одном и том же содержимом.
+            // Файлы остаются открытыми, пока helper работает. Отпускать их
+            // сразу после Process.Start мало: сборки рядом с exe грузятся
+            // лениво, уже в запущенном процессе, и между стартом и первым
+            // обращением к ним оставалось окно на подмену. Блокировки
+            // снимаются по завершении helper, а если он не пережил своего
+            // Process — по Disposed: вызывающий код всегда держит его в using.
             IList<FileStream> locked = OpenVerifiedClosure();
+            bool held = false;
             try
             {
                 Process process = Process.Start(startInfo);
@@ -94,6 +99,8 @@ namespace EsmTspiot.WinForms.Shared
                 {
                     throw new InvalidOperationException("Не удалось запустить helper.");
                 }
+                ReleaseWhenHelperExits(process, locked);
+                held = true;
                 return process;
             }
             catch (Win32Exception ex)
@@ -106,7 +113,10 @@ namespace EsmTspiot.WinForms.Shared
             }
             finally
             {
-                CloseAll(locked);
+                if (!held)
+                {
+                    CloseAll(locked);
+                }
             }
         }
 
@@ -209,6 +219,20 @@ namespace EsmTspiot.WinForms.Shared
                 FileMode.Open,
                 FileAccess.Read,
                 FileShare.Read);
+        }
+
+        /// <summary>
+        /// Блокировки живут ровно столько, сколько работает helper. Exited
+        /// закрывает штатный случай, Disposed — случай, когда вызывающий
+        /// код бросил ожидание раньше (Process у него всегда в using).
+        /// CloseAll идемпотентен, поэтому оба обработчика безопасны.
+        /// </summary>
+        private static void ReleaseWhenHelperExits(
+            Process process, IList<FileStream> locked)
+        {
+            process.Exited += delegate { CloseAll(locked); };
+            process.Disposed += delegate { CloseAll(locked); };
+            process.EnableRaisingEvents = true;
         }
 
         private static void CloseAll(IList<FileStream> streams)
