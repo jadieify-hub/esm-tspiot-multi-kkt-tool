@@ -77,8 +77,13 @@ jobs:
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts\package_compact_release.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $zipPath = "artifacts\release\MultiKKT-ESM-TSPioT-compact.zip"
-          $archive = [IO.Compression.ZipFile]::OpenRead((Resolve-Path $zipPath))
+          # Имя архива несёт версию продукта, поэтому заранее оно не
+          # известно: проверяется тот, который скрипт только что собрал.
+          $zips = @(Get-ChildItem -LiteralPath "artifacts\release" -Filter "MultiKKT-ESM-TSPioT-*.zip" -File | Sort-Object LastWriteTimeUtc -Descending)
+          if ($zips.Count -eq 0) {
+            throw "The packaging script produced no compact ZIP."
+          }
+          $archive = [IO.Compression.ZipFile]::OpenRead($zips[0].FullName)
           try {
             $entries = @($archive.Entries | ForEach-Object FullName | Sort-Object)
             $entries | ForEach-Object { Write-Host $_ }
