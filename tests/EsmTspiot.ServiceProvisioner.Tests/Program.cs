@@ -143,7 +143,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("MSI local module ensure enables automatic start for an adopted base", MsiLocalModuleEnsureEnablesAutomaticStartForAdoptedBase);
             Run("MSI local module protocol v3 hashes and validates every item", MsiLocalModuleProtocolV3HashesAndValidatesEveryItem);
             Run("MSI local module session continues independent INN failures", MsiLocalModuleSessionContinuesIndependentInnFailures);
-            Run("Managed local module protocol accepts consistent shared INN rows", ManagedLocalModuleProtocolAcceptsConsistentSharedInnRows);
+            Run("Managed local module operation is retired", ManagedLocalModuleOperationIsRetired);
             Run("Managed provisioning session accepts only known monotonic messages", ManagedProvisioningSessionAcceptsOnlyKnownMonotonicMessages);
             Run("Local module configs isolate every mutable path", LocalModuleConfigsIsolateEveryMutablePath);
             Run("Local module start plans share only read-only runtime", LocalModuleStartPlansShareOnlyReadOnlyRuntime);
@@ -4094,50 +4094,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 diagnostic.IndexOf("hunter2", StringComparison.OrdinalIgnoreCase) >= 0 ||
                 diagnostic.IndexOf("ADMINPASSWORD", StringComparison.OrdinalIgnoreCase) >= 0,
                 "MSI mismatch diagnostics must not echo paths or secret values.");
-        }
-
-        private static void ManagedLocalModuleProtocolAcceptsConsistentSharedInnRows()
-        {
-            LmServiceProvisioningBatchRequest request = CreateManagedLocalModuleRequest(2);
-            AssertTrue(ProvisioningRequestValidator.Validate(request).IsValid,
-                "A sorted exact-version local-module request must be accepted.");
-
-            LmServiceProvisioningBatchRequest sharedInn = CreateManagedLocalModuleRequest(2);
-            ManagedLocalModuleProvisioningItemRequest first = sharedInn.ManagedLocalModules[0];
-            ManagedLocalModuleProvisioningItemRequest second = sharedInn.ManagedLocalModules[1];
-            second.Inn = first.Inn;
-            second.LocalModuleOrdinal = first.LocalModuleOrdinal;
-            second.ApiPort = first.ApiPort;
-            second.DatabasePort = first.DatabasePort;
-            second.EpmdPort = first.EpmdPort;
-            sharedInn.PlanHash = CanonicalLmPlanHasher.Compute(sharedInn);
-            AssertTrue(ProvisioningRequestValidator.Validate(sharedInn).IsValid,
-                "Two KKT of one INN must share one immutable LM definition in one session.");
-
-            LmServiceProvisioningBatchRequest inconsistent = CreateManagedLocalModuleRequest(2);
-            first = inconsistent.ManagedLocalModules[0];
-            second = inconsistent.ManagedLocalModules[1];
-            second.Inn = first.Inn;
-            second.LocalModuleOrdinal = first.LocalModuleOrdinal;
-            second.ApiPort = first.ApiPort + 1000;
-            second.DatabasePort = first.DatabasePort;
-            second.EpmdPort = first.EpmdPort;
-            inconsistent.PlanHash = CanonicalLmPlanHasher.Compute(inconsistent);
-            AssertFalse(ProvisioningRequestValidator.Validate(inconsistent).IsValid,
-                "One INN must never carry two different LM endpoints in one session.");
-
-            LmServiceProvisioningBatchRequest changedPlan = CreateManagedLocalModuleRequest(1);
-            changedPlan.ManagedLocalModules[0].ApiPort++;
-            ValidationResult changedValidation = ProvisioningRequestValidator.Validate(changedPlan);
-            AssertFalse(changedValidation.IsValid,
-                "A port changed after confirmation must invalidate the plan hash.");
-            AssertContains(changedValidation.JoinMessages(), "SHA-256");
-
-            LmServiceProvisioningBatchRequest changedController =
-                CreateManagedLocalModuleRequest(1);
-            changedController.InstallerSelection.Sha256 = new string('b', 64);
-            AssertFalse(ProvisioningRequestValidator.Validate(changedController).IsValid,
-                "The controller package must belong to the same immutable full-stack plan.");
         }
 
         private static void ManagedProvisioningSessionAcceptsOnlyKnownMonotonicMessages()
@@ -8729,6 +8685,19 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 SignerThumbprint = "1CD26372850FE30F1559821CF5D318591695271A",
                 StopManagedInstancesWarningAccepted = true
             };
+        }
+
+        private static void ManagedLocalModuleOperationIsRetired()
+        {
+            LmServiceProvisioningBatchRequest request =
+                CreateManagedLocalModuleRequest(2);
+            ValidationResult validation =
+                ProvisioningRequestValidator.Validate(request);
+            AssertFalse(validation.IsValid,
+                "The retired managed local-module operation must be rejected.");
+            AssertContains(
+                validation.JoinMessages(),
+                "управляемых ЛМ ЧЗ");
         }
 
         private static LmServiceProvisioningBatchRequest CreateManagedLocalModuleRequest(int count)
