@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param()
 
 $ErrorActionPreference = "Stop"
@@ -238,6 +238,9 @@ $gatewayPageServicesPath = Join-Path $repositoryRoot "src\EsmTspiot.WinForms.Sha
 $gatewayPageServices = [IO.File]::ReadAllText($gatewayPageServicesPath)
 $gatewayPagePath = Join-Path $repositoryRoot "src\EsmTspiot.WinForms.Shared\LmGatewayPage.cs"
 $gatewayPage = [IO.File]::ReadAllText($gatewayPagePath)
+$gatewayPageMsiPath = Join-Path $repositoryRoot (
+    "src\EsmTspiot.WinForms.Shared\LmGatewayPage.MsiLocalModules.cs")
+$gatewayPageMsi = [IO.File]::ReadAllText($gatewayPageMsiPath)
 $bindingPagePath = Join-Path $repositoryRoot "src\EsmTspiot.WinForms.Shared\LmGatewayPage.Binding.cs"
 $bindingDialogPath = Join-Path $repositoryRoot "src\EsmTspiot.WinForms.Shared\LmGatewayBindingDialog.cs"
 if (-not (Test-Path -LiteralPath $bindingPagePath -PathType Leaf) -or
@@ -277,14 +280,15 @@ if ($bindingPage -match 'Dictionary\s*<\s*string\s*,\s*LmGatewayCredentials|priv
 if ($bindingDialog -notmatch 'UseSystemPasswordChar\s*=\s*true') {
     throw "The one-time ESM binding dialog must mask its password field."
 }
-if ($gatewayPageServices -notmatch '(?s)private async Task StartAutomaticSetupAsync\(\).*?ExecuteCompleteAutomaticSetupAsync') {
-    throw "The LM-tab automatic entry point must use the complete KKT/controller/local-module workflow."
+if ($gatewayPageServices -notmatch '(?s)private async Task StartAutomaticSetupAsync\(\).*?RunFullAutomaticLocalSetupFromHostAsync') {
+    throw "The LM-tab automatic entry point must use the controller/MSI local-module workflow."
 }
-if ($gatewayPageServices -notmatch '(?s)public async Task<bool> RunCompleteAutomaticSetupFromHostAsync.*?ExecuteCompleteAutomaticSetupAsync') {
-    throw "The host end-to-end automatic entry point must use the same complete-stack workflow."
-}
-if ($gatewayPageServices -notmatch '(?s)CreateCompleteSetupRequest.*?ManagedLocalModuleRequestBuilder\.Build.*?CanonicalLmPlanHasher\.Compute') {
-    throw "The complete automatic request must be built from the immutable managed-LM plan and hashed before elevation."
+$automaticRequestCount = ([regex]::Matches(
+    $gatewayPageMsi, 'new LmServiceProvisioningBatchRequest')).Count
+$automaticHashCount = ([regex]::Matches(
+    $gatewayPageMsi, 'request\.PlanHash = CanonicalLmPlanHasher\.Compute\(request\)')).Count
+if ($automaticRequestCount -lt 1 -or $automaticHashCount -ne $automaticRequestCount) {
+    throw "Every automatic helper request must be hashed before elevation."
 }
 if ($gatewayPageServices -match '(?s)FixedTimeEqualsHex\(\s*item\.ManifestFingerprint\.Sha256,\s*item\.ManifestFingerprint\.Sha256\)' -or
     $gatewayPageServices -match '(?s)FixedTimeEqualsHex\(\s*managed\.ManagedStateFingerprint\.Sha256,\s*managed\.ManagedStateFingerprint\.Sha256\)') {
@@ -296,7 +300,6 @@ if ($gatewayPageServices -match '(?s)FixedTimeEqualsHex\(\s*item\.ManifestFinger
 $productionFiles = New-Object System.Collections.Generic.List[string]
 $productionFiles.AddRange([string[]]@(Get-ChildItem (Join-Path $repositoryRoot "src\EsmTspiot.ServiceProvisioner") -Recurse -Filter *.cs | ForEach-Object FullName))
 $productionFiles.AddRange([string[]]@(Get-ChildItem (Join-Path $repositoryRoot "src\EsmTspiot.WinForms.Shared") -Filter "Lm*.cs" | ForEach-Object FullName))
-$productionFiles.Add((Join-Path $repositoryRoot "src\EsmTspiot.WinForms.Shared\CompleteStackProvisionerClient.cs"))
 $productionFiles.Add((Join-Path $repositoryRoot "src\EsmTspiot.WinForms.Shared\LocalModuleInstallerPicker.cs"))
 $productionFiles.Add((Join-Path $repositoryRoot "src\EsmTspiot.WinForms.Shared\ManagedLocalModuleInventoryReader.cs"))
 $productionFiles.Add((Join-Path $repositoryRoot "src\EsmTspiot.WinForms.Shared\ProvisionerProcessLauncher.cs"))

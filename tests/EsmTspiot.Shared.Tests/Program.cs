@@ -135,8 +135,6 @@ namespace EsmTspiot.Shared.Tests
             Run("Managed LM planner groups KKT by INN", ManagedLmPlannerGroupsKktByInn);
             Run("Managed LM planner assigns stable ordinals", ManagedLmPlannerAssignsStableOrdinals);
             Run("Managed LM planner blocks occupied deterministic ports", ManagedLmPlannerBlocksOccupiedPorts);
-            Run("Managed LM port preflight ignores owned ports and blocks new conflicts", ManagedLmPortPreflightIgnoresOwnedPortsAndBlocksNewConflicts);
-            Run("Managed LM request repeats one endpoint for shared INN", ManagedLmRequestRepeatsOneEndpointForSharedInn);
             Run("LM gateway defaults use the fixed 45000 gRPC pool", LmDefaultsUse45000GrpcPool);
             Run("LM gateway draft defaults follow the KKT ordinal", LmGatewayDraftDefaultsFollowKktOrdinal);
             Run("LM gateway draft defaults do not crash on excess KKT", LmGatewayDraftDefaultsDoNotCrashOnExcessKkt);
@@ -2898,89 +2896,7 @@ namespace EsmTspiot.Shared.Tests
                 "The planner must report the deterministic port instead of shifting it.");
         }
 
-        private static void ManagedLmPortPreflightIgnoresOwnedPortsAndBlocksNewConflicts()
-        {
-            ManagedKktAssignment savedKkt = new ManagedKktAssignment
-            {
-                KktSerial = "00105700000001",
-                KktInn = "1234567894",
-                KktOrdinal = 1,
-                GrpcPort = 45001,
-                RestPort = 15001
-            };
-            ManagedLocalModuleAssignment savedModule =
-                new ManagedLocalModuleAssignment
-                {
-                    Inn = "1234567894",
-                    ModuleOrdinal = 1,
-                    InstanceId = "lm-existing",
-                    ApiPort = 5995,
-                    DatabasePort = 5984,
-                    EpmdPort = 43691,
-                    RuntimeVersion = "2.6.1"
-                };
-            ManagedLocalModulePlan plan = ManagedLocalModulePlanner.Build(
-                new List<LmGatewayKkt>
-                {
-                    CreateLmKkt("00105700000001", "1234567894"),
-                    CreateLmKkt("00105700000002", "1234567894")
-                },
-                new List<ManagedKktAssignment> { savedKkt },
-                new List<ManagedLocalModuleAssignment> { savedModule },
-                new List<TcpListenerSnapshotItem>());
 
-            IList<int> conflicts = ManagedLocalModulePortPreflight.FindConflicts(
-                plan,
-                new List<ManagedKktAssignment> { savedKkt },
-                new List<ManagedLocalModuleAssignment> { savedModule },
-                new List<int> { 5995, 5984, 43691, 45001, 15001, 45002 });
-
-            AssertEqual(1, conflicts.Count,
-                "Existing managed listeners must be left to helper ownership checks.");
-            AssertEqual(45002, conflicts[0],
-                "An occupied port required by the new KKT must fail preflight.");
-
-            plan.Items[0].Module.ApiPort = 6995;
-            conflicts = ManagedLocalModulePortPreflight.FindConflicts(
-                plan,
-                new List<ManagedKktAssignment> { savedKkt },
-                new List<ManagedLocalModuleAssignment> { savedModule },
-                new List<int> { 6995 });
-            AssertEqual(1, conflicts.Count,
-                "An edited port is new ownership and must be checked.");
-            AssertEqual(6995, conflicts[0],
-                "The changed API port must be reported exactly.");
-        }
-
-        private static void ManagedLmRequestRepeatsOneEndpointForSharedInn()
-        {
-            ManagedLocalModulePlan plan = ManagedLocalModulePlanner.Build(
-                new List<LmGatewayKkt>
-                {
-                    CreateLmKkt("00105700000001", "1234567894"),
-                    CreateLmKkt("00105700000002", "1234567894"),
-                    CreateLmKkt("00105700000003", "7707083893")
-                },
-                new List<ManagedKktAssignment>(),
-                new List<ManagedLocalModuleAssignment>(),
-                new List<TcpListenerSnapshotItem>());
-
-            IList<ManagedLocalModuleProvisioningItemRequest> request =
-                ManagedLocalModuleRequestBuilder.Build(plan, "2.6.1");
-
-            AssertEqual(3, request.Count,
-                "The immutable helper plan must retain one row per KKT.");
-            AssertEqual("1234567894", request[0].Inn,
-                "The canary must be the first KKT of the first INN group.");
-            AssertEqual("1234567894", request[1].Inn,
-                "The second KKT of the same INN must follow its canary.");
-            AssertEqual(request[0].LocalModuleOrdinal, request[1].LocalModuleOrdinal,
-                "KKT of one INN must share the same LM number.");
-            AssertEqual(request[0].ApiPort, request[1].ApiPort,
-                "KKT of one INN must show the same LM endpoint.");
-            AssertFalse(request[0].ControllerGrpcPort == request[1].ControllerGrpcPort,
-                "Every KKT must retain its own controller port.");
-        }
 
         private static void LmDefaultsUse45000GrpcPool()
         {
