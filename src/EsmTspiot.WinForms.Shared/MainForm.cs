@@ -1148,6 +1148,26 @@ namespace EsmTspiot.WinForms.Shared
                 return;
             }
 
+            // Спрашиваем MSI ЛМ ЧЗ на старте, а не после регистрации и
+            // контроллеров: без него автомат доходил до конца и оставлял
+            // кассу без локального модуля.
+            if (!_lmGatewayPage.RequireLocalModuleInstaller(this))
+            {
+                _automationStatusLabel.Text = "Статус: запуск отменен";
+                AppendLog(
+                    "Автоматическая настройка не запущена: не выбран " +
+                    "официальный MSI ЛМ ЧЗ." + Environment.NewLine);
+                MessageBox.Show(
+                    this,
+                    "Укажите официальный MSI ЛМ ЧЗ. Без него настройка " +
+                        "дойдёт до конца, но касса останется без локального " +
+                        "модуля.",
+                    "Автоматическая настройка",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
+            }
+
             _automaticCancellation = new System.Threading.CancellationTokenSource();
             _automaticStopButton.Enabled = true;
             try
