@@ -5606,6 +5606,83 @@ namespace EsmTspiot.Shared.Tests
                 "The MSI client must use the reviewed provisioner launcher.");
             AssertTrue(MethodBodyCalls(launch, canLaunch),
                 "ProvisionerProcessLauncher.Launch must verify helper hash/version before Process.Start.");
+
+            // Проверка без удержания ничего не значит: между ней и запуском
+            // файл можно подменить, и стартует уже другой образ.
+            MethodInfo openVerified = typeof(ProvisionerProcessLauncher).GetMethod(
+                "OpenVerifiedClosure",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            AssertTrue(openVerified != null,
+                "The launcher must open the verified closure before starting it.");
+            AssertTrue(MethodBodyCalls(launch, openVerified),
+                "Launch must hold the verified files open until Process.Start.");
+
+            MethodInfo openLocked = typeof(ProvisionerProcessLauncher).GetMethod(
+                "OpenLocked",
+                BindingFlags.NonPublic | BindingFlags.Static);
+            AssertTrue(openLocked != null, "The launcher must open files with a share mode of its own.");
+            string probeRoot = Path.Combine(
+                Path.GetTempPath(),
+                "esm-launcher-lock-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(probeRoot);
+            try
+            {
+                string probe = Path.Combine(probeRoot, "helper.probe");
+                File.WriteAllBytes(probe, new byte[] { 1, 2, 3 });
+                using (FileStream held = (FileStream)openLocked.Invoke(null, new object[] { probe }))
+                {
+                    AssertEqual(3L, held.Length, "The locked file must be readable.");
+                    AssertFalse(CanWrite(probe), "A held file must not be writable.");
+                    AssertFalse(CanDelete(probe), "A held file must not be deletable.");
+                    AssertFalse(
+                        CanRename(probe, Path.Combine(probeRoot, "other.probe")),
+                        "A held file must not be renameable.");
+                }
+            }
+            finally
+            {
+                try { Directory.Delete(probeRoot, true); }
+                catch (IOException) { }
+            }
+        }
+
+        private static bool CanWrite(string path)
+        {
+            try
+            {
+                using (File.Open(path, FileMode.Open, FileAccess.Write, FileShare.None)) { }
+                return true;
+            }
+            catch (IOException)
+            {
+                return false;
+            }
+        }
+
+        private static bool CanDelete(string path)
+        {
+            try
+            {
+                File.Delete(path);
+                return true;
+            }
+            catch (IOException)
+            {
+                return false;
+            }
+        }
+
+        private static bool CanRename(string path, string target)
+        {
+            try
+            {
+                File.Move(path, target);
+                return true;
+            }
+            catch (IOException)
+            {
+                return false;
+            }
         }
 
         private static bool MethodBodyCalls(MethodInfo caller, MethodInfo target)
