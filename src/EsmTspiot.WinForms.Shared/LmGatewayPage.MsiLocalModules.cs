@@ -38,14 +38,14 @@ namespace EsmTspiot.WinForms.Shared
         internal string FormatSummary()
         {
             string controllers = Controllers == null
-                ? "контроллеры не запускались"
+                ? "контроллеры не запускались."
                 : Controllers.FormatSummary();
             StringBuilder text = new StringBuilder();
-            text.Append(controllers + " ЛМ готовы: " +
+            text.Append("ЛМ готовы: " +
                 LocalModulesReady.ToString(CultureInfo.InvariantCulture) +
                 "; ЛМ отложены/с ошибкой: " +
                 LocalModulesFailed.ToString(CultureInfo.InvariantCulture) +
-                ". ЕСМ подтвердил привязку: " +
+                ". " + controllers + " ЕСМ подтвердил привязку: " +
                 EsmVerifiedCount.ToString(CultureInfo.InvariantCulture) +
                 "; ЛМ ждёт инициализации: " +
                 EsmLocalModulePendingCount.ToString(CultureInfo.InvariantCulture) +
@@ -283,20 +283,6 @@ namespace EsmTspiot.WinForms.Shared
                     delegate { return Task.FromResult(true); },
                     async delegate(CancellationToken operationCancellation)
                     {
-                        controllers =
-                            await EnsureDirectControllersFromHostAsync(
-                                registeredKkts,
-                                plan.CreateTargetApiPortMap(),
-                                operationCancellation).ConfigureAwait(true);
-                        outcome.Controllers = controllers;
-                        return DirectControllerSetupPolicy.IsComplete(
-                            registeredKkts.Count,
-                            controllers.ReadyCount,
-                            controllers.FailedCount,
-                            controllers.Cancelled);
-                    },
-                    async delegate(CancellationToken operationCancellation)
-                    {
                         if (_localModuleInstallerSelection == null)
                         {
                             outcome.LocalModulesDeferred = true;
@@ -311,6 +297,20 @@ namespace EsmTspiot.WinForms.Shared
                             plan,
                             inventory,
                             operationCancellation).ConfigureAwait(true);
+                    },
+                    async delegate(CancellationToken operationCancellation)
+                    {
+                        controllers =
+                            await EnsureDirectControllersFromHostAsync(
+                                registeredKkts,
+                                plan.CreateTargetApiPortMap(),
+                                operationCancellation).ConfigureAwait(true);
+                        outcome.Controllers = controllers;
+                        return DirectControllerSetupPolicy.IsComplete(
+                            registeredKkts.Count,
+                            controllers.ReadyCount,
+                            controllers.FailedCount,
+                            controllers.Cancelled);
                     },
                     async delegate(CancellationToken operationCancellation)
                     {

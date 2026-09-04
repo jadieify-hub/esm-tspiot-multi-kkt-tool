@@ -108,6 +108,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Direct controller manifest is credential free and hash guarded", DirectControllerManifestIsCredentialFreeAndHashGuarded);
             Run("Direct controller provisioner continues independent KKT failures", DirectControllerProvisionerContinuesIndependentKktFailures);
             Run("Direct controller readiness requires listeners owned by service PID", DirectControllerReadinessRequiresListenersOwnedByServicePid);
+            Run("Direct controller probe sees a local module started later", DirectControllerProbeSeesLocalModuleStartedLater);
             Run("Remove-all protocol accepts only a confirmed managed batch", RemoveAllProtocolAcceptsOnlyConfirmedManagedBatch);
             Run("Managed stack removal accepts its displayed fingerprint without controller ports", ManagedStackRemovalAcceptsDisplayedFingerprintWithoutControllerPorts);
             Run("Managed cleanup accepts only its displayed managed-state fingerprint", ManagedCleanupAcceptsOnlyDisplayedManagedStateFingerprint);
@@ -4958,6 +4959,44 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 "A listener owned by a foreign process must fail readiness.");
         }
 
+        // Полевой прогон 2026-09-04: клон ЛМ ЧЗ встал после своего
+        // контроллера, и ЕСМ ответил «ЛМ Контроллер не смог найти ЛМ ЧЗ»
+        // (2059), а привязку отверг кодом 2025. Та же гонка повторяется после
+        // каждой перезагрузки, поэтому признак должен читаться с машины, а не
+        // предполагаться по ходу прогона.
+        private static void DirectControllerProbeSeesLocalModuleStartedLater()
+        {
+            FakeWindowsServiceApi services = new FakeWindowsServiceApi();
+            services.SetRecord(new WindowsServiceRecord
+            {
+                ServiceName = "esm-lm-controller-2",
+                State = WindowsServiceState.Running,
+                ProcessId = 4242
+            });
+            FakeDirectTcpListenerOwnerReader listeners =
+                new FakeDirectTcpListenerOwnerReader();
+            listeners.SetOwners(6995, 7373);
+            FakeProcessStartTimeReader startTimes = new FakeProcessStartTimeReader();
+            startTimes.Set(4242, new DateTime(2026, 9, 4, 12, 0, 0, DateTimeKind.Utc));
+            startTimes.Set(7373, new DateTime(2026, 9, 4, 12, 5, 0, DateTimeKind.Utc));
+            DirectControllerReadinessProbe probe = new DirectControllerReadinessProbe(
+                services,
+                listeners,
+                new FakeProcessTreeReader(),
+                startTimes);
+
+            AssertTrue(probe.LocalModuleStartedAfterController(2, 6995),
+                "A local module that started after its controller must be reported.");
+
+            startTimes.Set(7373, new DateTime(2026, 9, 4, 11, 55, 0, DateTimeKind.Utc));
+            AssertFalse(probe.LocalModuleStartedAfterController(2, 6995),
+                "A local module that already listened needs no controller restart.");
+
+            listeners.SetOwners(6995);
+            AssertFalse(probe.LocalModuleStartedAfterController(2, 6995),
+                "Without a listening local module there is nothing to reconnect to.");
+        }
+
         private static void DirectControllerProtocolV2AcceptsCanonicalBatch()
         {
             LmServiceProvisioningBatchRequest request =
@@ -7319,6 +7358,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     State = WindowsServiceState.Running,
                     ProcessId = 100
                 });
+                FakeDirectControllerReadiness readiness =
+                    new FakeDirectControllerReadiness(true);
                 WindowsDirectControllerPlatform platform = new WindowsDirectControllerPlatform(
                     profile,
                     new VerifiedControllerBinary
@@ -7332,7 +7373,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     manifests,
                     profiles,
                     services,
-                    new FakeDirectControllerReadiness(true));
+                    readiness);
                 DirectControllerProvisioningItemRequest item =
                     CreateDirectControllerRequest(
                         2,
@@ -7351,6 +7392,27 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 DirectControllerManifest manifest = manifests.Read(item.KktSerial);
                 AssertEqual(DirectControllerLifecycleState.Ready, manifest.State,
                     "Only a ready clone may be projected as ready in inventory.");
+
+                // Контроллер, поднявшийся раньше своего ЛМ ЧЗ, отвечает ЕСМ
+                // «ЛМ Контроллер не смог найти ЛМ ЧЗ». Повторный проход обязан
+                // перезапустить службу, а не объявить комплект готовым.
+                readiness.LateLocalModulePorts.Add(item.TargetLocalModulePort);
+                services.Events.Clear();
+
+                LmServiceProvisioningItemResult reconnected = platform.Ensure(
+                    item,
+                    Guid.NewGuid().ToString("N"),
+                    "S-1-5-21-111-222-333-1001");
+
+                AssertEqual(LmServiceProvisioningStatus.Succeeded, reconnected.Status,
+                    "Reconnecting a controller to its late local module must succeed.");
+                AssertContains(reconnected.Message, "стартовал позже");
+                AssertTrue(services.Events.Contains("stop:esm-lm-controller-2"),
+                    "The controller must be stopped before it looks for its local module again.");
+                AssertTrue(services.Events.Contains("start:esm-lm-controller-2"),
+                    "The controller must be started again after the restart.");
+                readiness.LateLocalModulePorts.Clear();
+                manifest = manifests.Read(item.KktSerial);
                 item.ExpectedManifestSha256 = manifests.ComputeFingerprint(manifest);
                 services.DeleteVisibilityQueries = 2;
 
@@ -9061,6 +9123,16 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             internal FakeDirectControllerReadiness(bool ready)
             {
                 _ready = ready;
+                LateLocalModulePorts = new List<int>();
+            }
+
+            internal IList<int> LateLocalModulePorts { get; private set; }
+
+            public bool LocalModuleStartedAfterController(
+                int ordinal,
+                int localModulePort)
+            {
+                return LateLocalModulePorts.Contains(localModulePort);
             }
 
             public LmReadinessResult WaitUntilReady(
@@ -9341,6 +9413,22 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 return port == _port
                     ? new List<int> { _processId }
                     : new List<int>();
+            }
+        }
+
+        private sealed class FakeProcessStartTimeReader : IProcessStartTimeReader
+        {
+            private readonly Dictionary<int, DateTime> _times =
+                new Dictionary<int, DateTime>();
+
+            internal void Set(int processId, DateTime startTimeUtc)
+            {
+                _times[processId] = startTimeUtc;
+            }
+
+            public bool TryGetStartTimeUtc(int processId, out DateTime startTimeUtc)
+            {
+                return _times.TryGetValue(processId, out startTimeUtc);
             }
         }
 

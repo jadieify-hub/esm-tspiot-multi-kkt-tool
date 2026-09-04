@@ -7,8 +7,11 @@ namespace EsmTspiot.Shared.Services
     public enum LmAutomaticSetupStage
     {
         Registration = 0,
-        ControllerEnsure = 1,
-        LocalModuleEnsure = 2,
+        // ЛМ ЧЗ поднимается до контроллеров: контроллер ищет свой локальный
+        // модуль при старте и, не найдя, отвечает ЕСМ «ЛМ Контроллер не смог
+        // найти ЛМ ЧЗ», а сама привязка отвергается кодом 2025.
+        LocalModuleEnsure = 1,
+        ControllerEnsure = 2,
         EsmBinding = 3,
         EsmReadback = 4,
         InitializationDeferred = 5
@@ -50,10 +53,10 @@ namespace EsmTspiot.Shared.Services
             {
                 if (!RegistrationSucceeded)
                     return "регистрация ККТ не завершена";
-                if (!ControllerEnsureSucceeded)
-                    return "не все контроллеры готовы";
                 if (!LocalModuleEnsureSucceeded)
                     return "ЛМ ЧЗ не установлены или отложены";
+                if (!ControllerEnsureSucceeded)
+                    return "не все контроллеры готовы";
                 if (!EsmBindingSucceeded)
                     return "привязка к ЕСМ не подтверждена";
                 if (!EsmReadbackSucceeded)
@@ -91,18 +94,18 @@ namespace EsmTspiot.Shared.Services
 
         public async Task<LmAutomaticSetupResult> ExecuteFullAsync(
             Func<CancellationToken, Task<bool>> register,
-            Func<CancellationToken, Task<bool>> ensureControllers,
             Func<CancellationToken, Task<bool>> ensureLocalModules,
+            Func<CancellationToken, Task<bool>> ensureControllers,
             Func<CancellationToken, Task<bool>> bindEsm,
             Func<CancellationToken, Task<bool>> readbackEsm,
             Action<LmAutomaticSetupStage> reportStage,
             CancellationToken cancellation)
         {
             if (register == null) throw new ArgumentNullException("register");
-            if (ensureControllers == null)
-                throw new ArgumentNullException("ensureControllers");
             if (ensureLocalModules == null)
                 throw new ArgumentNullException("ensureLocalModules");
+            if (ensureControllers == null)
+                throw new ArgumentNullException("ensureControllers");
             if (bindEsm == null) throw new ArgumentNullException("bindEsm");
             if (readbackEsm == null) throw new ArgumentNullException("readbackEsm");
 
@@ -112,15 +115,15 @@ namespace EsmTspiot.Shared.Services
             result.RegistrationSucceeded = await register(cancellation);
             if (!result.RegistrationSucceeded) return result;
 
-            Report(reportStage, LmAutomaticSetupStage.ControllerEnsure);
-            cancellation.ThrowIfCancellationRequested();
-            result.ControllerEnsureSucceeded =
-                await ensureControllers(cancellation);
-
             Report(reportStage, LmAutomaticSetupStage.LocalModuleEnsure);
             cancellation.ThrowIfCancellationRequested();
             result.LocalModuleEnsureSucceeded =
                 await ensureLocalModules(cancellation);
+
+            Report(reportStage, LmAutomaticSetupStage.ControllerEnsure);
+            cancellation.ThrowIfCancellationRequested();
+            result.ControllerEnsureSucceeded =
+                await ensureControllers(cancellation);
 
             Report(reportStage, LmAutomaticSetupStage.EsmBinding);
             cancellation.ThrowIfCancellationRequested();
