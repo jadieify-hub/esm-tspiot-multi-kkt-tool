@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Globalization;
@@ -31,9 +31,6 @@ namespace EsmTspiot.WinForms.Shared
         private bool _hostBusy;
         private bool _loadingGrid;
         private bool _hasLoaded;
-        private bool _automaticSetupCancelledBeforeMutation;
-        private string _automaticSetupStopReason = string.Empty;
-
         public LmGatewayPage(
             Func<string> baseUrlProvider,
             ITspiotApiClient apiClient,
@@ -103,16 +100,6 @@ namespace EsmTspiot.WinForms.Shared
         public string AutomaticSetupStatus
         {
             get { return _statusLabel.Text ?? string.Empty; }
-        }
-
-        public bool AutomaticSetupCancelledBeforeMutation
-        {
-            get { return _automaticSetupCancelledBeforeMutation; }
-        }
-
-        public string AutomaticSetupStopReason
-        {
-            get { return _automaticSetupStopReason ?? string.Empty; }
         }
 
         public void SetHostBusy(bool busy)

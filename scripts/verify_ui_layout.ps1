@@ -96,7 +96,6 @@ function Invoke-ClipboardWriteWithRetry {
 }
 
 $form = $null
-$automaticParametersDialog = $null
 $bindingDialog = $null
 $removeAllDialog = $null
 $kktDeletionDialog = $null
@@ -797,62 +796,6 @@ try {
         throw "The exact primary KKT serial must enable the deletion action."
     }
 
-    $rowType = $assembly.GetType(
-        "EsmTspiot.WinForms.Shared.LmAutomaticSetupDialogRow",
-        $true)
-    $genericListType = [System.Collections.Generic.List``1].MakeGenericType($rowType)
-    $rows = [Activator]::CreateInstance($genericListType)
-    $row = [Activator]::CreateInstance($rowType, $true)
-    $rowType.GetProperty("Ordinal").SetValue($row, 1, $null)
-    $rowType.GetProperty("KktSerial").SetValue($row, "00105700000001", $null)
-    $rowType.GetProperty("KktInn").SetValue($row, "1234567894", $null)
-    $rowType.GetProperty("SoftwarePort").SetValue($row, "51401", $null)
-    $rowType.GetProperty("TargetAddress").SetValue($row, "127.0.0.1", $null)
-    $rowType.GetProperty("TargetPort").SetValue($row, "5995", $null)
-    $rows.Add($row)
-    $dialogType = $assembly.GetType(
-        "EsmTspiot.WinForms.Shared.LmAutomaticSetupDialog",
-        $true)
-    $constructor = $dialogType.GetConstructors(
-        [System.Reflection.BindingFlags]::Instance -bor [System.Reflection.BindingFlags]::NonPublic)[0]
-    $constructorArguments = New-Object object[] 1
-    $constructorArguments[0] = $rows
-    $automaticParametersDialog = $constructor.Invoke($constructorArguments)
-    $parametersGrid = Get-PrivateFieldValue -Instance $automaticParametersDialog -Name "_grid"
-    $continueButton = Get-PrivateFieldValue -Instance $automaticParametersDialog -Name "_continueButton"
-    $expectedParameterNames = @(
-        "KktOrdinal",
-        "KktSerial",
-        "KktInn",
-        "KktSoftwarePort",
-        "LmTargetAddress",
-        "LmTargetPort",
-        "Validation")
-    if ($parametersGrid.Columns.Count -ne $expectedParameterNames.Count) {
-        throw "The automatic-setup dialog must contain only operator-facing fields."
-    }
-    for ($index = 0; $index -lt $expectedParameterNames.Count; $index++) {
-        if ($parametersGrid.Columns[$index].Name -ne $expectedParameterNames[$index]) {
-            throw "Unexpected automatic-setup column $index`: '$($parametersGrid.Columns[$index].Name)'."
-        }
-    }
-    foreach ($name in @("KktOrdinal", "KktSerial", "KktInn", "KktSoftwarePort", "LmTargetAddress", "Validation")) {
-        if (-not $parametersGrid.Columns[$name].ReadOnly) {
-            throw "Automatic-setup identity/status column must be read-only: $name."
-        }
-    }
-    foreach ($name in @("LmTargetPort")) {
-        if ($parametersGrid.Columns[$name].ReadOnly) {
-            throw "Automatic-setup operator field must be editable: $name."
-        }
-    }
-    if ($parametersGrid.Columns["KktSoftwarePort"].HeaderText -ne
-            $expectedSoftwarePortHeader -or
-        [string]::IsNullOrWhiteSpace(
-            $parametersGrid.Columns["KktSoftwarePort"].ToolTipText)) {
-        throw "The automatic dialog needs the same concise software-port heading and hint."
-    }
-
     # The pre-UAC batch recheck must reject a change in either displayed
     # fingerprint, even when the other fingerprint still matches.
     $fingerprintType = $sharedAssembly.GetType(
@@ -969,7 +912,7 @@ try {
         $localModuleSelectionType)
     $unconfirmedSelection.LicenseNoticeAccepted = $false
     $selectionCopy = $page.GetType().GetMethod(
-        "CopyLocalModuleInstallerForCompleteSetup",
+        "CopyLocalModuleInstallerForAutomaticSetup",
         $staticFlags)
     if ($null -eq $selectionCopy -or
         $selectionCopy.GetParameters().Count -ne 2) {
@@ -1038,13 +981,6 @@ try {
         throw "The combined LM row hid CleanupPending behind a stale controller status."
     }
 
-    $automaticParametersDialog.CreateControl()
-    $automaticParametersDialog.PerformLayout()
-    $parametersGrid.PerformLayout()
-    [System.Windows.Forms.Application]::DoEvents()
-    if (-not $continueButton.Enabled) {
-        throw "A complete automatic-setup row must allow the operator to continue."
-    }
     if ($installButton.Tag -ne "AutomaticSetup") {
         throw "The installer action must expose the single automatic setup command."
     }
@@ -1239,9 +1175,6 @@ finally {
     }
     if ($null -ne $bindingDialog) {
         $bindingDialog.Dispose()
-    }
-    if ($null -ne $automaticParametersDialog) {
-        $automaticParametersDialog.Dispose()
     }
     if ($null -ne $form) {
         $form.Dispose()

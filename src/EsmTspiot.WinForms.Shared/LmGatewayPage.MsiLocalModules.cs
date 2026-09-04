@@ -496,7 +496,7 @@ namespace EsmTspiot.WinForms.Shared
                     OperationId = Guid.NewGuid().ToString("N"),
                     InitiatingSid = identity.User.Value,
                     LocalModuleInstallerSelection =
-                        CopyLocalModuleInstallerForCompleteSetup(
+                        CopyLocalModuleInstallerForAutomaticSetup(
                             _localModuleInstallerSelection,
                             true)
                 };
