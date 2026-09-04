@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Security.AccessControl;
@@ -198,6 +198,16 @@ namespace EsmTspiot.ServiceProvisioner
             string readOnlySid,
             IList<string> serviceSids)
         {
+            // Порядок здесь и есть защита. Раньше каталог создавался и
+            // получал наш ACL до того, как вызывающий код проверял путь:
+            // заранее подставленная связка каталогов (reparse point) на
+            // месте нашего корня успевала увести смену прав на чужой
+            // каталог. Существующие сегменты проверяются до первой записи.
+            if (HasReparseComponent(path, null))
+            {
+                throw new InvalidDataException(
+                    "Защищённый путь проходит через reparse point: " + path);
+            }
             Directory.CreateDirectory(path);
             IList<SecurityIdentifier> preservedTraverseSids =
                 kind == ProtectedDirectoryKind.InstallerStaging
