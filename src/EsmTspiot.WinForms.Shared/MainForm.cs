@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -84,8 +84,11 @@ namespace EsmTspiot.WinForms.Shared
             _lmGatewayPage.OperationStateChanged += OnLmGatewayOperationStateChanged;
             _lmGatewayPage.InstallerSelectionChanged += UpdateAutomaticInstallerSelection;
             Text = "Управление ККТ в ЕСМ/ТС ПИоТ";
-            ClientSize = new Size(780, 650);
-            MinimumSize = new Size(640, 420);
+            // Таблица ЛМ ЧЗ шире прежнего окна: её колонки требуют около
+            // 925 пикселей, и на 780 оператору приходилось растягивать окно
+            // руками при каждом запуске.
+            ClientSize = new Size(980, 700);
+            MinimumSize = new Size(980, 540);
             StartPosition = FormStartPosition.CenterScreen;
             Font = new Font("Segoe UI", 8.25F);
             try

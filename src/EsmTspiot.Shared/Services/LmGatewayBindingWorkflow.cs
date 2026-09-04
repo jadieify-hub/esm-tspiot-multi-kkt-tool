@@ -219,6 +219,7 @@ namespace EsmTspiot.Shared.Services
             DateTime deadline = DateTime.UtcNow.Add(_verificationBudget);
             LmGatewayReadbackObservation observation = null;
             int attempt = 0;
+            bool waitedOut = false;
             while (true)
             {
                 attempt++;
@@ -243,8 +244,18 @@ namespace EsmTspiot.Shared.Services
                         observation.InfoResponseBody);
                 }
 
+                // Ждать нечего, если ЕСМ уже сказал, что ЛМ инициализируется:
+                // инициализация идёт минутами и выполняется не нами.
+                if (observation != null && observation.IsAvailable &&
+                    observation.IdentityMatches && observation.HasLmConfiguration &&
+                    LmContourReadbackPolicy.IsLocalModulePending(observation.LmStatus))
+                {
+                    break;
+                }
+
                 if (DateTime.UtcNow >= deadline)
                 {
+                    waitedOut = true;
                     break;
                 }
 
@@ -264,10 +275,15 @@ namespace EsmTspiot.Shared.Services
                 }
             }
 
-            string waited = " Проверка повторялась " +
-                ((int)Math.Round(_verificationBudget.TotalSeconds)).ToString(
-                    CultureInfo.InvariantCulture) +
-                " с, попыток: " + attempt.ToString(CultureInfo.InvariantCulture) + ".";
+            // Про ожидание пишем только когда действительно ждали: ранний
+            // выход по состоянию ЛМ не должен выглядеть как исчерпанный бюджет.
+            string waited = waitedOut
+                ? " Проверка повторялась " +
+                    ((int)Math.Round(_verificationBudget.TotalSeconds)).ToString(
+                        CultureInfo.InvariantCulture) +
+                    " с, попыток: " +
+                    attempt.ToString(CultureInfo.InvariantCulture) + "."
+                : string.Empty;
             if (observation == null)
             {
                 return CreateResult(
