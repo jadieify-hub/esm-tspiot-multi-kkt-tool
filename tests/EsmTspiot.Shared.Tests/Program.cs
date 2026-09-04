@@ -125,12 +125,6 @@ namespace EsmTspiot.Shared.Tests
             Run("MSI local module removal wording preserves vendor base", MsiLocalModuleRemovalWordingPreservesVendorBase);
             Run("Direct controller setup defers LM readiness without failing controllers", DirectControllerSetupDefersLmReadinessWithoutFailingControllers);
             Run("Direct controller binding separates controller and LM ports", DirectControllerBindingSeparatesControllerAndLmPorts);
-            Run("LM gateway planner never adopts official base service", LmGatewayPlannerNeverAdoptsOfficialBaseService);
-            Run("LM gateway planner allocates sequential local ports", LmGatewayPlannerAllocatesSequentialLocalPorts);
-            Run("LM gateway planner keeps owned and skips foreign listener", LmGatewayPlannerKeepsOwnedAndSkipsForeignListener);
-            Run("LM listener snapshot projects only ready managed owners", LmListenerSnapshotProjectsOnlyReadyManagedOwners);
-            Run("LM gateway planner preserves matching managed assignment", LmGatewayPlannerPreservesMatchingManagedAssignment);
-            Run("LM gateway planner rejects unsafe target and all port conflicts", LmGatewayPlannerRejectsUnsafeTargetAndAllPortConflicts);
             Run("Managed LM service spec contains no credentials", ManagedLmServiceSpecContainsNoCredentials);
             Run("Managed LM planner groups KKT by INN", ManagedLmPlannerGroupsKktByInn);
             Run("Managed LM planner assigns stable ordinals", ManagedLmPlannerAssignsStableOrdinals);
@@ -225,8 +219,6 @@ namespace EsmTspiot.Shared.Tests
             Run("LM probe result separates service and listener state", LmProbeResultSeparatesServiceAndListenerState);
             Run("LM provisioning progress contains no credentials", LmProvisioningProgressContainsNoCredentials);
             Run("LM provisioning result formats every item for the operator log", LmProvisioningResultFormatsEveryItemForOperatorLog);
-            Run("Automatic mode registers KKT before LM setup", AutomaticModeRegistersKktBeforeLmSetup);
-            Run("Automatic mode skips LM setup after registration failure", AutomaticModeSkipsLmSetupAfterRegistrationFailure);
             Run("LM automatic setup installs before configuring KKT", LmAutomaticSetupInstallsBeforeConfiguringKkt);
             Run("LM automatic setup stops after failed installation", LmAutomaticSetupStopsAfterFailedInstallation);
 #if !NETFRAMEWORK
@@ -236,13 +228,6 @@ namespace EsmTspiot.Shared.Tests
             Run("LM contour read-back policy classifies ESM observations", LmContourReadbackPolicyClassifiesEsmObservations);
 #endif
             Run("LM automatic setup reports incomplete controller configuration", LmAutomaticSetupReportsIncompleteControllerConfiguration);
-            Run("LM lifecycle ensures probes then binds", LmLifecycleEnsuresProbesThenBinds);
-            Run("LM lifecycle completion requires verified readback", LmLifecycleCompletionRequiresVerifiedReadback);
-            Run("LM lifecycle never binds failed service", LmLifecycleNeverBindsFailedService);
-            Run("LM lifecycle continues after one KKT failure", LmLifecycleContinuesAfterOneKktFailure);
-            Run("LM lifecycle retries binding without reprovisioning", LmLifecycleRetriesBindingWithoutReprovisioning);
-            Run("LM lifecycle preserves partial outcome on cancellation", LmLifecyclePreservesPartialOutcomeOnCancellation);
-            Run("LM lifecycle reconciles unknown result before mutation", LmLifecycleReconcilesUnknownResultBeforeMutation);
             Run("LM removal workflow removes one selected managed service", LmRemovalWorkflowRemovesOneSelectedManagedService);
             Run("LM removal workflow accepts managed stack fingerprint", LmRemovalWorkflowAcceptsManagedStackFingerprint);
             Run("LM cleanup workflow locks the displayed managed stack fingerprint", LmCleanupWorkflowLocksDisplayedManagedStackFingerprint);
@@ -2416,320 +2401,14 @@ namespace EsmTspiot.Shared.Tests
                 "One controller failure must not be reported as a complete batch.");
         }
 
-        private static void LmGatewayPlannerNeverAdoptsOfficialBaseService()
-        {
-            LmGatewayDiscovery discovery = CreateLmDiscovery(CreateLmKkt("00105700000001", "1234567894"));
-            IList<LmGatewayDraft> drafts = new List<LmGatewayDraft>
-            {
-                CreateLmGatewayDraft("00105700000001", "10.20.30.40", "5995", null, null)
-            };
-            IList<LmServiceInventoryItem> inventory = new List<LmServiceInventoryItem>
-            {
-                new LmServiceInventoryItem
-                {
-                    ServiceName = "esm-lm-controller",
-                    Role = LmServiceRole.VerifiedOfficial,
-                    Ports = new LmGatewayPorts(50063, 5063),
-                    IsRunning = true
-                }
-            };
-
-            LmGatewayPlan plan = LmGatewayPlanner.Build(
-                discovery,
-                drafts,
-                inventory,
-                CreateLmPortPolicy(),
-                new List<TcpListenerSnapshotItem>());
-
-            AssertEqual(1, plan.Items.Count, "Expected one managed plan row.");
-            AssertTrue(plan.Items[0].IsValid, "Official service must only reserve its observed ports.");
-            AssertEqual("krs-esm-lm-00105700000001", plan.Items[0].Spec.ServiceName,
-                "The official base service must never be adopted.");
-            AssertEqual(LmServiceRole.Managed, plan.Items[0].Spec.Role,
-                "Every planned per-KKT service must have the managed role.");
-            AssertFalse(plan.Items[0].Spec.Ports.GrpcPort == 50063 || plan.Items[0].Spec.Ports.RestPort == 5063,
-                "Official ports must remain reserved.");
-        }
-
-        private static void LmGatewayPlannerAllocatesSequentialLocalPorts()
-        {
-            LmGatewayDiscovery discovery = CreateLmDiscovery(
-                CreateLmKkt("00105700000003", "500100732259"),
-                CreateLmKkt("00105700000001", "1234567894"),
-                CreateLmKkt("00105700000002", "7707083893"));
-            IList<LmGatewayDraft> drafts = new List<LmGatewayDraft>
-            {
-                CreateLmGatewayDraft("00105700000003", "lm-three.example", "5995", null, null),
-                CreateLmGatewayDraft("00105700000001", "10.20.30.41", "5995", null, null),
-                CreateLmGatewayDraft("00105700000002", "2001:db8::2", "5995", null, null)
-            };
-
-            LmGatewayPlan plan = LmGatewayPlanner.Build(
-                discovery,
-                drafts,
-                new List<LmServiceInventoryItem>(),
-                CreateLmPortPolicy(),
-                new List<TcpListenerSnapshotItem>());
-
-            AssertEqual(3, plan.Items.Count, "Expected one plan row per KKT even when INNs repeat.");
-            for (int index = 0; index < plan.Items.Count; index++)
-            {
-                AssertTrue(plan.Items[index].IsValid, "Expected every happy-path row to be valid.");
-                AssertEqual(LmServiceRole.Managed, plan.Items[index].Spec.Role,
-                    "Each KKT must receive an independent managed service.");
-                AssertEqual(55000 + index, plan.Items[index].Spec.Ports.GrpcPort,
-                    "Expected deterministic sequential gRPC allocation.");
-                AssertEqual(15000 + index, plan.Items[index].Spec.Ports.RestPort,
-                    "Expected deterministic sequential REST allocation.");
-            }
-
-            AssertEqual("00105700000001", plan.Items[0].Kkt.KktSerial,
-                "Allocation order must use ordinal KKT serial order.");
-            AssertEqual("00105700000003", plan.Items[2].Kkt.KktSerial,
-                "Discovery order must not affect allocation.");
-
-            LmGatewayDiscovery sameInnDiscovery = CreateLmDiscovery(
-                CreateLmKkt("00105700000011", "7707083893"),
-                CreateLmKkt("00105700000012", "7707083893"));
-            IList<LmGatewayDraft> sameInnDrafts = new List<LmGatewayDraft>
-            {
-                CreateLmGatewayDraft("00105700000011", "10.20.31.11", "5995", null, null),
-                CreateLmGatewayDraft("00105700000012", "10.20.31.12", "5995", null, null)
-            };
-            LmGatewayPlan sameInnPlan = LmGatewayPlanner.Build(
-                sameInnDiscovery,
-                sameInnDrafts,
-                new List<LmServiceInventoryItem>(),
-                CreateLmPortPolicy(),
-                new List<TcpListenerSnapshotItem>());
-            AssertEqual(2, sameInnPlan.Items.Count,
-                "Equal INNs must not collapse independent physical KKT rows.");
-            AssertFalse(string.Equals(
-                    sameInnPlan.Items[0].Spec.ServiceName,
-                    sameInnPlan.Items[1].Spec.ServiceName,
-                    StringComparison.Ordinal),
-                "Service identity must be derived from KKT serial rather than INN.");
-        }
-
-        private static void LmGatewayPlannerKeepsOwnedAndSkipsForeignListener()
-        {
-            const string existingSerial = "00105700000001";
-            const string newSerial = "00105700000002";
-            string existingService = LmServiceIdentity.CreateName(existingSerial);
-            LmGatewayDiscovery discovery = CreateLmDiscovery(
-                CreateLmKkt(existingSerial, "1234567894"),
-                CreateLmKkt(newSerial, "7707083893"));
-            IList<LmGatewayDraft> drafts = new List<LmGatewayDraft>
-            {
-                CreateLmGatewayDraft(existingSerial, "10.20.30.41", "5995", null, null),
-                CreateLmGatewayDraft(newSerial, "10.20.30.42", "5995", null, null)
-            };
-            IList<LmServiceInventoryItem> inventory = new List<LmServiceInventoryItem>
-            {
-                new LmServiceInventoryItem
-                {
-                    KktSerial = existingSerial,
-                    ServiceName = existingService,
-                    Role = LmServiceRole.Managed,
-                    Ports = new LmGatewayPorts(55000, 15000),
-                    Target = new LmGatewayTarget("10.20.30.41", 5995),
-                    IsRunning = true
-                }
-            };
-            IList<TcpListenerSnapshotItem> listeners = new List<TcpListenerSnapshotItem>
-            {
-                new TcpListenerSnapshotItem(55000, existingService, true),
-                new TcpListenerSnapshotItem(15000, existingService, true),
-                new TcpListenerSnapshotItem(55001, "foreign-service", true),
-                new TcpListenerSnapshotItem(15001, null, false)
-            };
-
-            LmGatewayPlan plan = LmGatewayPlanner.Build(
-                discovery, drafts, inventory, CreateLmPortPolicy(), listeners);
-
-            AssertEqual(55000, plan.Items[0].Spec.Ports.GrpcPort,
-                "A proven owned listener must preserve the managed assignment.");
-            AssertEqual(15000, plan.Items[0].Spec.Ports.RestPort,
-                "A proven owned listener must preserve both assigned ports.");
-            AssertEqual(LmGatewayPlanAction.NoChange, plan.Items[0].Action,
-                "A running matching service with proven listeners needs no service mutation.");
-            AssertEqual(55002, plan.Items[1].Spec.Ports.GrpcPort,
-                "A foreign listener in either column must reserve the number globally.");
-            AssertEqual(15002, plan.Items[1].Spec.Ports.RestPort,
-                "An ambiguous listener must be skipped instead of adopted.");
-        }
-
-        private static void LmListenerSnapshotProjectsOnlyReadyManagedOwners()
-        {
-            const string readySerial = "00105700000001";
-            const string unreadySerial = "00105700000002";
-            string readyService = LmServiceIdentity.CreateName(readySerial);
-            IList<LmServiceInventoryItem> inventory = new List<LmServiceInventoryItem>
-            {
-                new LmServiceInventoryItem
-                {
-                    KktSerial = readySerial,
-                    ServiceName = readyService,
-                    Role = LmServiceRole.Managed,
-                    Ports = new LmGatewayPorts(55000, 15000),
-                    IsRunning = true,
-                    IsReady = true
-                },
-                new LmServiceInventoryItem
-                {
-                    KktSerial = unreadySerial,
-                    ServiceName = LmServiceIdentity.CreateName(unreadySerial),
-                    Role = LmServiceRole.Managed,
-                    Ports = new LmGatewayPorts(55001, 15001),
-                    IsRunning = true,
-                    IsReady = false
-                }
-            };
-
-            IList<TcpListenerSnapshotItem> snapshot = LmTcpListenerSnapshotBuilder.Build(
-                new[] { 55000, 15000, 55001, 15001, 55002 },
-                inventory);
-
-            AssertEqual(5, snapshot.Count, "Every occupied port must remain in the snapshot.");
-            AssertTrue(snapshot[0].IsOwnerVerified && snapshot[0].OwnerServiceName == readyService,
-                "A readiness-probed managed gRPC listener must retain its verified owner.");
-            AssertTrue(snapshot[1].IsOwnerVerified && snapshot[1].OwnerServiceName == readyService,
-                "A readiness-probed managed REST listener must retain its verified owner.");
-            AssertFalse(snapshot[2].IsOwnerVerified,
-                "An unready managed service must not claim an occupied port.");
-            AssertFalse(snapshot[3].IsOwnerVerified,
-                "Both ports of an unready managed service must remain unverified.");
-            AssertFalse(snapshot[4].IsOwnerVerified,
-                "An unrelated occupied port must remain unverified.");
-        }
-
-        private static void LmGatewayPlannerPreservesMatchingManagedAssignment()
-        {
-            const string serial = "00105700000001";
-            LmGatewayDiscovery discovery = CreateLmDiscovery(CreateLmKkt(serial, "1234567894"));
-            IList<LmGatewayDraft> drafts = new List<LmGatewayDraft>
-            {
-                CreateLmGatewayDraft(serial, "lm-one.example", "5995", null, null)
-            };
-            IList<LmServiceInventoryItem> inventory = new List<LmServiceInventoryItem>
-            {
-                new LmServiceInventoryItem
-                {
-                    KktSerial = serial,
-                    ServiceName = LmServiceIdentity.CreateName(serial),
-                    Role = LmServiceRole.Managed,
-                    Ports = new LmGatewayPorts(55007, 15007),
-                    Target = new LmGatewayTarget("lm-one.example", 5995),
-                    IsRunning = false
-                }
-            };
-
-            LmGatewayPlan plan = LmGatewayPlanner.Build(
-                discovery,
-                drafts,
-                inventory,
-                CreateLmPortPolicy(),
-                new List<TcpListenerSnapshotItem>());
-
-            AssertTrue(plan.Items[0].IsValid, "A stopped but matching managed assignment must remain valid.");
-            AssertEqual(55007, plan.Items[0].Spec.Ports.GrpcPort,
-                "A valid existing assignment must not be renumbered.");
-            AssertEqual(15007, plan.Items[0].Spec.Ports.RestPort,
-                "Both existing ports must be preserved.");
-            AssertEqual(LmGatewayPlanAction.StartManagedService, plan.Items[0].Action,
-                "A matching stopped service only needs to start.");
-        }
-
-        private static void LmGatewayPlannerRejectsUnsafeTargetAndAllPortConflicts()
-        {
-            LmGatewayDiscovery discovery = CreateLmDiscovery(
-                CreateLmKkt("00105700000001", "1234567894"),
-                CreateLmKkt("00105700000002", "7707083893"),
-                CreateLmKkt("00105700000003", "500100732259"),
-                CreateLmKkt("00105700000004", "781122334455"));
-            IList<LmGatewayDraft> drafts = new List<LmGatewayDraft>
-            {
-                CreateLmGatewayDraft("00105700000001", "https://lm.example/path", "5995", null, null),
-                CreateLmGatewayDraft("00105700000002", "10.20.30.42", "5995", "54999", "15001"),
-                CreateLmGatewayDraft("00105700000003", "localhost", "55000", "55000", "15000"),
-                CreateLmGatewayDraft("00105700000004", "10.20.30.44", "5995", null, null)
-            };
-            IList<TcpListenerSnapshotItem> listeners = new List<TcpListenerSnapshotItem>
-            {
-                new TcpListenerSnapshotItem(55001, "foreign-service", true),
-                new TcpListenerSnapshotItem(15001, null, false)
-            };
-
-            LmGatewayPlan plan = LmGatewayPlanner.Build(
-                discovery, drafts, new List<LmServiceInventoryItem>(), CreateLmPortPolicy(), listeners);
-
-            AssertEqual(LmGatewayPlanAction.Blocked, plan.Items[0].Action,
-                "A URL is not a plain target address and must be blocked.");
-            AssertContains(plan.Items[0].ServiceValidation.JoinMessages(), "Адрес");
-            AssertEqual(LmGatewayPlanAction.Blocked, plan.Items[1].Action,
-                "An explicit port outside its approved pool must be blocked.");
-            AssertContains(plan.Items[1].ServiceValidation.JoinMessages(), "диапазон");
-            AssertEqual(LmGatewayPlanAction.Blocked, plan.Items[2].Action,
-                "A loopback target must not reuse a local controller port.");
-            AssertContains(plan.Items[2].ServiceValidation.JoinMessages(), "целевого ЛМ");
-            AssertTrue(plan.Items[3].IsValid, "Invalid preceding drafts must not consume automatic ports.");
-            AssertEqual(55000, plan.Items[3].Spec.Ports.GrpcPort,
-                "The first valid automatic row must retain the first free gRPC number.");
-            AssertEqual(15000, plan.Items[3].Spec.Ports.RestPort,
-                "The first valid automatic row must retain the first free REST number.");
-
-            LmGatewayDiscovery overlappingDiscovery = CreateLmDiscovery(
-                CreateLmKkt("00105700000011", "1234567894"),
-                CreateLmKkt("00105700000012", "7707083893"),
-                CreateLmKkt("00105700000013", "500100732259"));
-            IList<LmGatewayDraft> overlappingDrafts = new List<LmGatewayDraft>
-            {
-                CreateLmGatewayDraft("00105700000011", "10.20.31.11", "5995", "20000", "20001"),
-                CreateLmGatewayDraft("00105700000012", "10.20.31.12", "5995", "20002", "20000"),
-                CreateLmGatewayDraft("00105700000013", "10.20.31.13", "5995", null, null)
-            };
-            LmManagedPortPolicy overlappingPolicy = new LmManagedPortPolicy(
-                new TcpPortRange(20000, 20003),
-                new TcpPortRange(20000, 20003));
-
-            LmGatewayPlan overlappingPlan = LmGatewayPlanner.Build(
-                overlappingDiscovery,
-                overlappingDrafts,
-                new List<LmServiceInventoryItem>(),
-                overlappingPolicy,
-                new List<TcpListenerSnapshotItem>());
-
-            AssertTrue(overlappingPlan.Items[0].IsValid, "Expected the first explicit pair to be accepted.");
-            AssertEqual(LmGatewayPlanAction.Blocked, overlappingPlan.Items[1].Action,
-                "A port used in the other local column must still be treated as occupied.");
-            AssertTrue(overlappingPlan.Items[2].IsValid,
-                "A duplicate invalid row must not reserve its otherwise unused port.");
-            AssertEqual(20002, overlappingPlan.Items[2].Spec.Ports.GrpcPort,
-                "Automatic allocation must skip both numbers of the earlier pair.");
-            AssertEqual(20003, overlappingPlan.Items[2].Spec.Ports.RestPort,
-                "Automatic allocation must keep both local columns globally unique.");
-
-            string normalizedLoopback;
-            bool isLoopback;
-            AssertTrue(LmGatewayInputValidator.TryNormalizeTargetAddress(
-                "::ffff:127.0.0.1", out normalizedLoopback, out isLoopback),
-                "IPv4-mapped IPv6 loopback must be accepted as an IP literal.");
-            AssertTrue(isLoopback, "All loopback representations must participate in local-port conflicts.");
-            AssertEqual("127.0.0.1", normalizedLoopback, "Loopback comparison must use one canonical form.");
-
-            ValidationResult unicodeTarget = LmGatewayInputValidator.ValidateTarget(
-                new LmGatewayTarget("lm-\u0430.example", 5995));
-            AssertFalse(unicodeTarget.IsValid, "Ambiguous Unicode DNS names must be rejected.");
-        }
-
         private static void ManagedLmServiceSpecContainsNoCredentials()
         {
             Type[] types =
             {
                 typeof(ManagedLmServiceSpec),
                 typeof(LmGatewayDraft),
-                typeof(LmGatewayPlanItem),
-                typeof(LmGatewayPlan)
+                typeof(DirectControllerAssignment),
+                typeof(DirectControllerPlan)
             };
 
             for (int typeIndex = 0; typeIndex < types.Length; typeIndex++)
@@ -2781,13 +2460,6 @@ namespace EsmTspiot.Shared.Tests
                 GrpcPort = grpcPort,
                 RestPort = restPort
             };
-        }
-
-        private static LmManagedPortPolicy CreateLmPortPolicy()
-        {
-            return new LmManagedPortPolicy(
-                new TcpPortRange(55000, 55009),
-                new TcpPortRange(15000, 15009));
         }
 
         private static void ManagedLmPlannerGroupsKktByInn()
@@ -2895,8 +2567,6 @@ namespace EsmTspiot.Shared.Tests
             AssertEqual(5995, plan.Items[0].Module.ApiPort,
                 "The planner must report the deterministic port instead of shifting it.");
         }
-
-
 
         private static void LmDefaultsUse45000GrpcPool()
         {
@@ -5167,7 +4837,7 @@ namespace EsmTspiot.Shared.Tests
                 "ServiceName", "SourcePath", "Password", "Credential", "Secret", "Token"
             };
             MethodInfo[] methods = contract.GetMethods();
-            AssertEqual(5, methods.Length, "The helper contract must expose only five typed operations.");
+            AssertEqual(4, methods.Length, "The helper contract must expose only four typed operations.");
             for (int methodIndex = 0; methodIndex < methods.Length; methodIndex++)
             {
                 ParameterInfo[] parameters = methods[methodIndex].GetParameters();
@@ -5282,95 +4952,27 @@ namespace EsmTspiot.Shared.Tests
 
         private static void LmAutomaticSetupInstallsBeforeConfiguringKkt()
         {
-            Type type = typeof(LmGatewayLifecycleWorkflow).Assembly.GetType(
-                "EsmTspiot.Shared.Services.LmAutomaticSetupCoordinator");
-            AssertTrue(type != null, "Expected an automatic setup coordinator.");
-            if (type == null)
-            {
-                return;
-            }
-
-            object coordinator = Activator.CreateInstance(type);
+            LmAutomaticSetupCoordinator coordinator =
+                new LmAutomaticSetupCoordinator();
             List<string> order = new List<string>();
-            Func<CancellationToken, Task<bool>> install = delegate
-            {
-                order.Add("install");
-                return Task.FromResult(true);
-            };
-            Func<CancellationToken, Task<bool>> configure = delegate
-            {
-                order.Add("configure");
-                return Task.FromResult(true);
-            };
-            MethodInfo execute = type.GetMethod("ExecuteAsync");
-            AssertTrue(execute != null, "Expected the automatic setup entry point.");
-            Task<bool> task = (Task<bool>)execute.Invoke(
-                coordinator,
-                new object[] { install, configure, CancellationToken.None });
 
-            bool completed = task.GetAwaiter().GetResult();
+            bool completed = coordinator.ExecuteAsync(
+                delegate
+                {
+                    order.Add("install");
+                    return Task.FromResult(true);
+                },
+                delegate
+                {
+                    order.Add("configure");
+                    return Task.FromResult(true);
+                },
+                CancellationToken.None).GetAwaiter().GetResult();
 
             AssertTrue(completed, "A successful two-stage setup must report completion.");
             AssertEqual(2, order.Count, "Both automatic setup stages must run exactly once.");
             AssertEqual("install", order[0], "Controller installation must happen first.");
             AssertEqual("configure", order[1], "KKT configuration must start only after installation.");
-        }
-
-        private static void AutomaticModeRegistersKktBeforeLmSetup()
-        {
-            Type type = typeof(LmGatewayLifecycleWorkflow).Assembly.GetType(
-                "EsmTspiot.Shared.Services.AutomaticConfigurationCoordinator");
-            AssertTrue(type != null, "Expected an end-to-end automatic configuration coordinator.");
-            if (type == null)
-            {
-                return;
-            }
-
-            object coordinator = Activator.CreateInstance(type);
-            List<string> order = new List<string>();
-            Func<CancellationToken, Task<bool>> register = delegate
-            {
-                order.Add("register");
-                return Task.FromResult(true);
-            };
-            Func<CancellationToken, Task<bool>> configureControllers = delegate
-            {
-                order.Add("controllers");
-                return Task.FromResult(true);
-            };
-            MethodInfo execute = type.GetMethod("ExecuteAsync");
-            AssertTrue(execute != null, "Expected the end-to-end automatic mode entry point.");
-            Task<bool> task = (Task<bool>)execute.Invoke(
-                coordinator,
-                new object[] { register, configureControllers, CancellationToken.None });
-
-            bool completed = task.GetAwaiter().GetResult();
-
-            AssertTrue(completed, "Successful registration and controller setup must complete.");
-            AssertEqual(2, order.Count, "Both end-to-end stages must run exactly once.");
-            AssertEqual("register", order[0], "KKT registration must happen first.");
-            AssertEqual("controllers", order[1],
-                "Controller setup must start automatically after KKT registration.");
-        }
-
-        private static void AutomaticModeSkipsLmSetupAfterRegistrationFailure()
-        {
-            AutomaticConfigurationCoordinator coordinator =
-                new AutomaticConfigurationCoordinator();
-            bool controllersCalled = false;
-
-            bool completed = coordinator.ExecuteAsync(
-                delegate { return Task.FromResult(false); },
-                delegate
-                {
-                    controllersCalled = true;
-                    return Task.FromResult(true);
-                },
-                CancellationToken.None).GetAwaiter().GetResult();
-
-            AssertFalse(completed, "A failed registration stage must stop the automatic run.");
-            AssertFalse(controllersCalled,
-                "Controller services must not be changed after registration preparation fails.");
         }
 
         private static void LmAutomaticSetupStopsAfterFailedInstallation()
@@ -5405,161 +5007,9 @@ namespace EsmTspiot.Shared.Tests
                 "Automatic setup must report a partial result when a KKT is not fully configured.");
         }
 
-        private static void LmLifecycleEnsuresProbesThenBinds()
-        {
-            List<string> order = new List<string>();
-            FakeLmProvisioner provisioner = new FakeLmProvisioner(order);
-            FakeLmProbe probe = new FakeLmProbe(order);
-            FakeTspiotApiClient api = new FakeTspiotApiClient();
-            api.LmGatewayCallObserved = delegate { order.Add("bind"); };
-            LmGatewayPlan plan = CreateLifecyclePlan(2, LmGatewayPlanAction.CreateManagedService);
-            string operationId = Guid.NewGuid().ToString("N");
-            string hash = ComputeEnsureHash(plan, operationId);
-            provisioner.EnsureResult = CreateEnsureResult(plan, operationId, hash, -1);
-
-            LmGatewayLifecycleOutcome outcome = new LmGatewayLifecycleWorkflow(
-                provisioner,
-                probe,
-                NewFastBindingWorkflow(api)).ExecuteAsync(
-                    "http://127.0.0.1:51077",
-                    plan,
-                    operationId,
-                    hash,
-                    CreateCredentials,
-                    null,
-                    CancellationToken.None).GetAwaiter().GetResult();
-
-            AssertEqual(1, provisioner.EnsureCalls, "All services must use one helper batch.");
-            AssertEqual(2, api.LmGatewayCalls.Count, "Every ready service must be bound.");
-            AssertEqual("ensure", order[0], "Provisioning must happen first.");
-            AssertEqual("probe", order[1], "Probe must happen before binding.");
-            AssertEqual("bind", order[2], "Binding must follow a successful probe.");
-            AssertEqual(LmGatewayLifecycleStatus.BindingAccepted, outcome.Results[0].Status, "Expected accepted binding.");
-        }
-
-        private static void LmLifecycleCompletionRequiresVerifiedReadback()
-        {
-            LmGatewayLifecycleOutcome outcome = new LmGatewayLifecycleOutcome();
-            outcome.Results.Add(new LmGatewayLifecycleResult
-            {
-                Status = LmGatewayLifecycleStatus.BindingAccepted,
-                BindingStatus = LmGatewayBindingStatus.BindingAccepted,
-                BindingAttempted = true
-            });
-
-            AssertFalse(
-                LmGatewayLifecycleWorkflow.IsFullyVerified(outcome, 1),
-                "A successful PUT without readback must remain a partial automatic result.");
-
-            outcome.Results[0].BindingStatus = LmGatewayBindingStatus.BindingObserved;
-            AssertFalse(
-                LmGatewayLifecycleWorkflow.IsFullyVerified(outcome, 1),
-                "Observed identity without endpoint verification must remain partial.");
-
-            outcome.Results[0].BindingStatus = LmGatewayBindingStatus.BindingVerified;
-            AssertTrue(
-                LmGatewayLifecycleWorkflow.IsFullyVerified(outcome, 1),
-                "Only verified readback may complete the automatic scenario.");
-        }
-
-        private static void LmLifecycleNeverBindsFailedService()
-        {
-            FakeLmProvisioner provisioner = new FakeLmProvisioner(null);
-            FakeLmProbe probe = new FakeLmProbe(null);
-            probe.DefaultResult = new LmGatewayProbeResult { ServiceRunning = true, Message = "listeners missing" };
-            FakeTspiotApiClient api = new FakeTspiotApiClient();
-            LmGatewayPlan plan = CreateLifecyclePlan(1, LmGatewayPlanAction.CreateManagedService);
-            string operationId = Guid.NewGuid().ToString("N");
-            string hash = ComputeEnsureHash(plan, operationId);
-            provisioner.EnsureResult = CreateEnsureResult(plan, operationId, hash, -1);
-
-            LmGatewayLifecycleOutcome outcome = CreateLifecycleWorkflow(provisioner, probe, api)
-                .ExecuteAsync("http://127.0.0.1:51077", plan, operationId, hash,
-                    CreateCredentials, null, CancellationToken.None).GetAwaiter().GetResult();
-
-            AssertEqual(0, api.LmGatewayCalls.Count, "A failed readiness probe must block PUT.");
-            AssertEqual(LmGatewayLifecycleStatus.ServiceFailed, outcome.Results[0].Status, "Expected service failure.");
-        }
-
-        private static void LmLifecycleContinuesAfterOneKktFailure()
-        {
-            FakeLmProvisioner provisioner = new FakeLmProvisioner(null);
-            FakeLmProbe probe = new FakeLmProbe(null);
-            FakeTspiotApiClient api = new FakeTspiotApiClient();
-            LmGatewayPlan plan = CreateLifecyclePlan(2, LmGatewayPlanAction.UpdateManagedService);
-            string operationId = Guid.NewGuid().ToString("N");
-            string hash = ComputeEnsureHash(plan, operationId);
-            provisioner.EnsureResult = CreateEnsureResult(plan, operationId, hash, 0);
-
-            LmGatewayLifecycleOutcome outcome = CreateLifecycleWorkflow(provisioner, probe, api)
-                .ExecuteAsync("http://127.0.0.1:51077", plan, operationId, hash,
-                    CreateCredentials, null, CancellationToken.None).GetAwaiter().GetResult();
-
-            AssertEqual(2, outcome.Results.Count, "Both KKT outcomes must be retained.");
-            AssertEqual(LmGatewayLifecycleStatus.ServiceFailed, outcome.Results[0].Status, "First service must fail.");
-            AssertEqual(LmGatewayLifecycleStatus.BindingAccepted, outcome.Results[1].Status, "Second KKT must continue.");
-            AssertEqual(1, api.LmGatewayCalls.Count, "Only the ready KKT must be bound.");
-        }
-
-        private static void LmLifecycleRetriesBindingWithoutReprovisioning()
-        {
-            FakeLmProvisioner provisioner = new FakeLmProvisioner(null);
-            FakeLmProbe probe = new FakeLmProbe(null);
-            FakeTspiotApiClient api = new FakeTspiotApiClient();
-            LmGatewayPlanItem item = CreateLifecyclePlan(1, LmGatewayPlanAction.BindReadyService).Items[0];
-
-            LmGatewayLifecycleResult result = CreateLifecycleWorkflow(provisioner, probe, api)
-                .RetryBindingAsync("http://127.0.0.1:51077", item, CreateCredentials, null,
-                    CancellationToken.None).GetAwaiter().GetResult();
-
-            AssertEqual(0, provisioner.EnsureCalls, "Binding retry must not request UAC/helper.");
-            AssertEqual(1, probe.Calls, "Binding retry must re-probe readiness.");
-            AssertEqual(LmGatewayLifecycleStatus.BindingAccepted, result.Status, "Expected accepted retry.");
-        }
-
-        private static void LmLifecyclePreservesPartialOutcomeOnCancellation()
-        {
-            CancellationTokenSource cancellation = new CancellationTokenSource();
-            FakeLmProvisioner provisioner = new FakeLmProvisioner(null);
-            FakeLmProbe probe = new FakeLmProbe(null);
-            FakeTspiotApiClient api = new FakeTspiotApiClient();
-            api.LmGatewayCallObserved = delegate(int call) { if (call == 1) cancellation.Cancel(); };
-            LmGatewayPlan plan = CreateLifecyclePlan(2, LmGatewayPlanAction.CreateManagedService);
-            string operationId = Guid.NewGuid().ToString("N");
-            string hash = ComputeEnsureHash(plan, operationId);
-            provisioner.EnsureResult = CreateEnsureResult(plan, operationId, hash, -1);
-
-            LmGatewayLifecycleOutcome outcome = CreateLifecycleWorkflow(provisioner, probe, api)
-                .ExecuteAsync("http://127.0.0.1:51077", plan, operationId, hash,
-                    CreateCredentials, null, cancellation.Token).GetAwaiter().GetResult();
-
-            AssertTrue(outcome.Cancelled, "Outcome must retain cancellation state.");
-            AssertEqual(LmGatewayLifecycleStatus.BindingAccepted, outcome.Results[0].Status, "Completed KKT must stay completed.");
-            AssertEqual(LmGatewayLifecycleStatus.Cancelled, outcome.Results[1].Status, "Untouched KKT must be cancelled.");
-        }
-
-        private static void LmLifecycleReconcilesUnknownResultBeforeMutation()
-        {
-            FakeLmProvisioner provisioner = new FakeLmProvisioner(null);
-            provisioner.EnsureException = new IOException("pipe lost");
-            FakeLmProbe probe = new FakeLmProbe(null);
-            FakeTspiotApiClient api = new FakeTspiotApiClient();
-            LmGatewayPlan plan = CreateLifecyclePlan(1, LmGatewayPlanAction.CreateManagedService);
-            string operationId = Guid.NewGuid().ToString("N");
-            string hash = ComputeEnsureHash(plan, operationId);
-
-            LmGatewayLifecycleOutcome outcome = CreateLifecycleWorkflow(provisioner, probe, api)
-                .ExecuteAsync("http://127.0.0.1:51077", plan, operationId, hash,
-                    CreateCredentials, null, CancellationToken.None).GetAwaiter().GetResult();
-
-            AssertEqual(1, provisioner.EnsureCalls, "Unknown result must not trigger a second mutation.");
-            AssertEqual(1, probe.Calls, "Unknown result must be reconciled read-only.");
-            AssertEqual(LmGatewayLifecycleStatus.BindingAccepted, outcome.Results[0].Status, "Ready reconciled service may bind.");
-        }
-
         private static void LmRemovalWorkflowRemovesOneSelectedManagedService()
         {
-            FakeLmProvisioner provisioner = new FakeLmProvisioner(null);
+            FakeLmProvisioner provisioner = new FakeLmProvisioner();
             LmServiceInventoryItem selected = CreateManagedInventoryItem();
             provisioner.RemoveResult = new LmServiceProvisioningItemResult
             {
@@ -5591,7 +5041,7 @@ namespace EsmTspiot.Shared.Tests
 
         private static void LmRemovalWorkflowAcceptsManagedStackFingerprint()
         {
-            FakeLmProvisioner provisioner = new FakeLmProvisioner(null);
+            FakeLmProvisioner provisioner = new FakeLmProvisioner();
             LmServiceInventoryItem selected = new LmServiceInventoryItem
             {
                 KktSerial = "00105700000001",
@@ -5643,7 +5093,7 @@ namespace EsmTspiot.Shared.Tests
 
         private static void LmRemovalWorkflowBlocksBatchAndOfficialRemoval()
         {
-            FakeLmProvisioner provisioner = new FakeLmProvisioner(null);
+            FakeLmProvisioner provisioner = new FakeLmProvisioner();
             LmGatewayRemovalWorkflow workflow = new LmGatewayRemovalWorkflow(
                 provisioner,
                 delegate { return new List<LmServiceInventoryItem>(); });
@@ -5678,7 +5128,7 @@ namespace EsmTspiot.Shared.Tests
                     Sha256 = new string('c', 64)
                 }
             };
-            FakeLmProvisioner provisioner = new FakeLmProvisioner(null)
+            FakeLmProvisioner provisioner = new FakeLmProvisioner()
             {
                 CleanupResult = new LmServiceProvisioningItemResult
                 {
@@ -5728,7 +5178,7 @@ namespace EsmTspiot.Shared.Tests
                     Sha256 = new string('d', 64)
                 }
             };
-            FakeLmProvisioner blockedProvisioner = new FakeLmProvisioner(null);
+            FakeLmProvisioner blockedProvisioner = new FakeLmProvisioner();
             LmGatewayRemovalWorkflow blockedWorkflow = new LmGatewayRemovalWorkflow(
                 blockedProvisioner,
                 delegate { return new List<LmServiceInventoryItem> { changed }; });
@@ -6101,64 +5551,6 @@ namespace EsmTspiot.Shared.Tests
         }
 #endif
 
-        private static LmGatewayLifecycleWorkflow CreateLifecycleWorkflow(
-            FakeLmProvisioner provisioner,
-            FakeLmProbe probe,
-            FakeTspiotApiClient api)
-        {
-            return new LmGatewayLifecycleWorkflow(
-                provisioner,
-                probe,
-                NewFastBindingWorkflow(api));
-        }
-
-        private static LmGatewayPlan CreateLifecyclePlan(int count, LmGatewayPlanAction action)
-        {
-            LmGatewayPlan plan = new LmGatewayPlan();
-            for (int index = 0; index < count; index++)
-            {
-                string serial = "001057000000" + (index + 1).ToString("00");
-                LmGatewayKkt kkt = new LmGatewayKkt
-                {
-                    InstanceId = "instance-" + index.ToString(),
-                    KktSerial = serial,
-                    KktInn = index == 0 ? "1234567894" : "500100732259"
-                };
-                plan.Items.Add(new LmGatewayPlanItem
-                {
-                    Kkt = kkt,
-                    Spec = new ManagedLmServiceSpec(
-                        new LmGatewayKkt { KktSerial = serial, KktInn = kkt.KktInn },
-                        new LmGatewayPorts(50063 + index * 2, 50064 + index * 2),
-                        new LmGatewayTarget("10.0.0." + (index + 10).ToString(), 5000)),
-                    Action = action
-                });
-            }
-            return plan;
-        }
-
-        private static string ComputeEnsureHash(LmGatewayPlan plan, string operationId)
-        {
-            LmServiceProvisioningBatchRequest request = new LmServiceProvisioningBatchRequest
-            {
-                SchemaVersion = 1,
-                Operation = LmServiceOperation.EnsureBatch,
-                OperationId = operationId,
-                InitiatingSid = "S-1-5-21-1-2-3-1001"
-            };
-            for (int index = 0; index < plan.Items.Count; index++)
-            {
-                LmGatewayPlanItem item = plan.Items[index];
-                if (item != null && item.IsValid &&
-                    item.Action != LmGatewayPlanAction.BindReadyService &&
-                    item.Action != LmGatewayPlanAction.NoChange)
-                {
-                    request.Items.Add(ToProvisioningRequest(item.Spec));
-                }
-            }
-            return CanonicalLmPlanHasher.Compute(request);
-        }
-
         private static LmServiceProvisioningItemRequest ToProvisioningRequest(ManagedLmServiceSpec spec)
         {
             return new LmServiceProvisioningItemRequest
@@ -6169,35 +5561,6 @@ namespace EsmTspiot.Shared.Tests
                 TargetAddress = spec.Target.Address,
                 TargetPort = spec.Target.Port
             };
-        }
-
-        private static LmServiceProvisioningBatchResult CreateEnsureResult(
-            LmGatewayPlan plan,
-            string operationId,
-            string hash,
-            int failedIndex)
-        {
-            LmServiceProvisioningBatchResult result = new LmServiceProvisioningBatchResult
-            {
-                SchemaVersion = 1,
-                OperationId = operationId,
-                PlanHash = hash,
-                Status = failedIndex < 0
-                    ? LmServiceProvisioningStatus.Succeeded
-                    : LmServiceProvisioningStatus.RequiresAttention
-            };
-            for (int index = 0; index < plan.Items.Count; index++)
-            {
-                result.Items.Add(new LmServiceProvisioningItemResult
-                {
-                    KktSerial = plan.Items[index].Spec.KktSerial,
-                    Status = index == failedIndex
-                        ? LmServiceProvisioningStatus.Failed
-                        : LmServiceProvisioningStatus.Succeeded,
-                    Message = index == failedIndex ? "failed" : "ready"
-                });
-            }
-            return result;
         }
 
         private static LmGatewayCredentials CreateCredentials(string serial)
@@ -6321,18 +5684,8 @@ namespace EsmTspiot.Shared.Tests
 
         private sealed class FakeLmProvisioner : ILmServiceProvisioner
         {
-            private readonly IList<string> _order;
-
-            internal FakeLmProvisioner(IList<string> order)
-            {
-                _order = order;
-            }
-
-            internal int EnsureCalls { get; private set; }
             internal int RemoveCalls { get; private set; }
             internal int CleanupCalls { get; private set; }
-            internal Exception EnsureException { get; set; }
-            internal LmServiceProvisioningBatchResult EnsureResult { get; set; }
             internal LmServiceProvisioningItemResult RemoveResult { get; set; }
             internal LmServiceProvisioningItemResult CleanupResult { get; set; }
 
@@ -6343,24 +5696,6 @@ namespace EsmTspiot.Shared.Tests
                 CancellationToken cancellation)
             {
                 throw new NotSupportedException();
-            }
-
-            public Task<LmServiceProvisioningBatchResult> EnsureBatchAsync(
-                IList<LmServiceProvisioningItemRequest> items,
-                string operationId,
-                string planHash,
-                CancellationToken cancellation)
-            {
-                EnsureCalls++;
-                if (_order != null)
-                {
-                    _order.Add("ensure");
-                }
-                if (EnsureException != null)
-                {
-                    throw EnsureException;
-                }
-                return Task.FromResult(EnsureResult);
             }
 
             public Task<LmServiceProvisioningItemResult> RemoveAsync(
@@ -6390,38 +5725,6 @@ namespace EsmTspiot.Shared.Tests
             {
                 CleanupCalls++;
                 return Task.FromResult(CleanupResult);
-            }
-        }
-
-        private sealed class FakeLmProbe : ILmGatewayProbe
-        {
-            private readonly IList<string> _order;
-
-            internal FakeLmProbe(IList<string> order)
-            {
-                _order = order;
-                DefaultResult = new LmGatewayProbeResult
-                {
-                    ServiceRunning = true,
-                    GrpcListenerReady = true,
-                    RestListenerReady = true,
-                    ListenerOwnersVerified = true
-                };
-            }
-
-            internal int Calls { get; private set; }
-            internal LmGatewayProbeResult DefaultResult { get; set; }
-
-            public Task<LmGatewayProbeResult> ProbeAsync(
-                ManagedLmServiceSpec service,
-                CancellationToken cancellation)
-            {
-                Calls++;
-                if (_order != null)
-                {
-                    _order.Add("probe");
-                }
-                return Task.FromResult(DefaultResult);
             }
         }
 

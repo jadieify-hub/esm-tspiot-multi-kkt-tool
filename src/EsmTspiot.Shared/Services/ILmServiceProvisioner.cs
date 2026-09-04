@@ -13,12 +13,6 @@ namespace EsmTspiot.Shared.Services
             string planHash,
             CancellationToken cancellation);
 
-        Task<LmServiceProvisioningBatchResult> EnsureBatchAsync(
-            IList<LmServiceProvisioningItemRequest> items,
-            string operationId,
-            string planHash,
-            CancellationToken cancellation);
-
         Task<LmServiceProvisioningItemResult> RemoveAsync(
             LmRemovalConfirmation confirmation,
             string operationId,

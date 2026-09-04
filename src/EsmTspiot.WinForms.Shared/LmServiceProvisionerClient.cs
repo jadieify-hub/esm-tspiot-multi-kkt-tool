@@ -48,26 +48,6 @@ namespace EsmTspiot.WinForms.Shared
             return InvokeAsync<LmControllerInstallResult>(request, cancellation);
         }
 
-        public Task<LmServiceProvisioningBatchResult> EnsureBatchAsync(
-            IList<LmServiceProvisioningItemRequest> items,
-            string operationId,
-            string planHash,
-            CancellationToken cancellation)
-        {
-            LmServiceProvisioningBatchRequest request = CreateRequest(
-                LmServiceOperation.EnsureBatch,
-                operationId,
-                planHash);
-            if (items != null)
-            {
-                for (int index = 0; index < items.Count; index++)
-                {
-                    request.Items.Add(items[index]);
-                }
-            }
-            return InvokeAsync<LmServiceProvisioningBatchResult>(request, cancellation);
-        }
-
         internal Task<LmServiceProvisioningBatchResult> EnsureDirectControllersAsync(
             IList<DirectControllerProvisioningItemRequest> items,
             string operationId,
