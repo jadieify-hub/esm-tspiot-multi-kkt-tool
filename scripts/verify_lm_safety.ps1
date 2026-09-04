@@ -178,9 +178,6 @@ function Test-AllowedSecretHit {
     if ($relative -eq "src/EsmTspiot.WinForms.Shared/LmGatewayPage.Binding.cs") {
         return $text -match 'delegate\(CancellationToken token\)|ExecuteSelectedBindingAsync\(plan, credentials, token\)|credentials\.Password\s*=\s*string\.Empty|Password\s*=\s*credentials\.Password'
     }
-    if ($relative -eq "src/EsmTspiot.ServiceProvisioner/OfficialLmProfileAdapter.cs") {
-        return $text -match 'forbidden secret field|lower\.IndexOf\("(password|secret|token|apikey)"'
-    }
     if ($relative -eq "src/EsmTspiot.ServiceProvisioner/WindowsServiceApi.cs") {
         return $text -match '^\s*string password[,);]'
     }

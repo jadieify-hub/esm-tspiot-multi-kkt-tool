@@ -204,17 +204,11 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Managed removal journal survives deleted KKT stack", ManagedRemovalJournalSurvivesDeletedKktStack);
             Run("Managed removal journal keeps operator read only access", ManagedRemovalJournalKeepsOperatorReadOnlyAccess);
             Run("Windows managed removal deletes owned stack and retry journal", WindowsManagedRemovalDeletesOwnedStackAndRetryJournal);
-            Run("LM profile adapter changes only supported fields", LmProfileAdapterChangesOnlySupportedFields);
-            Run("LM profile adapter rejects ambiguous schema", LmProfileAdapterRejectsAmbiguousSchema);
-            Run("LM profile adapter preserves unknown nonsecret fields", LmProfileAdapterPreservesUnknownNonsecretFields);
-            Run("LM profile adapter writes atomically", LmProfileAdapterWritesAtomically);
-            Run("LM profile adapter never clones official profile", LmProfileAdapterNeverClonesOfficialProfile);
             Run("Direct controller profile stages only official CA pair", DirectControllerProfileStagesOnlyOfficialCaPair);
             Run("Direct controller profile atomically replaces read only CA", DirectControllerProfileAtomicallyReplacesReadOnlyCa);
             Run("Direct controller profile writes isolated ports without credentials", DirectControllerProfileWritesIsolatedPortsWithoutCredentials);
             Run("Direct controller manifest safely upgrades legacy target port", DirectControllerManifestSafelyUpgradesLegacyTargetPort);
             Run("Windows direct controller platform creates and removes exact clone", WindowsDirectControllerPlatformCreatesAndRemovesExactClone);
-            Run("LM profile adapter detects unsupported controller version", LmProfileAdapterDetectsUnsupportedControllerVersion);
             Run("Install version marks every managed instance verification pending before launch", InstallVersionMarksEveryManagedInstanceVerificationPendingBeforeLaunch);
             Run("Install version never runs a substituted or unlocked installer", InstallVersionNeverRunsSubstitutedOrUnlockedInstaller);
             Run("Install version leaves services stopped when verification fails", InstallVersionLeavesServicesStoppedWhenVerificationFails);
@@ -6714,170 +6708,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             }
         }
 
-        private static void LmProfileAdapterChangesOnlySupportedFields()
-        {
-            string root = CreateTemporaryDirectory();
-            try
-            {
-                FakeWindowsServiceApi api = new FakeWindowsServiceApi();
-                OfficialLmProfileAdapter adapter = CreateTestProfileAdapter(root, api);
-                ManagedLmServiceSpec initial = CreateManagedSpec(
-                    "00105700000001", 55000, 15000, "10.20.30.40", 5995);
-                adapter.CreateOrLoadConfiguration(initial, TestServiceSid());
-                string path = adapter.GetConfigurationPath(initial.KktSerial);
-                string before = File.ReadAllText(path, Encoding.UTF8);
-                ManagedLmServiceSpec changed = CreateManagedSpec(
-                    initial.KktSerial, 55001, 15001, "lm-two.example", 6995);
-
-                adapter.ApplyConfiguration(changed, TestServiceSid());
-                LmProfileConfiguration observed = adapter.ReadConfiguration(
-                    initial.KktSerial, TestServiceSid());
-                string after = File.ReadAllText(path, Encoding.UTF8);
-
-                AssertEqual(55001, observed.GrpcPort, "Expected only the typed gRPC port update.");
-                AssertEqual(15001, observed.RestPort, "Expected only the typed REST port update.");
-                AssertEqual("lm-two.example", observed.TargetAddress,
-                    "Expected only the normalized target address update.");
-                AssertEqual(6995, observed.TargetPort, "Expected only the typed target port update.");
-                AssertEqual(RemoveSupportedProfileLines(before), RemoveSupportedProfileLines(after),
-                    "Every unsupported schema line must remain byte-for-byte stable.");
-
-                CreateTestSupervisorService(api).EnsureConfigured(initial.KktSerial);
-                api.Start(initial.ServiceName);
-                AssertThrows<InvalidOperationException>(delegate {
-                    adapter.ApplyConfiguration(changed, TestServiceSid());
-                }, "A running supervisor must block every profile mutation.");
-            }
-            finally
-            {
-                Directory.Delete(root, true);
-            }
-        }
-
-        private static void LmProfileAdapterRejectsAmbiguousSchema()
-        {
-            string root = CreateTemporaryDirectory();
-            try
-            {
-                OfficialLmProfileAdapter adapter = CreateTestProfileAdapter(root);
-                ManagedLmServiceSpec spec = CreateManagedSpec(
-                    "00105700000001", 55000, 15000, "10.20.30.40", 5995);
-                adapter.CreateOrLoadConfiguration(spec, TestServiceSid());
-                string path = adapter.GetConfigurationPath(spec.KktSerial);
-                File.AppendAllText(path, Environment.NewLine +
-                    "settings:" + Environment.NewLine +
-                    "    common:" + Environment.NewLine +
-                    "        gRPCPort: 55999" + Environment.NewLine, Encoding.UTF8);
-
-                AssertThrows<InvalidDataException>(delegate {
-                    adapter.ReadConfiguration(spec.KktSerial, TestServiceSid());
-                },
-                    "Duplicate schema paths must fail closed before configuration changes.");
-
-                ManagedLmServiceSpec second = CreateManagedSpec(
-                    "00105700000002", 55001, 15001, "10.20.30.41", 5996);
-                adapter.CreateOrLoadConfiguration(second, TestServiceSid());
-                string secondPath = adapter.GetConfigurationPath(second.KktSerial);
-                string malformedIndent = File.ReadAllText(secondPath, Encoding.UTF8).Replace(
-                    "        gRPCPort:",
-                    "            gRPCPort:");
-                File.WriteAllText(secondPath, malformedIndent, Encoding.UTF8);
-                AssertThrows<InvalidDataException>(delegate {
-                    adapter.ReadConfiguration(second.KktSerial, TestServiceSid());
-                }, "A path with non-exact nesting must fail closed.");
-            }
-            finally
-            {
-                Directory.Delete(root, true);
-            }
-        }
-
-        private static void LmProfileAdapterPreservesUnknownNonsecretFields()
-        {
-            string root = CreateTemporaryDirectory();
-            try
-            {
-                OfficialLmProfileAdapter adapter = CreateTestProfileAdapter(root);
-                ManagedLmServiceSpec spec = CreateManagedSpec(
-                    "00105700000001", 55000, 15000, "10.20.30.40", 5995);
-                adapter.CreateOrLoadConfiguration(spec, TestServiceSid());
-                string path = adapter.GetConfigurationPath(spec.KktSerial);
-                File.AppendAllText(path,
-                    "    extension:" + Environment.NewLine +
-                    "        harmlessFlag: keep-me" + Environment.NewLine,
-                    Encoding.UTF8);
-
-                adapter.ApplyConfiguration(CreateManagedSpec(
-                    spec.KktSerial, 55002, 15002, "10.20.30.41", 5996), TestServiceSid());
-
-                AssertContains(File.ReadAllText(path, Encoding.UTF8), "harmlessFlag: keep-me");
-            }
-            finally
-            {
-                Directory.Delete(root, true);
-            }
-        }
-
-        private static void LmProfileAdapterWritesAtomically()
-        {
-            string root = CreateTemporaryDirectory();
-            try
-            {
-                OfficialLmProfileAdapter adapter = CreateTestProfileAdapter(root);
-                ManagedLmServiceSpec spec = CreateManagedSpec(
-                    "00105700000001", 55000, 15000, "10.20.30.40", 5995);
-
-                adapter.CreateOrLoadConfiguration(spec, TestServiceSid());
-                adapter.ApplyConfiguration(CreateManagedSpec(
-                    spec.KktSerial, 55003, 15003, "10.20.30.42", 5997), TestServiceSid());
-
-                string directory = Path.GetDirectoryName(adapter.GetConfigurationPath(spec.KktSerial));
-                AssertEqual(0, Directory.GetFiles(directory, "*.tmp").Length,
-                    "Atomic profile writes must not leave a temporary file.");
-                AssertEqual(55003, adapter.ReadConfiguration(
-                    spec.KktSerial, TestServiceSid()).GrpcPort,
-                    "The atomically replaced file must remain readable.");
-            }
-            finally
-            {
-                Directory.Delete(root, true);
-            }
-        }
-
-        private static void LmProfileAdapterNeverClonesOfficialProfile()
-        {
-            string root = CreateTemporaryDirectory();
-            try
-            {
-                OfficialLmProfileAdapter adapter = CreateTestProfileAdapter(root);
-                ManagedLmServiceSpec spec = CreateManagedSpec(
-                    "00105700000001", 55000, 15000, "10.20.30.40", 5995);
-                string profileRoot = adapter.PrepareEmptyProfile(spec, TestServiceSid());
-                adapter.CreateOrLoadConfiguration(spec, TestServiceSid());
-                string[] files = Directory.GetFiles(profileRoot, "*", SearchOption.AllDirectories);
-
-                AssertEqual(1, files.Length,
-                    "A new profile may contain only the independently generated config before first start.");
-                AssertEqual("config.yml", Path.GetFileName(files[0]),
-                    "Certificates and keys must be generated by the official controller itself.");
-                string fixturePath = Path.Combine(
-                    AppDomain.CurrentDomain.BaseDirectory,
-                    "Fixtures",
-                    "official-lm-profile-sanitized.json");
-                string fixture = File.ReadAllText(fixturePath, Encoding.UTF8);
-                AssertContains(fixture, "PrivateBlackBox");
-                AssertContains(fixture, "run3-empty-profile");
-                AssertFalse(fixture.IndexOf("BEGIN ", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                            fixture.IndexOf("password", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                            fixture.IndexOf("token", StringComparison.OrdinalIgnoreCase) >= 0,
-                    "The sanitized schema fixture must contain no copied secrets.");
-            }
-            finally
-            {
-                Directory.Delete(root, true);
-            }
-        }
-
         private static void LegacyTerminatorRejectsPidReuseAndForeignIdentity()
         {
             string root = Path.GetFullPath(@"C:\ProgramData\KRS\MultiKKT\LocalModules\runtime");
@@ -7712,53 +7542,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             {
                 DeleteTestTreeWithReadOnlyFiles(root);
             }
-        }
-
-        private static void LmProfileAdapterDetectsUnsupportedControllerVersion()
-        {
-            string root = CreateTemporaryDirectory();
-            try
-            {
-                TrustedFileExpectation binary = CreateExpectation(
-                    Path.Combine(root, "lmcontroller.exe"), "lmcontroller.exe");
-                TrustedFileExpectation installer = CreateExpectation(
-                    Path.Combine(root, "setup.exe"),
-                    "esm-lm-controller_9.9.9.9-windows-setup.exe");
-                ControllerCapabilityProfile unsupported = ControllerCapabilityProfile.CreateForTesting(
-                    "9.9.9.9",
-                    root,
-                    "lmcontroller.exe",
-                    binary,
-                    installer,
-                    "ProgramFiles");
-
-                AssertThrows<NotSupportedException>(delegate {
-                    new OfficialLmProfileAdapter(
-                        unsupported,
-                        new ManagedServiceManifestStore(
-                            root, new FakePathSafety(true), "S-1-5-21-111-222-333-1001"),
-                        new AtomicFileWriter(),
-                        new FakeWindowsServiceApi());
-                }, "Неописанная схема профиля контроллера должна отвергаться до доступа к файлам.");
-            }
-            finally
-            {
-                Directory.Delete(root, true);
-            }
-        }
-
-        private static OfficialLmProfileAdapter CreateTestProfileAdapter(
-            string root,
-            FakeWindowsServiceApi serviceApi = null)
-        {
-            return new OfficialLmProfileAdapter(
-                ControllerCapabilityProfile.Supported(),
-                new ManagedServiceManifestStore(
-                    root,
-                    new FakePathSafety(true),
-                    "S-1-5-21-111-222-333-1001"),
-                new AtomicFileWriter(),
-                serviceApi ?? new FakeWindowsServiceApi());
         }
 
         private static ManagedLmServiceSpec CreateManagedSpec(
@@ -8890,25 +8673,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 "Expected exception was not thrown: " + typeof(TException).Name + ".");
         }
 
-        private sealed class CancelAfterCompletedItems : ILmProvisioningCancellation
-        {
-            private readonly FakeLmProvisioningPlatform _platform;
-            private readonly int _completedItems;
-
-            internal CancelAfterCompletedItems(
-                FakeLmProvisioningPlatform platform,
-                int completedItems)
-            {
-                _platform = platform;
-                _completedItems = completedItems;
-            }
-
-            public bool IsCancellationRequested
-            {
-                get { return _platform.CompletedItems >= _completedItems; }
-            }
-        }
-
         private sealed class FakeDirectControllerPlatform : IDirectControllerPlatform
         {
             internal FakeDirectControllerPlatform()
@@ -9090,18 +8854,10 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
         private sealed class FakeLmProvisioningPlatform : ILmProvisioningPlatform
         {
-            private readonly Dictionary<string, LmProvisioningObservedState> _states =
-                new Dictionary<string, LmProvisioningObservedState>(StringComparer.Ordinal);
-            private bool _reservationHeld;
-            private bool _profileSawReservation;
-            private bool _scmSawReservation;
-            private bool _throwInjected;
-
             internal FakeLmProvisioningPlatform()
             {
                 Events = new List<string>();
                 ManagedSerials = new List<string>();
-                Readiness = LmReadinessResult.Ready();
                 InstallerResult = new LmControllerInstallResult
                 {
                     Status = LmServiceProvisioningStatus.Succeeded,
@@ -9111,28 +8867,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
             internal List<string> Events { get; private set; }
             internal List<string> ManagedSerials { get; private set; }
-            internal LmReadinessResult Readiness { get; set; }
             internal LmControllerInstallResult InstallerResult { get; set; }
-            internal string FailSerial { get; set; }
-            internal string ThrowOnceAtPrefix { get; set; }
             internal bool RejectInstaller { get; set; }
-            internal bool RequireReservationReleasedBeforeStart { get; set; }
-            internal int CurrentMachineLockDepth { get; private set; }
-            internal int CurrentItemLockDepth { get; private set; }
-            internal int MaximumMachineLockDepth { get; private set; }
-            internal int MaximumItemLockDepth { get; private set; }
-            internal int CompletedItems { get; private set; }
-
-            internal bool ReservationHeldDuringProfileAndScm
-            {
-                get { return _profileSawReservation && _scmSawReservation; }
-            }
-
-            internal void SetState(string serial, LmProvisioningObservedState state)
-            {
-                _states[serial] = state;
-            }
-
             internal bool ContainsEventPrefix(string prefix)
             {
                 for (int index = 0; index < Events.Count; index++)
@@ -9148,134 +8884,12 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             public IDisposable AcquireMachineLock()
             {
                 Record("MachineLock");
-                CurrentMachineLockDepth++;
-                MaximumMachineLockDepth = Math.Max(
-                    MaximumMachineLockDepth,
-                    CurrentMachineLockDepth);
-                return new CallbackDisposable(delegate { CurrentMachineLockDepth--; });
-            }
-
-            public IDisposable AcquireItemLock(string kktSerial)
-            {
-                Record("ItemLock:" + kktSerial);
-                CurrentItemLockDepth++;
-                MaximumItemLockDepth = Math.Max(MaximumItemLockDepth, CurrentItemLockDepth);
-                return new CallbackDisposable(delegate { CurrentItemLockDepth--; });
-            }
-
-            public void Reconcile(LmServiceProvisioningItemRequest item, string operationId)
-            {
-                Record("Reconcile:" + item.KktSerial);
-            }
-
-            public LmVerifiedController VerifyController()
-            {
-                Record("VerifyController");
-                return new LmVerifiedController
-                {
-                    Version = "1.6.3.2",
-                    BinarySha256 = new string('a', 64),
-                    SupervisorSha256 = new string('b', 64)
-                };
-            }
-
-            public LmProvisioningObservedState Inspect(
-                LmServiceProvisioningItemRequest item,
-                string initiatingSid)
-            {
-                Record("Inspect:" + item.KktSerial);
-                if (string.Equals(item.KktSerial, FailSerial, StringComparison.Ordinal))
-                {
-                    throw new InvalidOperationException("injected item failure");
-                }
-                LmProvisioningObservedState state;
-                return _states.TryGetValue(item.KktSerial, out state)
-                    ? state
-                    : LmProvisioningObservedState.Absent;
-            }
-
-            public IDisposable ReservePorts(LmServiceProvisioningItemRequest item)
-            {
-                Record("Reserve:" + item.KktSerial);
-                if (_reservationHeld)
-                {
-                    throw new InvalidOperationException("reservation already held");
-                }
-                _reservationHeld = true;
-                return new CallbackDisposable(delegate
-                {
-                    if (_reservationHeld)
-                    {
-                        _reservationHeld = false;
-                        Record("ReleasePorts:" + item.KktSerial);
-                    }
-                });
-            }
-
-            public string DeriveServiceSid(string kktSerial)
-            {
-                return TestServiceSid();
-            }
-
-            public void WriteJournal(
-                LmServiceProvisioningItemRequest item,
-                string operationId,
-                LmProvisioningJournalStage stage)
-            {
-                Record("Journal:" + stage.ToString());
-            }
-
-            public void PrepareProfile(LmServiceProvisioningItemRequest item, string serviceSid)
-            {
-                _profileSawReservation |= _reservationHeld;
-                Record("Profile:" + item.KktSerial);
-            }
-
-            public void ConfigureService(
-                LmServiceProvisioningItemRequest item,
-                string serviceSid,
-                string initiatingSid)
-            {
-                _scmSawReservation |= _reservationHeld;
-                Record("Configure:" + item.KktSerial);
-            }
-
-            public void Start(LmServiceProvisioningItemRequest item)
-            {
-                if (RequireReservationReleasedBeforeStart && _reservationHeld)
-                {
-                    throw new InvalidOperationException("ports still reserved at StartService");
-                }
-                Record("Start:" + item.KktSerial);
+                return new CallbackDisposable(delegate { });
             }
 
             public void RequestStop(LmServiceProvisioningItemRequest item)
             {
                 Record("Stop:" + item.KktSerial);
-            }
-
-            public LmReadinessResult Probe(LmServiceProvisioningItemRequest item)
-            {
-                Record("Probe:" + item.KktSerial);
-                return Readiness;
-            }
-
-            public void WriteManifest(
-                LmServiceProvisioningItemRequest item,
-                LmVerifiedController controller,
-                string serviceSid,
-                string operationId)
-            {
-                Record("Manifest:" + item.KktSerial);
-                _states[item.KktSerial] = LmProvisioningObservedState.MatchingReady;
-            }
-
-            public void CompleteJournal(
-                LmServiceProvisioningItemRequest item,
-                string operationId)
-            {
-                Record("CompleteJournal:" + item.KktSerial);
-                CompletedItems++;
             }
 
             public IList<string> GetManagedSerials()
@@ -9303,13 +8917,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             private void Record(string value)
             {
                 Events.Add(value);
-                if (!_throwInjected &&
-                    !string.IsNullOrEmpty(ThrowOnceAtPrefix) &&
-                    value.StartsWith(ThrowOnceAtPrefix, StringComparison.Ordinal))
-                {
-                    _throwInjected = true;
-                    throw new InvalidOperationException("simulated crash at " + value);
-                }
             }
 
             private sealed class FakeLockedInstaller : ILockedControllerInstaller

@@ -86,32 +86,7 @@ namespace EsmTspiot.ServiceProvisioner
     internal interface ILmProvisioningPlatform
     {
         IDisposable AcquireMachineLock();
-        IDisposable AcquireItemLock(string kktSerial);
-        void Reconcile(LmServiceProvisioningItemRequest item, string operationId);
-        LmVerifiedController VerifyController();
-        LmProvisioningObservedState Inspect(
-            LmServiceProvisioningItemRequest item,
-            string initiatingSid);
-        IDisposable ReservePorts(LmServiceProvisioningItemRequest item);
-        string DeriveServiceSid(string kktSerial);
-        void WriteJournal(
-            LmServiceProvisioningItemRequest item,
-            string operationId,
-            LmProvisioningJournalStage stage);
-        void PrepareProfile(LmServiceProvisioningItemRequest item, string serviceSid);
-        void ConfigureService(
-            LmServiceProvisioningItemRequest item,
-            string serviceSid,
-            string initiatingSid);
-        void Start(LmServiceProvisioningItemRequest item);
         void RequestStop(LmServiceProvisioningItemRequest item);
-        LmReadinessResult Probe(LmServiceProvisioningItemRequest item);
-        void WriteManifest(
-            LmServiceProvisioningItemRequest item,
-            LmVerifiedController controller,
-            string serviceSid,
-            string operationId);
-        void CompleteJournal(LmServiceProvisioningItemRequest item, string operationId);
         IList<string> GetManagedSerials();
         void MarkVersionPending(string kktSerial, string operationId);
         ILockedControllerInstaller PrepareInstaller(

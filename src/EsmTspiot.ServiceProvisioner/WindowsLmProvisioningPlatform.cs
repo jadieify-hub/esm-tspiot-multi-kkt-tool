@@ -20,9 +20,7 @@ namespace EsmTspiot.ServiceProvisioner
         private readonly OfficialControllerLocator _controllerLocator;
         private readonly ManagedServiceManifestStore _manifestStore;
         private readonly ProvisioningOperationJournalStore _journalStore;
-        private readonly OfficialLmProfileAdapter _profileAdapter;
         private readonly LmGatewaySupervisorService _supervisor;
-        private readonly LmServiceOwnershipVerifier _ownership;
         private readonly LmServiceReadinessProbe _readiness;
         private readonly IFileTrustVerifier _trustVerifier;
         private readonly IPathSafety _pathSafety;
@@ -37,9 +35,7 @@ namespace EsmTspiot.ServiceProvisioner
             OfficialControllerLocator controllerLocator,
             ManagedServiceManifestStore manifestStore,
             ProvisioningOperationJournalStore journalStore,
-            OfficialLmProfileAdapter profileAdapter,
             LmGatewaySupervisorService supervisor,
-            LmServiceOwnershipVerifier ownership,
             LmServiceReadinessProbe readiness,
             IFileTrustVerifier trustVerifier,
             IPathSafety pathSafety,
@@ -52,9 +48,7 @@ namespace EsmTspiot.ServiceProvisioner
             _controllerLocator = controllerLocator;
             _manifestStore = manifestStore;
             _journalStore = journalStore;
-            _profileAdapter = profileAdapter;
             _supervisor = supervisor;
-            _ownership = ownership;
             _readiness = readiness;
             _trustVerifier = trustVerifier;
             _pathSafety = pathSafety;
@@ -90,17 +84,6 @@ namespace EsmTspiot.ServiceProvisioner
                 serviceApi,
                 profile,
                 supervisorBinary);
-            OfficialLmProfileAdapter profileAdapter = new OfficialLmProfileAdapter(
-                profile,
-                manifestStore,
-                new AtomicFileWriter(),
-                serviceApi);
-            LmServiceOwnershipVerifier ownership = new LmServiceOwnershipVerifier(
-                serviceApi,
-                manifestStore,
-                journalStore,
-                profileAdapter,
-                supervisor);
             LmServiceReadinessProbe readiness = new LmServiceReadinessProbe(
                 serviceApi,
                 new TcpListenerOwnerReader(),
@@ -113,9 +96,7 @@ namespace EsmTspiot.ServiceProvisioner
                 locator,
                 manifestStore,
                 journalStore,
-                profileAdapter,
                 supervisor,
-                ownership,
                 readiness,
                 trustVerifier,
                 pathSafety,
@@ -133,126 +114,6 @@ namespace EsmTspiot.ServiceProvisioner
         {
             string serviceName = LmServiceIdentity.CreateName(kktSerial);
             return AcquireMutex("Global\\KRS.MultiKKT.LmGateway.Item." + serviceName);
-        }
-
-        public void Reconcile(LmServiceProvisioningItemRequest item, string operationId)
-        {
-            _journalStore.ReadForKkt(item.KktSerial);
-        }
-
-        public LmVerifiedController VerifyController()
-        {
-            VerifiedControllerBinaryResult resolved =
-                _controllerLocator.ResolveVerifiedBinary();
-            if (!resolved.IsSuccess)
-            {
-                throw new NotSupportedException(resolved.ErrorMessage);
-            }
-            VerifiedProvisionerBinary supervisor =
-                VerifiedProvisionerBinary.ResolveCurrent(_pathSafety);
-            _lastVerifiedController = new LmVerifiedController
-            {
-                Version = resolved.Binary.Version,
-                BinarySha256 = resolved.Binary.Sha256,
-                SupervisorSha256 = supervisor.Sha256
-            };
-            return _lastVerifiedController;
-        }
-
-        public LmProvisioningObservedState Inspect(
-            LmServiceProvisioningItemRequest item,
-            string initiatingSid)
-        {
-            if (_lastVerifiedController == null)
-            {
-                throw new InvalidOperationException("Controller identity was not verified.");
-            }
-            return _ownership.Inspect(item, _lastVerifiedController);
-        }
-
-        public IDisposable ReservePorts(LmServiceProvisioningItemRequest item)
-        {
-            if (!_profile.ListenerUsesDualStackIpv6Wildcard)
-            {
-                throw new NotSupportedException("Listener endpoint profile is unsupported.");
-            }
-            return ExclusiveTcpPortReservation.AcquireDualStackWildcard(
-                item.GrpcPort,
-                item.RestPort);
-        }
-
-        public string DeriveServiceSid(string kktSerial)
-        {
-            return RestrictedServiceSid.Derive(LmServiceIdentity.CreateName(kktSerial));
-        }
-
-        public void WriteJournal(
-            LmServiceProvisioningItemRequest item,
-            string operationId,
-            LmProvisioningJournalStage stage)
-        {
-            LmVerifiedController controller = _lastVerifiedController;
-            if (controller == null)
-            {
-                throw new InvalidOperationException("Controller identity was not verified.");
-            }
-            string serviceName = LmServiceIdentity.CreateName(item.KktSerial);
-            _journalStore.Write(new ProvisioningOperationJournal
-            {
-                SchemaVersion = 1,
-                OperationId = operationId,
-                Operation = LmServiceOperation.EnsureBatch,
-                KktSerial = item.KktSerial,
-                State = MapJournalState(stage),
-                ManifestFingerprint = string.Empty,
-                UpdatedUtc = DateTime.UtcNow.ToString("o"),
-                Stage = stage,
-                GrpcPort = item.GrpcPort,
-                RestPort = item.RestPort,
-                TargetAddress = item.TargetAddress,
-                TargetPort = item.TargetPort,
-                ServiceName = serviceName,
-                SupervisorImagePath = _supervisorBinary.FullPath,
-                ProfilePath = _manifestStore.GetProfileRoot(item.KktSerial),
-                ServiceSid = RestrictedServiceSid.Derive(serviceName),
-                ControllerVersion = controller.Version,
-                ControllerBinarySha256 = controller.BinarySha256,
-                SupervisorSha256 = controller.SupervisorSha256
-            });
-        }
-
-        public void PrepareProfile(
-            LmServiceProvisioningItemRequest item,
-            string serviceSid)
-        {
-            ManagedLmServiceSpec spec = ToSpec(item);
-            _profileAdapter.CreateOrLoadConfiguration(spec, serviceSid);
-            _profileAdapter.ApplyConfiguration(spec, serviceSid);
-        }
-
-        public void ConfigureService(
-            LmServiceProvisioningItemRequest item,
-            string serviceSid,
-            string initiatingSid)
-        {
-            WindowsServiceRecord configured = _supervisor.EnsureConfigured(
-                item.KktSerial,
-                initiatingSid);
-            if (configured.State != WindowsServiceState.Stopped || configured.ProcessId != 0)
-            {
-                throw new InvalidOperationException(
-                    "SCM mutation did not leave the service stopped with zero PID.");
-            }
-            string resolvedSid = RestrictedServiceSid.Resolve(configured.ServiceName);
-            if (!string.Equals(resolvedSid, serviceSid, StringComparison.Ordinal))
-            {
-                throw new InvalidDataException("Derived and registered service SIDs differ.");
-            }
-        }
-
-        public void Start(LmServiceProvisioningItemRequest item)
-        {
-            _serviceApi.Start(LmServiceIdentity.CreateName(item.KktSerial));
         }
 
         public void RequestStop(LmServiceProvisioningItemRequest item)
@@ -280,42 +141,6 @@ namespace EsmTspiot.ServiceProvisioner
             {
                 WaitForServiceStopped(serviceName);
             }
-        }
-
-        public LmReadinessResult Probe(LmServiceProvisioningItemRequest item)
-        {
-            return _readiness.WaitUntilReady(
-                item,
-                DeriveServiceSid(item.KktSerial),
-                ReadyTimeoutMilliseconds);
-        }
-
-        public void WriteManifest(
-            LmServiceProvisioningItemRequest item,
-            LmVerifiedController controller,
-            string serviceSid,
-            string operationId)
-        {
-            ManagedServiceManifest manifest = ManagedServiceManifest.Create(
-                item.KktSerial,
-                new LmGatewayPorts(item.GrpcPort, item.RestPort),
-                new LmGatewayTarget(item.TargetAddress, item.TargetPort),
-                controller.Version,
-                controller.BinarySha256,
-                controller.SupervisorSha256,
-                serviceSid,
-                operationId,
-                ManagedServiceLifecycleState.ServiceReady,
-                _supervisorBinary.FullPath,
-                _manifestStore.GetProfileRoot(item.KktSerial));
-            _manifestStore.Write(manifest);
-        }
-
-        public void CompleteJournal(
-            LmServiceProvisioningItemRequest item,
-            string operationId)
-        {
-            _journalStore.DeleteForKkt(item.KktSerial);
         }
 
         public IList<string> GetManagedSerials()
@@ -703,14 +528,6 @@ namespace EsmTspiot.ServiceProvisioner
             throw new InvalidOperationException("Служба не остановилась в отведенное время.");
         }
 
-        private static ManagedLmServiceSpec ToSpec(LmServiceProvisioningItemRequest item)
-        {
-            return new ManagedLmServiceSpec(
-                item.KktSerial,
-                new LmGatewayPorts(item.GrpcPort, item.RestPort),
-                new LmGatewayTarget(item.TargetAddress, item.TargetPort));
-        }
-
         private static IDisposable AcquireMutex(string name)
         {
             Mutex mutex = new Mutex(false, name);
@@ -730,25 +547,6 @@ namespace EsmTspiot.ServiceProvisioner
                 mutex.Dispose();
                 throw;
             }
-        }
-
-        private static ManagedServiceLifecycleState MapJournalState(
-            LmProvisioningJournalStage stage)
-        {
-            if (stage == LmProvisioningJournalStage.Failed)
-            {
-                return ManagedServiceLifecycleState.Failed;
-            }
-            if (stage == LmProvisioningJournalStage.Started ||
-                stage == LmProvisioningJournalStage.ServiceReady)
-            {
-                return ManagedServiceLifecycleState.Creating;
-            }
-            if (stage == LmProvisioningJournalStage.Updating)
-            {
-                return ManagedServiceLifecycleState.Updating;
-            }
-            return ManagedServiceLifecycleState.Creating;
         }
 
         private sealed class MutexLease : IDisposable
