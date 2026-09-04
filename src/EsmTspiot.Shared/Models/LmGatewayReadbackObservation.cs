@@ -1,4 +1,4 @@
-namespace EsmTspiot.Shared.Models
+﻿namespace EsmTspiot.Shared.Models
 {
     public sealed class LmGatewayReadbackObservation
     {
@@ -14,6 +14,13 @@ namespace EsmTspiot.Shared.Models
         public string LmStatus { get; set; }
         public string LmVersion { get; set; }
         public string Details { get; set; }
+
+        /// <summary>
+        /// Замаскированная выдержка из ответа /api/v2/info. Нужна, когда
+        /// ЕСМ принял привязку, но не сообщает её обратно: без ответа
+        /// причина не видна ни в журнале, ни в поле.
+        /// </summary>
+        public string InfoResponseBody { get; set; }
 
         public bool IsVerified
         {

@@ -195,6 +195,8 @@ namespace EsmTspiot.WinForms.Shared
                                 SensitiveDataMasker.Mask(progress.Message) +
                                 "\r\n");
                             Log(DescribeFailedExchange(progress.Response));
+                            if (!string.IsNullOrWhiteSpace(progress.Diagnostics))
+                                Log(progress.Diagnostics + Environment.NewLine);
                         },
                         cancellation).ConfigureAwait(true);
                 for (int index = 0; index < binding.Results.Count; index++)

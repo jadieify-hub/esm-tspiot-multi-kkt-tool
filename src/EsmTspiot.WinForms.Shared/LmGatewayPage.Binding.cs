@@ -135,6 +135,10 @@ namespace EsmTspiot.WinForms.Shared
                     Log(SensitiveDataMasker.Mask(progress.Message) + "\r\n");
                 }
                 Log(DescribeFailedExchange(progress.Response));
+                if (!string.IsNullOrWhiteSpace(progress.Diagnostics))
+                {
+                    Log(progress.Diagnostics + Environment.NewLine);
+                }
             });
         }
 

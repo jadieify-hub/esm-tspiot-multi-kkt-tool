@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Threading;
@@ -11,6 +11,8 @@ namespace EsmTspiot.Shared.Services
 {
     public sealed class LmGatewayReadbackWorkflow
     {
+        private const int MaximumInfoBodyLength = 900;
+
         private readonly ITspiotApiClient _apiClient;
 
         public LmGatewayReadbackWorkflow(ITspiotApiClient apiClient)
@@ -78,6 +80,8 @@ namespace EsmTspiot.Shared.Services
                     : "Привязку не удалось проверить через /api/v2/info.";
                 return observation;
             }
+
+            observation.InfoResponseBody = DescribeInfoBody(response.ResponseBody);
 
             LmGatewayInfo info;
             if (!LmGatewayInfoParser.TryParse(response.ResponseBody, out info))
@@ -271,6 +275,25 @@ namespace EsmTspiot.Shared.Services
                 details += " Версия: " + observation.LmVersion + ".";
             }
             return details;
+        }
+
+        /// <summary>
+        /// Замаскированная и обрезанная выдержка из ответа ЕСМ. Она нужна
+        /// именно тогда, когда сверка не сошлась: иначе в журнале остаётся
+        /// вывод без исходных данных, и проверить его нечем.
+        /// </summary>
+        private static string DescribeInfoBody(string body)
+        {
+            string value = (body ?? string.Empty).Trim();
+            if (value.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            value = SensitiveDataMasker.Mask(value);
+            return value.Length > MaximumInfoBodyLength
+                ? value.Substring(0, MaximumInfoBodyLength) + "..."
+                : value;
         }
 
         private static string Trim(string value)

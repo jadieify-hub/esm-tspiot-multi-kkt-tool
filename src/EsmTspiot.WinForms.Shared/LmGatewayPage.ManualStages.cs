@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Globalization;
@@ -407,6 +407,12 @@ namespace EsmTspiot.WinForms.Shared
                     LmContourReadbackPolicy.Describe(observation));
                 outcome.EsmLines.Add(line);
                 Log(line + "\r\n");
+                // При расхождении показываем сам ответ ЕСМ: иначе строка
+                // сверки ничем не проверяется.
+                if (state != LmContourReadbackState.Verified &&
+                    !string.IsNullOrWhiteSpace(observation.InfoResponseBody))
+                    Log("    Ответ /api/v2/info: " +
+                        observation.InfoResponseBody + Environment.NewLine);
             }
             return acceptable;
         }
