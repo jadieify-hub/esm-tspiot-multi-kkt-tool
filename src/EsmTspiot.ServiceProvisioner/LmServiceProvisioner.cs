@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using EsmTspiot.Shared.Models;
 using EsmTspiot.Shared.Services;
 
@@ -60,50 +59,16 @@ namespace EsmTspiot.ServiceProvisioner
         }
     }
 
-    internal interface ILockedControllerInstaller : IDisposable
-    {
-        LmControllerInstallResult Run();
-    }
-
-    internal interface ILmProvisioningPlatform
-    {
-        IDisposable AcquireMachineLock();
-        void RequestStop(LmServiceProvisioningItemRequest item);
-        IList<string> GetManagedSerials();
-        void MarkVersionPending(string kktSerial, string operationId);
-        ILockedControllerInstaller PrepareInstaller(
-            LmControllerInstallerSelection selection,
-            string operationId);
-    }
-
     internal sealed class LmServiceProvisioner
     {
-        private readonly ILmProvisioningPlatform _platform;
         private readonly ILmServiceRemovalPlatform _removalPlatform;
 
-        internal LmServiceProvisioner(ILmProvisioningPlatform platform)
+        internal LmServiceProvisioner(ILmServiceRemovalPlatform removalPlatform)
         {
-            if (platform == null)
-            {
-                throw new ArgumentNullException("platform");
-            }
-            _platform = platform;
-            _removalPlatform = platform as ILmServiceRemovalPlatform;
-        }
-
-        internal LmServiceProvisioner(
-            ILmProvisioningPlatform platform,
-            ILmServiceRemovalPlatform removalPlatform)
-        {
-            if (platform == null)
-            {
-                throw new ArgumentNullException("platform");
-            }
             if (removalPlatform == null)
             {
                 throw new ArgumentNullException("removalPlatform");
             }
-            _platform = platform;
             _removalPlatform = removalPlatform;
         }
 
@@ -185,47 +150,6 @@ namespace EsmTspiot.ServiceProvisioner
             return result;
         }
 
-        internal LmControllerInstallResult InstallControllerVersion(
-            LmServiceProvisioningBatchRequest request)
-        {
-            ValidationResult validation = ProvisioningRequestValidator.Validate(request);
-            if (!validation.IsValid || request.Operation != LmServiceOperation.InstallControllerVersion)
-            {
-                return new LmControllerInstallResult
-                {
-                    Status = LmServiceProvisioningStatus.Failed,
-                    Message = validation.IsValid
-                        ? "Запрошена неверная операция помощника."
-                        : validation.JoinMessages(),
-                    OperationId = request == null ? string.Empty : request.OperationId,
-                    PlanHash = request == null ? string.Empty : request.PlanHash
-                };
-            }
-
-            try
-            {
-                using (_platform.AcquireMachineLock())
-                using (ILockedControllerInstaller installer = _platform.PrepareInstaller(
-                    request.InstallerSelection,
-                    request.OperationId))
-                {
-                    return RunPreparedControllerInstaller(request, installer);
-                }
-            }
-            catch (Exception ex)
-            {
-                return new LmControllerInstallResult
-                {
-                    Status = ex is NotSupportedException
-                        ? LmServiceProvisioningStatus.UnsupportedController
-                        : LmServiceProvisioningStatus.Failed,
-                    Message = SafeMessage(ex),
-                    OperationId = request == null ? string.Empty : request.OperationId,
-                    PlanHash = request == null ? string.Empty : request.PlanHash
-                };
-            }
-        }
-
         private static LmServiceProvisioningBatchResult CreateBatchResult(
             LmServiceProvisioningBatchRequest request)
         {
@@ -259,43 +183,6 @@ namespace EsmTspiot.ServiceProvisioner
                     LmServiceProvisioningStatus.Failed,
                     message));
             }
-        }
-
-        private LmControllerInstallResult RunPreparedControllerInstaller(
-            LmServiceProvisioningBatchRequest request,
-            ILockedControllerInstaller installer)
-        {
-            List<string> serials = new List<string>(_platform.GetManagedSerials());
-            serials.Sort(StringComparer.Ordinal);
-            for (int index = 0; index < serials.Count; index++)
-            {
-                _platform.MarkVersionPending(serials[index], request.OperationId);
-            }
-            for (int index = 0; index < serials.Count; index++)
-            {
-                _platform.RequestStop(new LmServiceProvisioningItemRequest
-                {
-                    KktSerial = serials[index]
-                });
-            }
-
-            LmControllerInstallResult installed = installer.Run();
-            installed.OperationId = request.OperationId;
-            installed.PlanHash = request.PlanHash;
-            return installed;
-        }
-
-        private static LmServiceProvisioningItemResult CreateItemResult(
-            LmServiceProvisioningItemRequest item,
-            LmServiceProvisioningStatus status,
-            string message)
-        {
-            return new LmServiceProvisioningItemResult
-            {
-                KktSerial = item == null ? string.Empty : item.KktSerial,
-                Status = status,
-                Message = message ?? string.Empty
-            };
         }
 
         private static LmServiceProvisioningItemResult CreateRemovalResult(
@@ -344,17 +231,5 @@ namespace EsmTspiot.ServiceProvisioner
             return status;
         }
 
-        private static string SafeMessage(Exception exception)
-        {
-            if (exception is InvalidDataException ||
-                exception is InvalidOperationException ||
-                exception is NotSupportedException ||
-                exception is UnauthorizedAccessException ||
-                exception is IOException)
-            {
-                return exception.Message;
-            }
-            return "Операция завершилась ошибкой: " + exception.GetType().Name + ".";
-        }
     }
 }

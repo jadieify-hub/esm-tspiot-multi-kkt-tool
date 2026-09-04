@@ -59,7 +59,13 @@ namespace EsmTspiot.ServiceProvisioner
             }
             else if (request.Operation == LmServiceOperation.InstallControllerVersion)
             {
-                ValidateInstall(request, result);
+                // Установку контроллера выполняет вендорный установщик ЕСП,
+                // помощник только клонирует уже установленную службу.
+                // Номер операции занят навсегда, чтобы старый вызов не попал
+                // в новую операцию, а сам запрос отвергается на входе.
+                result.Add(
+                    "Операция установки версии контроллера ЛМ ЧЗ " +
+                    "больше не поддерживается.");
             }
             else if (request.Operation == LmServiceOperation.RemoveManaged)
             {
@@ -119,7 +125,7 @@ namespace EsmTspiot.ServiceProvisioner
             LmServiceProvisioningBatchRequest request,
             ValidationResult result)
         {
-            if (HasItems(request) || request.InstallerSelection != null ||
+            if (HasItems(request) ||
                 request.RemovalConfirmation != null || request.CleanupConfirmation != null ||
                 HasRemovalConfirmations(request) || HasLocalModulePayload(request))
             {
@@ -226,7 +232,7 @@ namespace EsmTspiot.ServiceProvisioner
             LmServiceProvisioningBatchRequest request,
             ValidationResult result)
         {
-            if (HasItems(request) || request.InstallerSelection != null ||
+            if (HasItems(request) ||
                 request.RemovalConfirmation != null ||
                 request.CleanupConfirmation != null ||
                 HasRemovalConfirmations(request) ||
@@ -301,41 +307,6 @@ namespace EsmTspiot.ServiceProvisioner
                     !IsHex(item.ExpectedManifestSha256, 64))
                     result.Add("Отпечаток MSI ЛМ имеет неверный формат.");
             }
-        }
-
-        internal static ValidationResult ValidateInstallerSelection(
-            LmControllerInstallerSelection selection)
-        {
-            ValidationResult result = new ValidationResult();
-            ValidateInstallerShape(selection, result);
-            return result;
-        }
-
-        internal static ValidationResult ValidateInstallerSelection(
-            LmControllerInstallerSelection selected,
-            LmControllerInstallerSelection observed)
-        {
-            ValidationResult result = new ValidationResult();
-            ValidateInstallerShape(selected, result);
-            ValidateInstallerShape(observed, result);
-            if (!result.IsValid)
-            {
-                return result;
-            }
-
-            if (!string.Equals(selected.SourcePath, observed.SourcePath, StringComparison.Ordinal) ||
-                !string.Equals(selected.FileName, observed.FileName, StringComparison.Ordinal) ||
-                selected.ByteLength != observed.ByteLength ||
-                !CanonicalLmPlanHasher.FixedTimeEqualsHex(selected.Sha256, observed.Sha256) ||
-                !string.Equals(selected.FileVersion, observed.FileVersion, StringComparison.Ordinal) ||
-                !string.Equals(selected.ProductVersion, observed.ProductVersion, StringComparison.Ordinal) ||
-                !string.Equals(selected.SignerSubject, observed.SignerSubject, StringComparison.Ordinal) ||
-                !string.Equals(selected.SignerThumbprint, observed.SignerThumbprint, StringComparison.OrdinalIgnoreCase))
-            {
-                result.Add("Выбранный файл установщика изменился или был подменен после подтверждения.");
-            }
-
-            return result;
         }
 
         internal static ValidationResult ValidateLocalModuleInstallerSelection(
@@ -448,24 +419,11 @@ namespace EsmTspiot.ServiceProvisioner
             return result;
         }
 
-        private static void ValidateInstall(
-            LmServiceProvisioningBatchRequest request,
-            ValidationResult result)
-        {
-            if (HasItems(request) || request.RemovalConfirmation != null ||
-                request.CleanupConfirmation != null || HasRemovalConfirmations(request) ||
-                HasLocalModulePayload(request))
-            {
-                result.Add("InstallControllerVersion принимает ровно один выбранный установщик.");
-            }
-            ValidateInstallerShape(request.InstallerSelection, result);
-        }
-
         private static void ValidateRemove(
             LmServiceProvisioningBatchRequest request,
             ValidationResult result)
         {
-            if (HasItems(request) || request.InstallerSelection != null ||
+            if (HasItems(request) ||
                 request.CleanupConfirmation != null || HasRemovalConfirmations(request) ||
                 HasLocalModulePayload(request))
             {
@@ -484,7 +442,7 @@ namespace EsmTspiot.ServiceProvisioner
             LmServiceProvisioningBatchRequest request,
             ValidationResult result)
         {
-            if (HasItems(request) || request.InstallerSelection != null ||
+            if (HasItems(request) ||
                 request.RemovalConfirmation != null || HasRemovalConfirmations(request) ||
                 HasLocalModulePayload(request))
             {
@@ -522,7 +480,7 @@ namespace EsmTspiot.ServiceProvisioner
             LmServiceProvisioningBatchRequest request,
             ValidationResult result)
         {
-            if (HasItems(request) || request.InstallerSelection != null ||
+            if (HasItems(request) ||
                 request.RemovalConfirmation != null || request.CleanupConfirmation != null ||
                 HasLocalModulePayload(request))
             {
@@ -613,42 +571,6 @@ namespace EsmTspiot.ServiceProvisioner
         private static bool IsFingerprint(LmManifestFingerprint fingerprint)
         {
             return fingerprint != null && IsHex(fingerprint.Sha256, 64);
-        }
-
-        private static void ValidateInstallerShape(
-            LmControllerInstallerSelection selection,
-            ValidationResult result)
-        {
-            if (selection == null)
-            {
-                result.Add("Не выбран установщик контроллера ЛМ.");
-                return;
-            }
-            if (string.IsNullOrEmpty(selection.SourcePath) ||
-                !Path.IsPathRooted(selection.SourcePath) ||
-                !string.Equals(Path.GetFileName(selection.SourcePath), selection.FileName, StringComparison.Ordinal))
-            {
-                result.Add("Путь и имя выбранного установщика не совпадают.");
-            }
-            if (!IsVersionedInstallerFileName(selection.FileName))
-            {
-                result.Add("Имя установщика должно иметь вид esm-lm-controller_<version>-windows-setup.exe.");
-            }
-            if (selection.ByteLength <= 0 || !IsHex(selection.Sha256, 64))
-            {
-                result.Add("Размер и SHA-256 установщика неверны.");
-            }
-            if (string.IsNullOrWhiteSpace(selection.FileVersion) ||
-                selection.ProductVersion == null ||
-                string.IsNullOrWhiteSpace(selection.SignerSubject) ||
-                !IsHex(selection.SignerThumbprint, 40))
-            {
-                result.Add("Метаданные версии или подписанта установщика неверны.");
-            }
-            if (!selection.StopManagedInstancesWarningAccepted)
-            {
-                result.Add("Не подтверждена остановка всех управляемых экземпляров на время установки.");
-            }
         }
 
         private static void ValidateLocalModuleInstallerShape(
@@ -782,35 +704,6 @@ namespace EsmTspiot.ServiceProvisioner
         {
             Guid parsed;
             return !string.IsNullOrWhiteSpace(value) && Guid.TryParse(value, out parsed);
-        }
-
-        private static bool IsVersionedInstallerFileName(string value)
-        {
-            const string prefix = "esm-lm-controller_";
-            const string suffix = "-windows-setup.exe";
-            if (string.IsNullOrEmpty(value) ||
-                !value.StartsWith(prefix, StringComparison.Ordinal) ||
-                !value.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
-            {
-                return false;
-            }
-
-            string version = value.Substring(prefix.Length, value.Length - prefix.Length - suffix.Length);
-            if (version.Length == 0)
-            {
-                return false;
-            }
-            for (int index = 0; index < version.Length; index++)
-            {
-                char character = version[index];
-                if ((character < '0' || character > '9') && character != '.')
-                {
-                    return false;
-                }
-            }
-
-            return version[0] != '.' && version[version.Length - 1] != '.' &&
-                version.IndexOf("..", StringComparison.Ordinal) < 0;
         }
 
         private static bool IsValidSid(string value)

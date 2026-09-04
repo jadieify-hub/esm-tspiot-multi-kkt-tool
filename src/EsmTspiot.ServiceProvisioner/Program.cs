@@ -169,9 +169,8 @@ namespace EsmTspiot.ServiceProvisioner
                             }
                         }
                         WindowsLmProvisioningPlatform platform =
-                            WindowsLmProvisioningPlatform.Create(
-                                request.InitiatingSid,
-                                request.OperationId);
+                            WindowsLmProvisioningPlatform.CreateForRemoval(
+                                request.InitiatingSid);
                         LmServiceProvisioner provisioner = new LmServiceProvisioner(platform);
                         if (request.Operation == LmServiceOperation.RemoveManaged)
                         {
@@ -255,18 +254,6 @@ namespace EsmTspiot.ServiceProvisioner
             LmServiceProvisioningStatus status,
             string message)
         {
-            if (request.Operation == LmServiceOperation.InstallControllerVersion)
-            {
-                channel.WriteMessage(new LmControllerInstallResult
-                {
-                    Status = status,
-                    Message = message,
-                    OperationId = request.OperationId,
-                    PlanHash = request.PlanHash
-                });
-                return;
-            }
-
             LmServiceProvisioningBatchResult result = new LmServiceProvisioningBatchResult
             {
                 SchemaVersion = request.SchemaVersion,
@@ -440,9 +427,8 @@ namespace EsmTspiot.ServiceProvisioner
                     else
                     {
                         WindowsLmProvisioningPlatform legacyPlatform =
-                            WindowsLmProvisioningPlatform.Create(
-                                request.InitiatingSid,
-                                request.OperationId);
+                            WindowsLmProvisioningPlatform.CreateForRemoval(
+                                request.InitiatingSid);
                         result.Items.Add(new LmServiceProvisioner(
                             legacyPlatform).RemoveManaged(single));
                     }

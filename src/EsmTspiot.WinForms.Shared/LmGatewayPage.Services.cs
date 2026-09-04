@@ -20,15 +20,12 @@ namespace EsmTspiot.WinForms.Shared
 {
     public sealed partial class LmGatewayPage
     {
-        private readonly Button _selectInstallerButton = new Button();
         private readonly Button _selectLocalModuleInstallerButton = new Button();
         private readonly Button _installControllerButton = new Button();
         private readonly Button _removeServiceButton = new Button();
         private readonly Button _removeAllServicesButton = new Button();
         private readonly Button _cleanupButton = new Button();
-        private readonly TextBox _installerPathTextBox = new TextBox();
         private readonly TextBox _localModuleInstallerPathTextBox = new TextBox();
-        private readonly Label _installerStatusLabel = new Label();
         private readonly Label _localModuleInstallerStatusLabel = new Label();
         private readonly Label _setupActionHintLabel = new Label();
         private readonly ToolTip _serviceToolTip = new ToolTip();
@@ -50,7 +47,6 @@ namespace EsmTspiot.WinForms.Shared
         private LmGatewayProbe _serviceProbe;
         private ReadOnlyTcpListenerOwnerReader _tcpListenerReader;
         private LmGatewayRemovalWorkflow _removalWorkflow;
-        private LmControllerInstallerSelection _installerSelection;
         private LocalModuleInstallerSelection _localModuleInstallerSelection;
         private LmGatewayDiscovery _currentDiscovery;
         private bool _helperAvailable;
@@ -170,34 +166,6 @@ namespace EsmTspiot.WinForms.Shared
             return group;
         }
 
-        public bool SelectControllerInstaller(IWin32Window owner)
-        {
-            ClearInstallerSelection();
-            try
-            {
-                _installerSelection = LmControllerInstallerPicker.SelectAndInspect(owner ?? this);
-                if (_installerSelection == null)
-                {
-                    _installerStatusLabel.Text = "Выбор отменён; путь к файлу очищен.";
-                    SaveInstallerPaths();
-                    UpdateActionState();
-                    return false;
-                }
-                ApplyControllerInstallerSelection();
-                SaveInstallerPaths();
-                RaiseInstallerSelectionChanged();
-            }
-            catch (Exception ex)
-            {
-                ClearInstallerSelection();
-                SaveInstallerPaths();
-                MessageBox.Show(this, SensitiveDataMasker.Mask(ex.Message),
-                    "Проверка установщика", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-            UpdateActionState();
-            return _installerSelection != null;
-        }
-
         public bool SelectLocalModuleInstaller(IWin32Window owner)
         {
             ClearLocalModuleInstallerSelection();
@@ -243,21 +211,6 @@ namespace EsmTspiot.WinForms.Shared
             if (_localModuleInstallerSelection != null) return true;
             SelectLocalModuleInstaller(owner);
             return _localModuleInstallerSelection != null;
-        }
-
-        public bool SelectRequiredInstallers(IWin32Window owner)
-        {
-            if (_installerSelection == null &&
-                !SelectControllerInstaller(owner))
-            {
-                return false;
-            }
-            if (_localModuleInstallerSelection == null &&
-                !SelectLocalModuleInstaller(owner))
-            {
-                return false;
-            }
-            return true;
         }
 
         private async Task StartAutomaticSetupAsync()
@@ -979,7 +932,6 @@ namespace EsmTspiot.WinForms.Shared
             LmServiceInventoryItem selected = GetSelectedInventoryItem();
             bool managed = selected != null && selected.Role == LmServiceRole.Managed;
             LmGatewayBindingSessionRow selectedSession = GetSelectedSessionRow();
-            _selectInstallerButton.Enabled = false;
             _selectLocalModuleInstallerButton.Enabled = idle;
             _installControllerButton.Enabled = idle && _helperAvailable && hasKkts;
             UpdateManualStageActionState(idle, hasKkts);
@@ -1147,7 +1099,7 @@ namespace EsmTspiot.WinForms.Shared
             return 0;
         }
 
-        private void RestoreInstallerSelections()
+        private void RestoreInstallerSelection()
         {
             if (_packagePathStore == null)
             {
@@ -1171,27 +1123,6 @@ namespace EsmTspiot.WinForms.Shared
             }
 
             bool discardInvalidPath = false;
-            if (!string.IsNullOrEmpty(paths.ControllerInstallerPath))
-            {
-                try
-                {
-                    _installerSelection = LmControllerInstallerPicker.Inspect(
-                        paths.ControllerInstallerPath);
-                    ApplyControllerInstallerSelection();
-                }
-                catch (Exception ex)
-                {
-                    if (!IsRecoverableInstallerPathException(ex))
-                    {
-                        throw;
-                    }
-                    ClearInstallerSelection();
-                    discardInvalidPath = true;
-                    Log("Сохранённый установщик контроллера больше не прошёл проверку: " +
-                        ex.GetType().Name + ". " +
-                        SensitiveDataMasker.Mask(ex.Message) + "\r\n");
-                }
-            }
             if (!string.IsNullOrEmpty(paths.LocalModuleInstallerPath))
             {
                 try
@@ -1218,21 +1149,6 @@ namespace EsmTspiot.WinForms.Shared
             {
                 SaveInstallerPaths();
             }
-        }
-
-        private void ApplyControllerInstallerSelection()
-        {
-            if (_installerSelection == null)
-            {
-                return;
-            }
-            _installerPathTextBox.Text = _installerSelection.SourcePath;
-            _serviceToolTip.SetToolTip(
-                _installerPathTextBox,
-                _installerSelection.SourcePath);
-            _installerStatusLabel.Text = _installerSelection.FileName +
-                " | версия " + _installerSelection.FileVersion +
-                " | цифровая подпись проверена";
         }
 
         private void ApplyLocalModuleInstallerSelection()
@@ -1262,9 +1178,6 @@ namespace EsmTspiot.WinForms.Shared
             try
             {
                 _packagePathStore.Save(
-                    _installerSelection == null
-                        ? string.Empty
-                        : _installerSelection.SourcePath,
                     _localModuleInstallerSelection == null
                         ? string.Empty
                         : _localModuleInstallerSelection.SourcePath);
@@ -1291,22 +1204,6 @@ namespace EsmTspiot.WinForms.Shared
                 ex is NotSupportedException ||
                 ex is CryptographicException ||
                 ex is System.Security.SecurityException;
-        }
-
-        private void ClearInstallerSelection()
-        {
-            if (_installerSelection != null)
-            {
-                _installerSelection.SourcePath = string.Empty;
-            }
-            _installerSelection = null;
-            _installerPathTextBox.Clear();
-            _serviceToolTip.SetToolTip(_installerPathTextBox, string.Empty);
-            if (!IsDisposed)
-            {
-                _installerStatusLabel.Text = "Установщик не выбран.";
-            }
-            RaiseInstallerSelectionChanged();
         }
 
         private void ClearLocalModuleInstallerSelection()

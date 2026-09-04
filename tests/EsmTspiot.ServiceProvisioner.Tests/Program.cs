@@ -97,6 +97,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Provisioning protocol accepts bounded batch", ProvisioningProtocolAcceptsBoundedBatch);
             Run("Provisioning protocol rejects unknown schema or operation", ProvisioningProtocolRejectsUnknownSchemaOrOperation);
             Run("Provisioning protocol rejects plan hash mismatch", ProvisioningProtocolRejectsPlanHashMismatch);
+            Run("Controller install operation is retired", ControllerInstallOperationIsRetired);
             Run("Managed gateway batch operation is retired", ManagedGatewayBatchOperationIsRetired);
             Run("Journal store keeps independent rows per KKT", JournalStoreKeepsIndependentRowsPerKkt);
             Run("Direct controller protocol v2 accepts canonical batch", DirectControllerProtocolV2AcceptsCanonicalBatch);
@@ -111,8 +112,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Managed stack removal accepts its displayed fingerprint without controller ports", ManagedStackRemovalAcceptsDisplayedFingerprintWithoutControllerPorts);
             Run("Managed cleanup accepts only its displayed managed-state fingerprint", ManagedCleanupAcceptsOnlyDisplayedManagedStateFingerprint);
             Run("Provisioning protocol exposes no credentials paths or commands", ProvisioningProtocolExposesNoCredentialsPathsOrCommands);
-            Run("Installer operation accepts only one verified setup selection", InstallerOperationAcceptsOnlyOneVerifiedSetupSelection);
-            Run("Installer operation rejects stale or substituted source file", InstallerOperationRejectsStaleOrSubstitutedSourceFile);
             Run("Local module verifier accepts only the exact locked MSI", LocalModuleVerifierAcceptsOnlyExactLockedMsi);
             Run("Local module verifier accepts safe pinned signer identity", LocalModuleVerifierAcceptsSafePinnedSignerIdentity);
             Run("WinTrust matches safe local module identity only with pinned thumbprint", WinTrustMatchesSafeLocalModuleIdentityOnlyWithPinnedThumbprint);
@@ -164,9 +163,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Official controller locator requires installed product registration", OfficialControllerLocatorRequiresInstalledProductRegistration);
             Run("Installed controller product requires exact registry values", InstalledControllerProductRequiresExactRegistryValues);
             Run("Supported controller profile pins the vendor, not the version", SupportedControllerProfilePinsVendorNotVersion);
-            Run("Official installer verifier locks verifies and stages atomically", OfficialInstallerVerifierLocksVerifiesAndStagesAtomically);
-            Run("Official installer verifier rejects filename signer version or hash mismatch", OfficialInstallerVerifierRejectsFilenameSignerVersionOrHashMismatch);
-            Run("Supported installer uses the fixed NSIS silent switch", SupportedInstallerUsesFixedNsisSilentSwitch);
             Run("WinTrust marshals the action GUID as one native pointer", WinTrustMarshalsActionGuidAsOneNativePointer);
             Run("Manifest path is derived only from KKT serial", ManifestPathIsDerivedOnlyFromKktSerial);
             Run("Manifest and profile stores reject reparse points", ManifestAndProfileStoresRejectReparsePoints);
@@ -209,9 +205,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Direct controller profile writes isolated ports without credentials", DirectControllerProfileWritesIsolatedPortsWithoutCredentials);
             Run("Direct controller manifest safely upgrades legacy target port", DirectControllerManifestSafelyUpgradesLegacyTargetPort);
             Run("Windows direct controller platform creates and removes exact clone", WindowsDirectControllerPlatformCreatesAndRemovesExactClone);
-            Run("Install version marks every managed instance verification pending before launch", InstallVersionMarksEveryManagedInstanceVerificationPendingBeforeLaunch);
-            Run("Install version never runs a substituted or unlocked installer", InstallVersionNeverRunsSubstitutedOrUnlockedInstaller);
-            Run("Install version leaves services stopped when verification fails", InstallVersionLeavesServicesStoppedWhenVerificationFails);
             Run("Remove deletes only fully owned freshly confirmed service", RemoveDeletesOnlyFullyOwnedFreshlyConfirmedService);
             Run("Remove all managed processes every confirmed service in one batch", RemoveAllManagedProcessesEveryConfirmedServiceInOneBatch);
             Run("Remove blocks official base service", RemoveBlocksOfficialBaseService);
@@ -785,6 +778,26 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             AssertContains(validation.JoinMessages(), "SHA-256");
         }
 
+        private static void ControllerInstallOperationIsRetired()
+        {
+            LmServiceProvisioningBatchRequest request =
+                CreateRequest(LmServiceOperation.InstallControllerVersion);
+            request.PlanHash = CanonicalLmPlanHasher.Compute(request);
+
+            ValidationResult validation =
+                ProvisioningRequestValidator.Validate(request);
+
+            AssertFalse(validation.IsValid,
+                "The retired controller-install operation must be refused at the door.");
+            AssertContains(
+                validation.JoinMessages(),
+                "больше не поддерживается");
+            AssertEqual(
+                1,
+                (int)LmServiceOperation.InstallControllerVersion,
+                "The retired operation number must stay reserved.");
+        }
+
         private static void ManagedGatewayBatchOperationIsRetired()
         {
             LmServiceProvisioningBatchRequest request = CreateEnsureRequest(1);
@@ -984,7 +997,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 typeof(LmManifestFingerprint),
                 typeof(ManagedLocalModuleProvisioningItemRequest),
                 typeof(ManagedProvisioningSessionMessage),
-                typeof(LmControllerInstallResult),
                 typeof(LmServiceProvisioningItemResult),
                 typeof(LmServiceProvisioningBatchResult)
             };
@@ -1030,19 +1042,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     "Top-level protocol must not expose arbitrary execution fields.");
             }
 
-            PropertyInfo[] installerProperties = typeof(LmControllerInstallerSelection).GetProperties();
-            for (int index = 0; index < installerProperties.Length; index++)
-            {
-                string name = installerProperties[index].Name;
-                AssertFalse(name.IndexOf("Password", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                            name.IndexOf("Credential", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                            name.IndexOf("Command", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                            name.IndexOf("Argument", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                            name.IndexOf("Environment", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                            name.IndexOf("ServiceName", StringComparison.OrdinalIgnoreCase) >= 0,
-                    "Installer selection may expose only its scoped source path and displayed file metadata.");
-            }
-
             PropertyInfo[] localModuleInstallerProperties =
                 typeof(LocalModuleInstallerSelection).GetProperties();
             for (int index = 0; index < localModuleInstallerProperties.Length; index++)
@@ -1057,45 +1056,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                             name.IndexOf("Password", StringComparison.OrdinalIgnoreCase) >= 0,
                     "The LM installer selection must not expose execution or secret fields.");
             }
-        }
-
-        private static void InstallerOperationAcceptsOnlyOneVerifiedSetupSelection()
-        {
-            LmServiceProvisioningBatchRequest request = CreateInstallerRequest();
-
-            ValidationResult validation = ProvisioningRequestValidator.Validate(request);
-
-            AssertTrue(validation.IsValid, validation.JoinMessages());
-
-            LmServiceProvisioningBatchRequest mixed = CreateInstallerRequest();
-            mixed.Items.Add(CreateEnsureItem(1));
-            mixed.PlanHash = CanonicalLmPlanHasher.Compute(mixed);
-            AssertFalse(ProvisioningRequestValidator.Validate(mixed).IsValid,
-                "Installer operation must contain exactly one installer selection and no service items.");
-
-            LmServiceProvisioningBatchRequest wrongName = CreateInstallerRequest();
-            wrongName.InstallerSelection.FileName = "controller-setup.exe";
-            wrongName.PlanHash = CanonicalLmPlanHasher.Compute(wrongName);
-            AssertFalse(ProvisioningRequestValidator.Validate(wrongName).IsValid,
-                "Only the versioned official setup filename shape is accepted.");
-        }
-
-        private static void InstallerOperationRejectsStaleOrSubstitutedSourceFile()
-        {
-            LmControllerInstallerSelection selected = CreateInstallerSelection();
-            LmControllerInstallerSelection observed = CreateInstallerSelection();
-            AssertTrue(ProvisioningRequestValidator.ValidateInstallerSelection(selected, observed).IsValid,
-                "An unchanged locked source snapshot must match the displayed selection.");
-
-            LmControllerInstallerSelection substituted = CreateInstallerSelection();
-            substituted.Sha256 = new string('b', 64);
-            AssertFalse(ProvisioningRequestValidator.ValidateInstallerSelection(selected, substituted).IsValid,
-                "A substituted source hash must fail before installer execution.");
-
-            LmControllerInstallerSelection stale = CreateInstallerSelection();
-            stale.ByteLength++;
-            AssertFalse(ProvisioningRequestValidator.ValidateInstallerSelection(selected, stale).IsValid,
-                "A changed source length must fail before installer execution.");
         }
 
         private static void LocalModuleVerifierAcceptsOnlyExactLockedMsi()
@@ -4745,7 +4705,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 string binaryPath = Path.Combine(root, "bin", "lmcontroller.exe");
                 Directory.CreateDirectory(Path.GetDirectoryName(binaryPath));
                 File.WriteAllBytes(binaryPath, Encoding.ASCII.GetBytes("trusted-controller"));
-                ControllerCapabilityProfile profile = CreateTestCapabilityProfile(root, binaryPath, null);
+                ControllerCapabilityProfile profile = CreateTestCapabilityProfile(root, binaryPath);
                 FakePathSafety safePaths = new FakePathSafety(true);
                 FakeFileTrustVerifier trust = new FakeFileTrustVerifier(profile.ControllerBinary, true);
 
@@ -4783,7 +4743,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 string binaryPath = Path.Combine(root, "bin", "lmcontroller.exe");
                 Directory.CreateDirectory(Path.GetDirectoryName(binaryPath));
                 File.WriteAllBytes(binaryPath, Encoding.ASCII.GetBytes("trusted-controller"));
-                ControllerCapabilityProfile profile = CreateTestCapabilityProfile(root, binaryPath, null);
+                ControllerCapabilityProfile profile = CreateTestCapabilityProfile(root, binaryPath);
                 FakeFileTrustVerifier rejectedTrust = new FakeFileTrustVerifier(
                     profile.ControllerBinary,
                     false,
@@ -5068,7 +5028,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 string binaryPath = Path.Combine(root, "bin", "lmcontroller.exe");
                 Directory.CreateDirectory(Path.GetDirectoryName(binaryPath));
                 File.WriteAllBytes(binaryPath, Encoding.ASCII.GetBytes("trusted-controller"));
-                ControllerCapabilityProfile profile = CreateTestCapabilityProfile(root, binaryPath, null);
+                ControllerCapabilityProfile profile = CreateTestCapabilityProfile(root, binaryPath);
 
                 VerifiedControllerBinaryResult result = new OfficialControllerLocator(
                     profile,
@@ -5155,26 +5115,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 "Подпись контроллера обязана иметь назначение Code Signing.");
             AssertContains(profile.ControllerBinary.SignerSubject, "JSC ESP");
 
-            AssertEqual(string.Empty, profile.Installer.FileName,
-                "Имя установщика содержит версию и потому не пинуется.");
-            AssertEqual(0L, profile.Installer.ByteLength,
-                "Размер установщика меняется от сборки к сборке.");
-            AssertEqual(string.Empty, profile.Installer.Sha256,
-                "Хеш установщика меняется от сборки к сборке.");
-            AssertEqual(string.Empty, profile.Installer.FileVersion,
-                "Версия установщика меняется от сборки к сборке.");
-            AssertEqual(string.Empty, profile.Installer.SignerThumbprint,
-                "Отпечаток сертификата установщика не пинуется.");
-            AssertEqual(PeMachine.Unknown, profile.Installer.Machine,
-                "Разрядность установщика не является границей доверия.");
-            AssertEqual("ЕСП Контроллер ЛМ ЧЗ", profile.Installer.ProductName,
-                "Имя продукта вендор не меняет и оно остаётся закреплённым.");
-            AssertEqual("ЕСП", profile.Installer.CompanyName,
-                "Издатель остаётся закреплённым.");
-            AssertTrue(profile.Installer.RequireCodeSigningEku,
-                "Подпись установщика обязана иметь назначение Code Signing.");
-            AssertContains(profile.Installer.SignerSubject, "JSC ESP");
-
             PropertyInfo serviceSidType = typeof(ControllerCapabilityProfile).GetProperty(
                 "ServiceSidType",
                 BindingFlags.Instance | BindingFlags.NonPublic);
@@ -5185,117 +5125,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 (WindowsServiceSidType)serviceSidType.GetValue(profile, null),
                 "У штатной службы контроллера нет значения SERVICE_SID_INFO.");
         }
-        private static void OfficialInstallerVerifierLocksVerifiesAndStagesAtomically()
-        {
-            string root = CreateTemporaryDirectory();
-            try
-            {
-                string source = Path.Combine(root, "source", "esm-lm-controller_1.6.3.2-windows-setup.exe");
-                Directory.CreateDirectory(Path.GetDirectoryName(source));
-                byte[] content = Encoding.UTF8.GetBytes("official-installer-content");
-                File.WriteAllBytes(source, content);
-                string stagingRoot = Path.Combine(root, "staging");
-                ControllerCapabilityProfile profile = CreateTestCapabilityProfile(root, null, source);
-                FakeFileTrustVerifier trust = new FakeFileTrustVerifier(profile.Installer, true);
-                LmControllerInstallerSelection selection = CreateSelectionFromExpectation(source, profile.Installer);
-                OfficialControllerInstallerVerifier verifier = new OfficialControllerInstallerVerifier(
-                    profile,
-                    trust,
-                    new FakePathSafety(true),
-                    stagingRoot,
-                    Guid.NewGuid().ToString("N"));
-
-                string stagedPath;
-                using (LockedInstallerArtifact artifact = verifier.VerifyStageAndLock(selection))
-                {
-                    stagedPath = artifact.FullPath;
-                    AssertTrue(File.Exists(stagedPath), "Expected an administrator-owned staged copy.");
-                    AssertFalse(string.Equals(source, stagedPath, StringComparison.OrdinalIgnoreCase),
-                        "Installer must never execute directly from the selected source path.");
-                    AssertEqual(Convert.ToBase64String(content), Convert.ToBase64String(File.ReadAllBytes(stagedPath)),
-                        "Staging must copy the exact locked bytes.");
-
-                    bool sourceLocked = false;
-                    try
-                    {
-                        using (FileStream ignored = new FileStream(
-                            source, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete))
-                        {
-                        }
-                    }
-                    catch (IOException)
-                    {
-                        sourceLocked = true;
-                    }
-                    AssertTrue(sourceLocked, "Source must remain locked against write/delete through staging.");
-                }
-
-                using (FileStream writable = new FileStream(
-                    source, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete))
-                {
-                    AssertTrue(writable.CanWrite, "Disposing the artifact must release the source lock.");
-                }
-            }
-            finally
-            {
-                Directory.Delete(root, true);
-            }
-        }
-
-        private static void OfficialInstallerVerifierRejectsFilenameSignerVersionOrHashMismatch()
-        {
-            string root = CreateTemporaryDirectory();
-            try
-            {
-                string source = Path.Combine(root, "esm-lm-controller_1.6.3.2-windows-setup.exe");
-                File.WriteAllBytes(source, Encoding.UTF8.GetBytes("official-installer-content"));
-                ControllerCapabilityProfile profile = CreateTestCapabilityProfile(root, null, source);
-                FakeFileTrustVerifier trust = new FakeFileTrustVerifier(profile.Installer, true);
-                OfficialControllerInstallerVerifier verifier = new OfficialControllerInstallerVerifier(
-                    profile,
-                    trust,
-                    new FakePathSafety(true),
-                    Path.Combine(root, "staging"),
-                    Guid.NewGuid().ToString("N"));
-
-                LmControllerInstallerSelection wrongName = CreateSelectionFromExpectation(source, profile.Installer);
-                wrongName.FileName = "controller-setup.exe";
-                AssertThrows<InvalidDataException>(delegate { verifier.VerifyStageAndLock(wrongName); },
-                    "Filename mismatch must fail before staging.");
-
-                LmControllerInstallerSelection wrongSigner = CreateSelectionFromExpectation(source, profile.Installer);
-                wrongSigner.SignerThumbprint = new string('f', 40);
-                AssertThrows<InvalidDataException>(delegate { verifier.VerifyStageAndLock(wrongSigner); },
-                    "Signer mismatch must fail before staging.");
-
-                LmControllerInstallerSelection wrongVersion = CreateSelectionFromExpectation(source, profile.Installer);
-                wrongVersion.FileVersion = "9.9.9.9";
-                AssertThrows<InvalidDataException>(delegate { verifier.VerifyStageAndLock(wrongVersion); },
-                    "Version mismatch must fail before staging.");
-
-                LmControllerInstallerSelection wrongHash = CreateSelectionFromExpectation(source, profile.Installer);
-                wrongHash.Sha256 = new string('e', 64);
-                AssertThrows<InvalidDataException>(delegate { verifier.VerifyStageAndLock(wrongHash); },
-                    "Hash mismatch must fail before staging.");
-            }
-            finally
-            {
-                Directory.Delete(root, true);
-            }
-        }
-
-        private static void SupportedInstallerUsesFixedNsisSilentSwitch()
-        {
-            ControllerCapabilityProfile profile =
-                ControllerCapabilityProfile.Supported();
-
-            AssertEqual("/S", profile.InstallerArguments,
-                "The verified NSIS package must use its case-sensitive silent switch.");
-            AssertEqual(CapabilityFactProvenance.OfficialPackage,
-                profile.Provenance["InstallerArguments"],
-                "Installer arguments must come from the fixed capability profile, never from UI input.");
-        }
-
         private static void WinTrustMarshalsActionGuidAsOneNativePointer()
         {
             MethodInfo nativeMethod = typeof(WinTrustVerifier).GetMethod(
@@ -7585,60 +7414,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             return result.ToString();
         }
 
-        private static void InstallVersionMarksEveryManagedInstanceVerificationPendingBeforeLaunch()
-        {
-            FakeLmProvisioningPlatform platform = new FakeLmProvisioningPlatform();
-            platform.ManagedSerials.Add("00105700000001");
-            platform.ManagedSerials.Add("00105700000002");
-
-            LmControllerInstallResult result = new LmServiceProvisioner(platform)
-                .InstallControllerVersion(CreateInstallerRequest());
-
-            AssertEqual(LmServiceProvisioningStatus.Succeeded, result.Status,
-                "A verified staged installer may complete.");
-            AssertEventOrder(platform.Events,
-                "PrepareInstaller", "VersionPending:00105700000001",
-                "VersionPending:00105700000002", "Stop:00105700000001",
-                "Stop:00105700000002", "LaunchInstaller");
-            AssertFalse(platform.ContainsEventPrefix("Start:"),
-                "Managed services must not restart automatically after installer exit.");
-        }
-
-        private static void InstallVersionNeverRunsSubstitutedOrUnlockedInstaller()
-        {
-            FakeLmProvisioningPlatform platform = new FakeLmProvisioningPlatform();
-            platform.RejectInstaller = true;
-
-            LmControllerInstallResult result = new LmServiceProvisioner(platform)
-                .InstallControllerVersion(CreateInstallerRequest());
-
-            AssertEqual(LmServiceProvisioningStatus.Failed, result.Status,
-                "A substituted installer must fail before machine state changes.");
-            AssertFalse(platform.Events.Contains("LaunchInstaller") ||
-                        platform.ContainsEventPrefix("VersionPending:"),
-                "An unverified or unlocked source must never launch or stop services.");
-        }
-
-        private static void InstallVersionLeavesServicesStoppedWhenVerificationFails()
-        {
-            FakeLmProvisioningPlatform platform = new FakeLmProvisioningPlatform();
-            platform.ManagedSerials.Add("00105700000001");
-            platform.InstallerResult = new LmControllerInstallResult
-            {
-                Status = LmServiceProvisioningStatus.UnsupportedController,
-                Message = "installed identity mismatch"
-            };
-
-            LmControllerInstallResult result = new LmServiceProvisioner(platform)
-                .InstallControllerVersion(CreateInstallerRequest());
-
-            AssertEqual(LmServiceProvisioningStatus.UnsupportedController, result.Status,
-                "Post-install identity mismatch must remain explicit.");
-            AssertTrue(platform.ContainsEventPrefix("Stop:"), "Managed services must be stopped first.");
-            AssertFalse(platform.ContainsEventPrefix("Start:"),
-                "Verification failure must never restart an old managed instance.");
-        }
-
         private static void RemoveDeletesOnlyFullyOwnedFreshlyConfirmedService()
         {
             FakeLmRemovalPlatform platform = new FakeLmRemovalPlatform();
@@ -7941,14 +7716,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             return request;
         }
 
-        private static LmServiceProvisioningBatchRequest CreateInstallerRequest()
-        {
-            LmServiceProvisioningBatchRequest request = CreateRequest(LmServiceOperation.InstallControllerVersion);
-            request.InstallerSelection = CreateInstallerSelection();
-            request.PlanHash = CanonicalLmPlanHasher.Compute(request);
-            return request;
-        }
-
         private static LmServiceProvisioningBatchRequest CreateRemovalRequest()
         {
             LmServiceProvisioningBatchRequest request = CreateRequest(LmServiceOperation.RemoveManaged);
@@ -7969,7 +7736,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             FakeLmRemovalPlatform removal = new FakeLmRemovalPlatform();
             removal.PreserveOwnershipAcrossSerials = true;
             LmServiceProvisioningBatchResult result = new LmServiceProvisioner(
-                new FakeLmProvisioningPlatform(),
                 removal).RemoveAllManaged(
                     CreateRemoveAllRequest(2),
                     NeverCancelLmProvisioning.Instance);
@@ -8048,22 +7814,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             };
         }
 
-        private static LmControllerInstallerSelection CreateInstallerSelection()
-        {
-            return new LmControllerInstallerSelection
-            {
-                SourcePath = @"C:\Users\operator\Downloads\esm-lm-controller_1.6.3.2-windows-setup.exe",
-                FileName = "esm-lm-controller_1.6.3.2-windows-setup.exe",
-                ByteLength = 12345678,
-                Sha256 = new string('a', 64),
-                FileVersion = "1.6.3.2",
-                ProductVersion = "1.6.3.2",
-                SignerSubject = "CN=JSC ESP",
-                SignerThumbprint = "1CD26372850FE30F1559821CF5D318591695271A",
-                StopManagedInstancesWarningAccepted = true
-            };
-        }
-
         private static void ManagedLocalModuleOperationIsRetired()
         {
             LmServiceProvisioningBatchRequest request =
@@ -8081,7 +7831,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
         {
             LmServiceProvisioningBatchRequest request =
                 CreateRequest(LmServiceOperation.EnsureManagedLocalModules);
-            request.InstallerSelection = CreateInstallerSelection();
             request.LocalModuleInstallerSelection = new LocalModuleInstallerSelection
             {
                 SourcePath = @"C:\Users\operator\Downloads\regime-2.6.1-7.msi",
@@ -8453,26 +8202,16 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
         private static ControllerCapabilityProfile CreateTestCapabilityProfile(
             string installRoot,
-            string binaryPath,
-            string installerPath)
+            string binaryPath)
         {
             string actualBinaryPath = binaryPath ?? Path.Combine(installRoot, "bin", "lmcontroller.exe");
-            string actualInstallerPath = installerPath ?? Path.Combine(
-                installRoot,
-                "esm-lm-controller_1.6.3.2-windows-setup.exe");
             TrustedFileExpectation binary = CreateExpectation(actualBinaryPath, "lmcontroller.exe");
-            TrustedFileExpectation installer = CreateExpectation(
-                actualInstallerPath,
-                "esm-lm-controller_1.6.3.2-windows-setup.exe");
-            installer.FileVersion = "1.6.3.2";
-            installer.ProductVersion = string.Empty;
 
             return ControllerCapabilityProfile.CreateForTesting(
                 "1.6.3.2",
                 installRoot,
                 Path.Combine("bin", "lmcontroller.exe"),
                 binary,
-                installer,
                 "ProgramData");
         }
 
@@ -8492,24 +8231,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 SignerSubject = "CN=JSC ESP",
                 SignerThumbprint = "1CD26372850FE30F1559821CF5D318591695271A",
                 RequireCodeSigningEku = true
-            };
-        }
-
-        private static LmControllerInstallerSelection CreateSelectionFromExpectation(
-            string sourcePath,
-            TrustedFileExpectation expectation)
-        {
-            return new LmControllerInstallerSelection
-            {
-                SourcePath = sourcePath,
-                FileName = expectation.FileName,
-                ByteLength = expectation.ByteLength,
-                Sha256 = expectation.Sha256,
-                FileVersion = expectation.FileVersion,
-                ProductVersion = expectation.ProductVersion,
-                SignerSubject = expectation.SignerSubject,
-                SignerThumbprint = expectation.SignerThumbprint,
-                StopManagedInstancesWarningAccepted = true
             };
         }
 
@@ -8849,94 +8570,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     Ownership = LmRemovalOwnershipState.Missing;
                 }
                 ManifestProjectedCleanupPending = false;
-            }
-        }
-
-        private sealed class FakeLmProvisioningPlatform : ILmProvisioningPlatform
-        {
-            internal FakeLmProvisioningPlatform()
-            {
-                Events = new List<string>();
-                ManagedSerials = new List<string>();
-                InstallerResult = new LmControllerInstallResult
-                {
-                    Status = LmServiceProvisioningStatus.Succeeded,
-                    Message = "installed"
-                };
-            }
-
-            internal List<string> Events { get; private set; }
-            internal List<string> ManagedSerials { get; private set; }
-            internal LmControllerInstallResult InstallerResult { get; set; }
-            internal bool RejectInstaller { get; set; }
-            internal bool ContainsEventPrefix(string prefix)
-            {
-                for (int index = 0; index < Events.Count; index++)
-                {
-                    if (Events[index].StartsWith(prefix, StringComparison.Ordinal))
-                    {
-                        return true;
-                    }
-                }
-                return false;
-            }
-
-            public IDisposable AcquireMachineLock()
-            {
-                Record("MachineLock");
-                return new CallbackDisposable(delegate { });
-            }
-
-            public void RequestStop(LmServiceProvisioningItemRequest item)
-            {
-                Record("Stop:" + item.KktSerial);
-            }
-
-            public IList<string> GetManagedSerials()
-            {
-                return new List<string>(ManagedSerials);
-            }
-
-            public void MarkVersionPending(string kktSerial, string operationId)
-            {
-                Record("VersionPending:" + kktSerial);
-            }
-
-            public ILockedControllerInstaller PrepareInstaller(
-                LmControllerInstallerSelection selection,
-                string operationId)
-            {
-                Record("PrepareInstaller");
-                if (RejectInstaller)
-                {
-                    throw new InvalidDataException("installer changed");
-                }
-                return new FakeLockedInstaller(this);
-            }
-
-            private void Record(string value)
-            {
-                Events.Add(value);
-            }
-
-            private sealed class FakeLockedInstaller : ILockedControllerInstaller
-            {
-                private readonly FakeLmProvisioningPlatform _owner;
-
-                internal FakeLockedInstaller(FakeLmProvisioningPlatform owner)
-                {
-                    _owner = owner;
-                }
-
-                public LmControllerInstallResult Run()
-                {
-                    _owner.Record("LaunchInstaller");
-                    return _owner.InstallerResult;
-                }
-
-                public void Dispose()
-                {
-                }
             }
         }
 

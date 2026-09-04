@@ -231,9 +231,7 @@ namespace EsmTspiot.ServiceProvisioner
                     .RemoveKkt(kktSerial, operationId);
             }
             WindowsLmProvisioningPlatform platform =
-                WindowsLmProvisioningPlatform.Create(
-                    initiatingSid,
-                    operationId);
+                WindowsLmProvisioningPlatform.CreateForRemoval(initiatingSid);
             return new LmServiceProvisioner(platform).RemoveManaged(request);
         }
 

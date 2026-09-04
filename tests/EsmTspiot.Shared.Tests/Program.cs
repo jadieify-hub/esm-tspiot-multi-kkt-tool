@@ -4836,7 +4836,7 @@ namespace EsmTspiot.Shared.Tests
                 "ServiceName", "SourcePath", "Password", "Credential", "Secret", "Token"
             };
             MethodInfo[] methods = contract.GetMethods();
-            AssertEqual(4, methods.Length, "The helper contract must expose only four typed operations.");
+            AssertEqual(3, methods.Length, "The helper contract must expose only three typed operations.");
             for (int methodIndex = 0; methodIndex < methods.Length; methodIndex++)
             {
                 ParameterInfo[] parameters = methods[methodIndex].GetParameters();
@@ -4877,20 +4877,15 @@ namespace EsmTspiot.Shared.Tests
                 "esm_tspiot_package_paths_" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(root);
             string settingsPath = Path.Combine(root, "operator-package-paths.json");
-            string controllerPath = Path.Combine(
-                root,
-                "esm-lm-controller_1.6.3.2-windows-setup.exe");
             string localModulePath = Path.Combine(root, "regime-2.6.1-7.msi");
             try
             {
                 OperatorPackagePathStore store =
                     new OperatorPackagePathStore(settingsPath);
 
-                store.Save(controllerPath, localModulePath);
+                store.Save(localModulePath);
                 OperatorPackagePaths loaded = store.Load();
 
-                AssertEqual(Path.GetFullPath(controllerPath), loaded.ControllerInstallerPath,
-                    "The last controller package path must survive an application restart.");
                 AssertEqual(Path.GetFullPath(localModulePath), loaded.LocalModuleInstallerPath,
                     "The last LM package path must survive an application restart.");
                 string json = File.ReadAllText(settingsPath);
@@ -5665,15 +5660,6 @@ namespace EsmTspiot.Shared.Tests
             internal int CleanupCalls { get; private set; }
             internal LmServiceProvisioningItemResult RemoveResult { get; set; }
             internal LmServiceProvisioningItemResult CleanupResult { get; set; }
-
-            public Task<LmControllerInstallResult> InstallControllerVersionAsync(
-                LmControllerInstallerSelection selection,
-                string operationId,
-                string planHash,
-                CancellationToken cancellation)
-            {
-                throw new NotSupportedException();
-            }
 
             public Task<LmServiceProvisioningItemResult> RemoveAsync(
                 LmRemovalConfirmation confirmation,

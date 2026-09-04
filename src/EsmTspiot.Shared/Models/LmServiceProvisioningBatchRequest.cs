@@ -39,9 +39,6 @@ namespace EsmTspiot.Shared.Models
         [DataMember(Order = 8, EmitDefaultValue = false)]
         public LmCleanupConfirmation CleanupConfirmation { get; set; }
 
-        [DataMember(Order = 9, EmitDefaultValue = false)]
-        public LmControllerInstallerSelection InstallerSelection { get; set; }
-
         [DataMember(Order = 10, EmitDefaultValue = false)]
         public IList<LmRemovalConfirmation> RemovalConfirmations { get; private set; }
 

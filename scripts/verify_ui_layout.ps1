@@ -105,15 +105,13 @@ $supportDialogCloseTimer = $null
 try {
     $form = [Activator]::CreateInstance($formType)
     $page = Get-PrivateFieldValue -Instance $form -Name "_lmGatewayPage"
-    foreach ($clearMethodName in @(
-            "ClearInstallerSelection",
-            "ClearLocalModuleInstallerSelection")) {
-        $clearMethod = $page.GetType().GetMethod($clearMethodName, $flags)
-        if ($null -eq $clearMethod) {
-            throw "Private method not found: $clearMethodName"
-        }
-        $clearMethod.Invoke($page, @()) | Out-Null
+    $clearMethod = $page.GetType().GetMethod(
+        "ClearLocalModuleInstallerSelection",
+        $flags)
+    if ($null -eq $clearMethod) {
+        throw "Private method not found: ClearLocalModuleInstallerSelection"
     }
+    $clearMethod.Invoke($page, @()) | Out-Null
     $updateAutomaticSelection = $formType.GetMethod(
         "UpdateAutomaticInstallerSelection",
         $flags)
@@ -353,16 +351,12 @@ try {
     }
     [System.Windows.Forms.Application]::DoEvents()
 
-    $pathBox = Get-PrivateFieldValue -Instance $page -Name "_installerPathTextBox"
-    $selectButton = Get-PrivateFieldValue -Instance $page -Name "_selectInstallerButton"
     $localModulePathBox = Get-PrivateFieldValue -Instance $page -Name "_localModuleInstallerPathTextBox"
     $selectLocalModuleButton = Get-PrivateFieldValue -Instance $page -Name "_selectLocalModuleInstallerButton"
     $installButton = Get-PrivateFieldValue -Instance $page -Name "_installControllerButton"
     $bindButton = Get-PrivateFieldValue -Instance $page -Name "_bindButton"
     $removeAllButton = Get-PrivateFieldValue -Instance $page -Name "_removeAllServicesButton"
     $grid = Get-PrivateFieldValue -Instance $page -Name "_grid"
-    $automaticInstallerButton = Get-PrivateFieldValue -Instance $form -Name "_automaticSelectInstallerButton"
-    $automaticInstallerPath = Get-PrivateFieldValue -Instance $form -Name "_automaticInstallerTextBox"
     $automaticSetupButton = Get-PrivateFieldValue -Instance $form -Name "_bulkRegisterButton"
     $automaticStopButton = Get-PrivateFieldValue -Instance $form -Name "_automaticStopButton"
     $automaticTab = Get-PrivateFieldValue -Instance $form -Name "_automationTab"
@@ -976,10 +970,6 @@ try {
             "0KPQtNCw0LvQuNGC0Ywg0LLRgdGRINGB0L7Qt9C00LDQvdC90L7QtQ=="))) {
         throw "The LM page must expose the protected application-owned remove-all command."
     }
-    if ($null -ne $automaticInstallerButton.Parent -or
-        $null -ne $automaticInstallerPath.Parent) {
-        throw "Automatic registration must not expose obsolete installer selection controls."
-    }
     if ($automaticSetupButton.Tag -ne "EndToEndAutomaticSetup") {
         throw "Automatic mode must expose the end-to-end setup command."
     }
@@ -1003,12 +993,18 @@ try {
         throw "Automatic-mode stop button overflows the normal page width."
     }
 
-    if ($null -ne $pathBox.Parent -or $null -ne $selectButton.Parent) {
-        throw "The controller page must not expose obsolete controller-package selectors."
-    }
     if ($null -eq $localModulePathBox.Parent -or
         $null -eq $selectLocalModuleButton.Parent) {
         throw "The full automatic workflow must expose the official local-module MSI selector."
+    }
+    $controllerInstallerMembers = @($page.GetType().GetMembers(
+        [System.Reflection.BindingFlags]::Instance -bor
+        [System.Reflection.BindingFlags]::Static -bor
+        [System.Reflection.BindingFlags]::Public -bor
+        [System.Reflection.BindingFlags]::NonPublic) |
+        Where-Object { $_.Name -like "*ControllerInstaller*" })
+    if ($controllerInstallerMembers.Count -gt 0) {
+        throw "The LM page must not keep any controller-installer selection member."
     }
 
     $page.Size = [System.Drawing.Size]::new(748, 512)

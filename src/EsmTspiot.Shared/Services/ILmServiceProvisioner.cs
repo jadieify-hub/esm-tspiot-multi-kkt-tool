@@ -7,12 +7,6 @@ namespace EsmTspiot.Shared.Services
 {
     public interface ILmServiceProvisioner
     {
-        Task<LmControllerInstallResult> InstallControllerVersionAsync(
-            LmControllerInstallerSelection selection,
-            string operationId,
-            string planHash,
-            CancellationToken cancellation);
-
         Task<LmServiceProvisioningItemResult> RemoveAsync(
             LmRemovalConfirmation confirmation,
             string operationId,
