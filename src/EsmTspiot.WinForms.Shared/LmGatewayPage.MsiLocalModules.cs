@@ -341,8 +341,9 @@ namespace EsmTspiot.WinForms.Shared
                     ReportFullAutomaticStage,
                     cancellation).ConfigureAwait(true);
 
-            outcome.LocalModulesDeferred =
-                outcome.LocalModulesDeferred || coordinated.LocalModuleDeferred;
+            // Отложил оператор — это одно, а ЛМ не встал — совсем другое.
+            // Раньше любая ошибка ЛМ печаталась как «отложена оператором»,
+            // и настоящая причина терялась.
             outcome.LocalModulesReady = _lastAutomaticLocalModulesReady;
             outcome.LocalModulesFailed = Math.Max(
                 outcome.LocalModulesFailed,
@@ -358,6 +359,10 @@ namespace EsmTspiot.WinForms.Shared
                 outcome.LocalModuleLines.Add(
                     "ЛМ ЧЗ: установка отложена оператором или MSI не выбран; " +
                     "контур без ЛМ не считается завершённым.");
+            else if (outcome.LocalModulesFailed > 0)
+                outcome.LocalModuleLines.Add(
+                    "ЛМ ЧЗ: часть модулей не готова; причина указана выше " +
+                    "в строке по этому ИНН.");
             Log("Инициализация ЛМ ЧЗ не блокирует автомат: она выполняется " +
                 "ЛМ отдельно после запуска.\r\n");
             _statusLabel.Text = outcome.Complete

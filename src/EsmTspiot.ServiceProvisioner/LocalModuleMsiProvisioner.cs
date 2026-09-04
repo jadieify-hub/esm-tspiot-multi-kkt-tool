@@ -377,12 +377,25 @@ namespace EsmTspiot.ServiceProvisioner
         private static void RequireInstalledShape(
             LocalModuleMsiObservedState observed)
         {
-            if (!observed.ProductPresent || !observed.ProductMatches ||
-                !observed.ConfigurationMatches ||
-                !observed.ServicesPresent || !observed.ServicesMatch ||
-                (observed.FirewallPresent && !observed.FirewallMatches))
+            // Одно сообщение на шесть разных условий заставляет гадать, что
+            // именно разошлось. Называем причину по имени.
+            string mismatch = null;
+            if (!observed.ProductPresent)
+                mismatch = "продукт не установлен";
+            else if (!observed.ProductMatches)
+                mismatch = "версия или код продукта не те, что в плане";
+            else if (!observed.ConfigurationMatches)
+                mismatch = "конфигурация ЛМ (порты или каталог) не та, что в плане";
+            else if (!observed.ServicesPresent)
+                mismatch = "службы ЛМ отсутствуют";
+            else if (!observed.ServicesMatch)
+                mismatch = "службы ЛМ настроены иначе, чем в плане";
+            else if (observed.FirewallPresent && !observed.FirewallMatches)
+                mismatch = "правило сети не то, что в плане";
+            if (mismatch != null)
                 throw new InvalidDataException(
-                    "Установленный локальный модуль не совпадает с планом.");
+                    "Установленный локальный модуль не совпадает с планом: " +
+                    mismatch + ".");
         }
 
         private static void RequireReady(

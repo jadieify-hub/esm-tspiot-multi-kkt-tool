@@ -5940,12 +5940,22 @@ namespace EsmTspiot.Shared.Tests
                     LmContourReadbackState.Unavailable),
                 "An unavailable read-back is not acceptable.");
 
+            // ЕСМ сообщает в /api/v2/info endpoint локального модуля, а не
+            // порт контроллера, через который мы его привязали. Полевой
+            // журнал показал это прямо: привязка ККТ подтвердилась по адресу
+            // 127.0.0.1:5995, а сверка на том же прогоне ждала 127.0.0.1:50063
+            // и объявляла «требуется проверка» на исправной ККТ.
             LmGatewayTarget expected = LmContourReadbackPolicy.ExpectedTarget(
-                new DirectControllerAssignment { GrpcPort = 50064 });
+                new DirectControllerAssignment
+                {
+                    GrpcPort = 50064,
+                    TargetLocalModulePort = 6995
+                });
             AssertEqual("127.0.0.1", expected.Address,
                 "The expected binding target is the local controller address.");
-            AssertEqual(50064, expected.Port,
-                "The expected binding target is the controller gRPC port.");
+            AssertEqual(6995, expected.Port,
+                "The read-back must expect the LM endpoint that ESM reports, " +
+                "not the controller gRPC port used to bind it.");
             AssertTrue(LmContourReadbackPolicy.ExpectedTarget(null) == null,
                 "A KKT without a controller assignment has no expected target.");
         }
