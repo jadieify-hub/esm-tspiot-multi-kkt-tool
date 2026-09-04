@@ -82,6 +82,7 @@ namespace EsmTspiot.WinForms.Shared
                 AppendLog);
             _lmGatewayPage.OperationStateChanged += OnLmGatewayOperationStateChanged;
             _lmGatewayPage.InstallerSelectionChanged += UpdateAutomaticInstallerSelection;
+            _lmGatewayPage.ContourConfirmed += delegate { OfferSupportDevelopment(true); };
             Text = "Управление ККТ в ЕСМ/ТС ПИоТ";
             // Таблица ЛМ ЧЗ шире прежнего окна: её колонки требуют около
             // 925 пикселей, и на 780 оператору приходилось растягивать окно
@@ -1419,13 +1420,7 @@ namespace EsmTspiot.WinForms.Shared
                     fullySuccessful
                         ? MessageBoxIcon.Information
                         : MessageBoxIcon.Warning);
-                if (ShouldOfferSupportDialog(
-                        fullySuccessful,
-                        _supportDialogOffered))
-                {
-                    _supportDialogOffered = true;
-                    ShowSupportDevelopment();
-                }
+                OfferSupportDevelopment(fullySuccessful);
             }
             catch (OperationCanceledException)
             {
@@ -2065,6 +2060,17 @@ namespace EsmTspiot.WinForms.Shared
             bool alreadyOffered)
         {
             return fullySuccessful && !alreadyOffered;
+        }
+
+        private void OfferSupportDevelopment(bool fullySuccessful)
+        {
+            if (!ShouldOfferSupportDialog(fullySuccessful, _supportDialogOffered))
+            {
+                return;
+            }
+
+            _supportDialogOffered = true;
+            ShowSupportDevelopment();
         }
 
         private void ShowAbout()

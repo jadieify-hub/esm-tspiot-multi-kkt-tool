@@ -69,10 +69,11 @@ namespace EsmTspiot.Shared.Services
                 return prefix + "привязка подтверждена ЕСМ" +
                     (status.Length == 0 ? string.Empty : "; ЛМ: " + status) +
                     "." + (endpointDiffers
-                        ? " ЕСМ сообщает адрес ЛМ " + observation.LmAddress +
+                        ? " ЕСМ показывает адрес ЛМ " + observation.LmAddress +
                             ":" + observation.LmPort +
-                            " — это его модуль по умолчанию, фактическую " +
-                            "связку он ведёт через контроллер."
+                            " — это его модуль по умолчанию; фактическую " +
+                            "связку он ведёт через контроллер, ошибкой это " +
+                            "не является."
                         : string.Empty);
             }
             if (state == LmContourReadbackState.LocalModuleNotInitialized)

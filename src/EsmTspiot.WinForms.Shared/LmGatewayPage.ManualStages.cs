@@ -281,6 +281,13 @@ namespace EsmTspiot.WinForms.Shared
             return controllers;
         }
 
+        /// <summary>
+        /// Ручной шаг 4 подтвердил контур целиком. Автомат сообщает об этом
+        /// сам, а ручной путь оставался немым: оператор, собравший контур по
+        /// шагам, доходил до конца без единого слова благодарности.
+        /// </summary>
+        internal event Action ContourConfirmed;
+
         private async Task ReadbackManuallyAsync(
             IList<LmGatewayKkt> kkts,
             LocalModuleMsiPlan plan,
@@ -326,6 +333,10 @@ namespace EsmTspiot.WinForms.Shared
                 "; требуется проверка: " +
                 outcome.EsmAttentionCount.ToString(CultureInfo.InvariantCulture) +
                 (confirmed ? "." : "; см. журнал.");
+            if (confirmed && ContourConfirmed != null)
+            {
+                ContourConfirmed();
+            }
         }
 
         private async Task RefreshAfterManualStageAsync(

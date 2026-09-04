@@ -3202,7 +3202,7 @@ namespace EsmTspiot.Shared.Tests
                 "ESM answers lm.ip/lm.port with its default module, so a differing " +
                 "address cannot deny a binding ESM itself reports as ready.");
             AssertContains(outcome.Results[0].Details, "6995");
-            AssertContains(outcome.Results[0].Details, "по плану");
+            AssertContains(outcome.Results[0].Details, "по умолчанию");
         }
 
         private static string CreateLmInfoJson(
