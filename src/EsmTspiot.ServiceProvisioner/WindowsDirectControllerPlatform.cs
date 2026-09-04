@@ -178,6 +178,19 @@ namespace EsmTspiot.ServiceProvisioner
                     {
                         throw new InvalidOperationException(ready.Message);
                     }
+                    // Контроллер связывается со своим ЛМ ЧЗ при запуске.
+                    // Модуль, поднявшийся позже, для него не существует, и
+                    // ЕСМ отвергает привязку. Перезапуск возвращает связку в
+                    // рабочее состояние и ничего не переконфигурирует.
+                    bool restarted = _readiness.LocalModuleStartedAfterController(
+                        item.Ordinal,
+                        item.TargetLocalModulePort);
+                    if (restarted)
+                    {
+                        ProvisionerStepTrace.Write("ККТ " + item.KktSerial +
+                            ": ЛМ ЧЗ запустился позже контроллера; перезапуск");
+                        RestartControllerService(manifest);
+                    }
                     ProvisionerStepTrace.Write("ККТ " + item.KktSerial +
                         ": настройка конфигурации экземпляра ЕСМ");
                     EsmInstanceConfigApplyState configState =
@@ -192,6 +205,9 @@ namespace EsmTspiot.ServiceProvisioner
                         (item.Ordinal == 1
                             ? "Штатный контроллер подтверждён и запущен."
                             : "Независимый контроллер создан и запущен.") +
+                        (restarted
+                            ? " Контроллер перезапущен: его ЛМ ЧЗ стартовал позже."
+                            : string.Empty) +
                         (configState == EsmInstanceConfigApplyState.Deferred
                             ? " Конфигурация экземпляра ЕСМ ещё не создана; настройка отложена до следующего запуска."
                             : " Экземпляр ЕСМ направлен на этот контроллер."));
@@ -222,22 +238,7 @@ namespace EsmTspiot.ServiceProvisioner
                         "Служба прямого контроллера отсутствует.");
                 }
                 RequireOwnedService(manifest, service, initiatingSid);
-                if (service.State != WindowsServiceState.Stopped || service.ProcessId != 0)
-                {
-                    _services.RequestStop(serviceName);
-                    if (!_readiness.WaitUntilStopped(
-                            manifest.Ordinal,
-                            StopTimeoutMilliseconds))
-                    {
-                        throw new InvalidOperationException(
-                            "Служба прямого контроллера не остановилась штатно.");
-                    }
-                }
-                _services.Start(serviceName);
-                LmReadinessResult ready = _readiness.WaitUntilReady(
-                    manifest.Ordinal,
-                    ReadyTimeoutMilliseconds);
-                if (!ready.IsReady) throw new InvalidOperationException(ready.Message);
+                RestartControllerService(manifest);
                 manifest.OperationId = operationId;
                 manifest.State = DirectControllerLifecycleState.Ready;
                 manifest.UpdatedUtc = DateTime.UtcNow.ToString("o");
@@ -306,6 +307,29 @@ namespace EsmTspiot.ServiceProvisioner
                     LmServiceProvisioningStatus.RemovedLocalArtifactsBindingRetained,
                     "Служба и профиль контроллера удалены; привязка ЕСМ сохранена.");
             }
+        }
+
+        private void RestartControllerService(DirectControllerManifest manifest)
+        {
+            WindowsServiceRecord service = _services.Query(manifest.ServiceName);
+            if (service != null &&
+                (service.State != WindowsServiceState.Stopped ||
+                    service.ProcessId != 0))
+            {
+                _services.RequestStop(manifest.ServiceName);
+                if (!_readiness.WaitUntilStopped(
+                        manifest.Ordinal,
+                        StopTimeoutMilliseconds))
+                {
+                    throw new InvalidOperationException(
+                        "Служба прямого контроллера не остановилась штатно.");
+                }
+            }
+            _services.Start(manifest.ServiceName);
+            LmReadinessResult ready = _readiness.WaitUntilReady(
+                manifest.Ordinal,
+                ReadyTimeoutMilliseconds);
+            if (!ready.IsReady) throw new InvalidOperationException(ready.Message);
         }
 
         private bool WaitUntilServiceDeleted(

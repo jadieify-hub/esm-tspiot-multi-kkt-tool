@@ -1021,8 +1021,8 @@ try {
     # Manual mode exposes the same contour stages one at a time. Each action
     # must be placed, tagged for automation, captioned, and fit the page.
     $manualStageActions = @(
-        @{ Field = "_ensureControllersButton"; Tag = "EnsureControllers"; Text = "0KjQsNCzIDE6INC60L7QvdGC0YDQvtC70LvQtdGA0Ys=" },
-        @{ Field = "_ensureLocalModulesButton"; Tag = "EnsureLocalModules"; Text = "0KjQsNCzIDI6INCb0Jwg0KfQlw==" },
+        @{ Field = "_ensureLocalModulesButton"; Tag = "EnsureLocalModules"; Text = "0KjQsNCzIDE6INCb0Jwg0KfQlw==" },
+        @{ Field = "_ensureControllersButton"; Tag = "EnsureControllers"; Text = "0KjQsNCzIDI6INC60L7QvdGC0YDQvtC70LvQtdGA0Ys=" },
         @{ Field = "_bindAllEsmButton"; Tag = "BindReadyEsm"; Text = "0KjQsNCzIDM6INC/0YDQuNCy0Y/Qt9C60LAg0Log0JXQodCc" },
         @{ Field = "_readbackEsmButton"; Tag = "ReadbackEsm"; Text = "0KjQsNCzIDQ6INC/0YDQvtCy0LXRgNC40YLRjCDQv9C+INCV0KHQnA==" })
     foreach ($manualStage in $manualStageActions) {

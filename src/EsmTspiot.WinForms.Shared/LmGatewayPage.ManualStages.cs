@@ -16,10 +16,13 @@ namespace EsmTspiot.WinForms.Shared
     // first, so repeating a stage after a partial failure is always safe.
     public sealed partial class LmGatewayPage
     {
+        // Порядок шагов повторяет автомат: ЛМ ЧЗ поднимается раньше
+        // контроллеров, иначе контроллер стартует без своего локального
+        // модуля и ЕСМ отвергает привязку.
         private enum ManualContourStage
         {
-            Controllers = 1,
-            LocalModules = 2,
+            LocalModules = 1,
+            Controllers = 2,
             Binding = 3,
             Readback = 4
         }
@@ -47,17 +50,17 @@ namespace EsmTspiot.WinForms.Shared
                 Anchor = AnchorStyles.Left,
                 Margin = new Padding(0, 6, 8, 4)
             };
-            ConfigureButton(_ensureControllersButton, "Шаг 1: контроллеры");
-            _ensureControllersButton.Tag = "EnsureControllers";
-            _ensureControllersButton.Click += async delegate
-            {
-                await RunManualStageAsync(ManualContourStage.Controllers);
-            };
-            ConfigureButton(_ensureLocalModulesButton, "Шаг 2: ЛМ ЧЗ");
+            ConfigureButton(_ensureLocalModulesButton, "Шаг 1: ЛМ ЧЗ");
             _ensureLocalModulesButton.Tag = "EnsureLocalModules";
             _ensureLocalModulesButton.Click += async delegate
             {
                 await RunManualStageAsync(ManualContourStage.LocalModules);
+            };
+            ConfigureButton(_ensureControllersButton, "Шаг 2: контроллеры");
+            _ensureControllersButton.Tag = "EnsureControllers";
+            _ensureControllersButton.Click += async delegate
+            {
+                await RunManualStageAsync(ManualContourStage.Controllers);
             };
             ConfigureButton(_bindAllEsmButton, "Шаг 3: привязка к ЕСМ");
             _bindAllEsmButton.Tag = "BindReadyEsm";
@@ -72,8 +75,8 @@ namespace EsmTspiot.WinForms.Shared
                 await RunManualStageAsync(ManualContourStage.Readback);
             };
             panel.Controls.Add(caption);
-            panel.Controls.Add(_ensureControllersButton);
             panel.Controls.Add(_ensureLocalModulesButton);
+            panel.Controls.Add(_ensureControllersButton);
             panel.Controls.Add(_bindAllEsmButton);
             panel.Controls.Add(_readbackEsmButton);
             return panel;
@@ -269,7 +272,7 @@ namespace EsmTspiot.WinForms.Shared
                     controllers.Messages.Add(
                         "ККТ " + (kkt == null ? string.Empty : kkt.KktSerial) +
                         ": контроллер не найден, привязывать нечего; " +
-                        "выполните «Шаг 1: контроллеры».");
+                        "выполните «Шаг 2: контроллеры».");
                     continue;
                 }
                 controllers.ReadyAssignments[kkt.KktSerial] = assignment;

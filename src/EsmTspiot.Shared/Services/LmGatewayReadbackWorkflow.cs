@@ -104,10 +104,16 @@ namespace EsmTspiot.Shared.Services
             observation.LmPort = Trim(info.LmPort);
             observation.LmStatus = Trim(info.LmStatus);
             observation.LmVersion = Trim(info.LmVersion);
+            // «not_configured» — это состояние самого ЛМ ЧЗ, а не отсутствие
+            // привязки. В поле ЕСМ отдавал его вместе с версией модуля,
+            // адресом и логином: значит контроллер до ЛМ достучался, а
+            // модуль просто не инициализирован. Привязки нет только тогда,
+            // когда ЕСМ вдобавок не смог прочитать версию.
             if (string.Equals(
-                observation.LmStatus,
-                "not_configured",
-                StringComparison.OrdinalIgnoreCase))
+                    observation.LmStatus,
+                    "not_configured",
+                    StringComparison.OrdinalIgnoreCase) &&
+                observation.LmVersion.Length == 0)
             {
                 observation.HasLmConfiguration = false;
             }

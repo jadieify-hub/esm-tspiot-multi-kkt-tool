@@ -194,6 +194,7 @@ namespace EsmTspiot.Shared.Tests
             Run("Sequential registration disposes its VCOM before returning", SequentialRegistrationDisposesVcomBeforeReturning);
             Run("Sequential cancellation keeps the completed KKT", SequentialCancellationKeepsCompletedKkt);
             Run("Sequential final verification closes every VCOM on failure", SequentialFinalVerificationClosesEveryVcomOnFailure);
+            Run("Bulk discovery waits out and names a DKKT agent outage", BulkDiscoveryWaitsOutAndNamesDkktAgentOutage);
             Run("Diagnostic masker hides fiscal identifiers", DiagnosticMaskerHidesFiscalIdentifiers);
             Run("Diagnostic masker hides local user paths", DiagnosticMaskerHidesLocalUserPaths);
             Run("Diagnostic masker hides common secrets", DiagnosticMaskerHidesCommonSecrets);
@@ -4617,6 +4618,43 @@ namespace EsmTspiot.Shared.Tests
             };
         }
 
+        // Полевой прогон 2026-09-04: экземпляр 2 отвечал 2003 «Невозможно
+        // подключиться к Агенту-сервису ДККТ», три попытки за шесть секунд его
+        // не дождались, и ККТ ушла из плана со строкой про «состояние regData»,
+        // по которой причину было не восстановить.
+        private static void BulkDiscoveryWaitsOutAndNamesDkktAgentOutage()
+        {
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            api.InstancesResponse = Success(
+                "{\"instances\":[{\"id\":\"00105700000001\",\"port\":50401," +
+                "\"softPort\":51401,\"dkktPort\":0,\"serviceState\":\"Работает\"}]}");
+            api.DkktResponse = Success(
+                DkktListJson("00105700000001", "7300000000000001", "1234567894"));
+            for (int index = 0; index < 20; index++)
+            {
+                api.InstanceResponses.Enqueue(Failure(
+                    500,
+                    "{\"error\":{\"code\":2003,\"text\":\"error 2003: " +
+                    "Невозможно подключиться к Агенту-сервису ДККТ\"}}"));
+            }
+
+            BulkRegistrationDiscovery discovery = CreateWorkflow(api).DiscoverAsync(
+                "http://127.0.0.1:51077",
+                "4042",
+                null,
+                CancellationToken.None).GetAwaiter().GetResult();
+
+            AssertEqual(10, api.InstanceCalls,
+                "A missing DKKT agent deserves a longer wait than a one-off restart.");
+            AssertEqual(1, discovery.InitialResults.Count,
+                "The KKT must stay in the report instead of disappearing.");
+            AssertEqual(BulkKktRegistrationStatus.InspectionFailed,
+                discovery.InitialResults[0].Status,
+                "An unreachable DKKT agent leaves the registration unverified.");
+            AssertContains(discovery.InitialResults[0].Details, "Агенту-сервису ДККТ");
+            AssertContains(discovery.InitialResults[0].Details, "2003");
+        }
+
         private static void DiagnosticMaskerHidesFiscalIdentifiers()
         {
             string source =
@@ -5302,10 +5340,10 @@ namespace EsmTspiot.Shared.Tests
                 "The operator must see every full-automatic stage.");
             AssertEqual(LmAutomaticSetupStage.Registration, stages[0],
                 "Registration must remain the first stage.");
-            AssertEqual(LmAutomaticSetupStage.ControllerEnsure, stages[1],
-                "Controller provisioning must follow registration.");
-            AssertEqual(LmAutomaticSetupStage.LocalModuleEnsure, stages[2],
-                "Local-module provisioning must follow controllers.");
+            AssertEqual(LmAutomaticSetupStage.LocalModuleEnsure, stages[1],
+                "Local-module provisioning must follow registration.");
+            AssertEqual(LmAutomaticSetupStage.ControllerEnsure, stages[2],
+                "Controllers must start after their local modules listen.");
             AssertEqual(LmAutomaticSetupStage.EsmBinding, stages[3],
                 "ESM binding must run after provisioning attempts.");
             AssertEqual(LmAutomaticSetupStage.EsmReadback, stages[4],
@@ -5322,8 +5360,8 @@ namespace EsmTspiot.Shared.Tests
 
             LmAutomaticSetupResult result = coordinator.ExecuteFullAsync(
                 delegate { return Task.FromResult(true); },
-                delegate { return Task.FromResult(true); },
                 delegate { return Task.FromResult(false); },
+                delegate { return Task.FromResult(true); },
                 delegate
                 {
                     bindingCalled = true;
@@ -5353,14 +5391,18 @@ namespace EsmTspiot.Shared.Tests
 
             LmAutomaticSetupResult unconfirmed = coordinator.ExecuteFullAsync(
                 delegate { order.Add("register"); return Task.FromResult(true); },
-                delegate { order.Add("controllers"); return Task.FromResult(true); },
                 delegate { order.Add("local-modules"); return Task.FromResult(true); },
+                delegate { order.Add("controllers"); return Task.FromResult(true); },
                 delegate { order.Add("bind"); return Task.FromResult(true); },
                 delegate { order.Add("readback"); return Task.FromResult(false); },
                 null,
                 CancellationToken.None).GetAwaiter().GetResult();
 
             AssertEqual(5, order.Count, "Every contour stage must run exactly once.");
+            AssertEqual("local-modules", order[1],
+                "The LM must be installed before its controller starts.");
+            AssertEqual("controllers", order[2],
+                "Controllers follow the local modules they connect to.");
             AssertEqual("bind", order[3], "ESM binding must precede the read-back.");
             AssertEqual("readback", order[4], "The ESM read-back must run after binding.");
             AssertTrue(unconfirmed.EsmBindingSucceeded,
@@ -5430,10 +5472,23 @@ namespace EsmTspiot.Shared.Tests
                     "ожидалось 127.0.0.1:50064", StringComparison.Ordinal) >= 0,
                 "The attention line must carry the ESM details.");
 
-            LmGatewayReadbackObservation unconfigured = CreateContourObservation("not_configured");
-            unconfigured.HasLmConfiguration = false;
-            AssertEqual(LmContourReadbackState.Attention,
+            // Полевой прогон: ЕСМ отдал «not_configured» вместе с версией ЛМ
+            // 2.6.1-7, адресом 127.0.0.1:5995 и логином admin. Привязка при
+            // этом была принята, а утилита объявляла «требуется проверка».
+            LmGatewayReadbackObservation unconfigured =
+                CreateContourObservation("not_configured");
+            AssertEqual(LmContourReadbackState.LocalModuleNotInitialized,
                 LmContourReadbackPolicy.Classify(unconfigured),
+                "An LM that ESM reached but reports as not configured awaits initialization.");
+            AssertTrue(LmContourReadbackPolicy.Describe(unconfigured).IndexOf(
+                    "не инициализирован", StringComparison.Ordinal) >= 0,
+                "The line must say the LM awaits initialization, not that the binding is missing.");
+
+            LmGatewayReadbackObservation unbound =
+                CreateContourObservation("not_configured");
+            unbound.HasLmConfiguration = false;
+            AssertEqual(LmContourReadbackState.Attention,
+                LmContourReadbackPolicy.Classify(unbound),
                 "A KKT without an LM binding requires attention.");
 
             LmGatewayReadbackObservation unavailable = CreateContourObservation("ok");

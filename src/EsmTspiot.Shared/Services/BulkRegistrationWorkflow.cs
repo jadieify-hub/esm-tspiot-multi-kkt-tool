@@ -10,6 +10,11 @@ namespace EsmTspiot.Shared.Services
     public sealed class BulkRegistrationWorkflow
     {
         private const int MaximumTransientAttempts = 3;
+        // Агент-сервис ДККТ после перезагрузки поднимается позже экземпляров
+        // ЕСМ. Полевой прогон 2026-09-04: три попытки за шесть секунд не
+        // дождались его, и исправная ККТ молча выпала из плана вместе со
+        // своим контроллером и ЛМ.
+        private const int MaximumDkktAgentAttempts = 10;
         private const int MaximumRegistrationConfirmationAttempts = 30;
         private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(2);
 
@@ -199,7 +204,7 @@ namespace EsmTspiot.Shared.Services
                     {
                         KktSerial = serial,
                         Status = BulkKktRegistrationStatus.InspectionFailed,
-                        Details = "detail-запрос не подтвердил состояние regData"
+                        Details = DescribeInspectionFailure(detailResponse)
                     });
                 }
             }
@@ -538,7 +543,27 @@ namespace EsmTspiot.Shared.Services
             return response != null &&
                 (response.IsConnectionFailure ||
                     TspiotErrorDecoder.ContainsErrorCode(response.ResponseBody, 1013) ||
-                    TspiotErrorDecoder.ContainsErrorCode(response.ResponseBody, 2003));
+                    IsDkktAgentFailure(response));
+        }
+
+        private static bool IsDkktAgentFailure(ApiResponse response)
+        {
+            return response != null &&
+                TspiotErrorDecoder.ContainsErrorCode(response.ResponseBody, 2003);
+        }
+
+        // Экземпляр при этом жив: на /api/v1/settings он отвечает как обычно,
+        // и в журнале оставалась строка про «состояние regData», по которой
+        // причину было не найти.
+        private static string DescribeInspectionFailure(ApiResponse response)
+        {
+            if (IsDkktAgentFailure(response))
+            {
+                return "экземпляр ЕСМ не подключается к Агенту-сервису ДККТ " +
+                    "(error 2003); проверьте службу агента ДККТ и подключение " +
+                    "ККТ, затем повторите настройку";
+            }
+            return "detail-запрос не подтвердил состояние regData";
         }
 
         private async Task<ApiResponse> GetInstanceDetailsWithRetry(
@@ -550,8 +575,10 @@ namespace EsmTspiot.Shared.Services
             CancellationToken cancellationToken)
         {
             ApiResponse response = null;
-            for (int attempt = 1; attempt <= MaximumTransientAttempts; attempt++)
+            int attempt = 0;
+            while (true)
             {
+                attempt++;
                 cancellationToken.ThrowIfCancellationRequested();
                 response = await _api.GetInstanceAsync(baseUrl, serial, cancellationToken);
                 Report(
@@ -567,13 +594,18 @@ namespace EsmTspiot.Shared.Services
                     return response;
                 }
 
-                if (attempt < MaximumTransientAttempts)
+                // Агента ДККТ ждём дольше прочих осечек: он поднимается сам,
+                // а без него ККТ выпадает из контура целиком.
+                int limit = IsDkktAgentFailure(response)
+                    ? MaximumDkktAgentAttempts
+                    : MaximumTransientAttempts;
+                if (attempt >= limit)
                 {
-                    await _delay(RetryDelay, cancellationToken);
+                    return response;
                 }
-            }
 
-            return response;
+                await _delay(RetryDelay, cancellationToken);
+            }
         }
 
         private async Task<KktInstanceDetails> WaitForReadiness(

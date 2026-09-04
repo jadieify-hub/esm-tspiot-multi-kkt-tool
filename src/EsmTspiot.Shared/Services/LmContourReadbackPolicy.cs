@@ -103,6 +103,7 @@ namespace EsmTspiot.Shared.Services
             return value.StartsWith("error", StringComparison.OrdinalIgnoreCase) ||
                 value.StartsWith("init", StringComparison.OrdinalIgnoreCase) ||
                 value.Equals("not_initialized", StringComparison.OrdinalIgnoreCase) ||
+                value.Equals("not_configured", StringComparison.OrdinalIgnoreCase) ||
                 DirectControllerSetupPolicy.IsDeferredLocalModuleWarning(value);
         }
     }
