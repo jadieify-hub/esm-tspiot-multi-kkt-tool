@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
@@ -194,6 +194,7 @@ namespace EsmTspiot.WinForms.Shared
                                 ": " + progress.Stage + "; " +
                                 SensitiveDataMasker.Mask(progress.Message) +
                                 "\r\n");
+                            Log(DescribeFailedExchange(progress.Response));
                         },
                         cancellation).ConfigureAwait(true);
                 for (int index = 0; index < binding.Results.Count; index++)

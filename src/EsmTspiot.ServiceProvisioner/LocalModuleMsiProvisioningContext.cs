@@ -268,6 +268,12 @@ namespace EsmTspiot.ServiceProvisioner
             Exception error,
             bool rollbackOwnedChanges)
         {
+            // Каждая стадия ЛМ уже проходит через одно это место, поэтому
+            // отсюда же пишем след: пересборка вендорского MSI и установка
+            // клона идут минутами, и без него окно показывает голый таймер.
+            ProvisionerStepTrace.Write(
+                "ИНН " + (request == null ? "?" : request.Inn) + ": " +
+                DescribeStage(stage));
             Journals.Write(LocalModuleMsiLifecycleJournal.Create(
                 OperationId,
                 request,
@@ -275,6 +281,44 @@ namespace EsmTspiot.ServiceProvisioner
                 stage,
                 error == null ? string.Empty : error.GetType().Name,
                 rollbackOwnedChanges));
+        }
+
+        private static string DescribeStage(LocalModuleMsiLifecycleStage stage)
+        {
+            switch (stage)
+            {
+                case LocalModuleMsiLifecycleStage.Observing:
+                    return "проверка того, что уже установлено";
+                case LocalModuleMsiLifecycleStage.ManifestPersisting:
+                    return "запись состояния комплекта";
+                case LocalModuleMsiLifecycleStage.Installing:
+                    return "пересборка пакета и установка ЛМ (несколько минут)";
+                case LocalModuleMsiLifecycleStage.FirewallEnsuring:
+                    return "правило сетевого экрана";
+                case LocalModuleMsiLifecycleStage.ServicesStarting:
+                    return "запуск служб ЛМ";
+                case LocalModuleMsiLifecycleStage.Ready:
+                    return "готово";
+                case LocalModuleMsiLifecycleStage.ServicesStopping:
+                    return "остановка служб ЛМ";
+                case LocalModuleMsiLifecycleStage.FirewallRemoving:
+                    return "снятие правила сетевого экрана";
+                case LocalModuleMsiLifecycleStage.ProductUninstalling:
+                    return "удаление ЛМ установщиком Windows";
+                case LocalModuleMsiLifecycleStage.ManifestDeleting:
+                    return "удаление состояния комплекта";
+                case LocalModuleMsiLifecycleStage.EpmdWaiting:
+                    return "ожидание завершения узла Erlang";
+                case LocalModuleMsiLifecycleStage.CloneCompensation:
+                    return "возврат клонов в рабочее состояние";
+                case LocalModuleMsiLifecycleStage.CleanupPending:
+                    return "незавершённая очистка";
+                case LocalModuleMsiLifecycleStage.StartModeEnsuring:
+                    return "включение автозапуска служб";
+                case LocalModuleMsiLifecycleStage.StartModeRestoring:
+                    return "возврат прежнего режима запуска служб";
+            }
+            return stage.ToString();
         }
 
         internal IDisposable AcquireMutationLock()

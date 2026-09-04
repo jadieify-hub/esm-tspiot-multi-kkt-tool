@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -364,6 +364,24 @@ namespace EsmTspiot.WinForms.Shared
                     ". Проверьте журнал.";
             Log("=== Итог полного автомата ===\r\n" +
                 outcome.FormatSummary() + "\r\n");
+
+            // Таблица на этой вкладке держала снимок, снятый до прогона:
+            // модули и контроллеры уже стояли, а оператор видел старые
+            // строки, пока не перезапускал утилиту.
+            try
+            {
+                await RefreshCoreAsync(cancellation);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                Log("Таблицу ЛМ ЧЗ не удалось обновить после настройки: " +
+                    SensitiveDataMasker.Mask(ex.Message) + Environment.NewLine);
+            }
+
             return outcome;
         }
 
