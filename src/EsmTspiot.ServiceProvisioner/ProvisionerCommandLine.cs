@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using EsmTspiot.Shared.Services;
 
 namespace EsmTspiot.ServiceProvisioner
