@@ -44,6 +44,8 @@ namespace EsmTspiot.Shared.Tests
             Run("Unknown HTTP error shows the service response body", UnknownHttpErrorShowsServiceResponseBody);
             Run("LM binding waits until ESM reports the binding", LmBindingWorkflowWaitsUntilEsmReportsTheBinding);
             Run("LM binding diagnostics carry the info response", LmBindingDiagnosticsCarryTheInfoResponse);
+            Run("LM readback treats an initializing module as pending", LmReadbackTreatsInitializingModuleAsPending);
+            Run("LM binding accepts while the local module initializes", LmBindingAcceptsWhileLocalModuleInitializes);
             Run("Service recovery command uses KKT serial and ports", ServiceRecoveryCommandUsesKktSerialAndPorts);
             Run("Service recovery command recreates service with wrong ports", ServiceRecoveryCommandRecreatesServiceWithWrongPorts);
             Run("Service recovery command writes diagnostics", ServiceRecoveryCommandWritesDiagnostics);
@@ -3683,6 +3685,72 @@ namespace EsmTspiot.Shared.Tests
         {
             return "{\"kktSerial\":\"" + kktSerial +
                 "\",\"kktInn\":\"" + kktInn + "\"}";
+        }
+
+        private static void LmReadbackTreatsInitializingModuleAsPending()
+        {
+            // Поле: до инициализации ЕСМ отдаёт в lm.port значение по
+            // умолчанию 5995, хотя касса привязана к клону на 6995 и сам
+            // ЕСМ показывает наш контроллер. Сверка порта в этот момент
+            // объявляла исправный контур ошибкой.
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            api.LmInfoResponses.Enqueue(Success(
+                "{\"kktSerial\":\"00106205280301\",\"kktInn\":\"9203536788\"," +
+                "\"lm\":{\"version\":\"2.6.1-7\",\"status\":\"initialization\"," +
+                "\"ip\":\"127.0.0.1\",\"port\":5995}}"));
+            LmGatewayReadbackWorkflow workflow = new LmGatewayReadbackWorkflow(api);
+
+            LmGatewayReadbackObservation observation = workflow.ReadAsync(
+                "http://127.0.0.1:51077",
+                new LmGatewayKkt
+                {
+                    InstanceId = "00106205280301",
+                    KktSerial = "00106205280301",
+                    KktInn = "9203536788",
+                    Port = "50402",
+                    SoftPort = "51402"
+                },
+                "127.0.0.1",
+                "6995",
+                CancellationToken.None).Result;
+
+            AssertEqual(
+                LmContourReadbackState.LocalModuleNotInitialized,
+                LmContourReadbackPolicy.Classify(observation),
+                "An initializing LM must not be reported as a contour mismatch.");
+            AssertTrue(
+                LmContourReadbackPolicy.IsAcceptable(
+                    LmContourReadbackPolicy.Classify(observation)),
+                "Deferred LM initialization stays acceptable for the contour.");
+            AssertContains(observation.Details, "не инициализирован");
+            AssertFalse(
+                observation.Details.Contains("ожидалось"),
+                "The port comparison must be postponed until initialization.");
+            AssertContains(
+                LmContourReadbackPolicy.Describe(observation),
+                "ЛМ ЧЗ ещё не инициализирован");
+        }
+
+        private static void LmBindingAcceptsWhileLocalModuleInitializes()
+        {
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            api.LmInfoResponses.Enqueue(Success(
+                "{\"kktSerial\":\"00105700000001\",\"kktInn\":\"1234567894\"," +
+                "\"lm\":{\"version\":\"2.6.1-7\",\"status\":\"initialization\"," +
+                "\"ip\":\"127.0.0.1\",\"port\":7995}}"));
+            LmGatewayBindingWorkflow workflow = NewFastBindingWorkflow(api);
+
+            LmGatewayBindingOutcome outcome = workflow.ExecuteAsync(
+                "http://127.0.0.1:51077",
+                CreateValidLmBindingPlan(1),
+                delegate { return new LmGatewayCredentials { Login = "operator", Password = "test-password" }; },
+                null,
+                CancellationToken.None).Result;
+
+            AssertEqual(LmGatewayBindingStatus.BindingObserved, outcome.Results[0].Status,
+                "A binding whose LM is still initializing must not require attention.");
+            AssertEqual(1, api.LmInfoCalls,
+                "Waiting out the budget is pointless once ESM reports initialization.");
         }
 
         private static void LmBindingWorkflowSkipsInvalidItemAndContinues()

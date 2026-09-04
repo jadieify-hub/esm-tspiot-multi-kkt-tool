@@ -160,6 +160,25 @@ namespace EsmTspiot.Shared.Services
                     observedPort == expectedPort;
                 if (!observation.EndpointMatches.Value)
                 {
+                    // Пока ЛМ ЧЗ не инициализирован, ЕСМ подставляет в
+                    // lm.ip/lm.port значения по умолчанию, а не адрес
+                    // привязанного модуля. В поле это выглядело как «ЕСМ
+                    // сообщает 5995, ожидалось 6995» на исправно привязанной
+                    // кассе, у которой сам ЕСМ показывал наш контроллер.
+                    // Совпавший адрес сверяем как раньше: подменяется только
+                    // несовпавший.
+                    if (LmContourReadbackPolicy.IsLocalModulePending(
+                            observation.LmStatus))
+                    {
+                        observation.EndpointMatches = null;
+                        observation.Details =
+                            "ЛМ ЧЗ ещё не инициализирован — ЕСМ сообщает: " +
+                            Trim(observation.LmStatus) + ". До инициализации ЕСМ " +
+                            "не показывает фактический адрес ЛМ, поэтому сверка " +
+                            "порта отложена.";
+                        return observation;
+                    }
+
                     observation.Details = "ЕСМ сообщает целевой ЛМ " +
                         observation.LmAddress + ":" + observation.LmPort +
                         ", ожидалось " + Trim(expectedLmAddress) + ":" +

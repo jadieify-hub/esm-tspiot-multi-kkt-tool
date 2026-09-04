@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using EsmTspiot.Shared.Models;
 
 namespace EsmTspiot.Shared.Services
@@ -38,11 +38,15 @@ namespace EsmTspiot.Shared.Services
         {
             if (observation == null || !observation.IsAvailable)
                 return LmContourReadbackState.Unavailable;
+            // Состояние «ЛМ ещё не инициализирован» проверяется раньше сверки
+            // адреса: до инициализации ЕСМ отдаёт в lm.ip/lm.port значения по
+            // умолчанию, и несовпадение порта в этот момент ничего не значит.
+            if (observation.IdentityMatches && observation.HasLmConfiguration &&
+                IsLocalModulePending(observation.LmStatus))
+                return LmContourReadbackState.LocalModuleNotInitialized;
             if (!observation.IsVerified)
                 return LmContourReadbackState.Attention;
-            return ReportsLocalModuleError(observation.LmStatus)
-                ? LmContourReadbackState.LocalModuleNotInitialized
-                : LmContourReadbackState.Verified;
+            return LmContourReadbackState.Verified;
         }
 
         public static bool IsAcceptable(LmContourReadbackState state)
@@ -67,10 +71,15 @@ namespace EsmTspiot.Shared.Services
             }
             if (state == LmContourReadbackState.LocalModuleNotInitialized)
             {
-                return prefix + "привязка подтверждена ЕСМ (" +
-                    observation.LmAddress + ":" + observation.LmPort +
-                    "); ЛМ ЧЗ ещё не инициализирован — ЕСМ сообщает: " +
-                    (observation.LmStatus ?? string.Empty).Trim() + ".";
+                string reported = (observation.LmStatus ?? string.Empty).Trim();
+                bool endpointConfirmed = observation.EndpointMatches.HasValue &&
+                    observation.EndpointMatches.Value;
+                return prefix + (endpointConfirmed
+                    ? "привязка подтверждена ЕСМ (" + observation.LmAddress +
+                        ":" + observation.LmPort + "); "
+                    : "привязка принята ЕСМ; ") +
+                    "ЛМ ЧЗ ещё не инициализирован — ЕСМ сообщает: " +
+                    reported + ". Адрес ЛМ ЕСМ покажет после инициализации.";
             }
             string details = observation == null
                 ? string.Empty
@@ -80,10 +89,20 @@ namespace EsmTspiot.Shared.Services
             return prefix + "ЕСМ недоступен для контрольного чтения: " + details;
         }
 
-        private static bool ReportsLocalModuleError(string status)
+        /// <summary>
+        /// ЕСМ сообщает, что локальный модуль ещё не готов к работе: идёт
+        /// инициализация или модуль отвечает ошибкой до неё. Инициализация ЛМ
+        /// вне задачи утилиты, поэтому это строка оператору, а не отказ
+        /// контура.
+        /// </summary>
+        public static bool IsLocalModulePending(string status)
         {
             string value = (status ?? string.Empty).Trim();
+            if (value.Length == 0)
+                return false;
             return value.StartsWith("error", StringComparison.OrdinalIgnoreCase) ||
+                value.StartsWith("init", StringComparison.OrdinalIgnoreCase) ||
+                value.Equals("not_initialized", StringComparison.OrdinalIgnoreCase) ||
                 DirectControllerSetupPolicy.IsDeferredLocalModuleWarning(value);
         }
     }
