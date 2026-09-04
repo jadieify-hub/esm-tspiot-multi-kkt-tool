@@ -187,6 +187,8 @@ namespace EsmTspiot.ServiceProvisioner
             }
             byte[] current = ReadBounded(configPath);
             byte[] backup = ReadBounded(backupPath);
+            string serviceName =
+                EsmInstanceServiceIdentity.CreateName(manifest.KktSerial);
             if (!string.Equals(
                     Sha256(current),
                     manifest.EsmConfigAppliedSha256,
@@ -196,21 +198,27 @@ namespace EsmTspiot.ServiceProvisioner
                     manifest.EsmConfigOriginalSha256,
                     StringComparison.OrdinalIgnoreCase))
             {
+                // Сюда же приходит прерванный откат: файл уже вернули, а
+                // службу поднять не успели. Отказ от владения не повод
+                // оставлять кассу с остановленным ЕСМ.
                 Disown(manifest);
+                EnsureInstanceRunning(serviceName);
                 return false;
             }
-            string serviceName =
-                EsmInstanceServiceIdentity.CreateName(manifest.KktSerial);
-            bool wasRunning = StopInstance(serviceName);
+            StopInstance(serviceName);
             try
             {
                 _writer.WriteBytes(configPath, backup);
-                StartInstance(serviceName, wasRunning);
+                // Служба поднимается всегда, а не «если работала до нас»: в
+                // эту ветку заходят только с нашей записью в манифесте, то
+                // есть остановлена она нами — либо сейчас, либо прошлым
+                // заходом, который оборвался.
+                StartInstance(serviceName, true);
             }
             catch
             {
                 _writer.WriteBytes(configPath, current);
-                TryStartInstance(serviceName, wasRunning);
+                TryStartInstance(serviceName, true);
                 throw;
             }
             manifest.EsmConfigOriginalSha256 = null;

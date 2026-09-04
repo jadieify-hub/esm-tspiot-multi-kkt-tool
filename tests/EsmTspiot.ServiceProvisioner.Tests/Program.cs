@@ -7055,6 +7055,36 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     services.Query("esm-cm-" + serial).State,
                     "Прерванный перезапуск обязан быть доведён до конца.");
 
+                // Симметричный обрыв на откате: конфигурацию уже вернули,
+                // службу запустить не успели. Повторный заход отказывается от
+                // владения — и обязан поднять ЕСМ.
+                DirectControllerManifest interrupted = manifests.Read(serial);
+                File.WriteAllText(
+                    configPath,
+                    File.ReadAllText(
+                        manifests.GetEsmConfigBackupPath(serial), Encoding.UTF8),
+                    new UTF8Encoding(false));
+                services.SetRecord(new WindowsServiceRecord
+                {
+                    ServiceName = "esm-cm-" + serial,
+                    State = WindowsServiceState.Stopped,
+                    ProcessId = 0
+                });
+                AssertFalse(
+                    manager.RestoreAndRestart(interrupted),
+                    "Восстанавливать нечего: файл уже вернули.");
+                AssertEqual(
+                    WindowsServiceState.Running,
+                    services.Query("esm-cm-" + serial).State,
+                    "Прерванный откат обязан оставить ЕСМ запущенным.");
+
+                // Возвращаем состояние «наша конфигурация применена» для
+                // проверок ниже.
+                AssertEqual(
+                    EsmInstanceConfigApplyState.Applied,
+                    manager.ApplyAndRestart(manifests.Read(serial)),
+                    "После отказа от владения настройка накладывается заново.");
+
                 // Теперь конфигурацию правили вручную: перезаписывать её вслепую
                 // нельзя, но и снятие комплекта блокировать нечем.
                 File.WriteAllText(
