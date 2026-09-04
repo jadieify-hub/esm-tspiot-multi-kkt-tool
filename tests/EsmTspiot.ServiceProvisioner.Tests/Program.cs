@@ -126,6 +126,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Local module MSI output rejects cabinet and table drift", LocalModuleMsiOutputRejectsCabinetAndTableDrift);
             Run("Local module MSI staging recovers every mutation boundary", LocalModuleMsiStagingRecoversEveryMutationBoundary);
             Run("Windows Installer API keeps credentials out of diagnostics", WindowsInstallerApiKeepsCredentialsOutOfDiagnostics);
+            Run("Windows Installer API waits out a busy installer", WindowsInstallerApiWaitsOutABusyInstaller);
             Run("Windows Installer receives a terminated absolute LM directory", WindowsInstallerReceivesTerminatedAbsoluteLmDirectory);
             Run("Installed local module reader scans both registry views", InstalledLocalModuleReaderScansBothRegistryViews);
             Run("Local module MSI manifests guard ownership and content", LocalModuleMsiManifestsGuardOwnershipAndContent);
@@ -136,6 +137,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Local module layout discovers the erts runtime", LocalModuleLayoutDiscoversErtsRuntime);
             Run("MSI local module ensure is idempotent and recovers cleanup", MsiLocalModuleEnsureIsIdempotentAndRecoversCleanup);
             Run("MSI local module removal preserves base and compensates EPMD", MsiLocalModuleRemovalPreservesBaseAndCompensatesEpmd);
+            Run("Clone removal defers a locked directory to reboot", CloneRemovalDefersLockedDirectoryToReboot);
             Run("MSI local module ensure enables automatic start for an adopted base", MsiLocalModuleEnsureEnablesAutomaticStartForAdoptedBase);
             Run("MSI local module protocol v3 hashes and validates every item", MsiLocalModuleProtocolV3HashesAndValidatesEveryItem);
             Run("MSI local module session continues independent INN failures", MsiLocalModuleSessionContinuesIndependentInnFailures);
@@ -180,7 +182,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("ESM instance YAML supports block sequences and rejects ambiguity", EsmInstanceYamlSupportsBlockSequencesAndRejectsAmbiguity);
             Run("ESM instance config transaction backs up restores and defers", EsmInstanceConfigTransactionBacksUpRestoresAndDefers);
             Run("ESM instance service is startable but never mutable", EsmInstanceServiceIsStartableButNeverMutable);
-            Run("ESM instance config recovers from an aborted operation", EsmInstanceConfigRecoversFromAbortedOperation);
+            Run("ESM instance config reapplies over a vendor rewrite", EsmInstanceConfigReappliesOverVendorRewrite);
             Run("SCM handles are disposed on every failure", ScmHandlesAreDisposedOnEveryFailure);
             Run("SCM configures restricted service SID", ScmConfiguresRestrictedServiceSid);
             Run("Supervisor replaces only child ProgramData", SupervisorReplacesOnlyChildProgramData);
@@ -1483,7 +1485,10 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     RequireNoKrsHelperProcess();
                     if (services.Query("regime1") != null ||
                         services.Query("yenisei1") != null ||
-                        Directory.Exists(@"D:\Program Files\Regime1"))
+                        Directory.Exists(
+                            LocalModuleInstallRootPolicy.BuildCloneInstallDirectory(
+                                LocalModuleInstallRootPolicy.GetSystemVolumeRoot(),
+                                1)))
                         throw new InvalidOperationException(
                             "Cleanup left clone services or install root.");
                     for (int index = 0; index < items.Count; index++)
@@ -2488,6 +2493,69 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             }
         }
 
+        private static void WindowsInstallerApiWaitsOutABusyInstaller()
+        {
+            // Установка второго ЛМ подряд попадает в окно, когда Windows
+            // Installer ещё держит машинный мьютекс после первой, и получает
+            // 1618. Это ожидаемое состояние, а не отказ: ждём и повторяем.
+            string directory = CreateTemporaryDirectory();
+            try
+            {
+                string package = Path.Combine(directory, "package.msi");
+                File.WriteAllText(package, "synthetic");
+                FakeWindowsInstallerNative native =
+                    new FakeWindowsInstallerNative();
+                native.ReturnCodes.Enqueue(1618);
+                native.ReturnCodes.Enqueue(1618);
+                native.ReturnCodes.Enqueue(0);
+                List<int> waits = new List<int>();
+                DateTime frozen = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+                WindowsInstallerApi api = new WindowsInstallerApi(
+                    native,
+                    delegate(int milliseconds) { waits.Add(milliseconds); },
+                    delegate { return frozen; });
+
+                AssertEqual((uint)0, api.Install(package, "AUTOSERVICE=1"),
+                    "Занятый установщик обязан быть переждан, а не объявлен отказом.");
+                AssertEqual(3, native.InstallAttempts,
+                    "Повтор обязан идти до успеха, а не один раз.");
+                AssertEqual(2, waits.Count,
+                    "Между попытками обязана быть пауза.");
+
+                // Если установщик занят бесконечно, отказ обязан объяснять причину.
+                FakeWindowsInstallerNative stuck = new FakeWindowsInstallerNative();
+                stuck.ReturnCode = 1618;
+                // Часы двигаются быстрее ожидания, поэтому предел наступает
+                // на второй попытке, а не через три минуты реального времени.
+                DateTime moving = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+                WindowsInstallerApi stuckApi = new WindowsInstallerApi(
+                    stuck,
+                    delegate(int milliseconds)
+                    {
+                        moving = moving.AddMilliseconds(milliseconds * 100);
+                    },
+                    delegate { return moving; });
+                bool explained = false;
+                try
+                {
+                    stuckApi.Install(package, "AUTOSERVICE=1");
+                }
+                catch (WindowsInstallerOperationException error)
+                {
+                    explained = error.MsiErrorCode == 1618 &&
+                        error.Message.IndexOf("занят", StringComparison.Ordinal) >= 0;
+                }
+                AssertTrue(explained,
+                    "Бесконечно занятый установщик обязан назвать причину отказа.");
+                AssertTrue(stuck.InstallAttempts > 1,
+                    "Отказ обязан наступать только после повторов.");
+            }
+            finally
+            {
+                DeleteTestTreeWithReadOnlyFiles(directory);
+            }
+        }
+
         private static void WindowsInstallerApiKeepsCredentialsOutOfDiagnostics()
         {
             string directory = CreateTemporaryDirectory();
@@ -3221,6 +3289,47 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             platform.FailStartForInn = null;
         }
 
+        // Полевой отказ: клон снят, а его каталог держал завершающийся узел
+        // Erlang, и снятие сообщало CleanupPending. Каталог, поставленный в
+        // очередь удаления при перезагрузке, — это завершённое снятие, а не
+        // отказ, и оператор должен прочитать про перезагрузку.
+        private static void CloneRemovalDefersLockedDirectoryToReboot()
+        {
+            FakeLocalModuleMsiLifecyclePlatform platform =
+                new FakeLocalModuleMsiLifecyclePlatform();
+            FakeLocalModuleMsiRepository repository =
+                new FakeLocalModuleMsiRepository();
+            FakeLocalModuleMsiJournalStore journals =
+                new FakeLocalModuleMsiJournalStore();
+            LocalModuleMsiProvisioningContext context =
+                CreateMsiContext(platform, repository, journals);
+            LocalModuleMsiProvisioner provisioner =
+                new LocalModuleMsiProvisioner();
+            LocalModuleMsiRemovalWorkflow removal =
+                new LocalModuleMsiRemovalWorkflow();
+
+            LocalModuleMsiProvisioningItemRequest clone = MsiRequest(
+                "1234567890", 1, 6995, 7984, null);
+            LocalModuleMsiProvisioningItemResult created =
+                provisioner.Ensure(clone, context);
+            clone.ExpectedManifestSha256 = created.ManifestSha256;
+
+            platform.DeferCloneDirectoryToReboot = true;
+            LocalModuleMsiProvisioningItemResult removed =
+                removal.Remove(clone, context);
+            AssertEqual(
+                LmServiceProvisioningStatus.RemovedLocalArtifactsBindingRetained,
+                removed.Status,
+                "A clone whose folder stayed locked must still count as removed.");
+            AssertTrue(
+                removed.Message.IndexOf(
+                    "перезагрузке",
+                    StringComparison.Ordinal) >= 0,
+                "The operator must be told the folder disappears after a reboot.");
+            AssertFalse(journals.Contains(clone.Inn),
+                "A deferred folder must not leave the removal half-finished.");
+        }
+
         private static void MsiLocalModuleRemovalPreservesBaseAndCompensatesEpmd()
         {
             FakeLocalModuleMsiLifecyclePlatform platform =
@@ -3703,8 +3812,14 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 delegate { item.ApiPort = 6995; }, "API port");
             AssertMsiHashChanges(request, delegate { item.DatabasePort = 8984; },
                 delegate { item.DatabasePort = 7984; }, "database port");
-            AssertMsiHashChanges(request, delegate { item.InstallVolumeRoot = @"C:\"; },
-                delegate { item.InstallVolumeRoot = @"D:\"; }, "volume root");
+            AssertMsiHashChanges(request,
+                delegate { item.InstallVolumeRoot = @"Z:\"; },
+                delegate
+                {
+                    item.InstallVolumeRoot =
+                        LocalModuleInstallRootPolicy.GetSystemVolumeRoot();
+                },
+                "volume root");
             AssertMsiHashChanges(request,
                 delegate { item.RemoteAddress = "192.168.10.0/24"; },
                 delegate { item.RemoteAddress = "LocalSubnet"; }, "remote address");
@@ -3853,7 +3968,11 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 CloneOrdinal = ordinal,
                 ApiPort = apiPort,
                 DatabasePort = databasePort,
-                InstallVolumeRoot = @"D:\",
+                // Том берётся системный, а не жёстко D:. На кассе второго диска
+                // обычно нет, и стенд, прибитый к диску разработчика, проверял
+                // не ту машину.
+                InstallVolumeRoot =
+                    LocalModuleInstallRootPolicy.GetSystemVolumeRoot(),
                 RemoteAddress = "LocalSubnet",
                 ExpectedManifestSha256 = fingerprint
             };
@@ -7512,7 +7631,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 "Имя службы должно собираться обратно без изменений.");
         }
 
-        private static void EsmInstanceConfigRecoversFromAbortedOperation()
+        private static void EsmInstanceConfigReappliesOverVendorRewrite()
         {
             string root = CreateTemporaryDirectory();
             try
@@ -7555,7 +7674,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 bool refused = false;
                 try
                 {
-                    manager.ApplyAndRestart(manifests.Read(serial), false);
+                    manager.ApplyAndRestart(manifests.Read(serial));
                 }
                 catch (InvalidDataException)
                 {
@@ -7588,25 +7707,14 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     State = WindowsServiceState.Running,
                     ProcessId = 909
                 });
-                bool guarded = false;
-                try
-                {
-                    manager.ApplyAndRestart(manifests.Read(serial), false);
-                }
-                catch (InvalidDataException)
-                {
-                    guarded = true;
-                }
-                AssertTrue(guarded,
-                    "Без признака оборванной операции чужую правку трогать нельзя.");
-                AssertEqual(original, File.ReadAllText(configPath, Encoding.UTF8),
-                    "Отказ обязан оставлять конфигурацию ЕСМ нетронутой.");
-
+                // ЕСМ переписывает конфигурацию экземпляра сам при каждом
+                // перезапуске службы, а перезапускаем её мы же. Поэтому ни один
+                // хэш из манифеста не совпадает — и это штатное состояние, а не
+                // чужая правка: настройку надо просто наложить заново.
                 AssertEqual(
                     EsmInstanceConfigApplyState.Applied,
-                    manager.ApplyAndRestart(manifests.Read(serial), true),
-                    "После оборванной операции настройка обязана перепривязываться " +
-                    "к текущей конфигурации ЕСМ.");
+                    manager.ApplyAndRestart(manifests.Read(serial)),
+                    "Собственная перезапись ЕСМ не должна останавливать настройку.");
                 AssertContains(File.ReadAllText(configPath, Encoding.UTF8),
                     "gRPCPort: 50064");
                 DirectControllerManifest applied = manifests.Read(serial);
@@ -7615,7 +7723,32 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     applied.EsmConfigAppliedSha256,
                     "Манифест обязан ссылаться на то, что действительно записано.");
                 AssertTrue(File.Exists(manifests.GetEsmConfigBackupPath(serial)),
-                    "Перепривязка обязана заново сохранить исходный файл.");
+                    "Применение обязано сохранить исходный файл.");
+
+                // Ещё одна перезапись со стороны ЕСМ: применяемся поверх неё,
+                // но точку возврата не подменяем — она снята с того состояния,
+                // которое мы застали первыми.
+                string firstBackup = File.ReadAllText(
+                    manifests.GetEsmConfigBackupPath(serial), Encoding.UTF8);
+                File.WriteAllText(
+                    configPath,
+                    original.Replace("gRPCPort: 50063", "gRPCPort: 50099"),
+                    new UTF8Encoding(false));
+                AssertEqual(
+                    EsmInstanceConfigApplyState.Applied,
+                    manager.ApplyAndRestart(manifests.Read(serial)),
+                    "Повторное применение поверх перезаписи обязано проходить.");
+                AssertContains(File.ReadAllText(configPath, Encoding.UTF8),
+                    "gRPCPort: 50064");
+                AssertEqual(
+                    firstBackup,
+                    File.ReadAllText(
+                        manifests.GetEsmConfigBackupPath(serial), Encoding.UTF8),
+                    "Точка возврата обязана оставаться первой увиденной нами.");
+                AssertEqual(
+                    Sha256Hex(Encoding.UTF8.GetBytes(firstBackup)),
+                    manifests.Read(serial).EsmConfigOriginalSha256,
+                    "Манифест обязан ссылаться на сохранённую точку возврата.");
 
                 // Теперь конфигурацию правили вручную: перезаписывать её вслепую
                 // нельзя, но и снятие комплекта блокировать нечем.
@@ -7704,7 +7837,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
                 AssertEqual(
                     EsmInstanceConfigApplyState.Applied,
-                    manager.ApplyAndRestart(manifest, false),
+                    manager.ApplyAndRestart(manifest),
                     "The instance config must be applied transactionally.");
                 AssertContains(File.ReadAllText(configPath), "gRPCPort: 50064");
                 AssertTrue(File.Exists(manifests.GetEsmConfigBackupPath(serial)),
@@ -7731,7 +7864,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 manifests.Write(absent);
                 AssertEqual(
                     EsmInstanceConfigApplyState.Deferred,
-                    manager.ApplyAndRestart(absent, false),
+                    manager.ApplyAndRestart(absent),
                     "An instance config that is not created yet must defer without mutation.");
             }
             finally
@@ -10044,6 +10177,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             IWindowsInstallerNative
         {
             internal uint ReturnCode { get; set; }
+            internal Queue<uint> ReturnCodes { get; private set; }
+            internal int InstallAttempts { get; private set; }
             internal string PackagePath { get; private set; }
             internal string ProductCode { get; private set; }
             internal string CommandLine { get; private set; }
@@ -10055,6 +10190,12 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             internal FakeWindowsInstallerNative()
             {
                 UiTransitions = new List<int>();
+                ReturnCodes = new Queue<uint>();
+            }
+
+            private uint NextCode()
+            {
+                return ReturnCodes.Count > 0 ? ReturnCodes.Dequeue() : ReturnCode;
             }
 
             public int SetInternalUi(int uiLevel)
@@ -10069,7 +10210,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             {
                 PackagePath = packagePath;
                 CommandLine = commandLine;
-                return ReturnCode;
+                InstallAttempts++;
+                return NextCode();
             }
 
             public uint ConfigureProduct(
@@ -10082,7 +10224,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 InstallLevel = installLevel;
                 InstallState = installState;
                 CommandLine = commandLine;
-                return ReturnCode;
+                return NextCode();
             }
         }
 
@@ -11450,7 +11592,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 State(manifest.Inn).FirewallMatches = false;
             }
 
-            public void Uninstall(LocalModuleMsiManifest manifest)
+            public bool Uninstall(LocalModuleMsiManifest manifest)
             {
                 FakeLocalModuleMsiState state = State(manifest.Inn);
                 Events.Add(
@@ -11467,7 +11609,10 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 state.Running = false;
                 state.Ready = false;
                 state.AutomaticStart = false;
+                return !DeferCloneDirectoryToReboot;
             }
+
+            internal bool DeferCloneDirectoryToReboot;
 
             public void WaitForEpmdExit()
             {

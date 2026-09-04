@@ -110,14 +110,32 @@ namespace EsmTspiot.Shared.Services
             string normalized = Path.GetPathRoot(Path.GetFullPath(candidate));
             try
             {
+                // Причину отказа надо называть по имени: одно общее сообщение
+                // на четыре разных условия заставляет искать несуществующую
+                // точку повторного разбора там, где просто нет такого диска.
                 DriveInfo drive = new DriveInfo(normalized);
-                if (!drive.IsReady || !Directory.Exists(normalized) ||
-                    !IsSupportedVolumeCharacteristics(
+                if (!drive.IsReady || !Directory.Exists(normalized))
+                {
+                    throw new ArgumentException(
+                        "Диск " + normalized + " недоступен: " +
+                        "выберите том, который есть на этой машине.",
+                        "requestedVolumeRoot");
+                }
+                if (drive.DriveType != DriveType.Fixed)
+                {
+                    throw new ArgumentException(
+                        "Диск " + normalized + " не является постоянным " +
+                        "локальным (" + drive.DriveType + "); " +
+                        "ЛМ ЧЗ на сменный или сетевой том не ставится.",
+                        "requestedVolumeRoot");
+                }
+                if (!IsSupportedVolumeCharacteristics(
                         drive.DriveType,
                         File.GetAttributes(normalized)))
                 {
                     throw new ArgumentException(
-                        "Clone installation requires a ready fixed local volume without reparse points.",
+                        "Корень диска " + normalized +
+                        " является точкой повторного разбора.",
                         "requestedVolumeRoot");
                 }
             }

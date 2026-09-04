@@ -635,8 +635,10 @@ namespace EsmTspiot.WinForms.Shared
         {
             if (work == null) throw new ArgumentNullException("work");
             DateTime started = DateTime.UtcNow;
+            ProvisionerStepTrace.Restart(stageName);
             Log(stageName + ": начато, работает разовый помощник с правами " +
-                "администратора; журнал пополнится по завершении стадии.\r\n");
+                "администратора.\r\n");
+            string lastReported = string.Empty;
             while (true)
             {
                 Task finished = await Task.WhenAny(
@@ -647,9 +649,20 @@ namespace EsmTspiot.WinForms.Shared
                     break;
                 }
                 TimeSpan elapsed = DateTime.UtcNow - started;
-                Log(stageName + ": идёт работа, прошло " +
+                // Помощник пишет каждый свой шаг в общий след, поэтому окно
+                // может назвать текущую операцию, а не только время ожидания.
+                string step = ProvisionerStepTrace.ReadLastStep();
+                string suffix = string.IsNullOrEmpty(step)
+                    ? string.Empty
+                    : "; сейчас: " + step;
+                if (!string.Equals(step, lastReported, StringComparison.Ordinal) ||
+                    string.IsNullOrEmpty(step))
+                {
+                    lastReported = step;
+                }
+                Log(stageName + ": прошло " +
                     ((int)elapsed.TotalMinutes).ToString() + " мин " +
-                    elapsed.Seconds.ToString("00") + " с.\r\n");
+                    elapsed.Seconds.ToString("00") + " с" + suffix + ".\r\n");
             }
             return await work.ConfigureAwait(true);
         }

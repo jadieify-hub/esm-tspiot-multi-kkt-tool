@@ -64,7 +64,12 @@ namespace EsmTspiot.ServiceProvisioner
             LocalModuleMsiProvisioningItemRequest request,
             LocalModuleMsiManifest manifest);
         void RemoveFirewall(LocalModuleMsiManifest manifest);
-        void Uninstall(LocalModuleMsiManifest manifest);
+        /// <summary>Снимает продукт и убирает остатки каталога клона.</summary>
+        /// <returns>
+        /// true — каталог удалён сразу; false — каталог остался занят и
+        /// поставлен в очередь удаления при ближайшей перезагрузке.
+        /// </returns>
+        bool Uninstall(LocalModuleMsiManifest manifest);
         void WaitForEpmdExit();
     }
 

@@ -84,7 +84,7 @@ namespace EsmTspiot.WinForms.Shared
             bool mutation = idle && _helperAvailable && hasKkts;
             _ensureControllersButton.Enabled = mutation;
             _ensureLocalModulesButton.Enabled = mutation;
-            _bindAllEsmButton.Enabled = mutation;
+            _bindAllEsmButton.Enabled = idle && hasKkts;
             _readbackEsmButton.Enabled = idle && hasKkts;
             string unavailable = !_helperAvailable
                 ? _helperUnavailableReason
@@ -101,8 +101,10 @@ namespace EsmTspiot.WinForms.Shared
                     "из выбранного MSI; автозапуск включается; подтверждение UAC.");
             _serviceToolTip.SetToolTip(
                 _bindAllEsmButton,
-                unavailable ?? "Проверить контроллеры (UAC) и передать ЕСМ адрес " +
-                    "контроллера каждой ККТ.");
+                hasKkts
+                    ? "Передать ЕСМ адрес уже созданного контроллера каждой ККТ; " +
+                        "контроллеры не пересоздаются, UAC не требуется."
+                    : "В таблице нет зарегистрированных ККТ.");
             _serviceToolTip.SetToolTip(
                 _readbackEsmButton,
                 hasKkts
@@ -218,17 +220,17 @@ namespace EsmTspiot.WinForms.Shared
                 .ConfigureAwait(true);
         }
 
+        // Привязка не пересоздаёт контроллеры: она берёт то, что уже стоит на
+        // машине по данным инвентаризации, и передаёт ЕСМ их адреса. Иначе
+        // каждая привязка тянула бы за собой полную стадию контроллеров — с UAC
+        // и многоминутным ожиданием, хотя менять на диске нечего.
         private async Task BindControllersManuallyAsync(
             IList<LmGatewayKkt> kkts,
             LocalModuleMsiPlan plan,
             CancellationToken cancellation)
         {
-            RequireUsableLocalModulePlan(plan);
             DirectControllerSetupOutcome controllers =
-                await EnsureDirectControllersFromHostAsync(
-                    kkts,
-                    plan.CreateTargetApiPortMap(),
-                    cancellation).ConfigureAwait(true);
+                BuildInventoryControllerOutcome(kkts, plan);
             await BindReadyDirectControllersAsync(
                 kkts,
                 controllers,
@@ -236,6 +238,44 @@ namespace EsmTspiot.WinForms.Shared
             FinalizeDirectControllerOutcome(controllers);
             await RefreshAfterManualStageAsync(_statusLabel.Text, cancellation)
                 .ConfigureAwait(true);
+        }
+
+        private DirectControllerSetupOutcome BuildInventoryControllerOutcome(
+            IList<LmGatewayKkt> kkts,
+            LocalModuleMsiPlan plan)
+        {
+            DirectControllerOperatorInventoryReader reader =
+                new DirectControllerOperatorInventoryReader();
+            DirectControllerPlan controllerPlan = plan != null && plan.IsValid
+                ? reader.BuildPlan(kkts, plan.CreateTargetApiPortMap())
+                : reader.BuildPlan(kkts);
+            for (int index = 0;
+                index < controllerPlan.ValidationMessages.Count;
+                index++)
+                Log("План контроллеров: " + SensitiveDataMasker.Mask(
+                    controllerPlan.ValidationMessages[index]) + "\r\n");
+            DirectControllerSetupOutcome controllers =
+                new DirectControllerSetupOutcome();
+            controllers.ExpectedKktCount = kkts.Count;
+            for (int index = 0; index < kkts.Count; index++)
+            {
+                LmGatewayKkt kkt = kkts[index];
+                DirectControllerAssignment assignment = kkt == null
+                    ? null
+                    : controllerPlan.FindBySerial(kkt.KktSerial);
+                if (assignment == null)
+                {
+                    controllers.FailedCount++;
+                    controllers.Messages.Add(
+                        "ККТ " + (kkt == null ? string.Empty : kkt.KktSerial) +
+                        ": контроллер не найден, привязывать нечего; " +
+                        "выполните «Шаг 1: контроллеры».");
+                    continue;
+                }
+                controllers.ReadyAssignments[kkt.KktSerial] = assignment;
+                controllers.ReadyCount++;
+            }
+            return controllers;
         }
 
         private async Task ReadbackManuallyAsync(

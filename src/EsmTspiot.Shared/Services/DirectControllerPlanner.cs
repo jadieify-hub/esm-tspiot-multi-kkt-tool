@@ -161,6 +161,11 @@ namespace EsmTspiot.Shared.Services
         {
             Dictionary<string, int> result =
                 new Dictionary<string, int>(StringComparer.Ordinal);
+            // Один ЛМ обслуживает ровно один ИНН. Сохранённое назначение может
+            // указывать на порт, уже занятый другим ИНН: так бывает, когда
+            // прошлый прогон присвоил второй ККТ базовый ЛМ. Такой порт не
+            // принимаем — ИНН получит свободный ниже.
+            HashSet<int> usedPorts = new HashSet<int>();
             if (savedAssignments != null)
             {
                 for (int index = 0; index < savedAssignments.Count; index++)
@@ -169,7 +174,8 @@ namespace EsmTspiot.Shared.Services
                     string inn = Trim(saved == null ? null : saved.KktInn);
                     if (IsInn(inn) && !result.ContainsKey(inn) &&
                         saved.TargetLocalModulePort >= 1024 &&
-                        saved.TargetLocalModulePort <= 65535)
+                        saved.TargetLocalModulePort <= 65535 &&
+                        usedPorts.Add(saved.TargetLocalModulePort))
                     {
                         result.Add(inn, saved.TargetLocalModulePort);
                     }
@@ -192,14 +198,27 @@ namespace EsmTspiot.Shared.Services
             for (int index = 0; index < sorted.Count; index++)
             {
                 string inn = Trim(sorted[index].KktInn);
-                if (IsInn(inn) && !result.ContainsKey(inn))
-                {
-                    result.Add(
-                        inn,
-                        DirectControllerIdentity.FutureLmPortForOrdinal(index + 1));
-                }
+                if (!IsInn(inn) || result.ContainsKey(inn)) continue;
+                int port = FindFreeLocalModulePort(usedPorts);
+                if (port == 0) continue;
+                result.Add(inn, port);
             }
             return result;
+        }
+
+        // Порт ЛМ выбирается по первому свободному номеру, а не по позиции ККТ
+        // в списке: иначе ИНН, чей порт уже занят сохранённым назначением,
+        // получил бы тот же номер повторно.
+        private static int FindFreeLocalModulePort(HashSet<int> usedPorts)
+        {
+            for (int ordinal = 1;
+                ordinal <= DirectControllerIdentity.MaximumOrdinal;
+                ordinal++)
+            {
+                int candidate = DirectControllerIdentity.FutureLmPortForOrdinal(ordinal);
+                if (usedPorts.Add(candidate)) return candidate;
+            }
+            return 0;
         }
 
         private static List<LmGatewayKkt> NormalizeAndSortKkts(

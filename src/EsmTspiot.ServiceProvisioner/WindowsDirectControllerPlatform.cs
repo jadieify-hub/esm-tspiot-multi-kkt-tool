@@ -124,16 +124,15 @@ namespace EsmTspiot.ServiceProvisioner
             string operationId,
             string initiatingSid)
         {
+            ProvisionerStepTrace.Write("ККТ " + item.KktSerial + ": ожидание монопольного доступа");
             using (AcquireMutationLock())
             {
+                ProvisionerStepTrace.Write("ККТ " + item.KktSerial + ": чтение состояния комплекта");
                 DirectControllerManifest manifest = CreateManifest(
                     item,
                     operationId,
                     DirectControllerLifecycleState.Preparing);
                 DirectControllerManifest existing = _manifests.Read(item.KktSerial);
-                bool previousOperationAborted =
-                    existing != null &&
-                    existing.State == DirectControllerLifecycleState.RequiresAttention;
                 if (existing != null)
                 {
                     RequireSameControllerIdentity(existing, item);
@@ -143,6 +142,7 @@ namespace EsmTspiot.ServiceProvisioner
                         existing.EsmConfigAppliedSha256;
                 }
                 string serviceName = DirectControllerIdentity.ServiceNameForOrdinal(item.Ordinal);
+                ProvisionerStepTrace.Write("ККТ " + item.KktSerial + ": опрос службы " + serviceName);
                 WindowsServiceRecord service = _services.Query(serviceName);
                 if (existing == null && service != null && item.Ordinal != 1)
                 {
@@ -155,16 +155,22 @@ namespace EsmTspiot.ServiceProvisioner
                 {
                     if (item.Ordinal == 1)
                     {
+                        ProvisionerStepTrace.Write("ККТ " + item.KktSerial +
+                            ": проверка штатной службы контроллера");
                         EnsureOfficialBase(service, manifest);
                     }
                     else
                     {
+                        ProvisionerStepTrace.Write("ККТ " + item.KktSerial +
+                            ": создание или обновление службы " + serviceName);
                         EnsureClone(
                             service,
                             manifest,
                             initiatingSid,
                             existing != null);
                     }
+                    ProvisionerStepTrace.Write("ККТ " + item.KktSerial +
+                        ": ожидание готовности контроллера (до 45 с)");
                     LmReadinessResult ready = _readiness.WaitUntilReady(
                         item.Ordinal,
                         ReadyTimeoutMilliseconds);
@@ -172,10 +178,11 @@ namespace EsmTspiot.ServiceProvisioner
                     {
                         throw new InvalidOperationException(ready.Message);
                     }
+                    ProvisionerStepTrace.Write("ККТ " + item.KktSerial +
+                        ": настройка конфигурации экземпляра ЕСМ");
                     EsmInstanceConfigApplyState configState =
-                        _esmConfigs.ApplyAndRestart(
-                            manifest,
-                            previousOperationAborted);
+                        _esmConfigs.ApplyAndRestart(manifest);
+                    ProvisionerStepTrace.Write("ККТ " + item.KktSerial + ": готово");
                     manifest.State = DirectControllerLifecycleState.Ready;
                     manifest.UpdatedUtc = DateTime.UtcNow.ToString("o");
                     _manifests.Write(manifest);
