@@ -14,9 +14,20 @@ namespace EsmTspiot.ServiceProvisioner
         internal WindowsInstallerOperationException(
             string operation,
             uint msiErrorCode)
+            : this(operation, msiErrorCode, null)
+        {
+        }
+
+        internal WindowsInstallerOperationException(
+            string operation,
+            uint msiErrorCode,
+            string explanation)
             : base(
                 "Windows Installer " + operation +
-                " failed with code " + msiErrorCode.ToString() + ".")
+                " failed with code " + msiErrorCode.ToString() + "." +
+                (string.IsNullOrEmpty(explanation)
+                    ? string.Empty
+                    : " " + explanation))
         {
             MsiErrorCode = msiErrorCode;
         }

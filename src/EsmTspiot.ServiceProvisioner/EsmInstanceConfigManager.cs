@@ -15,13 +15,12 @@ namespace EsmTspiot.ServiceProvisioner
 
     internal interface IEsmInstanceConfigManager
     {
-        // recoverFromAbortedOperation ставится только тогда, когда предыдущая
-        // наша операция по этой ККТ оборвалась (манифест в RequiresAttention).
-        // В этом случае запись «конфигурация применена» не является
-        // доказательством того, что мы её действительно писали.
+        // Патч накладывается на текущее содержимое конфигурации ЕСМ, каким бы
+        // оно ни было. ЕСМ переписывает свой файл сам при каждом перезапуске
+        // экземпляра, поэтому «файл отличается от того, что мы записали» —
+        // штатное состояние, а не признак чужого вмешательства.
         EsmInstanceConfigApplyState ApplyAndRestart(
-            DirectControllerManifest manifest,
-            bool recoverFromAbortedOperation);
+            DirectControllerManifest manifest);
         bool RestoreAndRestart(DirectControllerManifest manifest);
     }
 
@@ -36,8 +35,7 @@ namespace EsmTspiot.ServiceProvisioner
         }
 
         public EsmInstanceConfigApplyState ApplyAndRestart(
-            DirectControllerManifest manifest,
-            bool recoverFromAbortedOperation)
+            DirectControllerManifest manifest)
         {
             return EsmInstanceConfigApplyState.Deferred;
         }
@@ -78,8 +76,7 @@ namespace EsmTspiot.ServiceProvisioner
         }
 
         public EsmInstanceConfigApplyState ApplyAndRestart(
-            DirectControllerManifest manifest,
-            bool recoverFromAbortedOperation)
+            DirectControllerManifest manifest)
         {
             if (manifest == null) throw new ArgumentNullException("manifest");
             string configPath = GetConfigPath(manifest.KktSerial);
@@ -96,68 +93,40 @@ namespace EsmTspiot.ServiceProvisioner
             byte[] patched = StrictUtf8.GetBytes(patchedText);
             string currentHash = Sha256(original);
             string appliedHash = Sha256(patched);
-            if (!string.IsNullOrEmpty(manifest.EsmConfigAppliedSha256) &&
-                !string.Equals(
-                    currentHash,
-                    manifest.EsmConfigAppliedSha256,
-                    StringComparison.OrdinalIgnoreCase) &&
-                !string.Equals(
-                    currentHash,
-                    manifest.EsmConfigOriginalSha256,
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                if (!recoverFromAbortedOperation)
-                {
-                    throw new InvalidDataException(
-                        "Конфигурация ЕСМ изменена после нашей последней операции; " +
-                        "автоматическая перезапись запрещена. " +
-                        "Снимите комплект этой ККТ кнопкой «Удалить всё созданное» и повторите настройку.");
-                }
-                // Прошлая наша операция оборвалась, а файл с тех пор сменился:
-                // ЕСМ пересоздал конфигурацию при перерегистрации ККТ. Записи
-                // о владении относятся к исчезнувшему файлу — перепривязываемся
-                // к текущему, как к первому применению.
-                manifest.EsmConfigOriginalSha256 = null;
-                manifest.EsmConfigAppliedSha256 = null;
-                TryDeleteBackup(
-                    _manifests.GetEsmConfigBackupPath(manifest.KktSerial));
-            }
-            if (string.Equals(currentHash, appliedHash, StringComparison.OrdinalIgnoreCase))
-            {
-                if (!string.IsNullOrEmpty(manifest.EsmConfigAppliedSha256) &&
-                    !string.Equals(
-                        currentHash,
-                        manifest.EsmConfigAppliedSha256,
-                        StringComparison.OrdinalIgnoreCase))
-                {
-                    throw new InvalidDataException(
-                        "Хэш применённой конфигурации ЕСМ не совпадает с манифестом.");
-                }
-                return EsmInstanceConfigApplyState.AlreadyApplied;
-            }
 
+            // Резервная копия снимается один раз — с того состояния, которое мы
+            // застали первыми. Именно её возвращает «Удалить всё созданное»,
+            // поэтому при повторных применениях она не переписывается.
             string backupPath = _manifests.GetEsmConfigBackupPath(manifest.KktSerial);
+            bool createdBackup = false;
             if (File.Exists(backupPath))
             {
-                byte[] existingBackup = ReadBounded(backupPath);
-                if (!string.Equals(
-                        Sha256(existingBackup),
+                string backupHash = Sha256(ReadBounded(backupPath));
+                if (!string.IsNullOrEmpty(manifest.EsmConfigOriginalSha256) &&
+                    !string.Equals(
+                        backupHash,
                         manifest.EsmConfigOriginalSha256,
                         StringComparison.OrdinalIgnoreCase))
                 {
                     throw new InvalidDataException(
                         "Защищённая резервная копия конфигурации ЕСМ изменилась.");
                 }
+                manifest.EsmConfigOriginalSha256 = backupHash;
             }
             else
             {
                 _writer.WriteBytes(backupPath, original);
                 _manifests.ProtectOwnedFile(backupPath);
+                createdBackup = true;
+                manifest.EsmConfigOriginalSha256 = currentHash;
             }
-            manifest.EsmConfigOriginalSha256 = currentHash;
             manifest.EsmConfigAppliedSha256 = appliedHash;
             manifest.UpdatedUtc = DateTime.UtcNow.ToString("o");
             _manifests.Write(manifest);
+            if (string.Equals(currentHash, appliedHash, StringComparison.OrdinalIgnoreCase))
+            {
+                return EsmInstanceConfigApplyState.AlreadyApplied;
+            }
 
             string serviceName =
                 EsmInstanceServiceIdentity.CreateName(manifest.KktSerial);
@@ -178,11 +147,22 @@ namespace EsmTspiot.ServiceProvisioner
                     _writer.WriteBytes(configPath, original);
                 }
                 TryStartInstance(serviceName, wasRunning);
-                manifest.EsmConfigOriginalSha256 = null;
-                manifest.EsmConfigAppliedSha256 = null;
+                if (createdBackup)
+                {
+                    // Резервную копию создали в этом же вызове — забираем её
+                    // обратно вместе с признаком владения.
+                    manifest.EsmConfigOriginalSha256 = null;
+                    manifest.EsmConfigAppliedSha256 = null;
+                    TryDeleteBackup(backupPath);
+                }
+                else
+                {
+                    // Копия снята прошлой операцией и остаётся точкой возврата;
+                    // на диске сейчас лежит содержимое до патча.
+                    manifest.EsmConfigAppliedSha256 = currentHash;
+                }
                 manifest.UpdatedUtc = DateTime.UtcNow.ToString("o");
                 _manifests.Write(manifest);
-                TryDeleteBackup(backupPath);
                 throw;
             }
         }
@@ -283,6 +263,7 @@ namespace EsmTspiot.ServiceProvisioner
 
         private bool StopInstance(string serviceName)
         {
+            ProvisionerStepTrace.Write("остановка экземпляра ЕСМ " + serviceName + " (до 30 с)");
             WindowsServiceRecord service = _services.Query(serviceName);
             if (service == null)
             {
@@ -310,6 +291,7 @@ namespace EsmTspiot.ServiceProvisioner
         private void StartInstance(string serviceName, bool shouldRun)
         {
             if (!shouldRun) return;
+            ProvisionerStepTrace.Write("запуск экземпляра ЕСМ " + serviceName + " (до 30 с)");
             _services.Start(serviceName);
             for (int attempt = 0; attempt < ServicePollAttempts; attempt++)
             {

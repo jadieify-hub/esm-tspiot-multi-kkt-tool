@@ -477,7 +477,7 @@ namespace EsmTspiot.ServiceProvisioner
                 manifest.FirewallRuleHash);
         }
 
-        public void Uninstall(LocalModuleMsiManifest manifest)
+        public bool Uninstall(LocalModuleMsiManifest manifest)
         {
             IList<InstalledLocalModuleProduct> installed = _products.ReadAll();
             bool productPresent = false;
@@ -500,10 +500,11 @@ namespace EsmTspiot.ServiceProvisioner
                     throw new InvalidOperationException(
                         "Windows Installer still reports the removed product.");
             if (manifest.CloneOrdinal > 0 && manifest.CanRemove)
-                RemoveCloneResidue(manifest);
+                return RemoveCloneResidue(manifest);
+            return true;
         }
 
-        private void RemoveCloneResidue(LocalModuleMsiManifest manifest)
+        private bool RemoveCloneResidue(LocalModuleMsiManifest manifest)
         {
             LocalModuleInstalledLayout layout = LocalModuleInstalledLayout.Create(
                 manifest.InstallRoot,
@@ -532,10 +533,11 @@ namespace EsmTspiot.ServiceProvisioner
                     StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException(
                     "Clone installation root is not exact.");
+            bool directoryRemoved = true;
             if (Directory.Exists(root))
             {
                 RejectReparseTree(root);
-                DeleteCloneDirectory(root);
+                directoryRemoved = DeleteCloneDirectory(root);
             }
 
             string suffix = " экземпляр " +
@@ -547,27 +549,45 @@ namespace EsmTspiot.ServiceProvisioner
                 manifest.InstallRoot);
             RemoveCrptRegistryKey(
                 @"SOFTWARE\ЦРПТ\Локальный модуль ЧЗ" + suffix);
+            return directoryRemoved;
         }
 
-        private void DeleteCloneDirectory(string root)
+        // Узел Erlang снятого клона завершается не мгновенно и всё это время
+        // держит файлы своего каталога. Дольше минуты ждать незачем: если он
+        // не отпустил каталог сразу, снятие всё равно не провалено — остатки
+        // встают в очередь удаления при перезагрузке, как это делает сам
+        // установщик Windows, и оператор не сидит перед замершим окном.
+        private const int CloneDirectoryDeleteTimeoutMilliseconds = 60000;
+
+        private bool DeleteCloneDirectory(string root)
         {
+            ProvisionerStepTrace.Write(
+                "ожидание освобождения каталога клона " +
+                Path.GetFileName(root));
+            DateTime deadline = DateTime.UtcNow.AddMilliseconds(
+                CloneDirectoryDeleteTimeoutMilliseconds);
             IOException lastError = null;
-            for (int attempt = 0; attempt < 120; attempt++)
+            while (true)
             {
                 try
                 {
-                    if (!Directory.Exists(root)) return;
+                    if (!Directory.Exists(root)) return true;
                     Directory.Delete(root, true);
-                    return;
+                    return true;
                 }
                 catch (IOException exception)
                 {
                     lastError = exception;
-                    _delay();
                 }
+                if (DateTime.UtcNow >= deadline) break;
+                _delay();
             }
+            ProvisionerStepTrace.Write(
+                "каталог клона занят, удаление отложено на перезагрузку");
+            if (PendingRebootDeletion.ScheduleTree(root)) return false;
             throw new IOException(
-                "Clone installation directory remained locked after uninstall.",
+                "Каталог клона ЛМ остался занят и не встал в очередь удаления: " +
+                root + ". Перезагрузите кассу и повторите снятие.",
                 lastError);
         }
 

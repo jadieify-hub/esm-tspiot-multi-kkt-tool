@@ -105,6 +105,7 @@ namespace EsmTspiot.Shared.Tests
             Run("Direct controller planner skips foreign names and ports", DirectControllerPlannerSkipsForeignNamesAndPorts);
             Run("Direct controller planner reports ordinal exhaustion", DirectControllerPlannerReportsOrdinalExhaustion);
             Run("Direct controller planner tolerates an absent saved KKT", DirectControllerPlannerToleratesAbsentSavedKkt);
+            Run("Direct controller planner never shares one LM port between INNs", DirectControllerPlannerNeverSharesLocalModulePort);
             Run("MSI local module planner groups KKT by INN", MsiLocalModulePlannerGroupsKktByInn);
             Run("MSI local module planner uses actual base and clone ports", MsiLocalModulePlannerUsesActualBaseAndClonePorts);
             Run("MSI local module planner preserves saved ordinals", MsiLocalModulePlannerPreservesSavedOrdinals);
@@ -1724,6 +1725,50 @@ namespace EsmTspiot.Shared.Tests
                 "Stable service identity follows the preserved ordinal.");
             AssertEqual(1, plan.FindBySerial("00105700000001").Ordinal,
                 "The free official base remains available to a new KKT.");
+        }
+
+        private static void DirectControllerPlannerNeverSharesLocalModulePort()
+        {
+            // Прошлый прогон присвоил второй ККТ базовый ЛМ, и это осело в
+            // сохранённом назначении. Один ЛМ обслуживает один ИНН, поэтому
+            // повторно отдавать тот же порт нельзя.
+            DirectControllerAssignment saved = new DirectControllerAssignment
+            {
+                KktSerial = "00105700000002",
+                KktInn = "7707083893",
+                Ordinal = 2,
+                Role = DirectControllerRole.DirectClone,
+                ServiceName = "esm-lm-controller-2",
+                GrpcPort = 50064,
+                RestPort = 5064,
+                TargetLocalModulePort = 5995
+            };
+            DirectControllerPlan plan = DirectControllerPlanner.Build(
+                new List<LmGatewayKkt>
+                {
+                    CreateLmKkt("00105700000001", "1234567894"),
+                    CreateLmKkt("00105700000002", "7707083893")
+                },
+                new List<DirectControllerAssignment> { saved },
+                new List<DirectControllerServiceInventoryItem>
+                {
+                    new DirectControllerServiceInventoryItem
+                    {
+                        ServiceName = "esm-lm-controller",
+                        IsVerifiedOfficial = true
+                    }
+                },
+                new List<TcpListenerSnapshotItem>());
+
+            AssertTrue(plan.IsValid, string.Join("; ", plan.ValidationMessages));
+            AssertEqual(2, plan.Assignments.Count, "Обе ККТ обязаны попасть в план.");
+            int first = plan.FindBySerial("00105700000001").TargetLocalModulePort;
+            int second = plan.FindBySerial("00105700000002").TargetLocalModulePort;
+            AssertTrue(first != second,
+                "Два ИНН не могут делить один ЛМ: получено " +
+                first.ToString() + " и " + second.ToString() + ".");
+            AssertTrue(first >= 5995 && second >= 5995,
+                "Порты ЛМ обязаны оставаться в штатном диапазоне.");
         }
 
         private static void DirectControllerPlannerToleratesAbsentSavedKkt()

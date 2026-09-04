@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 
 namespace EsmTspiot.ServiceProvisioner
 {
@@ -22,17 +23,67 @@ namespace EsmTspiot.ServiceProvisioner
         private const int InstallStateAbsent = 2;
         private const int InstallStateDefault = 5;
         private const int InstallUiLevelNone = 2;
+
+        // Windows Installer выполняет по одной операции на всю машину и держит
+        // мьютекс ещё некоторое время после завершения предыдущей: пользовательские
+        // действия пакета (регистрация служб, первый запуск) идут уже после того,
+        // как msiexec вернул управление. Установка второго ЛМ подряд попадает
+        // ровно в это окно и получает 1618. Ждём и повторяем.
+        private const uint ErrorInstallAlreadyRunning = 1618;
+        // Предел задан временем, а не числом попыток: сама попытка может длиться
+        // десятки секунд, и «60 попыток» превращались в полчаса молчания.
+        private const int InstallerBusyTimeoutMilliseconds = 180000;
+        private const int InstallerBusyDelayMilliseconds = 5000;
+
+        // MsiInstallProduct и MsiConfigureProductEx работают внутри нашего
+        // процесса и не умеют ни отменяться, ни истекать. Если пакет вендора
+        // встал на своём действии, помощник стоит вместе с ним неограниченно
+        // долго и с нулевой загрузкой — снаружи это неотличимо от зависания
+        // программы. Поэтому каждый вызов ограничен по времени: помощник
+        // одноразовый, он завершится и отпустит оператора, а незавершённая
+        // операция подхватится штатным повтором.
+        private const int InstallerCallTimeoutMilliseconds = 900000;
+
         private readonly IWindowsInstallerNative _native;
+        private readonly Action<int> _wait;
+        private readonly Func<DateTime> _clock;
 
         internal WindowsInstallerApi()
-            : this(new WindowsInstallerNative())
+            : this(new WindowsInstallerNative(), null, null)
         {
         }
 
         internal WindowsInstallerApi(IWindowsInstallerNative native)
+            : this(native, null, null)
+        {
+        }
+
+        internal WindowsInstallerApi(
+            IWindowsInstallerNative native,
+            Action<int> wait)
+            : this(native, wait, null)
+        {
+        }
+
+        internal WindowsInstallerApi(
+            IWindowsInstallerNative native,
+            Action<int> wait,
+            Func<DateTime> clock)
         {
             if (native == null) throw new ArgumentNullException("native");
             _native = native;
+            _wait = wait ?? DefaultWait;
+            _clock = clock ?? DefaultClock;
+        }
+
+        private static DateTime DefaultClock()
+        {
+            return DateTime.UtcNow;
+        }
+
+        private static void DefaultWait(int milliseconds)
+        {
+            Thread.Sleep(milliseconds);
         }
 
         public uint Install(string packagePath, string hiddenProperties)
@@ -89,7 +140,25 @@ namespace EsmTspiot.ServiceProvisioner
             int previous = _native.SetInternalUi(InstallUiLevelNone);
             try
             {
-                return Complete(operation, nativeOperation());
+                DateTime deadline = _clock().AddMilliseconds(
+                    InstallerBusyTimeoutMilliseconds);
+                uint code = RunBounded(operation, nativeOperation);
+                while (code == ErrorInstallAlreadyRunning &&
+                    _clock() < deadline)
+                {
+                    _wait(InstallerBusyDelayMilliseconds);
+                    code = RunBounded(operation, nativeOperation);
+                }
+                if (code == ErrorInstallAlreadyRunning)
+                {
+                    throw new WindowsInstallerOperationException(
+                        operation,
+                        code,
+                        "Установщик Windows занят другой установкой дольше " +
+                        (InstallerBusyTimeoutMilliseconds / 1000).ToString() +
+                        " с. Дождитесь её окончания и повторите настройку.");
+                }
+                return Complete(operation, code);
             }
             finally
             {
@@ -115,6 +184,30 @@ namespace EsmTspiot.ServiceProvisioner
                         .Append("<redacted>");
             }
             return result.ToString();
+        }
+
+        private uint RunBounded(string operation, Func<uint> nativeOperation)
+        {
+            uint code = 0;
+            Exception failure = null;
+            Thread worker = new Thread(delegate()
+            {
+                try { code = nativeOperation(); }
+                catch (Exception error) { failure = error; }
+            });
+            worker.IsBackground = true;
+            worker.Start();
+            if (!worker.Join(InstallerCallTimeoutMilliseconds))
+            {
+                throw new TimeoutException(
+                    "Установщик Windows не завершил операцию «" + operation +
+                    "» за " +
+                    (InstallerCallTimeoutMilliseconds / 60000).ToString() +
+                    " мин. Операция осталась за установщиком; " +
+                    "дождитесь её окончания и повторите шаг.");
+            }
+            if (failure != null) throw failure;
+            return code;
         }
 
         private static uint Complete(string operation, uint code)

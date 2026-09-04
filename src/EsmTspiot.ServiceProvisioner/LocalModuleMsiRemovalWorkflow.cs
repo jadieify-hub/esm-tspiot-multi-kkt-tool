@@ -100,6 +100,7 @@ namespace EsmTspiot.ServiceProvisioner
                     return right.Manifest.CloneOrdinal.CompareTo(
                         left.Manifest.CloneOrdinal);
                 });
+                StopEveryPairBeforeUninstall(plan, context);
                 for (int index = 0; index < plan.Count; index++)
                 {
                     RemovalPlanItem item = plan[index];
@@ -125,6 +126,31 @@ namespace EsmTspiot.ServiceProvisioner
                 }
             }
             return results;
+        }
+
+        // EPMD на машине один, и вендорский пакет гасит его при удалении.
+        // Пока жив узел Erlang любого другого экземпляра ЛМ, это действие
+        // не завершается, а вызов установщика прервать нечем — снятие
+        // комплекта встаёт целиком. Поэтому сначала останавливаем все пары
+        // и только потом запускаем удаления.
+        private static void StopEveryPairBeforeUninstall(
+            IList<RemovalPlanItem> plan,
+            LocalModuleMsiProvisioningContext context)
+        {
+            for (int index = 0; index < plan.Count; index++)
+            {
+                RemovalPlanItem item = plan[index];
+                if (!item.Manifest.CanRemove) continue;
+                try
+                {
+                    context.Platform.StopAndVerify(item.Request, item.Manifest);
+                }
+                catch (Exception)
+                {
+                    // Не сумевшая остановиться пара не должна мешать
+                    // остановке остальных: её отказ проявится на своём шаге.
+                }
+            }
         }
 
         private LocalModuleMsiProvisioningItemResult
@@ -248,12 +274,13 @@ namespace EsmTspiot.ServiceProvisioner
                         null, false);
                     context.Platform.RestoreStartMode(manifest);
                 }
+                bool directoryRemoved = true;
                 if (manifest.CanRemove)
                 {
                     context.WriteStage(request, manifest.OwnershipNonce,
                         LocalModuleMsiLifecycleStage.ProductUninstalling,
                         null, false);
-                    context.Platform.Uninstall(manifest);
+                    directoryRemoved = context.Platform.Uninstall(manifest);
                     LocalModuleMsiObservedState remaining =
                         LocalModuleMsiProvisioner.RequireUnconflicted(
                             request, manifest, context);
@@ -272,15 +299,19 @@ namespace EsmTspiot.ServiceProvisioner
                     manifest.Inn,
                     context.OperationId,
                     manifest.OwnershipNonce);
+                string removed = manifest.PreExisting
+                    ? manifest.StartModeAdjusted
+                        ? "Назначение удалено; предустановленный базовый ЛМ " +
+                            "сохранён, прежний режим запуска его служб возвращён."
+                        : "Назначение удалено; предустановленный базовый ЛМ сохранён."
+                    : "Созданный локальный модуль удалён; привязка ЕСМ сохранена.";
+                if (!directoryRemoved)
+                    removed += " Каталог клона был занят завершающимся " +
+                        "процессом и будет удалён при ближайшей перезагрузке.";
                 return LocalModuleMsiProvisioner.Result(
                     request,
                     LmServiceProvisioningStatus.RemovedLocalArtifactsBindingRetained,
-                    manifest.PreExisting
-                        ? manifest.StartModeAdjusted
-                            ? "Назначение удалено; предустановленный базовый ЛМ " +
-                                "сохранён, прежний режим запуска его служб возвращён."
-                            : "Назначение удалено; предустановленный базовый ЛМ сохранён."
-                        : "Созданный локальный модуль удалён; привязка ЕСМ сохранена.",
+                    removed,
                     string.Empty);
             }
             catch (Exception exception)
