@@ -71,6 +71,7 @@ namespace EsmTspiot.WinForms.Shared
         private string _lastControlModulePath = string.Empty;
         private bool _fileLogErrorShown;
         private bool _busy;
+        private bool _supportDialogOffered;
         private System.Threading.CancellationTokenSource _automaticCancellation;
 
         public MainForm()
@@ -1428,14 +1429,19 @@ namespace EsmTspiot.WinForms.Shared
                     this,
                     BuildAutomaticSetupCompletionMessage(
                         registrationOutcome,
-                        stackSummary,
-                        controllersDeferred || controllersComplete,
-                        registrationHasFailures),
+                        stackSummary),
                     "Автоматическая настройка",
                     MessageBoxButtons.OK,
                     fullySuccessful
                         ? MessageBoxIcon.Information
                         : MessageBoxIcon.Warning);
+                if (ShouldOfferSupportDialog(
+                        fullySuccessful,
+                        _supportDialogOffered))
+                {
+                    _supportDialogOffered = true;
+                    ShowSupportDevelopment();
+                }
             }
             catch (OperationCanceledException)
             {
@@ -2070,9 +2076,7 @@ namespace EsmTspiot.WinForms.Shared
 
         private static string BuildAutomaticSetupCompletionMessage(
             BulkRegistrationOutcome registrationOutcome,
-            string stackSummary,
-            bool complete,
-            bool registrationHasFailures)
+            string stackSummary)
         {
             StringBuilder message = new StringBuilder();
             message.Append("Автоматическая настройка завершена.\r\n\r\n");
@@ -2083,13 +2087,20 @@ namespace EsmTspiot.WinForms.Shared
             message.Append(
                 "\r\n\r\nКонтроллеры и порты кассового ПО показаны " +
                 "на вкладке «ЛМ ЧЗ».");
-            if (complete && !registrationHasFailures)
-            {
-                message.Append(
-                    "\r\n\r\nПрограмма помогла? Поддержать разработку: " +
-                    "меню Справка.");
-            }
             return message.ToString();
+        }
+
+        /// <summary>
+        /// Окно поддержки открывается после удачной настройки — вместо строки
+        /// в итоговом тексте, которую оператор не замечал. Один раз за запуск
+        /// программы: за смену настройку прогоняют по нескольку раз, и окно на
+        /// каждый прогон превратилось бы в помеху.
+        /// </summary>
+        internal static bool ShouldOfferSupportDialog(
+            bool fullySuccessful,
+            bool alreadyOffered)
+        {
+            return fullySuccessful && !alreadyOffered;
         }
 
         private void ShowAbout()
