@@ -1,5 +1,6 @@
-using System;
+﻿using System;
 using System.Globalization;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -133,7 +134,54 @@ namespace EsmTspiot.WinForms.Shared
                 {
                     Log(SensitiveDataMasker.Mask(progress.Message) + "\r\n");
                 }
+                Log(DescribeFailedExchange(progress.Response));
             });
+        }
+
+        /// <summary>
+        /// Разворачивает обмен с ЕСМ, когда он ответил ошибкой. Раньше в
+        /// журнал попадала только расшифровка вида «HTTP 500», а сам запрос
+        /// и ответ ЕСМ нигде не сохранялись. Тело уже замаскировано
+        /// рабочим процессом привязки.
+        /// </summary>
+        internal static string DescribeFailedExchange(ApiResponse response)
+        {
+            if (response == null || response.IsSuccess)
+            {
+                return string.Empty;
+            }
+
+            StringBuilder builder = new StringBuilder();
+            builder.Append("    Запрос: ")
+                .Append(response.Method ?? string.Empty)
+                .Append(" ")
+                .Append(response.Url ?? string.Empty)
+                .Append(Environment.NewLine);
+            if (!string.IsNullOrWhiteSpace(response.RequestBody))
+            {
+                builder.Append("    Тело запроса: ")
+                    .Append(Shorten(response.RequestBody))
+                    .Append(Environment.NewLine);
+            }
+
+            builder.Append("    Ответ ЕСМ: HTTP ")
+                .Append(response.StatusCode.ToString(CultureInfo.InvariantCulture))
+                .Append(string.IsNullOrWhiteSpace(response.ReasonPhrase)
+                    ? string.Empty
+                    : " " + response.ReasonPhrase)
+                .Append(Environment.NewLine);
+            builder.Append("    Тело ответа: ")
+                .Append(string.IsNullOrWhiteSpace(response.ResponseBody)
+                    ? "(пусто)"
+                    : Shorten(response.ResponseBody))
+                .Append(Environment.NewLine);
+            return builder.ToString();
+        }
+
+        private static string Shorten(string text)
+        {
+            string value = (text ?? string.Empty).Trim();
+            return value.Length > 2000 ? value.Substring(0, 2000) + "..." : value;
         }
 
         private static string GetBindingResultText(LmGatewayBindingResult result)

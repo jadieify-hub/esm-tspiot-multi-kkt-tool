@@ -328,6 +328,9 @@ namespace EsmTspiot.ServiceProvisioner
                         StringComparison.OrdinalIgnoreCase))
                     throw new InvalidDataException(
                         "Prepared base MSI identity changed before install.");
+                ProvisionerStepTrace.Write(
+                    "ИНН " + request.Inn +
+                    ": установщик Windows ставит базовый ЛМ в " + installRoot);
                 _installer.Install(
                     _source.FullPath,
                     InstallProperties(installRoot));
@@ -369,7 +372,14 @@ namespace EsmTspiot.ServiceProvisioner
                     manifest.OwnershipNonce,
                     _pathSafety))
             {
+                ProvisionerStepTrace.Write(
+                    "ИНН " + request.Inn + ": копирование вендорского пакета");
                 workspace.CopySource(_source.FullPath);
+                ProvisionerStepTrace.Write(
+                    "ИНН " + request.Inn +
+                    ": пересборка пакета под клон " +
+                    request.CloneOrdinal.ToString(
+                        System.Globalization.CultureInfo.InvariantCulture));
                 using (TransformedLocalModuleMsi transformed =
                     _transformer.Transform(
                         _source,
@@ -378,6 +388,9 @@ namespace EsmTspiot.ServiceProvisioner
                 {
                     workspace.MarkTransformed();
                     workspace.MarkVerified();
+                    ProvisionerStepTrace.Write(
+                        "ИНН " + request.Inn +
+                        ": установщик Windows ставит ЛМ в " + installRoot);
                     _installer.Install(
                         transformed.FullPath,
                         InstallProperties(installRoot));

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Pipes;
@@ -41,6 +41,7 @@ namespace EsmTspiot.Shared.Tests
             Run("Error 1012 is decoded as manual service recovery", Error1012IsDecodedAsManualServiceRecovery);
             Run("Error 1013 is decoded as manual service recovery", Error1013IsDecodedAsManualServiceRecovery);
             Run("Error 1026 explains multiple INN limitation", Error1026ExplainsMultipleInnLimitation);
+            Run("Unknown HTTP error shows the service response body", UnknownHttpErrorShowsServiceResponseBody);
             Run("Service recovery command uses KKT serial and ports", ServiceRecoveryCommandUsesKktSerialAndPorts);
             Run("Service recovery command recreates service with wrong ports", ServiceRecoveryCommandRecreatesServiceWithWrongPorts);
             Run("Service recovery command writes diagnostics", ServiceRecoveryCommandWritesDiagnostics);
@@ -481,6 +482,34 @@ namespace EsmTspiot.Shared.Tests
             AssertContains(message, "несколько ИНН");
             AssertContains(message, "автоматическую настройку");
             AssertContains(message, "только с кассами одного ИНН");
+        }
+
+        private static void UnknownHttpErrorShowsServiceResponseBody()
+        {
+            // Полевой случай: ЕСМ отвечал HTTP 500 на привязку, а в журнале
+            // оставалось только «смотрите в ответе сервера» — самого ответа
+            // не было нигде, и причина оставалась неизвестной.
+            string message = TspiotErrorDecoder.Decode(
+                500,
+                "{\"detail\": \"lm controller unreachable\"}");
+
+            AssertContains(message, "HTTP 500");
+            AssertContains(message, "lm controller unreachable");
+
+            string empty = TspiotErrorDecoder.Decode(500, string.Empty);
+            AssertContains(empty, "Ответ сервиса пустой");
+
+            string masked = TspiotErrorDecoder.Decode(
+                500,
+                "{\"espToken\": \"abcdefghijklmnopqrstuvwxyz0123456789\"}");
+            AssertFalse(
+                masked.Contains("abcdefghijklmnopqrstuvwxyz0123456789"),
+                "Expected the response body excerpt to be masked.");
+
+            string overflow = TspiotErrorDecoder.Decode(500, new string((char)0x0439, 4000));
+            AssertTrue(
+                overflow.Length < 1000,
+                "Expected a long response body to be trimmed.");
         }
 
         private static void ServiceRecoveryCommandUsesKktSerialAndPorts()

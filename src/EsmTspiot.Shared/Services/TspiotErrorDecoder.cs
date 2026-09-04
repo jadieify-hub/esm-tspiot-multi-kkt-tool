@@ -1,9 +1,12 @@
+﻿using EsmTspiot.Shared.Logging;
 using System.Text.RegularExpressions;
 
 namespace EsmTspiot.Shared.Services
 {
     public static class TspiotErrorDecoder
     {
+        private const int MaximumResponseBodyLength = 600;
+
         public static string Decode(int statusCode, string responseBody)
         {
             string body = responseBody ?? string.Empty;
@@ -61,7 +64,58 @@ namespace EsmTspiot.Shared.Services
                 return DecodeConnectionFailure();
             }
 
-            return "Сервис вернул ошибку HTTP " + statusCode.ToString() + ". Подробности смотрите в ответе сервера.";
+            return "Сервис вернул ошибку HTTP " + statusCode.ToString() + "." + DescribeResponseBody(body);
+        }
+
+        /// <summary>
+        /// Добавляет к сообщению фактический ответ сервиса. Раньше здесь
+        /// стояло «Подробности смотрите в ответе сервера», а самого ответа
+        /// в журнале не было — причину HTTP 500 приходилось угадывать.
+        /// Ответ маскируется и обрезается, чтобы строка журнала осталась
+        /// читаемой и не унесла с собой токен.
+        /// </summary>
+        public static string DescribeResponseBody(string responseBody)
+        {
+            string body = (responseBody ?? string.Empty).Trim();
+            if (body.Length == 0)
+            {
+                return " Ответ сервиса пустой.";
+            }
+
+            // Сначала маскирование, потом схлопывание переносов: маскирование
+            // YAML работает построчно и на схлопнутой строке уже не сработает.
+            body = CollapseWhitespace(SensitiveDataMasker.Mask(body));
+            if (body.Length > MaximumResponseBodyLength)
+            {
+                body = body.Substring(0, MaximumResponseBodyLength) + "...";
+            }
+
+            return " Ответ сервиса: " + body;
+        }
+
+        private static string CollapseWhitespace(string text)
+        {
+            System.Text.StringBuilder builder = new System.Text.StringBuilder(text.Length);
+            bool pendingSpace = false;
+            for (int index = 0; index < text.Length; index++)
+            {
+                char symbol = text[index];
+                if (char.IsWhiteSpace(symbol))
+                {
+                    pendingSpace = builder.Length > 0;
+                    continue;
+                }
+
+                if (pendingSpace)
+                {
+                    builder.Append(' ');
+                    pendingSpace = false;
+                }
+
+                builder.Append(symbol);
+            }
+
+            return builder.ToString();
         }
 
         public static string DecodeConnectionFailure()
