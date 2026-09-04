@@ -89,6 +89,11 @@ namespace EsmTspiot.Shared.Services
             builder.AppendLine("tasklist | findstr /I \"controlModule esm\" | Out-Host");
             builder.AppendLine();
             builder.AppendLine("$serviceArgs = \"--id $kkt --port $port --soft-port $softPort --pretty-logs=true\"");
+            // Подстрока ловила чужую службу: "--port 5040" входит в
+            // "--port 50401", и служба с другим портом считалась совпавшей.
+            builder.AppendLine("function Test-ServiceArgument([string]$path, [string]$argument) {");
+            builder.AppendLine("    return $path -match ('(^|\\s)' + [regex]::Escape($argument) + '(\\s|$)')");
+            builder.AppendLine("}");
             builder.AppendLine("$expectedId = \"--id $kkt\"");
             builder.AppendLine("$expectedPort = \"--port $port\"");
             builder.AppendLine("$expectedSoftPort = \"--soft-port $softPort\"");
@@ -100,7 +105,7 @@ namespace EsmTspiot.Shared.Services
             builder.AppendLine("    $currentPath = [string]$existing.PathName");
             builder.AppendLine("    Write-Host \"Найдена существующая служба $serviceName\"");
             builder.AppendLine("    Write-Host \"Текущая команда службы: $currentPath\"");
-            builder.AppendLine("    $pathOk = $currentPath.Contains($expectedId) -and $currentPath.Contains($expectedPort) -and $currentPath.Contains($expectedSoftPort)");
+            builder.AppendLine("    $pathOk = (Test-ServiceArgument $currentPath $expectedId) -and (Test-ServiceArgument $currentPath $expectedPort) -and (Test-ServiceArgument $currentPath $expectedSoftPort)");
             builder.AppendLine("    if (-not $pathOk) {");
             builder.AppendLine("        Write-Host \"Параметры существующей службы отличаются от ожидаемых. Служба будет пересоздана.\"");
             builder.AppendLine("        Write-Host \"Ожидалось: $expectedId $expectedPort $expectedSoftPort\"");

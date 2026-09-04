@@ -65,7 +65,6 @@ namespace EsmTspiot.WinForms.Shared
         private readonly Button _createServiceButton = new Button();
         private readonly Button _copyRecoveryCommandButton = new Button();
         private readonly IList<Button> _actionButtons = new List<Button>();
-        private string _lastRecoveryScript = string.Empty;
         private string _lastControlModulePath = string.Empty;
         private bool _fileLogErrorShown;
         private bool _busy;
@@ -1790,7 +1789,7 @@ namespace EsmTspiot.WinForms.Shared
                 return;
             }
 
-            string scriptPath = WriteRecoveryScriptFile(_lastRecoveryScript);
+            string scriptPath = WriteRecoveryScriptFile(BuildRecoveryScript(input));
             ProcessStartInfo startInfo = new ProcessStartInfo();
             startInfo.FileName = "powershell.exe";
             startInfo.Arguments = "-NoProfile -ExecutionPolicy Bypass -File " + QuoteArgument(scriptPath);
@@ -1827,12 +1826,7 @@ namespace EsmTspiot.WinForms.Shared
                 return Task.FromResult(0);
             }
 
-            if (string.IsNullOrEmpty(_lastRecoveryScript))
-            {
-                PrepareServiceRecovery(input);
-            }
-
-            Clipboard.SetText(_lastRecoveryScript);
+            Clipboard.SetText(BuildRecoveryScript(input));
             AppendLog("PowerShell-команда создания службы скопирована в буфер обмена.\r\n\r\n");
             MessageBox.Show(this, "Команда скопирована в буфер обмена.", "Создание службы", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return Task.FromResult(0);
@@ -1887,14 +1881,25 @@ namespace EsmTspiot.WinForms.Shared
             return answer == DialogResult.Yes;
         }
 
-        private void PrepareServiceRecovery(TspiotFormInput input)
+        /// <summary>
+        /// Скрипт строится из полей формы в момент обращения. Кэш прежней
+        /// попытки переживал смену ККТ: блок «Ошибка службы» оставался
+        /// открытым, оператор правил серийник и порты, а кнопка копирования
+        /// отдавала команду для предыдущей кассы.
+        /// </summary>
+        private string BuildRecoveryScript(TspiotFormInput input)
         {
             _lastControlModulePath = ServiceRecoveryCommandBuilder.FindControlModulePath();
-            _lastRecoveryScript = ServiceRecoveryCommandBuilder.BuildPowerShellScript(
+            return ServiceRecoveryCommandBuilder.BuildPowerShellScript(
                 input.KktSerial,
                 input.Port,
                 input.SoftPort,
                 _lastControlModulePath);
+        }
+
+        private void PrepareServiceRecovery(TspiotFormInput input)
+        {
+            string script = BuildRecoveryScript(input);
 
             string pathText = string.IsNullOrEmpty(_lastControlModulePath)
                 ? "controlModule.exe не найден в стандартных папках. Команду можно скопировать и поправить путь $exe вручную."
@@ -1908,7 +1913,7 @@ namespace EsmTspiot.WinForms.Shared
 
             AppendLog("Подготовлен аварийный сценарий восстановления службы.\r\n");
             AppendLog(pathText + "\r\n");
-            AppendLog("PowerShell-команда:\r\n" + _lastRecoveryScript + "\r\n");
+            AppendLog("PowerShell-команда:\r\n" + script + "\r\n");
 
             MessageBox.Show(
                 this,
@@ -1937,7 +1942,6 @@ namespace EsmTspiot.WinForms.Shared
         private void HideServiceRecovery()
         {
             _recoveryGroup.Visible = false;
-            _lastRecoveryScript = string.Empty;
             _lastControlModulePath = string.Empty;
         }
 
