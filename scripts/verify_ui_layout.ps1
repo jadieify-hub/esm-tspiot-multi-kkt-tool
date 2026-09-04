@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$Configuration = "Release"
 )
 
@@ -322,16 +322,26 @@ try {
     $emptyOutcome = [Activator]::CreateInstance($outcomeType)
     $donationLine = Get-Utf8Text(
         "0J/RgNC+0LPRgNCw0LzQvNCwINC/0L7QvNC+0LPQu9CwPyDQn9C+0LTQtNC10YDQttCw0YLRjCDRgNCw0LfRgNCw0LHQvtGC0LrRgzog0LzQtdC90Y4g0KHQv9GA0LDQstC60LAu")
-    $fullSuccessMessage = $completionMessageMethod.Invoke(
-        $null, @($emptyOutcome, "stack", $true, $false))
-    $partialMessage = $completionMessageMethod.Invoke(
-        $null, @($emptyOutcome, "stack", $true, $true))
-    $failedMessage = $completionMessageMethod.Invoke(
-        $null, @($emptyOutcome, "stack", $false, $false))
-    if (-not $fullSuccessMessage.EndsWith($donationLine) -or
-        $partialMessage.Contains($donationLine) -or
-        $failedMessage.Contains($donationLine)) {
-        throw "The support hint must be the final line of full-success results only."
+    $completionMessage = $completionMessageMethod.Invoke(
+        $null, @($emptyOutcome, "stack"))
+    # Строку про поддержку заменило само окно: в итоговом тексте её быть не
+    # должно, иначе оператор увидит и подсказку, и окно.
+    if ($completionMessage.Contains($donationLine)) {
+        throw "The completion message must not repeat the support hint."
+    }
+    $supportOfferMethod = $formType.GetMethod(
+        "ShouldOfferSupportDialog", $allStaticFlags)
+    if ($null -eq $supportOfferMethod) {
+        throw "Automatic setup needs one testable support-dialog decision."
+    }
+    if (-not [bool]$supportOfferMethod.Invoke($null, @($true, $false))) {
+        throw "A fully successful setup must offer the support window."
+    }
+    if ([bool]$supportOfferMethod.Invoke($null, @($false, $false))) {
+        throw "An incomplete setup must not offer the support window."
+    }
+    if ([bool]$supportOfferMethod.Invoke($null, @($true, $true))) {
+        throw "The support window must be offered once per application run."
     }
 
     # Test the responsive layout directly without displaying a window or starting discovery.
