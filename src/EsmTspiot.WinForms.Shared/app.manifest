@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
+  <assemblyIdentity version="1.0.0.0" name="MultiKKT.EsmTspiot" />
+  <!--
+    Программа настраивает службы Windows, ставит MSI локального модуля и
+    правит правила брандмауэра: без прав администратора она бесполезна.
+    Раньше это оставалось на операторе — «запустить от имени администратора»
+    правой кнопкой, — и запуск обычным двойным щелчком приводил к отказам уже
+    в середине работы. Теперь права запрашиваются один раз при старте, и
+    разовому помощнику отдельный запрос UAC уже не нужен.
+    DPI намеренно не объявляем: приложение работает как прежде.
+  -->
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
+    <security>
+      <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
+        <requestedExecutionLevel level="requireAdministrator" uiAccess="false" />
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+</assembly>

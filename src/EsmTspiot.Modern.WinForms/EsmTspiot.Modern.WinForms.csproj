@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
@@ -13,6 +13,7 @@
     <SelfContained>true</SelfContained>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <ApplicationIcon>..\EsmTspiot.WinForms.Shared\Assets\app.ico</ApplicationIcon>
+    <ApplicationManifest>..\EsmTspiot.WinForms.Shared\app.manifest</ApplicationManifest>
   </PropertyGroup>
 
   <ItemGroup>

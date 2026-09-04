@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
     [string]$StageRoot
@@ -148,6 +148,88 @@ $acceptsOutsideMain = [bool]$allowedMain.Invoke(
     [object[]]@($outsideMainPath, [string]$stage))
 if (-not $acceptsStagedMain -or $acceptsOutsideMain) {
     throw 'The packaged helper and main executable disagree about the application directory.'
+}
+
+# Программа правит службы, ставит MSI и меняет правила брандмауэра. Права
+# администратора она запрашивает манифестом при старте, чтобы оператору не
+# приходилось помнить про «запуск от имени администратора». Проверяем не
+# исходник, а то, что действительно зашито в поставляемый файл.
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public static class MultiKktEmbeddedManifest
+{
+    private const uint LoadLibraryAsDataFile = 0x00000002;
+    private const int ManifestResourceId = 1;
+    private const int ManifestResourceType = 24;
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern IntPtr LoadLibraryExW(string fileName, IntPtr file, uint flags);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool FreeLibrary(IntPtr module);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr FindResourceW(IntPtr module, IntPtr name, IntPtr type);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr LoadResource(IntPtr module, IntPtr resource);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr LockResource(IntPtr data);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint SizeofResource(IntPtr module, IntPtr resource);
+
+    public static string Read(string path)
+    {
+        IntPtr module = LoadLibraryExW(path, IntPtr.Zero, LoadLibraryAsDataFile);
+        if (module == IntPtr.Zero)
+        {
+            throw new InvalidOperationException("Cannot open the image: " + path);
+        }
+
+        try
+        {
+            IntPtr info = FindResourceW(
+                module,
+                new IntPtr(ManifestResourceId),
+                new IntPtr(ManifestResourceType));
+            if (info == IntPtr.Zero)
+            {
+                return string.Empty;
+            }
+
+            uint size = SizeofResource(module, info);
+            IntPtr data = LockResource(LoadResource(module, info));
+            if (data == IntPtr.Zero || size == 0)
+            {
+                return string.Empty;
+            }
+
+            byte[] bytes = new byte[size];
+            Marshal.Copy(data, bytes, 0, (int)size);
+            return Encoding.UTF8.GetString(bytes);
+        }
+        finally
+        {
+            FreeLibrary(module);
+        }
+    }
+}
+'@
+
+$mainManifest = [MultiKktEmbeddedManifest]::Read($mainPath)
+if ([string]::IsNullOrWhiteSpace($mainManifest)) {
+    throw 'The packaged main executable has no embedded application manifest.'
+}
+if ($mainManifest -notmatch 'level\s*=\s*"requireAdministrator"') {
+    throw 'The packaged main executable does not request administrator rights at startup.'
+}
+if ($mainManifest -match 'uiAccess\s*=\s*"true"') {
+    throw 'The packaged main executable must not request uiAccess.'
 }
 
 Write-Host 'Compact main/helper security contract passed.'

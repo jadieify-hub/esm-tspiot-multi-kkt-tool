@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$Configuration = "Release"
 )
@@ -126,7 +126,7 @@ Author: Ruslan Kerusov
 
 1. Verify the SHA-256 checksums before use.
 2. Extract the complete archive to any local folder (Downloads, Desktop, a USB stick) and run it from there. Keep EsmTspiot.Shared.dll and the Provisioner folder next to the executable; a lone EXE does not start. There is no installer and nothing is copied into system folders.
-3. Before every Windows-service operation the application checks that all helper files are present, that their SHA-256 match the values embedded in the main executable and that the versions match. UAC is requested only for service operations.
+3. Before every Windows-service operation the application checks that all helper files are present, that their SHA-256 match the values embedded in the main executable and that the versions match. The application requests administrator rights at startup: it configures Windows services, installs the LM CHZ MSI and edits firewall rules, and without those rights it fails midway. Confirm the single UAC prompt when the application starts; service operations then need no further prompt.
 4. Install the official ESM LM Controller (any current vendor build) before controller setup and keep the official CRPT LM CHZ installer at hand. Vendor binaries are discovered and verified in their installed or original locations; they are not included in this archive.
 5. This archive contains no ESP/CHZ vendor binaries, extracted runtime, credentials, LM CHZ database or managed Erlang runtime.
 6. Before a real installation, follow FIELD_TEST.md.
@@ -189,7 +189,18 @@ foreach ($file in @(Get-ChildItem -LiteralPath $stageRoot -Recurse -File | Sort-
 }
 [IO.File]::WriteAllLines((Join-Path $stageRoot "SHA256SUMS"), $sumLines, [Text.UTF8Encoding]::new($false))
 
-$smoke = Start-Process -FilePath $stagedMain -WorkingDirectory $stageRoot -PassThru
+# Пакет требует прав администратора манифестом. Сборочный прогон идёт без
+# них и не должен упираться в запрос UAC, поэтому дымовой запуск делается
+# под совместимостью RunAsInvoker. Сам манифест проверяет контракт
+# безопасности отдельно.
+$previousCompatLayer = $env:__COMPAT_LAYER
+$env:__COMPAT_LAYER = 'RunAsInvoker'
+try {
+    $smoke = Start-Process -FilePath $stagedMain -WorkingDirectory $stageRoot -PassThru
+}
+finally {
+    $env:__COMPAT_LAYER = $previousCompatLayer
+}
 try {
     if (-not $smoke.WaitForInputIdle(10000)) {
         throw "Compact Legacy smoke did not become interactive."

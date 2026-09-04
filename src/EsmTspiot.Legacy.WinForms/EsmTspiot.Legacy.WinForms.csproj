@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
+﻿<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net48</TargetFramework>
@@ -10,6 +10,7 @@
     <Prefer32Bit>true</Prefer32Bit>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <ApplicationIcon>..\EsmTspiot.WinForms.Shared\Assets\app.ico</ApplicationIcon>
+    <ApplicationManifest>..\EsmTspiot.WinForms.Shared\app.manifest</ApplicationManifest>
   </PropertyGroup>
 
   <ItemGroup>
