@@ -260,11 +260,6 @@ namespace EsmTspiot.WinForms.Shared
             return true;
         }
 
-        private void SelectInstaller()
-        {
-            SelectControllerInstaller(this);
-        }
-
         private async Task StartAutomaticSetupAsync()
         {
             await RunOperationAsync(
@@ -305,9 +300,6 @@ namespace EsmTspiot.WinForms.Shared
             return result;
         }
 
-
-
-
         private IList<LmGatewayKkt> CopySessionKkts()
         {
             List<LmGatewayKkt> result = new List<LmGatewayKkt>();
@@ -338,17 +330,6 @@ namespace EsmTspiot.WinForms.Shared
             };
         }
 
-
-
-
-
-
-
-
-
-
-
-
         private static LocalModuleInstallerSelection
             CopyLocalModuleInstallerForAutomaticSetup(
             LocalModuleInstallerSelection source,
@@ -371,10 +352,6 @@ namespace EsmTspiot.WinForms.Shared
             };
         }
 
-
-
-
-
         private static ManagedKktAssignment FindKktAssignment(
             ManagedLocalModulePlanItem group,
             string serial)
@@ -393,7 +370,6 @@ namespace EsmTspiot.WinForms.Shared
             }
             return null;
         }
-
 
         private void RefreshServiceInventory()
         {
@@ -793,135 +769,6 @@ namespace EsmTspiot.WinForms.Shared
                     MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             await RefreshCoreAsync(CancellationToken.None);
-        }
-
-        private async Task ConfirmAndRemoveAllServicesAsync()
-        {
-            IList<LmServiceInventoryItem> items = GetRemovableManagedItems(
-                _serviceInventory,
-                _managedLocalModuleInventory);
-            if (items.Count == 0)
-            {
-                MessageBox.Show(this,
-                    "Управляемые службы, которые можно безопасно удалить, не найдены.",
-                    "Полная очистка",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Information);
-                return;
-            }
-
-            using (LmGatewayRemoveAllDialog dialog = new LmGatewayRemoveAllDialog(items))
-            {
-                if (dialog.ShowDialog(this) != DialogResult.OK ||
-                    dialog.Confirmations == null)
-                {
-                    return;
-                }
-
-                IList<LmRemovalConfirmation> confirmations = dialog.Confirmations;
-                IList<LmServiceInventoryItem> fresh;
-                ManagedLocalModuleInventorySnapshot freshManaged;
-                try
-                {
-                    fresh = _inventoryReader.Read();
-                    freshManaged = _managedLocalModuleInventoryReader.Read();
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show(this,
-                        "Не удалось повторно проверить службы перед удалением: " +
-                            SensitiveDataMasker.Mask(ex.Message),
-                        "Полная очистка",
-                        MessageBoxButtons.OK,
-                        MessageBoxIcon.Error);
-                    return;
-                }
-
-                if (!RemovalBatchStillMatches(
-                    confirmations,
-                    fresh,
-                    freshManaged))
-                {
-                    RefreshServiceInventory();
-                    FillRows(null);
-                    MessageBox.Show(this,
-                        "Состав или состояние служб изменились после подтверждения. " +
-                            "Список обновлён; проверьте его и подтвердите удаление заново.",
-                        "Полная очистка",
-                        MessageBoxButtons.OK,
-                        MessageBoxIcon.Warning);
-                    return;
-                }
-
-                string operationId = Guid.NewGuid().ToString("N");
-                string hash = ComputeRemoveAllHash(confirmations, operationId);
-                await RunOperationAsync(
-                    delegate(CancellationToken token)
-                    {
-                        return RemoveAllServicesAsync(
-                            confirmations,
-                            operationId,
-                            hash,
-                            token);
-                    },
-                    "Ожидание одного подтверждения UAC для удаления всех созданных служб...");
-            }
-        }
-
-        private async Task RemoveAllServicesAsync(
-            IList<LmRemovalConfirmation> confirmations,
-            string operationId,
-            string hash,
-            CancellationToken cancellation)
-        {
-            LmServiceProvisioningBatchResult result = await _serviceProvisioner.RemoveAllAsync(
-                confirmations,
-                operationId,
-                hash,
-                cancellation);
-            int removed = 0;
-            int pending = 0;
-            for (int index = 0; index < result.Items.Count; index++)
-            {
-                LmServiceProvisioningItemResult item = result.Items[index];
-                if (item.Status ==
-                        LmServiceProvisioningStatus.RemovedLocalArtifactsBindingRetained ||
-                    item.Status == LmServiceProvisioningStatus.Succeeded ||
-                    item.Status ==
-                        LmServiceProvisioningStatus.SharedLocalModuleRetained)
-                {
-                    removed++;
-                }
-                else
-                {
-                    pending++;
-                }
-                Log(item.KktSerial + ": " + item.Status.ToString() + ". " +
-                    (item.Message ?? string.Empty) + "\r\n");
-            }
-
-            RefreshServiceInventory();
-            FillRows(null);
-            string summary = "Удалено созданных комплектов и их локальных данных: " +
-                removed.ToString(CultureInfo.InvariantCulture) + ".";
-            if (pending > 0)
-            {
-                summary += " Требуют внимания: " +
-                    pending.ToString(CultureInfo.InvariantCulture) +
-                    ". Подробности показаны в таблице и журнале.";
-            }
-            else
-            {
-                summary += " Штатная служба не изменена. Привязки в ЕСМ не очищались; " +
-                    "после перезагрузки можно повторить автоматическую настройку.";
-            }
-            _statusLabel.Text = summary;
-            Log(summary + "\r\n\r\n");
-            MessageBox.Show(this,
-                summary,
-                pending == 0 ? "Полная очистка завершена" : "Полная очистка завершена частично",
-                MessageBoxButtons.OK,
-                pending == 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
         }
 
         private static IList<LmServiceInventoryItem> GetRemovableManagedItems(
@@ -1523,27 +1370,6 @@ namespace EsmTspiot.WinForms.Shared
             if (item.Status == LmServiceProvisioningStatus.VersionVerificationPending) return "Нужна сверка версии";
             if (item.Status == LmServiceProvisioningStatus.RequiresAttention) return "Требуется внимание";
             return item.IsRunning ? "Запущена" : "Остановлена";
-        }
-
-        private static string ComputeRemoveAllHash(
-            IList<LmRemovalConfirmation> confirmations,
-            string operationId)
-        {
-            LmServiceProvisioningBatchRequest request =
-                new LmServiceProvisioningBatchRequest
-                {
-                    SchemaVersion = 1,
-                    Operation = LmServiceOperation.RemoveAllManaged,
-                    OperationId = operationId
-                };
-            if (confirmations != null)
-            {
-                for (int index = 0; index < confirmations.Count; index++)
-                {
-                    request.RemovalConfirmations.Add(confirmations[index]);
-                }
-            }
-            return CanonicalLmPlanHasher.Compute(request);
         }
 
         private static string GetLmEndpointText(

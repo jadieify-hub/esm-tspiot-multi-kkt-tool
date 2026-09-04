@@ -1108,15 +1108,6 @@ namespace EsmTspiot.WinForms.Shared
             UpdateInstancesGrid(instancesResponse);
         }
 
-        private Task SelectAutomaticInstallerAsync()
-        {
-            bool selected = _lmGatewayPage.SelectRequiredInstallers(this);
-            UpdateAutomaticInstallerSelection();
-            _automationStatusLabel.Text = selected
-                ? "Статус: пакеты выбраны для старого ручного режима"
-                : "Статус: готово к регистрации";
-            return Task.FromResult(0);
-        }
 
         private void UpdateAutomaticInstallerSelection()
         {
@@ -1684,13 +1675,6 @@ namespace EsmTspiot.WinForms.Shared
             }
         }
 
-        private static bool IsSuccessfulBulkRegistration(
-            BulkKktRegistrationStatus status)
-        {
-            return status == BulkKktRegistrationStatus.Registered ||
-                status == BulkKktRegistrationStatus.RecoveredRegistration ||
-                status == BulkKktRegistrationStatus.AlreadyExists;
-        }
 
         private void AppendBulkResult(BulkKktRegistrationResult result)
         {
@@ -1762,19 +1746,6 @@ namespace EsmTspiot.WinForms.Shared
             AppendLog(builder.ToString());
         }
 
-        private void AppendBulkResults(IList<BulkKktRegistrationResult> results)
-        {
-            StringBuilder builder = new StringBuilder();
-            builder.AppendLine("=== Итог массовой регистрации ===");
-            for (int i = 0; i < results.Count; i++)
-            {
-                builder.AppendLine(results[i].FormatLogLine());
-            }
-            builder.AppendLine();
-            builder.AppendLine(BulkKktRegistrationResult.FormatSummary(results));
-            builder.AppendLine();
-            AppendLog(builder.ToString());
-        }
 
         private bool HasBulkFailures(IList<BulkKktRegistrationResult> results)
         {

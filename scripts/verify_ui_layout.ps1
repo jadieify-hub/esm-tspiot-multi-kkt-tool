@@ -1120,8 +1120,12 @@ try {
         $mainFormSource -notmatch 'controllersDeferred \|\| controllersComplete') {
         throw "Registration must finish before an independently deferrable controller and local-module phase."
     }
-    if ($directControllersSource -notmatch 'RemoveAllDirectControllersAsync' -or
-        $directControllersSource -notmatch 'esm-lm-controller') {
+    $msiLocalModulesSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot "src\EsmTspiot.WinForms.Shared\LmGatewayPage.MsiLocalModules.cs"))
+    $removalWordingSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot "src\EsmTspiot.Shared\Services\LocalModuleRemovalMessagePolicy.cs"))
+    if ($msiLocalModulesSource -notmatch 'RemoveAllDirectControllersAsync' -or
+        $removalWordingSource -notmatch 'esm-lm-controller') {
         throw "Direct cleanup must preserve the official base controller service."
     }
     if ($mainFormSource -notmatch 'AutomaticRegistrationModeSelector\.Select' -or
