@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Security.Principal;
@@ -69,7 +69,11 @@ namespace EsmTspiot.ServiceProvisioner
             }
             else if (request.Operation == LmServiceOperation.EnsureManagedLocalModules)
             {
-                ValidateManagedLocalModules(request, result);
+                // Создание управляемых ЛМ снято: модули ставит вендорный MSI.
+                // Номер операции занят навсегда, чтобы старый вызов не попал
+                // в новую операцию, а сам запрос отвергается на входе.
+                result.Add(
+                    "Операция создания управляемых ЛМ ЧЗ больше не поддерживается.");
             }
             else if (directOperation)
             {
@@ -515,126 +519,6 @@ namespace EsmTspiot.ServiceProvisioner
             ValidateInstallerShape(request.InstallerSelection, result);
         }
 
-        private static void ValidateManagedLocalModules(
-            LmServiceProvisioningBatchRequest request,
-            ValidationResult result)
-        {
-            if (HasItems(request) ||
-                request.RemovalConfirmation != null || request.CleanupConfirmation != null ||
-                HasRemovalConfirmations(request))
-            {
-                result.Add("EnsureManagedLocalModules принимает два установщика и сгруппированный план ККТ.");
-            }
-            ValidateInstallerShape(request.InstallerSelection, result);
-            ValidateLocalModuleInstallerShape(request.LocalModuleInstallerSelection, result);
-
-            int count = request.ManagedLocalModules == null
-                ? 0
-                : request.ManagedLocalModules.Count;
-            if (count < 1 || count > MaximumBatchSize)
-            {
-                result.Add("EnsureManagedLocalModules должен содержать от 1 до 32 ККТ.");
-                return;
-            }
-
-            HashSet<string> serials = new HashSet<string>(StringComparer.Ordinal);
-            HashSet<string> completedInns = new HashSet<string>(StringComparer.Ordinal);
-            HashSet<int> kktOrdinals = new HashSet<int>();
-            HashSet<int> moduleOrdinals = new HashSet<int>();
-            HashSet<int> ports = new HashSet<int>();
-            int previousModuleOrdinal = 0;
-            int previousKktOrdinal = 0;
-            string currentInn = null;
-            ManagedLocalModuleProvisioningItemRequest currentModule = null;
-            for (int index = 0; index < count; index++)
-            {
-                ManagedLocalModuleProvisioningItemRequest item =
-                    request.ManagedLocalModules[index];
-                if (item == null)
-                {
-                    result.Add("Строка управляемого ЛМ не задана.");
-                    continue;
-                }
-
-                try
-                {
-                    LmServiceIdentity.CreateName(item.KktSerial);
-                }
-                catch (ArgumentException)
-                {
-                    result.Add("Серийный номер ККТ должен содержать 14 ASCII-цифр.");
-                }
-                if (!serials.Add(item.KktSerial ?? string.Empty))
-                {
-                    result.Add("ККТ повторяется в плане управляемых ЛМ.");
-                }
-                if (!IsAsciiDigits(item.Inn, 10) && !IsAsciiDigits(item.Inn, 12))
-                {
-                    result.Add("ИНН управляемого ЛМ должен содержать 10 или 12 ASCII-цифр.");
-                }
-                ValidateOrdinal(item.KktOrdinal, "K", kktOrdinals, result);
-                bool beginsGroup = !string.Equals(
-                    currentInn,
-                    item.Inn,
-                    StringComparison.Ordinal);
-                if (beginsGroup)
-                {
-                    if (currentInn != null)
-                    {
-                        completedInns.Add(currentInn);
-                    }
-                    if (completedInns.Contains(item.Inn ?? string.Empty))
-                    {
-                        result.Add("Строки одного ИНН должны идти подряд.");
-                    }
-                    ValidateOrdinal(
-                        item.LocalModuleOrdinal,
-                        "N",
-                        moduleOrdinals,
-                        result);
-                    if (item.LocalModuleOrdinal <= previousModuleOrdinal)
-                    {
-                        result.Add("Группы ЛМ должны быть отсортированы по номеру N.");
-                    }
-                    previousModuleOrdinal = item.LocalModuleOrdinal;
-                    previousKktOrdinal = 0;
-                    currentInn = item.Inn;
-                    currentModule = item;
-                    ValidateLocalPort(item.ApiPort, "API ЛМ", ports, result);
-                    ValidateLocalPort(item.DatabasePort, "база ЛМ", ports, result);
-                    ValidateLocalPort(item.EpmdPort, "EPMD ЛМ", ports, result);
-                }
-                else if (currentModule == null ||
-                    item.LocalModuleOrdinal != currentModule.LocalModuleOrdinal ||
-                    item.ApiPort != currentModule.ApiPort ||
-                    item.DatabasePort != currentModule.DatabasePort ||
-                    item.EpmdPort != currentModule.EpmdPort ||
-                    !string.Equals(
-                        item.RuntimeVersion,
-                        currentModule.RuntimeVersion,
-                        StringComparison.Ordinal))
-                {
-                    result.Add("Все ККТ одного ИНН должны ссылаться на один неизменный ЛМ.");
-                }
-                if (item.KktOrdinal <= previousKktOrdinal)
-                {
-                    result.Add("ККТ внутри группы ИНН должны быть отсортированы по номеру K.");
-                }
-                previousKktOrdinal = item.KktOrdinal;
-                ValidateLocalPort(item.ControllerGrpcPort, "gRPC контроллера", ports, result);
-                ValidateLocalPort(item.ControllerRestPort, "REST контроллера", ports, result);
-                if (string.IsNullOrWhiteSpace(item.RuntimeVersion) ||
-                    request.LocalModuleInstallerSelection == null ||
-                    !string.Equals(
-                        item.RuntimeVersion,
-                        request.LocalModuleInstallerSelection.ProductVersion,
-                        StringComparison.Ordinal))
-                {
-                    result.Add("Версия runtime строки не совпадает с выбранным MSI ЛМ.");
-                }
-            }
-        }
-
         private static void ValidateRemove(
             LmServiceProvisioningBatchRequest request,
             ValidationResult result)
@@ -861,25 +745,6 @@ namespace EsmTspiot.ServiceProvisioner
             if (!selection.LicenseNoticeAccepted)
             {
                 result.Add("Не подтверждено использование официального ЛМ для перечисленных ИНН.");
-            }
-        }
-
-        private static void ValidateSerialAndFingerprint(
-            string serial,
-            LmManifestFingerprint fingerprint,
-            ValidationResult result)
-        {
-            try
-            {
-                LmServiceIdentity.CreateName(serial);
-            }
-            catch (ArgumentException)
-            {
-                result.Add("Неверный серийный номер ККТ в подтверждении.");
-            }
-            if (fingerprint == null || !IsHex(fingerprint.Sha256, 64))
-            {
-                result.Add("Неверный fingerprint манифеста.");
             }
         }
 

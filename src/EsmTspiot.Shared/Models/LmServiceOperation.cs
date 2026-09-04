@@ -1,4 +1,4 @@
-using System.Runtime.Serialization;
+﻿using System.Runtime.Serialization;
 
 namespace EsmTspiot.Shared.Models
 {
@@ -18,6 +18,8 @@ namespace EsmTspiot.Shared.Models
         [EnumMember]
         RemoveAllManaged = 5,
         [EnumMember]
+        // Снято: помощник больше не создаёт управляемые ЛМ ЧЗ.
+        // Номер занят, чтобы старый запрос не попал в другую операцию.
         EnsureManagedLocalModules = 6,
         [EnumMember]
         EnsureDirectControllers = 7,

@@ -1,12 +1,10 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Security.Cryptography;
-using System.ServiceProcess;
 using System.Text;
-using System.Threading;
 using EsmTspiot.Shared.Models;
 using EsmTspiot.Shared.Services;
 
@@ -194,16 +192,6 @@ namespace EsmTspiot.ServiceProvisioner
             return definition;
         }
 
-        internal bool IsExactDefinition(
-            string kktSerial,
-            string operatorSid,
-            WindowsServiceRecord observed)
-        {
-            return WindowsServiceDefinitionMatcher.Matches(
-                BuildDefinition(kktSerial, operatorSid),
-                observed);
-        }
-
         internal bool IsManagedDefinition(
             string kktSerial,
             WindowsServiceRecord observed)
@@ -220,100 +208,5 @@ namespace EsmTspiot.ServiceProvisioner
                     StringComparison.Ordinal);
         }
 
-        internal static int RunServiceMode(string serviceName)
-        {
-            string serial;
-            if (!LmServiceIdentity.TryParseName(serviceName, out serial))
-            {
-                return 2;
-            }
-
-            ServiceBase.Run(new SupervisorServiceHost(serviceName));
-            return 0;
-        }
-
-        private static LmControllerChildProcess CreateVerifiedChild(string serviceName)
-        {
-            ControllerCapabilityProfile profile = ControllerCapabilityProfile.Supported();
-            PathSafety pathSafety = new PathSafety();
-            VerifiedProvisionerBinary.ResolveCurrent(pathSafety);
-            string serviceSid = RestrictedServiceSid.Resolve(serviceName);
-            if (!RestrictedServiceSid.CurrentTokenContains(serviceSid))
-            {
-                throw new InvalidOperationException("Restricted service SID is absent from the service token.");
-            }
-
-            OfficialControllerLocator locator = new OfficialControllerLocator(
-                profile,
-                new WinTrustVerifier(),
-                pathSafety);
-            VerifiedControllerBinaryResult controller = locator.ResolveVerifiedBinary();
-            if (!controller.IsSuccess)
-            {
-                throw new InvalidDataException(controller.ErrorMessage);
-            }
-
-            string appDataRoot = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-                "KRS",
-                "MultiKKT");
-            string profileRoot = Path.Combine(appDataRoot, "Profiles", serviceName);
-            ValidationResult profileValidation = pathSafety.ValidateProtected(
-                profileRoot,
-                appDataRoot,
-                serviceSid);
-            if (!profileValidation.IsValid)
-            {
-                throw new InvalidDataException(profileValidation.JoinMessages());
-            }
-
-            return new LmControllerChildProcess(
-                profile,
-                controller.Binary,
-                profileRoot,
-                new ProcessEnvironmentReader(),
-                new NativeControllerChildRuntime());
-        }
-
-        private sealed class SupervisorServiceHost : ServiceBase
-        {
-            private LmControllerChildProcess _child;
-            private volatile bool _stopping;
-
-            internal SupervisorServiceHost(string serviceName)
-            {
-                ServiceName = serviceName;
-                CanStop = true;
-                CanPauseAndContinue = false;
-                AutoLog = true;
-            }
-
-            protected override void OnStart(string[] args)
-            {
-                if (args != null && args.Length != 0)
-                {
-                    throw new InvalidOperationException("Supervisor start arguments are forbidden.");
-                }
-                _child = CreateVerifiedChild(ServiceName);
-                _child.Start();
-                ThreadPool.QueueUserWorkItem(delegate
-                {
-                    bool exited = _child.WaitForExit();
-                    if (exited && !_stopping)
-                    {
-                        Environment.Exit(1);
-                    }
-                });
-            }
-
-            protected override void OnStop()
-            {
-                _stopping = true;
-                if (_child != null && !_child.StopGracefully())
-                {
-                    throw new InvalidOperationException("Controller did not stop within the graceful timeout.");
-                }
-            }
-        }
     }
 }
