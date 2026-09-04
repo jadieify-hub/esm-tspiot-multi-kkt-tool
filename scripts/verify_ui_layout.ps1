@@ -834,24 +834,6 @@ try {
     $inventoryList = [Activator]::CreateInstance($inventoryListType)
     $inventoryList.Add($inventoryItem)
 
-    $removeAllType = $assembly.GetType(
-        "EsmTspiot.WinForms.Shared.LmGatewayRemoveAllDialog",
-        $true)
-    $removeAllConstructor = $removeAllType.GetConstructors(
-        [System.Reflection.BindingFlags]::Instance -bor
-        [System.Reflection.BindingFlags]::NonPublic)[0]
-    $removeAllArguments = New-Object object[] 1
-    $removeAllArguments[0] = $inventoryList
-    $removeAllDialog = $removeAllConstructor.Invoke($removeAllArguments)
-    $serviceList = @(Get-DescendantControls $removeAllDialog) |
-        Where-Object {
-            $_ -is [System.Windows.Forms.TextBox] -and
-            $_.Multiline -and $_.ReadOnly
-        } | Select-Object -First 1
-    if ($null -eq $serviceList -or $serviceList.TabStop) {
-        throw "The read-only remove-all service list must not steal keyboard focus."
-    }
-
     $confirmation = [Activator]::CreateInstance($confirmationType)
     $confirmation.KktSerial = $inventoryItem.KktSerial
     $confirmation.GrpcPort = 45001

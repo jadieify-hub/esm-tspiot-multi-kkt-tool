@@ -6,17 +6,6 @@ using EsmTspiot.Shared.Services;
 
 namespace EsmTspiot.ServiceProvisioner
 {
-    internal enum LmProvisioningObservedState
-    {
-        Absent = 0,
-        MatchingReady = 1,
-        MatchingStopped = 2,
-        OwnedMismatch = 3,
-        Foreign = 4,
-        VersionPending = 5,
-        RequiresAttention = 6
-    }
-
     internal enum LmProvisioningJournalStage
     {
         Preparing = 1,
@@ -27,13 +16,6 @@ namespace EsmTspiot.ServiceProvisioner
         Failed = 6,
         Deleting = 7,
         Cleaning = 8
-    }
-
-    internal sealed class LmVerifiedController
-    {
-        internal string Version { get; set; }
-        internal string BinarySha256 { get; set; }
-        internal string SupervisorSha256 { get; set; }
     }
 
     internal sealed class LmReadinessResult
