@@ -55,8 +55,6 @@ namespace EsmTspiot.ServiceProvisioner
         internal string InstallRoot { get; private set; }
         internal string ControllerRelativePath { get; set; }
         internal TrustedFileExpectation ControllerBinary { get; private set; }
-        internal TrustedFileExpectation Installer { get; private set; }
-        internal string InstallerArguments { get; private set; }
         internal string ProfileEnvironmentKey { get; private set; }
         internal string VendorProfileRelativePath { get; private set; }
         internal string VendorConfigFileName { get; private set; }
@@ -101,7 +99,6 @@ namespace EsmTspiot.ServiceProvisioner
                     60,
                     new[] { 30000, 60000, 60000 }),
                 TerminalArguments = string.Empty,
-                InstallerArguments = "/S",
                 GracefulStopTimeoutMilliseconds = 30000,
                 GeneratedArtifactFileNames = new List<string>
                 {
@@ -124,20 +121,6 @@ namespace EsmTspiot.ServiceProvisioner
                     SignerSubject = SignerSubjectValue,
                     SignerThumbprint = string.Empty,
                     RequireCodeSigningEku = true
-                },
-                Installer = new TrustedFileExpectation
-                {
-                    FileName = string.Empty,
-                    ByteLength = 0,
-                    Sha256 = string.Empty,
-                    FileVersion = string.Empty,
-                    ProductVersion = string.Empty,
-                    ProductName = "ЕСП Контроллер ЛМ ЧЗ",
-                    CompanyName = "ЕСП",
-                    Machine = PeMachine.Unknown,
-                    SignerSubject = SignerSubjectValue,
-                    SignerThumbprint = string.Empty,
-                    RequireCodeSigningEku = true
                 }
             };
             profile.TagProductionFacts();
@@ -149,7 +132,6 @@ namespace EsmTspiot.ServiceProvisioner
             string installRoot,
             string controllerRelativePath,
             TrustedFileExpectation controllerBinary,
-            TrustedFileExpectation installer,
             string profileEnvironmentKey)
         {
             ControllerCapabilityProfile profile = new ControllerCapabilityProfile
@@ -159,7 +141,6 @@ namespace EsmTspiot.ServiceProvisioner
                 InstallRoot = Path.GetFullPath(installRoot),
                 ControllerRelativePath = controllerRelativePath,
                 ControllerBinary = controllerBinary.Clone(),
-                Installer = installer.Clone(),
                 ProfileEnvironmentKey = profileEnvironmentKey,
                 VendorProfileRelativePath = Path.Combine("ESP", "lmcontroller"),
                 VendorConfigFileName = "config.yml",
@@ -172,7 +153,6 @@ namespace EsmTspiot.ServiceProvisioner
                     60,
                     new[] { 30000, 60000, 60000 }),
                 TerminalArguments = string.Empty,
-                InstallerArguments = string.Empty,
                 GracefulStopTimeoutMilliseconds = 30000,
                 GeneratedArtifactFileNames = new List<string>
                 {
@@ -194,8 +174,6 @@ namespace EsmTspiot.ServiceProvisioner
             Provenance["InstallRoot"] = CapabilityFactProvenance.PrivateBlackBox;
             Provenance["ControllerRelativePath"] = CapabilityFactProvenance.PrivateBlackBox;
             Provenance["ControllerBinary"] = CapabilityFactProvenance.PrivateBlackBox;
-            Provenance["Installer"] = CapabilityFactProvenance.OfficialPackage;
-            Provenance["InstallerArguments"] = CapabilityFactProvenance.OfficialPackage;
             Provenance["ProfileEnvironmentKey"] = CapabilityFactProvenance.PrivateBlackBox;
             Provenance["VendorProfileRelativePath"] = CapabilityFactProvenance.PrivateBlackBox;
             Provenance["VendorConfigFileName"] = CapabilityFactProvenance.PrivateBlackBox;

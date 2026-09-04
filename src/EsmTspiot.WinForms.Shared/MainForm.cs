@@ -36,8 +36,6 @@ namespace EsmTspiot.WinForms.Shared
         private readonly Button _registerButton = new Button();
         private readonly Button _bulkRegisterButton = new Button();
         private readonly Button _automaticStopButton = new Button();
-        private readonly Button _automaticSelectInstallerButton = new Button();
-        private readonly TextBox _automaticInstallerTextBox = new TextBox();
         private readonly TextBox _automaticLmInstallerTextBox = new TextBox();
         private readonly ToolTip _automaticToolTip = new ToolTip();
         private readonly Button _refreshInstancesButton = new Button();
@@ -1116,15 +1114,10 @@ namespace EsmTspiot.WinForms.Shared
                 return;
             }
 
-            string path = _lmGatewayPage.SelectedInstallerPath;
             string lmPath = _lmGatewayPage.SelectedLocalModuleInstallerPath;
-            _automaticInstallerTextBox.Text = string.IsNullOrWhiteSpace(path)
-                ? "Не выбран"
-                : path;
             _automaticLmInstallerTextBox.Text = string.IsNullOrWhiteSpace(lmPath)
                 ? "Не выбран"
                 : lmPath;
-            _automaticToolTip.SetToolTip(_automaticInstallerTextBox, path);
             _automaticToolTip.SetToolTip(_automaticLmInstallerTextBox, lmPath);
             if (!_busy)
             {

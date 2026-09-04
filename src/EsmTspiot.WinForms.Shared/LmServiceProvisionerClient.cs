@@ -34,20 +34,6 @@ namespace EsmTspiot.WinForms.Shared
             _launcher = launcher;
         }
 
-        public Task<LmControllerInstallResult> InstallControllerVersionAsync(
-            LmControllerInstallerSelection selection,
-            string operationId,
-            string planHash,
-            CancellationToken cancellation)
-        {
-            LmServiceProvisioningBatchRequest request = CreateRequest(
-                LmServiceOperation.InstallControllerVersion,
-                operationId,
-                planHash);
-            request.InstallerSelection = selection;
-            return InvokeAsync<LmControllerInstallResult>(request, cancellation);
-        }
-
         internal Task<LmServiceProvisioningBatchResult> EnsureDirectControllersAsync(
             IList<DirectControllerProvisioningItemRequest> items,
             string operationId,
@@ -440,32 +426,19 @@ namespace EsmTspiot.WinForms.Shared
             LmServiceProvisioningBatchRequest request,
             T result)
         {
-            string operationId;
-            string planHash;
             LmServiceProvisioningBatchResult batch =
                 result as LmServiceProvisioningBatchResult;
-            if (batch != null)
+            if (batch == null)
             {
-                if (batch.SchemaVersion != request.SchemaVersion)
-                {
-                    throw new InvalidDataException("Helper вернул неизвестную версию схемы.");
-                }
-                operationId = batch.OperationId;
-                planHash = batch.PlanHash;
+                throw new InvalidDataException("Helper вернул результат неожиданного типа.");
             }
-            else
+            if (batch.SchemaVersion != request.SchemaVersion)
             {
-                LmControllerInstallResult install = result as LmControllerInstallResult;
-                if (install == null)
-                {
-                    throw new InvalidDataException("Helper вернул результат неожиданного типа.");
-                }
-                operationId = install.OperationId;
-                planHash = install.PlanHash;
+                throw new InvalidDataException("Helper вернул неизвестную версию схемы.");
             }
 
-            if (!string.Equals(operationId, request.OperationId, StringComparison.OrdinalIgnoreCase) ||
-                !CanonicalLmPlanHasher.FixedTimeEqualsHex(planHash, request.PlanHash))
+            if (!string.Equals(batch.OperationId, request.OperationId, StringComparison.OrdinalIgnoreCase) ||
+                !CanonicalLmPlanHasher.FixedTimeEqualsHex(batch.PlanHash, request.PlanHash))
             {
                 throw new InvalidDataException("Ответ helper относится к другой операции.");
             }

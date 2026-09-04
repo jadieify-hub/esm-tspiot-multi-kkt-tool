@@ -9,56 +9,40 @@ using EsmTspiot.Shared.Services;
 
 namespace EsmTspiot.ServiceProvisioner
 {
-    internal sealed class WindowsLmProvisioningPlatform :
-        ILmProvisioningPlatform,
-        ILmServiceRemovalPlatform
+    internal sealed class WindowsLmProvisioningPlatform : ILmServiceRemovalPlatform
     {
         private const int StopTimeoutMilliseconds = 30000;
-        private const int ReadyTimeoutMilliseconds = 45000;
-        private readonly ControllerCapabilityProfile _profile;
         private readonly IWindowsServiceApi _serviceApi;
-        private readonly OfficialControllerLocator _controllerLocator;
         private readonly ManagedServiceManifestStore _manifestStore;
         private readonly ProvisioningOperationJournalStore _journalStore;
         private readonly LmGatewaySupervisorService _supervisor;
         private readonly LmServiceReadinessProbe _readiness;
-        private readonly IFileTrustVerifier _trustVerifier;
         private readonly IPathSafety _pathSafety;
         private readonly string _appDataRoot;
-        private readonly string _operationId;
         private readonly VerifiedProvisionerBinary _supervisorBinary;
 
         private WindowsLmProvisioningPlatform(
-            ControllerCapabilityProfile profile,
             IWindowsServiceApi serviceApi,
-            OfficialControllerLocator controllerLocator,
             ManagedServiceManifestStore manifestStore,
             ProvisioningOperationJournalStore journalStore,
             LmGatewaySupervisorService supervisor,
             LmServiceReadinessProbe readiness,
-            IFileTrustVerifier trustVerifier,
             IPathSafety pathSafety,
             string appDataRoot,
-            string operationId,
             VerifiedProvisionerBinary supervisorBinary)
         {
-            _profile = profile;
             _serviceApi = serviceApi;
-            _controllerLocator = controllerLocator;
             _manifestStore = manifestStore;
             _journalStore = journalStore;
             _supervisor = supervisor;
             _readiness = readiness;
-            _trustVerifier = trustVerifier;
             _pathSafety = pathSafety;
             _appDataRoot = appDataRoot;
-            _operationId = operationId;
             _supervisorBinary = supervisorBinary;
         }
 
-        internal static WindowsLmProvisioningPlatform Create(
-            string initiatingSid,
-            string operationId)
+        internal static WindowsLmProvisioningPlatform CreateForRemoval(
+            string initiatingSid)
         {
             ControllerCapabilityProfile profile =
                 ControllerCapabilityProfile.Supported();
@@ -90,17 +74,13 @@ namespace EsmTspiot.ServiceProvisioner
                 manifestStore,
                 profile);
             return new WindowsLmProvisioningPlatform(
-                profile,
                 serviceApi,
-                locator,
                 manifestStore,
                 journalStore,
                 supervisor,
                 readiness,
-                trustVerifier,
                 pathSafety,
                 appDataRoot,
-                operationId,
                 supervisorBinary);
         }
 
@@ -113,72 +93,6 @@ namespace EsmTspiot.ServiceProvisioner
         {
             string serviceName = LmServiceIdentity.CreateName(kktSerial);
             return AcquireMutex("Global\\KRS.MultiKKT.LmGateway.Item." + serviceName);
-        }
-
-        public void RequestStop(LmServiceProvisioningItemRequest item)
-        {
-            string serviceName = LmServiceIdentity.CreateName(item.KktSerial);
-            WindowsServiceRecord service = _serviceApi.Query(serviceName);
-            if (service == null)
-            {
-                return;
-            }
-            LmServiceProvisioningItemRequest complete = CompletePortsFromManifest(item);
-            if (service.State != WindowsServiceState.Stopped || service.ProcessId != 0)
-            {
-                _serviceApi.RequestStop(serviceName);
-            }
-            if (complete.GrpcPort > 0 && complete.RestPort > 0)
-            {
-                if (!_readiness.WaitUntilStopped(complete, StopTimeoutMilliseconds))
-                {
-                    throw new InvalidOperationException(
-                        "Служба или ее listener-процессы не завершились штатно.");
-                }
-            }
-            else
-            {
-                WaitForServiceStopped(serviceName);
-            }
-        }
-
-        public IList<string> GetManagedSerials()
-        {
-            return _manifestStore.ReadManagedSerials();
-        }
-
-        public void MarkVersionPending(string kktSerial, string operationId)
-        {
-            ManagedServiceManifest manifest = _manifestStore.Read(kktSerial);
-            manifest.LocalLifecycleState =
-                ManagedServiceLifecycleState.VersionVerificationPending;
-            manifest.OperationId = operationId;
-            manifest.UpdatedUtc = DateTime.UtcNow.ToString("o");
-            _manifestStore.Write(manifest);
-        }
-
-        public ILockedControllerInstaller PrepareInstaller(
-            LmControllerInstallerSelection selection,
-            string operationId)
-        {
-            if (!string.Equals(operationId, _operationId, StringComparison.OrdinalIgnoreCase))
-            {
-                throw new InvalidDataException("Installer operation identity changed.");
-            }
-            string stagingRoot = Path.Combine(_appDataRoot, "InstallerStaging");
-            OfficialControllerInstallerVerifier verifier =
-                new OfficialControllerInstallerVerifier(
-                    _profile,
-                    _trustVerifier,
-                    _pathSafety,
-                    stagingRoot,
-                    operationId);
-            LockedInstallerArtifact artifact = verifier.VerifyStageAndLock(selection);
-            return new WindowsLockedControllerInstaller(
-                artifact,
-                _controllerLocator,
-                _profile.Version,
-                _profile.InstallerArguments);
         }
 
         public void ReconcileRemoval(string kktSerial, string operationId)
@@ -510,23 +424,6 @@ namespace EsmTspiot.ServiceProvisioner
             };
         }
 
-        private void WaitForServiceStopped(string serviceName)
-        {
-            DateTime deadline = DateTime.UtcNow.AddMilliseconds(StopTimeoutMilliseconds);
-            do
-            {
-                WindowsServiceRecord service = _serviceApi.Query(serviceName);
-                if (service == null ||
-                    (service.State == WindowsServiceState.Stopped && service.ProcessId == 0))
-                {
-                    return;
-                }
-                Thread.Sleep(250);
-            }
-            while (DateTime.UtcNow < deadline);
-            throw new InvalidOperationException("Служба не остановилась в отведенное время.");
-        }
-
         private static IDisposable AcquireMutex(string name)
         {
             Mutex mutex = new Mutex(false, name);
@@ -569,83 +466,5 @@ namespace EsmTspiot.ServiceProvisioner
             }
         }
 
-        private sealed class WindowsLockedControllerInstaller : ILockedControllerInstaller
-        {
-            private LockedInstallerArtifact _artifact;
-            private readonly OfficialControllerLocator _locator;
-            private readonly string _version;
-            private readonly string _arguments;
-
-            internal WindowsLockedControllerInstaller(
-                LockedInstallerArtifact artifact,
-                OfficialControllerLocator locator,
-                string version,
-                string arguments)
-            {
-                _artifact = artifact;
-                _locator = locator;
-                _version = version;
-                _arguments = arguments ?? string.Empty;
-            }
-
-            public LmControllerInstallResult Run()
-            {
-                if (_artifact == null)
-                {
-                    throw new ObjectDisposedException("installer");
-                }
-                ProcessStartInfo startInfo = new ProcessStartInfo
-                {
-                    FileName = _artifact.FullPath,
-                    Arguments = _arguments,
-                    UseShellExecute = true,
-                    WorkingDirectory = Path.GetDirectoryName(_artifact.FullPath)
-                };
-                using (Process process = Process.Start(startInfo))
-                {
-                    if (process == null)
-                    {
-                        throw new InvalidOperationException("Не удалось запустить установщик.");
-                    }
-                    process.WaitForExit();
-                    if (process.ExitCode != 0)
-                    {
-                        return new LmControllerInstallResult
-                        {
-                            Status = LmServiceProvisioningStatus.Failed,
-                            Message = "Установщик завершился с кодом " +
-                                process.ExitCode.ToString() + "."
-                        };
-                    }
-                }
-
-                VerifiedControllerBinaryResult installed = _locator.ResolveVerifiedBinary();
-                if (!installed.IsSuccess)
-                {
-                    return new LmControllerInstallResult
-                    {
-                        Status = LmServiceProvisioningStatus.UnsupportedController,
-                        Message = installed.ErrorMessage
-                    };
-                }
-                return new LmControllerInstallResult
-                {
-                    Status = LmServiceProvisioningStatus.Succeeded,
-                    InstalledVersion = _version,
-                    Message = "Версия контроллера установлена и проверена. " +
-                        "Управляемые службы оставлены остановленными до явного обновления."
-                };
-            }
-
-            public void Dispose()
-            {
-                LockedInstallerArtifact artifact = _artifact;
-                _artifact = null;
-                if (artifact != null)
-                {
-                    artifact.Dispose();
-                }
-            }
-        }
     }
 }

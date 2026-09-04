@@ -31,7 +31,6 @@
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayCredentialDefaults.cs" Link="LmGatewayCredentialDefaults.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayBindingDialog.cs" Link="LmGatewayBindingDialog.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayRemovalDialog.cs" Link="LmGatewayRemovalDialog.cs" />
-    <Compile Include="..\EsmTspiot.WinForms.Shared\LmControllerInstallerPicker.cs" Link="LmControllerInstallerPicker.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LocalModuleInstallerPicker.cs" Link="LocalModuleInstallerPicker.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LocalModuleMsiPropertyReader.cs" Link="LocalModuleMsiPropertyReader.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmServiceProvisionerClient.cs" Link="LmServiceProvisionerClient.cs" />

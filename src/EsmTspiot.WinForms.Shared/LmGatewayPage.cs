@@ -55,7 +55,7 @@ namespace EsmTspiot.WinForms.Shared
             Dock = DockStyle.Fill;
             AutoScroll = false;
             BuildLayout();
-            RestoreInstallerSelections();
+            RestoreInstallerSelection();
             FillRows(null);
             UpdateActionState();
         }
@@ -63,28 +63,9 @@ namespace EsmTspiot.WinForms.Shared
         public event Action<bool> OperationStateChanged;
         public event Action InstallerSelectionChanged;
 
-        public bool HasInstallerSelection
-        {
-            get { return _installerSelection != null; }
-        }
-
         public bool HasLocalModuleInstallerSelection
         {
             get { return _localModuleInstallerSelection != null; }
-        }
-
-        public bool HasRequiredInstallerSelections
-        {
-            get
-            {
-                return _installerSelection != null &&
-                    _localModuleInstallerSelection != null;
-            }
-        }
-
-        public string SelectedInstallerPath
-        {
-            get { return _installerSelection == null ? string.Empty : _installerSelection.SourcePath; }
         }
 
         public string SelectedLocalModuleInstallerPath
@@ -139,7 +120,6 @@ namespace EsmTspiot.WinForms.Shared
                     _cancellation.Dispose();
                     _cancellation = null;
                 }
-                ClearInstallerSelection();
                 ClearLocalModuleInstallerSelection();
             }
 

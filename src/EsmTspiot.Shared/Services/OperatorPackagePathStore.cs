@@ -9,9 +9,6 @@ namespace EsmTspiot.Shared.Services
     public sealed class OperatorPackagePaths
     {
         [DataMember(Order = 1)]
-        public string ControllerInstallerPath { get; set; }
-
-        [DataMember(Order = 2)]
         public string LocalModuleInstallerPath { get; set; }
     }
 
@@ -72,21 +69,15 @@ namespace EsmTspiot.Shared.Services
             }
             return new OperatorPackagePaths
             {
-                ControllerInstallerPath = NormalizeOptional(
-                    stored.ControllerInstallerPath),
                 LocalModuleInstallerPath = NormalizeOptional(
                     stored.LocalModuleInstallerPath)
             };
         }
 
-        public void Save(
-            string controllerInstallerPath,
-            string localModuleInstallerPath)
+        public void Save(string localModuleInstallerPath)
         {
             OperatorPackagePaths safe = new OperatorPackagePaths
             {
-                ControllerInstallerPath = NormalizeOptional(
-                    controllerInstallerPath),
                 LocalModuleInstallerPath = NormalizeOptional(
                     localModuleInstallerPath)
             };
@@ -134,7 +125,6 @@ namespace EsmTspiot.Shared.Services
         {
             return new OperatorPackagePaths
             {
-                ControllerInstallerPath = string.Empty,
                 LocalModuleInstallerPath = string.Empty
             };
         }

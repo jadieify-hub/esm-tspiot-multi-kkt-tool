@@ -71,9 +71,8 @@ namespace EsmTspiot.ServiceProvisioner
             }
 
             WindowsLmProvisioningPlatform platform =
-                WindowsLmProvisioningPlatform.Create(
-                    _request.InitiatingSid,
-                    _request.OperationId);
+                WindowsLmProvisioningPlatform.CreateForRemoval(
+                    _request.InitiatingSid);
             LmServiceProvisioner provisioner = new LmServiceProvisioner(platform);
             LmServiceProvisioningItemResult result = _request.Operation ==
                 LmServiceOperation.CleanupManaged
