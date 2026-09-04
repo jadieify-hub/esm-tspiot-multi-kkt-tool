@@ -42,6 +42,8 @@ namespace EsmTspiot.Shared.Tests
             Run("Error 1013 is decoded as manual service recovery", Error1013IsDecodedAsManualServiceRecovery);
             Run("Error 1026 explains multiple INN limitation", Error1026ExplainsMultipleInnLimitation);
             Run("Unknown HTTP error shows the service response body", UnknownHttpErrorShowsServiceResponseBody);
+            Run("LM binding waits until ESM reports the binding", LmBindingWorkflowWaitsUntilEsmReportsTheBinding);
+            Run("LM binding diagnostics carry the info response", LmBindingDiagnosticsCarryTheInfoResponse);
             Run("Service recovery command uses KKT serial and ports", ServiceRecoveryCommandUsesKktSerialAndPorts);
             Run("Service recovery command recreates service with wrong ports", ServiceRecoveryCommandRecreatesServiceWithWrongPorts);
             Run("Service recovery command writes diagnostics", ServiceRecoveryCommandWritesDiagnostics);
@@ -482,6 +484,19 @@ namespace EsmTspiot.Shared.Tests
             AssertContains(message, "несколько ИНН");
             AssertContains(message, "автоматическую настройку");
             AssertContains(message, "только с кассами одного ИНН");
+        }
+
+        /// <summary>
+        /// Проверка привязки в поле ждёт ЕСМ десятками секунд. Тестам ждать
+        /// реальное время незачем, поэтому бюджет укорочен.
+        /// </summary>
+        private static LmGatewayBindingWorkflow NewFastBindingWorkflow(
+            ITspiotApiClient api)
+        {
+            return new LmGatewayBindingWorkflow(
+                api,
+                TimeSpan.FromMilliseconds(600),
+                TimeSpan.FromMilliseconds(50));
         }
 
         private static void UnknownHttpErrorShowsServiceResponseBody()
@@ -3520,7 +3535,7 @@ namespace EsmTspiot.Shared.Tests
             {
                 events.Add("put:" + api.LmGatewayCalls[callNumber - 1].Id);
             };
-            LmGatewayBindingWorkflow workflow = new LmGatewayBindingWorkflow(api);
+            LmGatewayBindingWorkflow workflow = NewFastBindingWorkflow(api);
 
             LmGatewayBindingOutcome outcome = workflow.ExecuteAsync(
                 "http://127.0.0.1:51077",
@@ -3549,7 +3564,7 @@ namespace EsmTspiot.Shared.Tests
             FakeTspiotApiClient api = new FakeTspiotApiClient();
             api.LmInfoResponses.Enqueue(Success(CreateLmInfoJson(
                 "00105700000001", "1234567894", "127.0.0.1", 5995)));
-            LmGatewayBindingWorkflow workflow = new LmGatewayBindingWorkflow(api);
+            LmGatewayBindingWorkflow workflow = NewFastBindingWorkflow(api);
 
             LmGatewayBindingOutcome outcome = workflow.ExecuteAsync(
                 "http://127.0.0.1:51077",
@@ -3568,7 +3583,7 @@ namespace EsmTspiot.Shared.Tests
         {
             FakeTspiotApiClient api = new FakeTspiotApiClient();
             api.LmInfoResponses.Enqueue(ConnectionFailure());
-            LmGatewayBindingWorkflow workflow = new LmGatewayBindingWorkflow(api);
+            LmGatewayBindingWorkflow workflow = NewFastBindingWorkflow(api);
 
             LmGatewayBindingOutcome outcome = workflow.ExecuteAsync(
                 "http://127.0.0.1:51077",
@@ -3587,7 +3602,7 @@ namespace EsmTspiot.Shared.Tests
             FakeTspiotApiClient api = new FakeTspiotApiClient();
             api.LmInfoResponses.Enqueue(Success(CreateLmInfoJson(
                 "00105700000001", "1234567894", "127.0.0.1", 6995)));
-            LmGatewayBindingWorkflow workflow = new LmGatewayBindingWorkflow(api);
+            LmGatewayBindingWorkflow workflow = NewFastBindingWorkflow(api);
 
             LmGatewayBindingOutcome outcome = workflow.ExecuteAsync(
                 "http://127.0.0.1:51077",
@@ -3612,6 +3627,64 @@ namespace EsmTspiot.Shared.Tests
                 "\",\"port\":" + port.ToString() + ",\"login\":\"operator\",\"pass\":\"secret\"}}";
         }
 
+        private static void LmBindingWorkflowWaitsUntilEsmReportsTheBinding()
+        {
+            // Поле: ЕСМ принимает привязку, а сообщает её обратно только
+            // через несколько секунд. Одна проверка сразу после запроса
+            // объявляла новую привязку неподтверждённой.
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            api.LmInfoResponses.Enqueue(Success(CreateLmInfoWithoutLocalModuleJson(
+                "00105700000001", "1234567894")));
+            api.LmInfoResponses.Enqueue(Success(CreateLmInfoWithoutLocalModuleJson(
+                "00105700000001", "1234567894")));
+            api.LmInfoResponses.Enqueue(Success(CreateLmInfoJson(
+                "00105700000001", "1234567894", "127.0.0.1", 5995)));
+            LmGatewayBindingWorkflow workflow = NewFastBindingWorkflow(api);
+
+            LmGatewayBindingOutcome outcome = workflow.ExecuteAsync(
+                "http://127.0.0.1:51077",
+                CreateValidLmBindingPlan(1),
+                delegate { return new LmGatewayCredentials { Login = "operator", Password = "test-password" }; },
+                null,
+                CancellationToken.None).Result;
+
+            AssertEqual(3, api.LmInfoCalls,
+                "Expected the verification to poll until ESM reports the binding.");
+            AssertEqual(LmGatewayBindingStatus.BindingVerified, outcome.Results[0].Status,
+                "A binding reported a few seconds later must still be verified.");
+        }
+
+        private static void LmBindingDiagnosticsCarryTheInfoResponse()
+        {
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            api.LmInfoResponses.Enqueue(Success(CreateLmInfoWithoutLocalModuleJson(
+                "00105700000001", "1234567894")));
+            LmGatewayBindingWorkflow workflow = NewFastBindingWorkflow(api);
+
+            LmGatewayBindingOutcome outcome = workflow.ExecuteAsync(
+                "http://127.0.0.1:51077",
+                CreateValidLmBindingPlan(1),
+                delegate { return new LmGatewayCredentials { Login = "operator", Password = "test-password" }; },
+                null,
+                CancellationToken.None).Result;
+
+            AssertEqual(LmGatewayBindingStatus.RequiresAttention, outcome.Results[0].Status,
+                "A missing LM configuration must still require attention after the wait.");
+            AssertContains(outcome.Results[0].Diagnostics, "/api/v2/info");
+            AssertContains(outcome.Results[0].Diagnostics, "00105700000001");
+            AssertFalse(
+                outcome.Results[0].Details.Contains("kktSerial"),
+                "The raw response must stay out of the decision text.");
+        }
+
+        private static string CreateLmInfoWithoutLocalModuleJson(
+            string kktSerial,
+            string kktInn)
+        {
+            return "{\"kktSerial\":\"" + kktSerial +
+                "\",\"kktInn\":\"" + kktInn + "\"}";
+        }
+
         private static void LmBindingWorkflowSkipsInvalidItemAndContinues()
         {
             FakeTspiotApiClient api = new FakeTspiotApiClient();
@@ -3624,7 +3697,7 @@ namespace EsmTspiot.Shared.Tests
             };
             LmGatewayBindingPlan plan = LmGatewayBindingPlanner.Build(discovery, inputs);
             List<string> credentialCalls = new List<string>();
-            LmGatewayBindingWorkflow workflow = new LmGatewayBindingWorkflow(api);
+            LmGatewayBindingWorkflow workflow = NewFastBindingWorkflow(api);
 
             LmGatewayBindingOutcome outcome = workflow.ExecuteAsync(
                 "http://127.0.0.1:51077",
@@ -3648,7 +3721,7 @@ namespace EsmTspiot.Shared.Tests
         {
             FakeTspiotApiClient api = new FakeTspiotApiClient();
             api.LmGatewayResponses.Enqueue(ConnectionFailure());
-            LmGatewayBindingWorkflow workflow = new LmGatewayBindingWorkflow(api);
+            LmGatewayBindingWorkflow workflow = NewFastBindingWorkflow(api);
 
             LmGatewayBindingOutcome outcome = workflow.ExecuteAsync(
                 "http://127.0.0.1:51077",
@@ -3666,7 +3739,7 @@ namespace EsmTspiot.Shared.Tests
         {
             FakeTspiotApiClient api = new FakeTspiotApiClient();
             api.LmGatewayResponses.Enqueue(Failure(400, "{\"error\":\"invalid settings\"}"));
-            LmGatewayBindingWorkflow workflow = new LmGatewayBindingWorkflow(api);
+            LmGatewayBindingWorkflow workflow = NewFastBindingWorkflow(api);
 
             LmGatewayBindingOutcome outcome = workflow.ExecuteAsync(
                 "http://127.0.0.1:51077",
@@ -3692,7 +3765,7 @@ namespace EsmTspiot.Shared.Tests
                 }
             };
             int credentialCalls = 0;
-            LmGatewayBindingWorkflow workflow = new LmGatewayBindingWorkflow(api);
+            LmGatewayBindingWorkflow workflow = NewFastBindingWorkflow(api);
 
             LmGatewayBindingOutcome outcome = workflow.ExecuteAsync(
                 "http://127.0.0.1:51077",
@@ -3727,7 +3800,7 @@ namespace EsmTspiot.Shared.Tests
                 DecodedMessage = "password=" + password
             });
             List<LmGatewayBindingProgress> progressItems = new List<LmGatewayBindingProgress>();
-            LmGatewayBindingWorkflow workflow = new LmGatewayBindingWorkflow(api);
+            LmGatewayBindingWorkflow workflow = NewFastBindingWorkflow(api);
 
             LmGatewayBindingOutcome outcome = workflow.ExecuteAsync(
                 "http://127.0.0.1:51077",
@@ -5363,7 +5436,7 @@ namespace EsmTspiot.Shared.Tests
             LmGatewayLifecycleOutcome outcome = new LmGatewayLifecycleWorkflow(
                 provisioner,
                 probe,
-                new LmGatewayBindingWorkflow(api)).ExecuteAsync(
+                NewFastBindingWorkflow(api)).ExecuteAsync(
                     "http://127.0.0.1:51077",
                     plan,
                     operationId,
@@ -6052,7 +6125,7 @@ namespace EsmTspiot.Shared.Tests
             return new LmGatewayLifecycleWorkflow(
                 provisioner,
                 probe,
-                new LmGatewayBindingWorkflow(api));
+                NewFastBindingWorkflow(api));
         }
 
         private static LmGatewayPlan CreateLifecyclePlan(int count, LmGatewayPlanAction action)
@@ -6503,6 +6576,8 @@ namespace EsmTspiot.Shared.Tests
             public int InstancesCalls { get; private set; }
             public int DkktCalls { get; private set; }
             public int LmInfoCalls { get; private set; }
+
+            private ApiResponse _lastLmInfoResponse;
             public int CancelOnInstanceCall { get; set; }
             public Action<int> LmGatewayCallObserved { get; set; }
             public string LastDeletedId { get; private set; }
@@ -6585,9 +6660,15 @@ namespace EsmTspiot.Shared.Tests
                 CancellationToken cancellationToken)
             {
                 LmInfoCalls++;
-                return Task.FromResult(LmInfoResponses.Count == 0
-                    ? ConnectionFailure()
-                    : LmInfoResponses.Dequeue());
+                // Настоящий ЕСМ отвечает одинаково, пока состояние не
+                // изменилось. Очередь, иссякая, повторяет последний ответ:
+                // иначе повторная проверка получала бы обрыв связи.
+                if (LmInfoResponses.Count > 0)
+                {
+                    _lastLmInfoResponse = LmInfoResponses.Dequeue();
+                }
+
+                return Task.FromResult(_lastLmInfoResponse ?? ConnectionFailure());
             }
         }
 

@@ -1,4 +1,4 @@
-namespace EsmTspiot.Shared.Models
+﻿namespace EsmTspiot.Shared.Models
 {
     public sealed class LmGatewayBindingProgress
     {
@@ -8,5 +8,6 @@ namespace EsmTspiot.Shared.Models
         public string Stage { get; set; }
         public string Message { get; set; }
         public ApiResponse Response { get; set; }
+        public string Diagnostics { get; set; }
     }
 }

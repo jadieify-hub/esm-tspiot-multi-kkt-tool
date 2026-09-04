@@ -1,4 +1,5 @@
-using System;
+﻿using System;
+using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
 using EsmTspiot.Shared.Logging;
@@ -8,10 +9,31 @@ namespace EsmTspiot.Shared.Services
 {
     public sealed class LmGatewayBindingWorkflow
     {
+        private const int VerificationBudgetSeconds = 45;
+        private const int VerificationAttemptSeconds = 5;
+        private const int VerificationRetryDelayMilliseconds = 3000;
+
         private readonly ITspiotApiClient _apiClient;
         private readonly LmGatewayReadbackWorkflow _readbackWorkflow;
+        private readonly TimeSpan _verificationBudget;
+        private readonly TimeSpan _verificationRetryDelay;
 
         public LmGatewayBindingWorkflow(ITspiotApiClient apiClient)
+            : this(
+                apiClient,
+                TimeSpan.FromSeconds(VerificationBudgetSeconds),
+                TimeSpan.FromMilliseconds(VerificationRetryDelayMilliseconds))
+        {
+        }
+
+        /// <summary>
+        /// Бюджет проверки вынесен в конструктор: в поле ждём ЕСМ десятками
+        /// секунд, а тестам ждать реальное время незачем.
+        /// </summary>
+        public LmGatewayBindingWorkflow(
+            ITspiotApiClient apiClient,
+            TimeSpan verificationBudget,
+            TimeSpan verificationRetryDelay)
         {
             if (apiClient == null)
             {
@@ -20,6 +42,8 @@ namespace EsmTspiot.Shared.Services
 
             _apiClient = apiClient;
             _readbackWorkflow = new LmGatewayReadbackWorkflow(apiClient);
+            _verificationBudget = verificationBudget;
+            _verificationRetryDelay = verificationRetryDelay;
         }
 
         public async Task<LmGatewayBindingOutcome> ExecuteAsync(
@@ -141,6 +165,9 @@ namespace EsmTspiot.Shared.Services
                         bindingResult = await VerifyAcceptedBindingAsync(
                             baseUrl,
                             item,
+                            progress,
+                            index + 1,
+                            plan.Items.Count,
                             cancellationToken).ConfigureAwait(false);
                     }
                     else
@@ -166,9 +193,19 @@ namespace EsmTspiot.Shared.Services
             return outcome;
         }
 
+        /// <summary>
+        /// ЕСМ принимает запрос привязки раньше, чем успевает поднять сессию
+        /// с контроллером и локальным модулем. Одной проверки на четыре
+        /// секунды хватало только уже привязанной ККТ: новая привязка
+        /// объявлялась неподтверждённой, хотя ЕСМ сообщал её через несколько
+        /// секунд. Поэтому проверка повторяется до общего бюджета.
+        /// </summary>
         private async Task<LmGatewayBindingResult> VerifyAcceptedBindingAsync(
             string baseUrl,
             LmGatewayBindingItem item,
+            Action<LmGatewayBindingProgress> progress,
+            int current,
+            int total,
             CancellationToken cancellationToken)
         {
             if (cancellationToken.IsCancellationRequested)
@@ -179,58 +216,151 @@ namespace EsmTspiot.Shared.Services
                     "ЕСМ принял запрос настройки; проверка результата отменена.");
             }
 
-            using (CancellationTokenSource timeout =
-                CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+            DateTime deadline = DateTime.UtcNow.Add(_verificationBudget);
+            LmGatewayReadbackObservation observation = null;
+            int attempt = 0;
+            while (true)
             {
-                timeout.CancelAfter(TimeSpan.FromSeconds(4));
-                try
+                attempt++;
+                observation = await ReadBindingOnceAsync(
+                    baseUrl,
+                    item,
+                    cancellationToken).ConfigureAwait(false);
+                if (cancellationToken.IsCancellationRequested)
                 {
-                    LmGatewayReadbackObservation observation =
-                        await _readbackWorkflow.ReadAsync(
-                            baseUrl,
-                            item.Kkt,
-                            item.Input.ExpectedLmAddress,
-                            item.Input.ExpectedLmPort,
-                            timeout.Token).ConfigureAwait(false);
-                    if (observation.IsVerified)
-                    {
-                        return CreateResult(
-                            item,
-                            LmGatewayBindingStatus.BindingVerified,
-                            observation.Details);
-                    }
-                    if (!observation.IsAvailable)
-                    {
-                        return CreateResult(
-                            item,
-                            LmGatewayBindingStatus.BindingAccepted,
-                            "ЕСМ принял запрос, но результат не удалось проверить: " +
-                                observation.Details);
-                    }
-                    if (observation.IdentityMatches && observation.HasLmConfiguration &&
-                        !observation.EndpointMatches.HasValue)
-                    {
-                        return CreateResult(
-                            item,
-                            LmGatewayBindingStatus.BindingObserved,
-                            observation.Details);
-                    }
-
                     return CreateResult(
                         item,
-                        LmGatewayBindingStatus.RequiresAttention,
-                        observation.Details);
+                        LmGatewayBindingStatus.BindingAccepted,
+                        "ЕСМ принял запрос настройки; проверка результата отменена.");
+                }
+
+                if (observation != null && observation.IsVerified)
+                {
+                    return CreateResult(
+                        item,
+                        LmGatewayBindingStatus.BindingVerified,
+                        observation.Details,
+                        observation.InfoResponseBody);
+                }
+
+                if (DateTime.UtcNow >= deadline)
+                {
+                    break;
+                }
+
+                ReportWaitingForBinding(progress, current, total, item, attempt);
+                try
+                {
+                    await Task.Delay(
+                        _verificationRetryDelay,
+                        cancellationToken).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
                 {
                     return CreateResult(
                         item,
                         LmGatewayBindingStatus.BindingAccepted,
-                        cancellationToken.IsCancellationRequested
-                            ? "ЕСМ принял запрос настройки; проверка результата отменена."
-                            : "ЕСМ принял запрос, но проверка результата превысила 4 секунды.");
+                        "ЕСМ принял запрос настройки; проверка результата отменена.");
                 }
             }
+
+            string waited = " Проверка повторялась " +
+                ((int)Math.Round(_verificationBudget.TotalSeconds)).ToString(
+                    CultureInfo.InvariantCulture) +
+                " с, попыток: " + attempt.ToString(CultureInfo.InvariantCulture) + ".";
+            if (observation == null)
+            {
+                return CreateResult(
+                    item,
+                    LmGatewayBindingStatus.BindingAccepted,
+                    "ЕСМ принял запрос, но ответ на проверку не пришёл." + waited);
+            }
+
+            if (!observation.IsAvailable)
+            {
+                return CreateResult(
+                    item,
+                    LmGatewayBindingStatus.BindingAccepted,
+                    "ЕСМ принял запрос, но результат не удалось проверить: " +
+                        observation.Details + waited,
+                    observation.InfoResponseBody);
+            }
+
+            if (observation.IdentityMatches && observation.HasLmConfiguration &&
+                !observation.EndpointMatches.HasValue)
+            {
+                return CreateResult(
+                    item,
+                    LmGatewayBindingStatus.BindingObserved,
+                    observation.Details,
+                    observation.InfoResponseBody);
+            }
+
+            return CreateResult(
+                item,
+                LmGatewayBindingStatus.RequiresAttention,
+                observation.Details + waited,
+                observation.InfoResponseBody);
+        }
+
+        private async Task<LmGatewayReadbackObservation> ReadBindingOnceAsync(
+            string baseUrl,
+            LmGatewayBindingItem item,
+            CancellationToken cancellationToken)
+        {
+            using (CancellationTokenSource timeout =
+                CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+            {
+                TimeSpan attemptBudget =
+                    TimeSpan.FromSeconds(VerificationAttemptSeconds);
+                if (_verificationBudget < attemptBudget)
+                {
+                    attemptBudget = _verificationBudget;
+                }
+
+                timeout.CancelAfter(attemptBudget);
+                try
+                {
+                    return await _readbackWorkflow.ReadAsync(
+                        baseUrl,
+                        item.Kkt,
+                        item.Input.ExpectedLmAddress,
+                        item.Input.ExpectedLmPort,
+                        timeout.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    return null;
+                }
+            }
+        }
+
+        private static void ReportWaitingForBinding(
+            Action<LmGatewayBindingProgress> progress,
+            int current,
+            int total,
+            LmGatewayBindingItem item,
+            int attempt)
+        {
+            // Оператор смотрит в журнал: без этой строки ожидание выглядит
+            // так же, как зависание.
+            if (progress == null || (attempt != 1 && attempt % 3 != 0))
+            {
+                return;
+            }
+
+            progress(new LmGatewayBindingProgress
+            {
+                Current = current,
+                Total = total,
+                KktSerial = item == null || item.Kkt == null
+                    ? string.Empty
+                    : (item.Kkt.KktSerial ?? string.Empty),
+                Stage = "Ожидание ЕСМ",
+                Message = "ЕСМ принял привязку, но ещё не сообщает её обратно; " +
+                    "проверка повторяется (попытка " +
+                    attempt.ToString(CultureInfo.InvariantCulture) + ")."
+            });
         }
 
         private static LmGatewayBindingResult BuildTransportResult(
@@ -269,6 +399,15 @@ namespace EsmTspiot.Shared.Services
             LmGatewayBindingStatus status,
             string details)
         {
+            return CreateResult(item, status, details, null);
+        }
+
+        private static LmGatewayBindingResult CreateResult(
+            LmGatewayBindingItem item,
+            LmGatewayBindingStatus status,
+            string details,
+            string diagnostics)
+        {
             LmGatewayKkt kkt = item == null ? null : item.Kkt;
             return new LmGatewayBindingResult
             {
@@ -276,7 +415,10 @@ namespace EsmTspiot.Shared.Services
                 KktSerial = kkt == null ? string.Empty : (kkt.KktSerial ?? string.Empty),
                 KktInn = kkt == null ? string.Empty : (kkt.KktInn ?? string.Empty),
                 Status = status,
-                Details = SensitiveDataMasker.Mask(details)
+                Details = SensitiveDataMasker.Mask(details),
+                Diagnostics = string.IsNullOrWhiteSpace(diagnostics)
+                    ? string.Empty
+                    : "    Ответ /api/v2/info: " + diagnostics
             };
         }
 
@@ -337,6 +479,7 @@ namespace EsmTspiot.Shared.Services
                 KktSerial = result == null ? string.Empty : (result.KktSerial ?? string.Empty),
                 Stage = stage,
                 Message = result == null ? string.Empty : (result.Details ?? string.Empty),
+                Diagnostics = result == null ? string.Empty : (result.Diagnostics ?? string.Empty),
                 Response = response
             });
         }
