@@ -27,7 +27,6 @@ namespace EsmTspiot.ServiceProvisioner
         private readonly string _appDataRoot;
         private readonly string _operationId;
         private readonly VerifiedProvisionerBinary _supervisorBinary;
-        private LmVerifiedController _lastVerifiedController;
 
         private WindowsLmProvisioningPlatform(
             ControllerCapabilityProfile profile,

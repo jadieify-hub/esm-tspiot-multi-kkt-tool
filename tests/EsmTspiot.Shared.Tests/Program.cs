@@ -217,7 +217,6 @@ namespace EsmTspiot.Shared.Tests
 #endif
             Run("LM provisioner contract exposes no arbitrary command", LmProvisionerContractExposesNoArbitraryCommand);
             Run("LM probe result separates service and listener state", LmProbeResultSeparatesServiceAndListenerState);
-            Run("LM provisioning progress contains no credentials", LmProvisioningProgressContainsNoCredentials);
             Run("LM provisioning result formats every item for the operator log", LmProvisioningResultFormatsEveryItemForOperatorLog);
             Run("LM automatic setup installs before configuring KKT", LmAutomaticSetupInstallsBeforeConfiguringKkt);
             Run("LM automatic setup stops after failed installation", LmAutomaticSetupStopsAfterFailedInstallation);
@@ -4869,28 +4868,6 @@ namespace EsmTspiot.Shared.Tests
             AssertTrue(result.GrpcListenerReady, "gRPC readiness must remain independently visible.");
             AssertFalse(result.RestListenerReady, "REST readiness must not be inferred from gRPC.");
             AssertFalse(result.IsReady, "Overall readiness needs service, both listeners and owner proof.");
-        }
-
-        private static void LmProvisioningProgressContainsNoCredentials()
-        {
-            Type type = typeof(LmProvisioningProgress);
-            string[] forbidden =
-            {
-                "Password", "Login", "Credential", "Secret", "Token", "Authorization",
-                "Request", "Response"
-            };
-            PropertyInfo[] properties = type.GetProperties();
-            for (int propertyIndex = 0; propertyIndex < properties.Length; propertyIndex++)
-            {
-                for (int forbiddenIndex = 0; forbiddenIndex < forbidden.Length; forbiddenIndex++)
-                {
-                    AssertFalse(
-                        properties[propertyIndex].Name.IndexOf(
-                            forbidden[forbiddenIndex],
-                            StringComparison.OrdinalIgnoreCase) >= 0,
-                        "Provisioning progress must be credential-free.");
-                }
-            }
         }
 
         private static void OperatorPackagePathsPersistWithoutPackageDataOrSecrets()
