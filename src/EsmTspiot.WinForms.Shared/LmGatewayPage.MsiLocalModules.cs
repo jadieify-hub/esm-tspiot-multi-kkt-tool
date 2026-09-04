@@ -144,7 +144,8 @@ namespace EsmTspiot.WinForms.Shared
                     _statusLabel.Text =
                         "Удаление завершено; поставщицкий базовый ЛМ сохранён, если он существовал до автомата.";
                 },
-                "Удаление созданных ЛМ и контроллеров; подтвердите UAC...");
+                "Удаление созданных ЛМ и контроллеров; " +
+                ElevationHint() + "...");
         }
 
         private static int CountMsiClones(
@@ -436,7 +437,8 @@ namespace EsmTspiot.WinForms.Shared
             LmServiceProvisioningBatchRequest request =
                 CreateMsiEnsureRequest(plan, inventory);
             _statusLabel.Text =
-                "Проверка MSI и установка независимых ЛМ; подтвердите UAC...";
+                "Проверка MSI и установка независимых ЛМ; " +
+                ElevationHint() + "...";
             LmServiceProvisioningBatchResult result =
                 await WithHeartbeatAsync(
                     "ЛМ ЧЗ",

@@ -15,15 +15,26 @@ namespace EsmTspiot.ServiceProvisioner
     {
         private readonly IWindowsServiceApi _services;
         private readonly ITcpListenerOwnerReader _listeners;
+        private readonly IProcessParentReader _parents;
 
         internal DirectControllerReadinessProbe(
             IWindowsServiceApi services,
             ITcpListenerOwnerReader listeners)
+            : this(services, listeners, new NativeProcessParentReader())
+        {
+        }
+
+        internal DirectControllerReadinessProbe(
+            IWindowsServiceApi services,
+            ITcpListenerOwnerReader listeners,
+            IProcessParentReader parents)
         {
             if (services == null) throw new ArgumentNullException("services");
             if (listeners == null) throw new ArgumentNullException("listeners");
+            if (parents == null) throw new ArgumentNullException("parents");
             _services = services;
             _listeners = listeners;
+            _parents = parents;
         }
 
         internal LmReadinessResult Probe(int ordinal)
@@ -40,13 +51,31 @@ namespace EsmTspiot.ServiceProvisioner
                 DirectControllerIdentity.GrpcPortForOrdinal(ordinal));
             IList<int> rest = _listeners.FindListenerProcessIds(
                 DirectControllerIdentity.RestPortForOrdinal(ordinal));
-            if (grpc.Count != 1 || rest.Count != 1 ||
-                grpc[0] != service.ProcessId || rest[0] != service.ProcessId)
+            // Контроллер вендора может слушать порты не сам, а из дочернего
+            // процесса. Требование точного совпадения PID со службой в этом
+            // случае не выполняется никогда: стадия молча выжидает весь
+            // таймаут и объявляет отказ на исправно работающем контроллере.
+            // Принимаем слушателя из дерева процессов службы — чужой процесс
+            // на этих портах по-прежнему готовностью не считается.
+            if (!OwnedByService(grpc, service.ProcessId) ||
+                !OwnedByService(rest, service.ProcessId))
             {
                 return LmReadinessResult.Failed(
-                    "Listener-порты прямого контроллера не принадлежат PID его службы.");
+                    "Listener-порты прямого контроллера заняты посторонним процессом.");
             }
             return LmReadinessResult.Ready();
+        }
+
+        private bool OwnedByService(IList<int> owners, int serviceProcessId)
+        {
+            if (owners == null || owners.Count == 0) return false;
+            for (int index = 0; index < owners.Count; index++)
+                if (ProcessTreeOwnership.IsSameOrDescendant(
+                        _parents,
+                        owners[index],
+                        serviceProcessId))
+                    return true;
+            return false;
         }
 
         public LmReadinessResult WaitUntilReady(int ordinal, int timeoutMilliseconds)
