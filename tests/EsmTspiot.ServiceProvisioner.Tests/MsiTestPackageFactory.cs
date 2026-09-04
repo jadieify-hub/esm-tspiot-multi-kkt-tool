@@ -37,6 +37,9 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
     internal static class MsiTestPackageFactory
     {
+        // Русская ANSI-кодовая страница: язык пакета в Template — 1049.
+        private const string LocalModulePackageCodePage = "1251";
+
         internal static MsiTestPackageFixture Create(string root)
         {
             string stage = "initialization";
@@ -55,6 +58,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 msiPath,
                 DatabaseOpenMode.CreateDirect))
             {
+                stage = "code page";
+                ForceCodePage(database, idtRoot);
                 stage = "schema import";
                 ImportSchemas(database, idtRoot);
                 stage = "property rows";
@@ -486,6 +491,27 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     view.Modify(ViewModifyMode.Update, record);
                 }
             }
+        }
+
+        /// <summary>
+        /// Строки MSI хранятся в кодовой странице базы, а у новой базы она
+        /// нейтральная: кириллические пути реестра из профиля тогда пишутся
+        /// через ANSI-кодировку машины. На русской Windows это 1251, и
+        /// сверка с профилем сходится; на англоязычном раннере CI кириллица
+        /// вырождалась в вопросительные знаки, и три строки Registry
+        /// расходились с профилем. Вендорный пакет русский
+        /// (Template "x64;1049"), поэтому базе задаётся та же кодовая
+        /// страница явно — теперь запись и чтение не зависят от локали
+        /// машины.
+        /// </summary>
+        private static void ForceCodePage(Database database, string root)
+        {
+            string path = Path.Combine(root, "codepage.idt");
+            File.WriteAllText(
+                path,
+                "\r\n\r\n" + LocalModulePackageCodePage + "\t_ForceCodepage\r\n",
+                Encoding.ASCII);
+            database.Import(path);
         }
 
         private static void ImportSchemas(Database database, string root)
