@@ -2816,17 +2816,16 @@ namespace EsmTspiot.Shared.Tests
                     KktInn = "1234567894",
                     IsAvailable = true,
                     IdentityMatches = true,
-                    HasLmConfiguration = true,
-                    EndpointMatches = false,
-                    Details = "Адрес ЛМ не совпадает."
+                    HasLmConfiguration = false,
+                    Details = "ЕСМ не сообщает настроенную привязку ЛМ."
                 }
             });
             session.ApplyOutcomeFallback(accepted);
 
             AssertEqual(LmGatewayBindingStatus.RequiresAttention,
                 session.Rows[0].LastBindingStatus.Value,
-                "A stale accepted PUT must not overwrite a newer mismatch.");
-            AssertContains(session.Rows[0].LastMessage, "не совпадает");
+                "A stale accepted PUT must not overwrite a newer failure.");
+            AssertContains(session.Rows[0].LastMessage, "не сообщает");
 
             session.ApplyReadback(new List<LmGatewayReadbackObservation>
             {
@@ -3199,9 +3198,11 @@ namespace EsmTspiot.Shared.Tests
                 null,
                 CancellationToken.None).Result;
 
-            AssertEqual(LmGatewayBindingStatus.RequiresAttention, outcome.Results[0].Status,
-                "A reachable readback with another endpoint must require attention.");
+            AssertEqual(LmGatewayBindingStatus.BindingVerified, outcome.Results[0].Status,
+                "ESM answers lm.ip/lm.port with its default module, so a differing " +
+                "address cannot deny a binding ESM itself reports as ready.");
             AssertContains(outcome.Results[0].Details, "6995");
+            AssertContains(outcome.Results[0].Details, "по плану");
         }
 
         private static string CreateLmInfoJson(
@@ -5439,8 +5440,8 @@ namespace EsmTspiot.Shared.Tests
                 "A verified read-back is acceptable.");
             string verifiedLine = LmContourReadbackPolicy.Describe(verified);
             AssertTrue(verifiedLine.IndexOf("00105700000001", StringComparison.Ordinal) >= 0 &&
-                verifiedLine.IndexOf("127.0.0.1:50064", StringComparison.Ordinal) >= 0,
-                "The verified line must name the KKT and the confirmed controller endpoint.");
+                verifiedLine.IndexOf("подтверждена", StringComparison.Ordinal) >= 0,
+                "The verified line must name the KKT and state that ESM confirmed it.");
 
             LmGatewayReadbackObservation uninitialized = CreateContourObservation("error 2025");
             AssertEqual(LmContourReadbackState.LocalModuleNotInitialized,
@@ -5459,18 +5460,23 @@ namespace EsmTspiot.Shared.Tests
                 LmContourReadbackPolicy.Classify(otherError),
                 "Any LM-level error behind a confirmed endpoint is an initialization matter.");
 
-            LmGatewayReadbackObservation mismatch = CreateContourObservation("ok");
-            mismatch.EndpointMatches = false;
-            mismatch.Details = "ЕСМ сообщает целевой ЛМ 127.0.0.1:5995, ожидалось 127.0.0.1:50064.";
-            AssertEqual(LmContourReadbackState.Attention,
-                LmContourReadbackPolicy.Classify(mismatch),
-                "An endpoint mismatch requires attention.");
-            AssertFalse(LmContourReadbackPolicy.IsAcceptable(
-                    LmContourReadbackState.Attention),
-                "An endpoint mismatch is not acceptable.");
-            AssertTrue(LmContourReadbackPolicy.Describe(mismatch).IndexOf(
-                    "ожидалось 127.0.0.1:50064", StringComparison.Ordinal) >= 0,
-                "The attention line must carry the ESM details.");
+            // Полевой прогон 2026-09-04: ЕСМ сообщил ЛМ 127.0.0.1:5995 обеим
+            // ККТ, включая ту, чей ИНН обслуживает клон на 6995, и сам же
+            // показывал её как «Готов к работе». Это его модуль по умолчанию,
+            // а не адрес привязки, поэтому расхождение — строка оператору.
+            LmGatewayReadbackObservation defaultAddress =
+                CreateContourObservation("ready");
+            defaultAddress.EndpointMatches = false;
+            defaultAddress.LmPort = "5995";
+            AssertEqual(LmContourReadbackState.Verified,
+                LmContourReadbackPolicy.Classify(defaultAddress),
+                "ESM reporting its default LM address cannot deny a binding.");
+            AssertTrue(LmContourReadbackPolicy.IsAcceptable(
+                    LmContourReadbackState.Verified),
+                "A binding ESM confirms is acceptable.");
+            AssertTrue(LmContourReadbackPolicy.Describe(defaultAddress).IndexOf(
+                    "127.0.0.1:5995", StringComparison.Ordinal) >= 0,
+                "The operator still has to see which address ESM reported.");
 
             // Полевой прогон: ЕСМ отдал «not_configured» вместе с версией ЛМ
             // 2.6.1-7, адресом 127.0.0.1:5995 и логином admin. Привязка при

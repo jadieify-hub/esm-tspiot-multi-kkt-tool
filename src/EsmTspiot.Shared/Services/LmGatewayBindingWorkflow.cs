@@ -235,6 +235,17 @@ namespace EsmTspiot.Shared.Services
                         "ЕСМ принял запрос настройки; проверка результата отменена.");
                 }
 
+                // Ждать нечего, если ЕСМ уже сказал, что ЛМ инициализируется:
+                // инициализация идёт минутами и выполняется не нами. Проверка
+                // идёт раньше подтверждения: привязка при этом уже принята, но
+                // оператору важнее знать, что модуль ещё не готов.
+                if (observation != null && observation.IsAvailable &&
+                    observation.IdentityMatches && observation.HasLmConfiguration &&
+                    LmContourReadbackPolicy.IsLocalModulePending(observation.LmStatus))
+                {
+                    break;
+                }
+
                 if (observation != null && observation.IsVerified)
                 {
                     return CreateResult(
@@ -242,15 +253,6 @@ namespace EsmTspiot.Shared.Services
                         LmGatewayBindingStatus.BindingVerified,
                         observation.Details,
                         observation.InfoResponseBody);
-                }
-
-                // Ждать нечего, если ЕСМ уже сказал, что ЛМ инициализируется:
-                // инициализация идёт минутами и выполняется не нами.
-                if (observation != null && observation.IsAvailable &&
-                    observation.IdentityMatches && observation.HasLmConfiguration &&
-                    LmContourReadbackPolicy.IsLocalModulePending(observation.LmStatus))
-                {
-                    break;
                 }
 
                 if (DateTime.UtcNow >= deadline)
@@ -303,11 +305,20 @@ namespace EsmTspiot.Shared.Services
             }
 
             if (observation.IdentityMatches && observation.HasLmConfiguration &&
-                !observation.EndpointMatches.HasValue)
+                LmContourReadbackPolicy.IsLocalModulePending(observation.LmStatus))
             {
                 return CreateResult(
                     item,
                     LmGatewayBindingStatus.BindingObserved,
+                    observation.Details,
+                    observation.InfoResponseBody);
+            }
+
+            if (observation.IsVerified)
+            {
+                return CreateResult(
+                    item,
+                    LmGatewayBindingStatus.BindingVerified,
                     observation.Details,
                     observation.InfoResponseBody);
             }

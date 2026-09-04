@@ -145,6 +145,7 @@ namespace EsmTspiot.Shared.Services
             observation.LmAddress = normalizedObservedAddress;
             observation.LmPort = observedPort.ToString(CultureInfo.InvariantCulture);
 
+            string endpointNote = string.Empty;
             bool hasExpectedEndpoint = !string.IsNullOrWhiteSpace(expectedLmAddress) ||
                 !string.IsNullOrWhiteSpace(expectedLmPort);
             if (hasExpectedEndpoint)
@@ -185,23 +186,26 @@ namespace EsmTspiot.Shared.Services
                         return observation;
                     }
 
-                    observation.Details = "ЕСМ сообщает целевой ЛМ " +
+                    // ЕСМ подставляет в lm.ip/lm.port свой модуль по
+                    // умолчанию, а не тот, к которому привязан контроллер:
+                    // в поле обе ККТ получили 127.0.0.1:5995, хотя второй
+                    // ИНН обслуживает клон на 6995 и штатный ЕСМ показывал
+                    // его как «Готов к работе». Отказом контура это быть не
+                    // может — только строкой оператору.
+                    endpointNote = " ЕСМ сообщает адрес ЛМ " +
                         observation.LmAddress + ":" + observation.LmPort +
-                        ", ожидалось " + Trim(expectedLmAddress) + ":" +
-                        Trim(expectedLmPort) + ".";
-                    return observation;
+                        "; по плану этой ККТ отвечает ЛМ " +
+                        Trim(expectedLmAddress) + ":" + Trim(expectedLmPort) +
+                        ".";
                 }
             }
 
             if (!hasExpectedEndpoint)
             {
-                observation.Details = "ЕСМ сообщает целевой ЛМ " +
-                    observation.LmAddress + ":" + observation.LmPort +
-                    ", но ожидаемый endpoint не задан для сверки.";
-                return observation;
+                endpointNote = " Ожидаемый адрес ЛМ для сверки не задан.";
             }
 
-            observation.Details = BuildVerifiedDetails(observation);
+            observation.Details = BuildVerifiedDetails(observation) + endpointNote;
             return observation;
         }
 
