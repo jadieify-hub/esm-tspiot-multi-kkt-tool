@@ -3,6 +3,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
+using EsmTspiot.Shared.Services;
 
 namespace EsmTspiot.ServiceProvisioner
 {
@@ -30,6 +31,15 @@ namespace EsmTspiot.ServiceProvisioner
         // как msiexec вернул управление. Установка второго ЛМ подряд попадает
         // ровно в это окно и получает 1618. Ждём и повторяем.
         private const uint ErrorInstallAlreadyRunning = 1618;
+
+        // Установщик Windows отвечает успехом двумя кодами помимо нуля:
+        // 3010 — операция выполнена, часть файлов заменится при
+        // перезагрузке; 1641 — выполнена, перезагрузка уже запущена. Оба
+        // кода означают, что продукт установлен или снят: считать их
+        // отказом нельзя, иначе успешная установка уходит в откат и
+        // утилита сносит то, что только что поставила.
+        private const uint ErrorSuccessRebootRequired = 3010;
+        private const uint ErrorSuccessRebootInitiated = 1641;
         // Предел задан временем, а не числом попыток: сама попытка может длиться
         // десятки секунд, и «60 попыток» превращались в полчаса молчания.
         private const int InstallerBusyTimeoutMilliseconds = 180000;
@@ -212,6 +222,15 @@ namespace EsmTspiot.ServiceProvisioner
 
         private static uint Complete(string operation, uint code)
         {
+            if (code == ErrorSuccessRebootRequired ||
+                code == ErrorSuccessRebootInitiated)
+            {
+                ProvisionerStepTrace.Write(
+                    "установщик Windows завершил операцию «" + operation +
+                    "» успешно, но требует перезагрузки (код " +
+                    code.ToString() + ")");
+                return code;
+            }
             if (code != 0)
                 throw new WindowsInstallerOperationException(operation, code);
             return code;
