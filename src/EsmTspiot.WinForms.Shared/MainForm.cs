@@ -1309,6 +1309,9 @@ namespace EsmTspiot.WinForms.Shared
                     }
                     catch (Exception ex)
                     {
+                        AppendDetailToFile(
+                            "Подробности ошибки регистрации ККТ " + serial +
+                            ":\r\n" + ex + "\r\n\r\n");
                         itemResult = new BulkKktRegistrationResult
                         {
                             KktSerial = serial,
@@ -1355,6 +1358,9 @@ namespace EsmTspiot.WinForms.Shared
                             "Итоговая VCOM-проверка не завершена: " +
                             SensitiveDataMasker.Mask(ex.Message);
                         AppendLog(finalVcomError + "\r\n");
+                        AppendDetailToFile(
+                            "Подробности итоговой VCOM-проверки:\r\n" + ex +
+                            "\r\n\r\n");
                     }
                 }
 
