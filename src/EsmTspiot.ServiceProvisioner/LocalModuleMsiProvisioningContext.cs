@@ -108,7 +108,8 @@ namespace EsmTspiot.ServiceProvisioner
         [EnumMember] CloneCompensation = 12,
         [EnumMember] CleanupPending = 13,
         [EnumMember] StartModeEnsuring = 14,
-        [EnumMember] StartModeRestoring = 15
+        [EnumMember] StartModeRestoring = 15,
+        [EnumMember] RebootPending = 16
     }
 
     [DataContract]
@@ -327,6 +328,8 @@ namespace EsmTspiot.ServiceProvisioner
                     return "включение автозапуска служб";
                 case LocalModuleMsiLifecycleStage.StartModeRestoring:
                     return "возврат прежнего режима запуска служб";
+                case LocalModuleMsiLifecycleStage.RebootPending:
+                    return "ожидание перезагрузки после установки";
             }
             return stage.ToString();
         }
