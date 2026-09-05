@@ -5368,6 +5368,14 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 "Требование перезагрузки не повод сносить установку.");
             AssertTrue(repository.Read(clone.Inn) != null,
                 "Манифест обязан пережить перезагрузку: шаг продолжится после неё.");
+            LocalModuleMsiLifecycleJournal parked = journals.Read(clone.Inn);
+            AssertTrue(parked != null &&
+                parked.Stage == LocalModuleMsiLifecycleStage.RebootPending &&
+                !parked.RollbackOwnedChanges,
+                "Состояние продолжения пишется без команды на откат.");
+            // Реальное хранилище отвергало новую стадию: валидатор знал
+            // значения только до StartModeRestoring.
+            LocalModuleMsiLifecycleJournal.Validate(parked);
 
             // Журнал первого вызова велел откатить установку: повтор сносил
             // только что поставленный ЛМ и ставил его заново. Повтор не
@@ -10523,6 +10531,10 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
             public void Write(LocalModuleMsiLifecycleJournal journal)
             {
+                // Реальное хранилище проверяет журнал перед записью. Фейк,
+                // складывавший объект как есть, пропустил стадию, которую
+                // валидатор отвергал, — и повтор после 3010 сносил ЛМ.
+                LocalModuleMsiLifecycleJournal.Validate(journal);
                 _items[journal.Inn] = journal;
             }
 

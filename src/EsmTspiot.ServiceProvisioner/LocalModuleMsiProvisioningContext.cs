@@ -173,7 +173,7 @@ namespace EsmTspiot.ServiceProvisioner
                 !LocalModuleManagedIdentity.IsLowerHex(
                     journal.OwnershipNonce, 32) ||
                 journal.Stage < LocalModuleMsiLifecycleStage.Observing ||
-                journal.Stage > LocalModuleMsiLifecycleStage.StartModeRestoring ||
+                journal.Stage > LocalModuleMsiLifecycleStage.RebootPending ||
                 journal.LastErrorClass == null ||
                 string.IsNullOrWhiteSpace(journal.UpdatedUtc))
                 throw new InvalidDataException(
