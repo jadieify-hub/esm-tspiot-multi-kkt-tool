@@ -129,22 +129,32 @@ namespace EsmTspiot.ServiceProvisioner
                 // остановкой службы и её запуском: при убитом процессе catch
                 // ниже не отрабатывает, и экземпляр ЕСМ остаётся лежать — для
                 // магазина это неработающая касса. Поэтому «уже применено»
-                // всегда доводит службу до запущенного состояния.
-                EnsureInstanceRunning(
-                    EsmInstanceServiceIdentity.CreateName(manifest.KktSerial));
+                // всегда доводит службу до запущенного состояния, а её
+                // отсутствие объявляет отказом так же, как остановка.
+                string appliedService =
+                    EsmInstanceServiceIdentity.CreateName(manifest.KktSerial);
+                if (!EnsureInstanceRunning(appliedService))
+                {
+                    throw new InvalidDataException(
+                        "Служба экземпляра ЕСМ " + appliedService +
+                        " отсутствует.");
+                }
                 return EsmInstanceConfigApplyState.AlreadyApplied;
             }
 
             string serviceName =
                 EsmInstanceServiceIdentity.CreateName(manifest.KktSerial);
-            bool wasRunning = false;
             bool applied = false;
             try
             {
-                wasRunning = StopInstance(serviceName);
+                // Служба поднимается всегда, а не «если работала до нас»:
+                // прошлый заход мог оборваться между остановкой и записью,
+                // и тогда wasRunning приходил ложью — касса оставалась с
+                // применённой конфигурацией и лежащим ЕСМ.
+                StopInstance(serviceName);
                 _writer.WriteBytes(configPath, patched);
                 applied = true;
-                StartInstance(serviceName, wasRunning);
+                StartInstance(serviceName, true);
                 return EsmInstanceConfigApplyState.Applied;
             }
             catch
@@ -153,7 +163,7 @@ namespace EsmTspiot.ServiceProvisioner
                 {
                     _writer.WriteBytes(configPath, original);
                 }
-                TryStartInstance(serviceName, wasRunning);
+                TryStartInstance(serviceName, true);
                 if (createdBackup)
                 {
                     // Резервную копию создали в этом же вызове — забираем её
@@ -200,9 +210,11 @@ namespace EsmTspiot.ServiceProvisioner
             {
                 // Сюда же приходит прерванный откат: файл уже вернули, а
                 // службу поднять не успели. Отказ от владения не повод
-                // оставлять кассу с остановленным ЕСМ.
-                Disown(manifest);
+                // оставлять кассу с остановленным ЕСМ, и записывается он
+                // после запуска: иначе сорвавшийся запуск стирал признак
+                // владения, и повторный заход уже не пытался помочь.
                 EnsureInstanceRunning(serviceName);
+                Disown(manifest);
                 return false;
             }
             StopInstance(serviceName);
@@ -327,19 +339,22 @@ namespace EsmTspiot.ServiceProvisioner
         /// глотает: молчаливое «уже применено» поверх лежащей службы — ровно
         /// тот случай, когда программа объявляет успех при отказе.
         /// </summary>
-        private void EnsureInstanceRunning(string serviceName)
+        // Возвращает false, если службы вообще нет: для вызывающего это
+        // не успех, а повод сказать оператору, что экземпляр ЕСМ отсутствует.
+        private bool EnsureInstanceRunning(string serviceName)
         {
             WindowsServiceRecord service = _services.Query(serviceName);
-            if (service == null) return;
+            if (service == null) return false;
             if (service.State == WindowsServiceState.Running &&
                 service.ProcessId > 0)
             {
-                return;
+                return true;
             }
             ProvisionerStepTrace.Write(
                 "экземпляр ЕСМ " + serviceName +
                 " остановлен при уже применённой конфигурации — запускаем");
             StartInstance(serviceName, true);
+            return true;
         }
 
         private void TryStartInstance(string serviceName, bool shouldRun)

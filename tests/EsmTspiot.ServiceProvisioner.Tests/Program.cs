@@ -7121,6 +7121,46 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     manager.ApplyAndRestart(manifests.Read(serial)),
                     "После отказа от владения настройка накладывается заново.");
 
+                // Обрыв между остановкой службы и записью YAML: на диске
+                // ещё исходный файл, служба уже лежит. Повторное применение
+                // обязано не только записать патч, но и поднять экземпляр —
+                // раньше оно смотрело на «работала ли служба до нас» и
+                // оставляло кассу без ЕСМ.
+                File.WriteAllText(
+                    configPath,
+                    File.ReadAllText(
+                        manifests.GetEsmConfigBackupPath(serial), Encoding.UTF8),
+                    new UTF8Encoding(false));
+                services.SetRecord(new WindowsServiceRecord
+                {
+                    ServiceName = "esm-cm-" + serial,
+                    State = WindowsServiceState.Stopped,
+                    ProcessId = 0
+                });
+                AssertEqual(
+                    EsmInstanceConfigApplyState.Applied,
+                    manager.ApplyAndRestart(manifests.Read(serial)),
+                    "Применение поверх прерванного захода обязано проходить.");
+                AssertEqual(
+                    WindowsServiceState.Running,
+                    services.Query("esm-cm-" + serial).State,
+                    "Записав конфигурацию, шаг обязан оставить ЕСМ запущенным.");
+
+                // Той же кассе снесли экземпляр ЕСМ. Конфигурация совпадает
+                // с нашей, но поднимать нечего: это отказ, а не «уже
+                // применено» — иначе контур объявляется готовым без ЕСМ.
+                services.RemoveRecord("esm-cm-" + serial);
+                AssertThrows<InvalidDataException>(delegate
+                {
+                    manager.ApplyAndRestart(manifests.Read(serial));
+                }, "Отсутствие службы экземпляра ЕСМ не является успехом.");
+                services.SetRecord(new WindowsServiceRecord
+                {
+                    ServiceName = "esm-cm-" + serial,
+                    State = WindowsServiceState.Running,
+                    ProcessId = 911
+                });
+
                 // Теперь конфигурацию правили вручную: перезаписывать её вслепую
                 // нельзя, но и снятие комплекта блокировать нечем.
                 File.WriteAllText(
@@ -9186,6 +9226,11 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             internal void SetRecord(WindowsServiceRecord record)
             {
                 _records[record.ServiceName] = record;
+            }
+
+            internal void RemoveRecord(string serviceName)
+            {
+                _records.Remove(serviceName);
             }
 
             public WindowsServiceRecord Query(string serviceName)
