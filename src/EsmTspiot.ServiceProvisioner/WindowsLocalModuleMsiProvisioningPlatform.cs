@@ -268,6 +268,12 @@ namespace EsmTspiot.ServiceProvisioner
                 Running = running,
                 Ready = ready,
                 AutomaticStart = automaticStart,
+                ApiStartMode = api == null
+                    ? default(WindowsServiceStartMode)
+                    : api.StartMode,
+                DatabaseStartMode = database == null
+                    ? default(WindowsServiceStartMode)
+                    : database.StartMode,
                 ConflictMessage = conflict
             };
         }

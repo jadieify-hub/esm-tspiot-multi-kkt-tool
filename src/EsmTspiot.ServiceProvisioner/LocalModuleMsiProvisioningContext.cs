@@ -21,6 +21,14 @@ namespace EsmTspiot.ServiceProvisioner
         internal bool Running { get; set; }
         internal bool Ready { get; set; }
         internal bool AutomaticStart { get; set; }
+
+        // Режимы запуска пары нужны до того, как мы их поменяем: снимок
+        // прежнего состояния вендорской базы записывается в манифест
+        // заранее, иначе оборвавшаяся смена не оставляет чему возвращать.
+        // Значения имеют смысл только вместе с ServicesMatch: у
+        // отсутствующей службы режима нет.
+        internal WindowsServiceStartMode ApiStartMode { get; set; }
+        internal WindowsServiceStartMode DatabaseStartMode { get; set; }
         internal string ConflictMessage { get; set; }
 
         internal bool IsExactReady

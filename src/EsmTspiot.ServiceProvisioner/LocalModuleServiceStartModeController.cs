@@ -59,10 +59,24 @@ namespace EsmTspiot.ServiceProvisioner
                     PreviousApiStartMode = api.StartMode,
                     PreviousDatabaseStartMode = database.StartMode
                 };
+            // Снимок прежних режимов вызывающий записывает в манифест до
+            // этого вызова, поэтому половина смены не теряет исходное
+            // состояние: штатный откат вернёт обе службы по манифесту. Здесь
+            // же неудача второй смены возвращает первую сразу, чтобы система
+            // не оставалась в промежуточном виде дольше необходимого.
             SetExact(layout, LocalModuleProcessRole.Database,
                 WindowsServiceStartMode.AutoStart);
-            SetExact(layout, LocalModuleProcessRole.Api,
-                WindowsServiceStartMode.AutoStart);
+            try
+            {
+                SetExact(layout, LocalModuleProcessRole.Api,
+                    WindowsServiceStartMode.AutoStart);
+            }
+            catch
+            {
+                RestoreExact(layout, LocalModuleProcessRole.Database,
+                    result.PreviousDatabaseStartMode);
+                throw;
+            }
             return result;
         }
 

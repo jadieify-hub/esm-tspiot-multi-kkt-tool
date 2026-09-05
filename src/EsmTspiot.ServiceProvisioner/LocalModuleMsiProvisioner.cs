@@ -162,16 +162,19 @@ namespace EsmTspiot.ServiceProvisioner
                     context.WriteStage(request, ownershipNonce,
                         LocalModuleMsiLifecycleStage.StartModeEnsuring,
                         null, createdThisOperation);
-                    LocalModuleStartModeAdjustment startModes =
-                        context.Platform.EnsureAutomaticStart(request, manifest);
-                    if (startModes.Adjusted && !manifest.StartModeAdjusted)
+                    // Снимок пишется до первой смены. Раньше он сохранялся
+                    // после возврата из платформы: обрыв между двумя
+                    // ChangeServiceConfig оставлял одну службу в AutoStart,
+                    // а вернуть её было уже не по чему.
+                    if (!manifest.StartModeAdjusted && observed.ServicesMatch)
                     {
                         manifest.RecordStartModeAdjustment(
-                            startModes.PreviousApiStartMode,
-                            startModes.PreviousDatabaseStartMode);
+                            observed.ApiStartMode,
+                            observed.DatabaseStartMode);
                         context.Manifests.Write(manifest);
                         manifest = context.Manifests.Read(request.Inn);
                     }
+                    context.Platform.EnsureAutomaticStart(request, manifest);
                 }
                 context.WriteStage(request, ownershipNonce,
                     LocalModuleMsiLifecycleStage.ServicesStarting,
