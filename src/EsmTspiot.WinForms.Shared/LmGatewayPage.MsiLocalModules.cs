@@ -102,9 +102,13 @@ namespace EsmTspiot.WinForms.Shared
                     MessageBoxDefaultButton.Button2) != DialogResult.Yes)
                 return;
 
+            bool preservedBase = HasPreExistingMsiBase(
+                _localModuleMsiInventory);
             await RunOperationAsync(
                 async delegate(CancellationToken operationCancellation)
                 {
+                    List<LmServiceProvisioningStatus> outcomes =
+                        new List<LmServiceProvisioningStatus>();
                     if (localModules.Count > 0)
                     {
                         LmServiceProvisioningBatchRequest request =
@@ -123,6 +127,7 @@ namespace EsmTspiot.WinForms.Shared
                         {
                             LocalModuleMsiProvisioningItemResult item =
                                 msi.LocalModuleMsiItems[index];
+                            outcomes.Add(item.Status);
                             Log("ИНН " + (item.Inn ?? string.Empty) +
                                 ": удаление ЛМ " + item.Status.ToString() +
                                 "; " + SensitiveDataMasker.Mask(
@@ -138,11 +143,14 @@ namespace EsmTspiot.WinForms.Shared
                                     Guid.NewGuid().ToString("N"),
                                     operationCancellation).ConfigureAwait(true);
                         for (int index = 0; index < direct.Items.Count; index++)
+                        {
+                            outcomes.Add(direct.Items[index].Status);
                             Log(direct.Items[index].FormatLogLine() + "\r\n");
+                        }
                     }
                     await RefreshCoreAsync(CancellationToken.None);
-                    _statusLabel.Text =
-                        "Удаление завершено; поставщицкий базовый ЛМ сохранён, если он существовал до автомата.";
+                    _statusLabel.Text = LocalModuleRemovalMessagePolicy
+                        .BuildRemoveEverythingSummary(outcomes, preservedBase);
                 },
                 "Удаление созданных ЛМ и контроллеров; " +
                 ElevationHint() + "...");

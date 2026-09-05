@@ -2396,6 +2396,33 @@ namespace EsmTspiot.Shared.Tests
                 LocalModuleRemovalMessagePolicy
                     .BuildRemoveEverythingConfirmation(2, 1, false);
 
+            // Снятие могло не удастся целиком — итог обязан это назвать,
+            // иначе оператор уходит со стенда, считая кассу чистой.
+            AssertContains(
+                LocalModuleRemovalMessagePolicy.BuildRemoveEverythingSummary(
+                    new[]
+                    {
+                        LmServiceProvisioningStatus.Succeeded,
+                        LmServiceProvisioningStatus
+                            .RemovedLocalArtifactsBindingRetained
+                    },
+                    false),
+                "Удаление завершено:");
+            string partial =
+                LocalModuleRemovalMessagePolicy.BuildRemoveEverythingSummary(
+                    new[]
+                    {
+                        LmServiceProvisioningStatus.Succeeded,
+                        LmServiceProvisioningStatus.CleanupPending,
+                        LmServiceProvisioningStatus.RemovalBlocked,
+                        LmServiceProvisioningStatus.RequiresAttention,
+                        LmServiceProvisioningStatus.MarkedForDelete
+                    },
+                    true);
+            AssertContains(partial, "не полностью");
+            AssertContains(partial, "снято 1 из 5");
+            AssertContains(partial, "сохранён");
+
             AssertContains(preserving, "останется установленным");
             AssertFalse(owned.IndexOf(
                     "останется установленным",
