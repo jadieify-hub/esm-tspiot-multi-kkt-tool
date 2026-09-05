@@ -77,8 +77,11 @@ namespace EsmTspiot.ServiceProvisioner
 
         /// <summary>
         /// Записи очереди — пары «источник», «цель»; источник приходит с
-        /// префиксом \??\, а цель у удаления пустая. Совпадением считается
-        /// как сам путь, так и любой каталог над ним.
+        /// префиксом \??\, а цель у удаления пустая. Каталог непригоден в
+        /// обе стороны: и когда в очереди стоит он сам или каталог над ним,
+        /// и когда там стоит хотя бы один файл внутри него — MoveFileEx
+        /// ставит дерево поэлементно, и очередь могла принять файлы, но не
+        /// сам корень.
         /// </summary>
         internal static bool CoversPath(string[] entries, string path)
         {
@@ -97,6 +100,11 @@ namespace EsmTspiot.ServiceProvisioner
                         scheduled + Path.DirectorySeparatorChar,
                         StringComparison.OrdinalIgnoreCase))
                     return true;
+                if (scheduled.StartsWith(
+                        target + Path.DirectorySeparatorChar,
+                        StringComparison.OrdinalIgnoreCase))
+                    return true;
+
             }
             return false;
         }
