@@ -156,6 +156,20 @@ namespace EsmTspiot.WinForms.Shared
                 ElevationHint() + "...");
         }
 
+        // Инвентарь ЛМ сверяется с SCM тем же читателем, что и контроллеры:
+        // запись на диске без служб — не установка.
+        private static LocalModuleMsiOperatorInventoryReader
+            CreateLocalModuleInventoryReader()
+        {
+            ReadOnlyWindowsServiceReader services =
+                new ReadOnlyWindowsServiceReader();
+            return new LocalModuleMsiOperatorInventoryReader(
+                delegate(string serviceName)
+                {
+                    return services.Query(serviceName) != null;
+                });
+        }
+
         private static int CountMsiClones(
             LocalModuleMsiOperatorInventorySnapshot inventory)
         {
@@ -258,7 +272,7 @@ namespace EsmTspiot.WinForms.Shared
             _lastAutomaticLocalModulesFailed = 0;
             _lastAutomaticLocalModuleLines.Clear();
             LocalModuleMsiOperatorInventorySnapshot inventory =
-                new LocalModuleMsiOperatorInventoryReader().Read();
+                CreateLocalModuleInventoryReader().Read();
             LocalModuleMsiPlan plan = LocalModuleMsiPlanner.Build(
                 registeredKkts,
                 inventory.Assignments,

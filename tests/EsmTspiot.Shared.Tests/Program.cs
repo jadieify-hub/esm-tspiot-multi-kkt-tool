@@ -2436,8 +2436,11 @@ namespace EsmTspiot.Shared.Tests
                         .WriteObject(stream, item);
                 }
 
+                HashSet<string> services = new HashSet<string>(
+                    new[] { "regime", "yenisei" }, StringComparer.Ordinal);
                 LocalModuleMsiOperatorInventorySnapshot snapshot =
-                    new LocalModuleMsiOperatorInventoryReader(root).Read();
+                    new LocalModuleMsiOperatorInventoryReader(
+                        root, services.Contains).Read();
 
                 AssertEqual(1, snapshot.Assignments.Count,
                     "The operator projection must restore one stable assignment.");
@@ -2450,15 +2453,31 @@ namespace EsmTspiot.Shared.Tests
 
                 // Ручная сверка подтверждает контур только при установленном
                 // ЛМ: план выдаёт назначение любому ИНН, инвентарь — нет.
-                AssertTrue(snapshot.HasInstalledModule(
-                        new LocalModuleMsiAssignment
-                        {
-                            Inn = "1234567894",
-                            CloneOrdinal = 0,
-                            ApiPort = 5995,
-                            DatabasePort = 5984
-                        }),
-                    "The recorded base is an installed module for its INN.");
+                LocalModuleMsiAssignment recordedBase =
+                    new LocalModuleMsiAssignment
+                    {
+                        Inn = "1234567894",
+                        CloneOrdinal = 0,
+                        ApiPort = 5995,
+                        DatabasePort = 5984
+                    };
+                AssertTrue(snapshot.HasInstalledModule(recordedBase),
+                    "The recorded base with both vendor services is installed.");
+
+                // Запись на диске создаётся до MSI и переживает удаление
+                // продукта средствами Windows: без служб в SCM она ничего
+                // не доказывает.
+                AssertFalse(
+                    new LocalModuleMsiOperatorInventoryReader(
+                        root, delegate(string name) { return false; })
+                        .Read().HasInstalledModule(recordedBase),
+                    "A record whose services are gone is not an installed module.");
+                AssertFalse(
+                    new LocalModuleMsiOperatorInventoryReader(
+                        root, new HashSet<string>(
+                            new[] { "regime" }, StringComparer.Ordinal).Contains)
+                        .Read().HasInstalledModule(recordedBase),
+                    "Half of the vendor pair is not an installed module.");
                 AssertFalse(snapshot.HasInstalledModule(
                         new LocalModuleMsiAssignment
                         {

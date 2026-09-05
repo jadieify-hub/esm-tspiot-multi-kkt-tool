@@ -359,7 +359,7 @@ namespace EsmTspiot.WinForms.Shared
             try
             {
                 _localModuleMsiInventory =
-                    new LocalModuleMsiOperatorInventoryReader().Read();
+                    CreateLocalModuleInventoryReader().Read();
             }
             catch (Exception ex)
             {

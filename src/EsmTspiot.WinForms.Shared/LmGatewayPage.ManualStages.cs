@@ -128,7 +128,7 @@ namespace EsmTspiot.WinForms.Shared
                         throw new InvalidOperationException(
                             "В ЕСМ нет зарегистрированных ККТ для этого шага.");
                     LocalModuleMsiOperatorInventorySnapshot inventory =
-                        new LocalModuleMsiOperatorInventoryReader().Read();
+                        CreateLocalModuleInventoryReader().Read();
                     LocalModuleMsiPlan plan = LocalModuleMsiPlanner.Build(
                         kkts,
                         inventory.Assignments,
