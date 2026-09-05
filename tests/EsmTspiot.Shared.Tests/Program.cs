@@ -107,6 +107,7 @@ namespace EsmTspiot.Shared.Tests
             Run("LM service identity rejects unsafe serial", LmServiceIdentityRejectsUnsafeSerial);
             Run("Direct controller planner assigns official base then clones", DirectControllerPlannerAssignsOfficialBaseThenClones);
             Run("Direct controller planner preserves stable saved ordinal", DirectControllerPlannerPreservesStableSavedOrdinal);
+            Run("Direct controller planner marks only installed controllers", DirectControllerPlannerMarksOnlyInstalledControllers);
             Run("Direct controller planner skips foreign names and ports", DirectControllerPlannerSkipsForeignNamesAndPorts);
             Run("Direct controller planner reports ordinal exhaustion", DirectControllerPlannerReportsOrdinalExhaustion);
             Run("Direct controller planner tolerates an absent saved KKT", DirectControllerPlannerToleratesAbsentSavedKkt);
@@ -1779,6 +1780,72 @@ namespace EsmTspiot.Shared.Tests
                 "Stable service identity follows the preserved ordinal.");
             AssertEqual(1, plan.FindBySerial("00105700000001").Ordinal,
                 "The free official base remains available to a new KKT.");
+        }
+
+        private static void DirectControllerPlannerMarksOnlyInstalledControllers()
+        {
+            // Запись инвентаря переживает удаление службы вручную, а новая
+            // ККТ получает назначение ещё до создания контроллера. Ручные
+            // шаги привязки и сверки должны отличать оба случая от живой
+            // службы.
+            DirectControllerAssignment installed = new DirectControllerAssignment
+            {
+                KktSerial = "00105700000002",
+                KktInn = "7707083893",
+                Ordinal = 2,
+                Role = DirectControllerRole.DirectClone,
+                ServiceName = "esm-lm-controller-2",
+                GrpcPort = 50064,
+                RestPort = 5064,
+                TargetLocalModulePort = 6995
+            };
+            DirectControllerAssignment orphaned = new DirectControllerAssignment
+            {
+                KktSerial = "00105700000003",
+                KktInn = "7707083893",
+                Ordinal = 3,
+                Role = DirectControllerRole.DirectClone,
+                ServiceName = "esm-lm-controller-3",
+                GrpcPort = 50065,
+                RestPort = 5065,
+                TargetLocalModulePort = 6995
+            };
+            DirectControllerPlan plan = DirectControllerPlanner.Build(
+                new List<LmGatewayKkt>
+                {
+                    CreateLmKkt("00105700000001", "1234567894"),
+                    CreateLmKkt("00105700000002", "7707083893"),
+                    CreateLmKkt("00105700000003", "7707083893"),
+                    CreateLmKkt("00105700000004", "1234567894")
+                },
+                new List<DirectControllerAssignment> { installed, orphaned },
+                new List<DirectControllerServiceInventoryItem>
+                {
+                    new DirectControllerServiceInventoryItem
+                    {
+                        ServiceName = "esm-lm-controller",
+                        IsVerifiedOfficial = true
+                    },
+                    new DirectControllerServiceInventoryItem
+                    {
+                        ServiceName = "esm-lm-controller-2",
+                        KktSerial = "00105700000002",
+                        IsOwned = true
+                    }
+                },
+                new List<TcpListenerSnapshotItem>());
+
+            AssertTrue(plan.IsValid, string.Join("; ", plan.ValidationMessages));
+            AssertEqual(4, plan.Assignments.Count,
+                "Every KKT still receives an assignment.");
+            AssertTrue(plan.IsInstalled("00105700000002"),
+                "A saved clone with its owned service is installed.");
+            AssertFalse(plan.IsInstalled("00105700000003"),
+                "A saved clone whose service is gone is not installed.");
+            AssertFalse(plan.IsInstalled("00105700000004"),
+                "A freshly allocated clone is only planned.");
+            AssertFalse(plan.IsInstalled("00105700000001"),
+                "The base is allocated to a new KKT, not yet bound to it.");
         }
 
         private static void DirectControllerPlannerNeverSharesLocalModulePort()
