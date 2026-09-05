@@ -5213,8 +5213,14 @@ namespace EsmTspiot.ServiceProvisioner.Tests
         private static void ProtectedDirectoryRefusesReparsePathBeforeTouchingIt()
         {
             string root = CreateTemporaryDirectory();
+            // Проверка идёт из каталога-соседа на том же диске: корень «C:»
+            // без разделителя раскрывался в текущий каталог, обход вверх не
+            // начинался, и связка проходила незамеченной.
+            string elsewhere = CreateTemporaryDirectory();
+            string previousCurrent = Environment.CurrentDirectory;
             try
             {
+                Environment.CurrentDirectory = elsewhere;
                 string target = Path.Combine(root, "target");
                 Directory.CreateDirectory(target);
                 string link = Path.Combine(root, "link");
@@ -5240,12 +5246,16 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             }
             finally
             {
+                Environment.CurrentDirectory = previousCurrent;
                 // Junction снимается первой: рекурсивное удаление проходит
                 // сквозь неё и упирается в отказ доступа.
                 try { Directory.Delete(Path.Combine(root, "link")); }
                 catch (IOException) { }
                 catch (UnauthorizedAccessException) { }
                 try { Directory.Delete(root, true); }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+                try { Directory.Delete(elsewhere, true); }
                 catch (IOException) { }
                 catch (UnauthorizedAccessException) { }
             }
