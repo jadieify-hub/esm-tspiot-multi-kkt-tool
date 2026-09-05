@@ -3537,6 +3537,29 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 "Незавершённое удаление остаётся незавершённым.");
             AssertContains(stuckResult.Message, "возвращён в работу");
 
+            // Состояние клона не читается (правило сети изменено): удаление
+            // отклонят, но общая остановка его уже погасила. «Не удалось
+            // определить» не значит «не работал» — клон обязан вернуться.
+            FakeLocalModuleMsiLifecyclePlatform blockedPlatform =
+                new FakeLocalModuleMsiLifecyclePlatform();
+            LocalModuleMsiProvisioningContext blockedContext =
+                CreateMsiContext(
+                    blockedPlatform,
+                    new FakeLocalModuleMsiRepository(),
+                    new FakeLocalModuleMsiJournalStore());
+            LocalModuleMsiProvisioningItemRequest blockedBase = MsiRequest(
+                "7707083893", 0, 5995, 5984, null);
+            LocalModuleMsiProvisioningItemRequest blockedClone = MsiRequest(
+                "1234567890", 1, 6995, 7984, null);
+            provisioner.Ensure(blockedBase, blockedContext);
+            provisioner.Ensure(blockedClone, blockedContext);
+            blockedPlatform.State(blockedClone.Inn).FirewallMatches = false;
+            removal.RemoveAll(blockedContext);
+            AssertTrue(blockedPlatform.State(blockedClone.Inn).ProductPresent,
+                "Клон с изменённым правилом сети не удаляется.");
+            AssertTrue(blockedPlatform.State(blockedClone.Inn).Running,
+                "Клон, чьё состояние не прочиталось, обязан вернуться в работу.");
+
             FakeLocalModuleMsiLifecyclePlatform selectivePlatform =
                 new FakeLocalModuleMsiLifecyclePlatform();
             FakeLocalModuleMsiRepository selectiveRepository =
