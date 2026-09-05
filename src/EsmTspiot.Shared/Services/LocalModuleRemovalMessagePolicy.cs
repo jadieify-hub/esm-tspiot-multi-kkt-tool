@@ -6,21 +6,33 @@ namespace EsmTspiot.Shared.Services
 {
     public static class LocalModuleRemovalMessagePolicy
     {
+        /// <summary>
+        /// Базу, поставленную самой программой, снятие удаляет вместе с
+        /// клонами; предустановленную не трогает: её службы не
+        /// останавливаются и не запускаются, им лишь возвращается прежний
+        /// режим запуска. Оба факта оператор должен видеть до подтверждения.
+        /// </summary>
         public static string BuildRemoveEverythingConfirmation(
             int controllerCount,
             int cloneCount,
-            bool preservesBase)
+            bool preservesBase,
+            bool removesOwnedBase)
         {
             return "Будут удалены созданные программой контроллеры (" +
                 controllerCount.ToString(CultureInfo.InvariantCulture) +
                 ") и клоны ЛМ ЧЗ (" +
                 cloneCount.ToString(CultureInfo.InvariantCulture) +
-                "). Экземплярные конфигурации ЕСМ вернутся к резервным " +
+                ")" +
+                (removesOwnedBase
+                    ? ", а также базовый ЛМ ЧЗ, установленный самой программой"
+                    : string.Empty) +
+                ". Экземплярные конфигурации ЕСМ вернутся к резервным " +
                 "копиям, если после настройки их никто не менял. " +
                 (preservesBase
                     ? "Базовый ЛМ, существовавший до автоматической настройки, " +
-                        "останется установленным и запущенным; его службам " +
-                        "вернётся прежний режим запуска. "
+                        "останется установленным: его службы удаление не " +
+                        "останавливает и не запускает, им лишь возвращается " +
+                        "прежний режим запуска. "
                     : string.Empty) +
                 "Регистрации ККТ и привязки в ЕСМ сохраняются, штатная " +
                 "служба esm-lm-controller остаётся установленной: это не " +

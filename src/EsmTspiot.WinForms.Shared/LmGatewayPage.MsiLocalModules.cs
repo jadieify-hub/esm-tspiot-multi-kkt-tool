@@ -92,7 +92,8 @@ namespace EsmTspiot.WinForms.Shared
                 LocalModuleRemovalMessagePolicy.BuildRemoveEverythingConfirmation(
                 controllers.Count,
                 CountMsiClones(_localModuleMsiInventory),
-                HasPreExistingMsiBase(_localModuleMsiInventory));
+                HasPreExistingMsiBase(_localModuleMsiInventory),
+                HasOwnedMsiBase(_localModuleMsiInventory));
             if (MessageBox.Show(
                     this,
                     confirmation,
@@ -190,6 +191,21 @@ namespace EsmTspiot.WinForms.Shared
             {
                 LocalModuleMsiInventoryItem item = inventory.Items[index];
                 if (item.CloneOrdinal == 0 && item.PreExisting) return true;
+            }
+            return false;
+        }
+
+        // База, поставленная самой программой (вендорной не было), снимается
+        // вместе с клонами — подтверждение обязано назвать это прямо.
+        private static bool HasOwnedMsiBase(
+            LocalModuleMsiOperatorInventorySnapshot inventory)
+        {
+            for (int index = 0;
+                inventory != null && index < inventory.Items.Count;
+                index++)
+            {
+                LocalModuleMsiInventoryItem item = inventory.Items[index];
+                if (item.CloneOrdinal == 0 && !item.PreExisting) return true;
             }
             return false;
         }

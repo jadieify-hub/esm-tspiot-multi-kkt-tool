@@ -2510,10 +2510,13 @@ namespace EsmTspiot.Shared.Tests
         {
             string preserving =
                 LocalModuleRemovalMessagePolicy
-                    .BuildRemoveEverythingConfirmation(2, 1, true);
+                    .BuildRemoveEverythingConfirmation(2, 1, true, false);
             string owned =
                 LocalModuleRemovalMessagePolicy
-                    .BuildRemoveEverythingConfirmation(2, 1, false);
+                    .BuildRemoveEverythingConfirmation(2, 1, false, true);
+            string withoutBase =
+                LocalModuleRemovalMessagePolicy
+                    .BuildRemoveEverythingConfirmation(2, 0, false, false);
 
             // Снятие могло не удастся целиком — итог обязан это назвать,
             // иначе оператор уходит со стенда, считая кассу чистой.
@@ -2542,15 +2545,29 @@ namespace EsmTspiot.Shared.Tests
             AssertContains(partial, "снято 1 из 5");
             AssertContains(partial, "сохранён");
 
-            AssertContains(preserving, "останется установленным и запущенным");
+            AssertContains(preserving, "останется установленным");
+            // Предустановленную базу снятие не останавливает и не запускает —
+            // обещать «останется запущенным» нельзя.
+            AssertContains(preserving, "не останавливает и не запускает");
+            AssertFalse(preserving.IndexOf(
+                    "запущенным",
+                    StringComparison.Ordinal) >= 0,
+                "Removal must not promise a running vendor base.");
             // Договор удаления называет то, что остаётся: регистрации и
             // привязки в ЕСМ снятие не трогает, полного возврата машины нет.
             AssertContains(owned, "Регистрации ККТ и привязки в ЕСМ сохраняются");
             AssertContains(owned, "не полный возврат машины");
+            // Базу, поставленную самой программой, снятие удаляет — это
+            // называется прямо, а не прячется за словом «клоны».
+            AssertContains(owned, "базовый ЛМ ЧЗ, установленный самой программой");
             AssertFalse(owned.IndexOf(
                     "останется установленным",
                     StringComparison.Ordinal) >= 0,
                 "An application-installed base must not be promised preservation.");
+            AssertFalse(withoutBase.IndexOf(
+                    "азовый ЛМ",
+                    StringComparison.Ordinal) >= 0,
+                "Without a base in the inventory the confirmation must not mention one.");
         }
 
         private static void DirectControllerSetupDefersLmReadinessWithoutFailingControllers()
