@@ -80,15 +80,18 @@ function Invoke-ClipboardWriteWithRetry {
         [string]$Description
     )
 
+    # Clipboard history and the cloud clipboard reopen the clipboard right
+    # after every write; the observed CLIPBRD_E_CANT_OPEN window outlived the
+    # former 10 x 50 ms budget, so the gate waits up to four seconds.
     $lastError = $null
-    for ($attempt = 1; $attempt -le 10; $attempt++) {
+    for ($attempt = 1; $attempt -le 40; $attempt++) {
         try {
             & $Operation
             return
         }
         catch [System.Runtime.InteropServices.ExternalException] {
             $lastError = $_.Exception
-            Start-Sleep -Milliseconds 50
+            Start-Sleep -Milliseconds 100
         }
     }
 
@@ -277,16 +280,24 @@ try {
             }
         }
         finally {
-            if ($null -ne $clipboardBefore) {
-                Invoke-ClipboardWriteWithRetry -Description "After copy-link test." -Operation {
-                    [System.Windows.Forms.Clipboard]::SetDataObject(
-                        $clipboardBefore, $true)
+            # Restoring the operator's clipboard is courtesy, not the assertion:
+            # the copy-link check above has already passed or thrown. A clipboard
+            # still held by the history listener must not fail the gate.
+            try {
+                if ($null -ne $clipboardBefore) {
+                    Invoke-ClipboardWriteWithRetry -Description "After copy-link test." -Operation {
+                        [System.Windows.Forms.Clipboard]::SetDataObject(
+                            $clipboardBefore, $true)
+                    }
+                }
+                else {
+                    Invoke-ClipboardWriteWithRetry -Description "After copy-link test." -Operation {
+                        [System.Windows.Forms.Clipboard]::Clear()
+                    }
                 }
             }
-            else {
-                Invoke-ClipboardWriteWithRetry -Description "After copy-link test." -Operation {
-                    [System.Windows.Forms.Clipboard]::Clear()
-                }
+            catch {
+                Write-Warning "Clipboard was not restored after the copy-link test: $($_.Exception.Message)"
             }
         }
     }
