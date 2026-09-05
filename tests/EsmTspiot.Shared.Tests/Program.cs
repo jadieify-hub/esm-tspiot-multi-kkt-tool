@@ -194,6 +194,7 @@ namespace EsmTspiot.Shared.Tests
             Run("Sequential registration disposes its VCOM before returning", SequentialRegistrationDisposesVcomBeforeReturning);
             Run("Sequential cancellation keeps the completed KKT", SequentialCancellationKeepsCompletedKkt);
             Run("Sequential final verification closes every VCOM on failure", SequentialFinalVerificationClosesEveryVcomOnFailure);
+            Run("Sequential final verification closes a VCOM whose serial changed", SequentialFinalVerificationClosesVcomWhoseSerialChanged);
             Run("Bulk discovery waits out and names a DKKT agent outage", BulkDiscoveryWaitsOutAndNamesDkktAgentOutage);
             Run("Diagnostic masker hides fiscal identifiers", DiagnosticMaskerHidesFiscalIdentifiers);
             Run("Diagnostic masker hides local user paths", DiagnosticMaskerHidesLocalUserPaths);
@@ -4546,6 +4547,48 @@ namespace EsmTspiot.Shared.Tests
                 "Final verification must unwind leases in reverse order.");
             AssertEqual("COM9", connections.DisposeOrder[1],
                 "The first lease must be the last one released.");
+        }
+
+        private static void SequentialFinalVerificationClosesVcomWhoseSerialChanged()
+        {
+            // На COM11 после построения плана оказалась другая касса.
+            // Проверка серийника бросала до того, как lease попадал в список
+            // освобождения, и VCOM оставался занятым до конца процесса.
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            FakeKktConnectionProvider connections = new FakeKktConnectionProvider();
+            connections.Add("COM9", "00105700000001");
+            connections.Add("COM11", "00105700000009");
+            SequentialKktDiscovery discovery = new SequentialKktDiscovery();
+            discovery.Targets.Add(CreateSequentialTarget(
+                "COM9", "00105700000001", "7300000000000001", "1234567894"));
+            discovery.Targets.Add(CreateSequentialTarget(
+                "COM11", "00105700000002", "7300000000000002", "7707083893"));
+            SequentialKktRegistrationCoordinator coordinator =
+                CreateSequentialCoordinator(api, connections);
+
+            bool rejected = false;
+            try
+            {
+                coordinator.VerifyAllAsync(
+                    "http://127.0.0.1:51077",
+                    discovery,
+                    null,
+                    CancellationToken.None).GetAwaiter().GetResult();
+            }
+            catch (InvalidOperationException exception)
+            {
+                rejected = exception.Message.IndexOf(
+                    "изменился", StringComparison.Ordinal) >= 0;
+            }
+
+            AssertTrue(rejected,
+                "A serial that changed after planning must abort verification.");
+            AssertEqual(2, connections.DisposedCount,
+                "The lease whose serial mismatched must be closed too.");
+            AssertEqual("COM11", connections.DisposeOrder[0],
+                "The rejected lease is released first.");
+            AssertEqual("COM9", connections.DisposeOrder[1],
+                "The already-verified lease is released after it.");
         }
 
         private static SequentialKktRegistrationCoordinator

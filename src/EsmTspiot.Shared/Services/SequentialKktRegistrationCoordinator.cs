@@ -265,12 +265,15 @@ namespace EsmTspiot.Shared.Services
                     IKktConnectionLease lease = await _connections.OpenAsync(
                         target.Port,
                         cancellationToken);
+                    // В список освобождения — сразу после открытия: отказ
+                    // любой проверки ниже иначе оставлял VCOM занятым до
+                    // конца процесса, и следующий проход не мог открыть ККТ.
+                    if (lease != null) leases.Add(lease);
                     ValidateLease(target.Port, lease);
                     EnsureSerialMatches(
                         target.Device.KktSerial,
                         lease.Identity.KktSerial,
                         target.Port.PortName);
-                    leases.Add(lease);
                     ReportConnection(
                         progress,
                         index + 1,
