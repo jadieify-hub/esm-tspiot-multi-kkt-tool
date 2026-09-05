@@ -318,6 +318,17 @@ namespace EsmTspiot.ServiceProvisioner
             LocalModuleInstallerProperties.RequireSupportedBy(
                 _source.CapabilityProfile);
             string installRoot = InstallRoot(request);
+            // Прошлое снятие могло оставить каталог занятым и поставить его
+            // в очередь удаления на перезагрузку. Очередь хранит абсолютные
+            // пути: поставив сюда новый ЛМ до перезагрузки, мы получим кассу,
+            // у которой Windows при загрузке снесёт файлы свежей установки.
+            if (PendingRebootDeletion.IsScheduled(installRoot))
+            {
+                throw new InvalidOperationException(
+                    "Каталог " + installRoot + " стоит в очереди удаления на " +
+                    "ближайшую перезагрузку. Перезагрузите кассу и повторите " +
+                    "установку ЛМ ЧЗ.");
+            }
             if (request.CloneOrdinal == 0)
             {
                 if (!string.Equals(manifest.ProductCode,

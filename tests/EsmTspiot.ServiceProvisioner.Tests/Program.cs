@@ -169,6 +169,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Manifest and profile stores reject reparse points", ManifestAndProfileStoresRejectReparsePoints);
             Run("Protected directory refuses a reparse path before touching it",
                 ProtectedDirectoryRefusesReparsePathBeforeTouchingIt);
+            Run("Directory queued for deletion is not reused by a new install",
+                DirectoryQueuedForDeletionIsNotReusedByANewInstall);
             Run("Manifest is atomic credential free and projects cleanup state", ManifestIsAtomicCredentialFreeAndProjectsCleanupState);
             Run("Manifest ownership mismatch blocks mutation", ManifestOwnershipMismatchBlocksMutation);
             Run("SCM adapter derives service name internally", ScmAdapterDerivesServiceNameInternally);
@@ -5236,6 +5238,39 @@ namespace EsmTspiot.ServiceProvisioner.Tests
         /// смена прав на подставленной цепочке — это смена прав на чужом
         /// каталоге.
         /// </summary>
+        private static void DirectoryQueuedForDeletionIsNotReusedByANewInstall()
+        {
+            // Снятие занятого клона отдаёт остатки очереди MoveFileEx. Пока
+            // касса не перезагружена, очередь хранит абсолютные пути: новая
+            // установка в тот же каталог будет снесена при загрузке.
+            // Живая очередь на этой машине содержала записи вида
+            // "*1\??\C:\Program Files\..." — разбор обязан снимать любой
+            // префикс перед путём, а не только "\??\".
+            string[] queue =
+            {
+                @"*1\??\D:\Program Files\Regime1\erts-13.0.4\bin\erl.exe", string.Empty,
+                @"!\??\D:\Program Files\Regime1", string.Empty
+            };
+
+            AssertTrue(
+                PendingRebootDeletion.CoversPath(queue, @"D:\Program Files\Regime1"),
+                "Каталог из очереди обязан считаться занятым.");
+            AssertTrue(
+                PendingRebootDeletion.CoversPath(
+                    queue, @"D:\Program Files\Regime1\etc"),
+                "Вложенный путь обязан считаться занятым вместе с каталогом.");
+            AssertFalse(
+                PendingRebootDeletion.CoversPath(queue, @"D:\Program Files\Regime2"),
+                "Соседний клон очередь не затрагивает.");
+            AssertFalse(
+                PendingRebootDeletion.CoversPath(
+                    queue, @"D:\Program Files\Regime10"),
+                "Совпадение по началу имени не является совпадением каталога.");
+            AssertFalse(
+                PendingRebootDeletion.CoversPath(null, @"D:\Program Files\Regime1"),
+                "Пустая очередь никого не блокирует.");
+        }
+
         private static void ProtectedDirectoryRefusesReparsePathBeforeTouchingIt()
         {
             string root = CreateTemporaryDirectory();

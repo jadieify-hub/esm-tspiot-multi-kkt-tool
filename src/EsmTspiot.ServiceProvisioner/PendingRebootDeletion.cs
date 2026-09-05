@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
+using Microsoft.Win32;
 
 namespace EsmTspiot.ServiceProvisioner
 {
@@ -44,6 +45,72 @@ namespace EsmTspiot.ServiceProvisioner
                 scheduled &= Schedule(directories[index]);
             scheduled &= Schedule(root);
             return scheduled;
+        }
+
+        /// <summary>
+        /// Стоит ли путь (или каталог над ним) в системной очереди удаления
+        /// на перезагрузку. Ставить туда же новую установку нельзя: очередь
+        /// хранит абсолютные пути, и при загрузке система снесёт уже чужие
+        /// файлы. Очередь читается целиком, поэтому в неё попадают и записи
+        /// вендорских установщиков, а не только наши.
+        /// </summary>
+        internal static bool IsScheduled(string path)
+        {
+            try
+            {
+                using (RegistryKey key = Registry.LocalMachine.OpenSubKey(
+                    @"SYSTEM\CurrentControlSet\Control\Session Manager"))
+                {
+                    if (key == null) return false;
+                    string[] entries =
+                        key.GetValue("PendingFileRenameOperations") as string[];
+                    return CoversPath(entries, path);
+                }
+            }
+            catch (Exception)
+            {
+                // Очередь недоступна — считаем, что она пуста: отказывать в
+                // установке из-за нечитаемого реестра нельзя.
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Записи очереди — пары «источник», «цель»; источник приходит с
+        /// префиксом \??\, а цель у удаления пустая. Совпадением считается
+        /// как сам путь, так и любой каталог над ним.
+        /// </summary>
+        internal static bool CoversPath(string[] entries, string path)
+        {
+            if (entries == null || entries.Length == 0) return false;
+            if (string.IsNullOrEmpty(path)) return false;
+            string target = Normalize(path);
+            if (target.Length == 0) return false;
+            for (int index = 0; index < entries.Length; index += 2)
+            {
+                string scheduled = Normalize(entries[index]);
+                if (scheduled.Length == 0) continue;
+                if (string.Equals(scheduled, target,
+                        StringComparison.OrdinalIgnoreCase))
+                    return true;
+                if (target.StartsWith(
+                        scheduled + Path.DirectorySeparatorChar,
+                        StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            return false;
+        }
+
+        private static string Normalize(string value)
+        {
+            // Живая очередь этой машины держит не только "\??\C:\...":
+            // обновления Windows пишут туда "!\??\..." и "*1\??\...".
+            // Путь начинается сразу за префиксом устройства, поэтому всё
+            // до него отбрасывается целиком.
+            string result = (value ?? string.Empty).Trim();
+            int marker = result.IndexOf(@"\??\", StringComparison.Ordinal);
+            if (marker >= 0) result = result.Substring(marker + 4);
+            return result.TrimEnd(Path.DirectorySeparatorChar);
         }
 
         private static bool Schedule(string path)
