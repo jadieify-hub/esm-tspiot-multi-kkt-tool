@@ -307,7 +307,10 @@ namespace EsmTspiot.ServiceProvisioner
                     : "Созданный локальный модуль удалён; привязка ЕСМ сохранена.";
                 if (!directoryRemoved)
                     removed += " Каталог клона был занят завершающимся " +
-                        "процессом и будет удалён при ближайшей перезагрузке.";
+                        "процессом и будет удалён при ближайшей перезагрузке. " +
+                        "До неё повторная установка ЛМ в этот каталог " +
+                        "отклоняется: очередь удаления хранит абсолютные пути " +
+                        "и снесла бы уже новые файлы.";
                 return LocalModuleMsiProvisioner.Result(
                     request,
                     LmServiceProvisioningStatus.RemovedLocalArtifactsBindingRetained,
