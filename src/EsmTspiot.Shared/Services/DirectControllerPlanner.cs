@@ -80,6 +80,8 @@ namespace EsmTspiot.Shared.Services
                     continue;
                 }
                 plan.Assignments.Add(Copy(saved));
+                if (HasInstalledService(saved, safeServices))
+                    plan.InstalledSerials.Add(kkt.KktSerial);
             }
 
             for (int index = 0; index < current.Count; index++)
@@ -386,6 +388,30 @@ namespace EsmTspiot.Shared.Services
                 }
             }
             return matches == 1;
+        }
+
+        // Сохранённое назначение переживает удаление службы вручную, поэтому
+        // «установлен» означает живую службу с ожидаемым именем, а не запись
+        // в инвентаре.
+        private static bool HasInstalledService(
+            DirectControllerAssignment assignment,
+            IList<DirectControllerServiceInventoryItem> services)
+        {
+            for (int index = 0; index < services.Count; index++)
+            {
+                DirectControllerServiceInventoryItem service = services[index];
+                if (service == null || !string.Equals(
+                        Trim(service.ServiceName),
+                        assignment.ServiceName,
+                        StringComparison.Ordinal))
+                {
+                    continue;
+                }
+                return assignment.Role == DirectControllerRole.OfficialBase
+                    ? service.IsVerifiedOfficial
+                    : service.IsOwned;
+            }
+            return false;
         }
 
         private static bool CanUseSavedAssignment(

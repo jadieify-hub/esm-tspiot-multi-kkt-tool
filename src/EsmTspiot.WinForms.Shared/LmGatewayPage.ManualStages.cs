@@ -266,7 +266,10 @@ namespace EsmTspiot.WinForms.Shared
                 DirectControllerAssignment assignment = kkt == null
                     ? null
                     : controllerPlan.FindBySerial(kkt.KktSerial);
-                if (assignment == null)
+                // План выдаёт назначение и для ККТ без службы — это
+                // намерение создать контроллер, а не факт его наличия.
+                if (assignment == null ||
+                    !controllerPlan.IsInstalled(kkt.KktSerial))
                 {
                     controllers.FailedCount++;
                     controllers.Messages.Add(
@@ -293,36 +296,20 @@ namespace EsmTspiot.WinForms.Shared
             LocalModuleMsiPlan plan,
             CancellationToken cancellation)
         {
-            DirectControllerOperatorInventoryReader reader =
-                new DirectControllerOperatorInventoryReader();
-            DirectControllerPlan controllerPlan = plan.IsValid
-                ? reader.BuildPlan(kkts, plan.CreateTargetApiPortMap())
-                : reader.BuildPlan(kkts);
-            for (int index = 0;
-                index < controllerPlan.ValidationMessages.Count;
-                index++)
-                Log("План контроллеров: " + SensitiveDataMasker.Mask(
-                    controllerPlan.ValidationMessages[index]) + "\r\n");
+            // Сверка идёт по тем же контроллерам, что и привязка: по стоящим
+            // на машине службам, а не по плану. Иначе ЕСМ, хранящий адрес
+            // ещё не созданного контроллера, «подтверждал» контур.
             DirectControllerSetupOutcome expected =
-                new DirectControllerSetupOutcome();
-            expected.ExpectedKktCount = kkts.Count;
-            for (int index = 0; index < kkts.Count; index++)
-            {
-                LmGatewayKkt kkt = kkts[index];
-                DirectControllerAssignment assignment = kkt == null
-                    ? null
-                    : controllerPlan.FindBySerial(kkt.KktSerial);
-                if (assignment == null) continue;
-                expected.ReadyAssignments[kkt.KktSerial] = assignment;
-                expected.ReadyCount++;
-            }
+                BuildInventoryControllerOutcome(kkts, plan);
+            for (int index = 0; index < expected.Messages.Count; index++)
+                Log(expected.Messages[index] + "\r\n");
             FullAutomaticLocalSetupOutcome outcome =
                 new FullAutomaticLocalSetupOutcome();
             bool confirmed = await ReadbackContourAsync(
                 kkts,
                 expected,
                 outcome,
-                cancellation).ConfigureAwait(true);
+                cancellation).ConfigureAwait(true) && expected.FailedCount == 0;
             _statusLabel.Text = (confirmed
                 ? "ЕСМ подтвердил контур: подтверждено "
                 : "ЕСМ не подтвердил контур полностью: подтверждено ") +
@@ -332,6 +319,10 @@ namespace EsmTspiot.WinForms.Shared
                     CultureInfo.InvariantCulture) +
                 "; требуется проверка: " +
                 outcome.EsmAttentionCount.ToString(CultureInfo.InvariantCulture) +
+                (expected.FailedCount > 0
+                    ? "; контроллер не создан: " +
+                        expected.FailedCount.ToString(CultureInfo.InvariantCulture)
+                    : string.Empty) +
                 (confirmed ? "." : "; см. журнал.");
             if (confirmed && ContourConfirmed != null)
             {
