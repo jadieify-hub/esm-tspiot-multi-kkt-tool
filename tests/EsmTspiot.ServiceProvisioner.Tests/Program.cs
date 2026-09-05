@@ -5847,14 +5847,13 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
         private static void ScmAdapterDerivesServiceNameInternally()
         {
-            FakeWindowsServiceApi api = new FakeWindowsServiceApi();
-            LmGatewaySupervisorService service = CreateTestSupervisorService(api);
+            LmGatewaySupervisorService service = CreateTestSupervisorService();
 
-            service.EnsureConfigured("00105700000001");
+            WindowsServiceDefinition definition = service.BuildDefinition("00105700000001");
 
-            AssertEqual("krs-esm-lm-00105700000001", api.LastDefinition.ServiceName,
+            AssertEqual("krs-esm-lm-00105700000001", definition.ServiceName,
                 "SCM identity must be derived only from the validated KKT serial.");
-            AssertThrows<ArgumentException>(delegate { service.EnsureConfigured("foreign-service"); },
+            AssertThrows<ArgumentException>(delegate { service.BuildDefinition("foreign-service"); },
                 "A caller-supplied service name must not cross the adapter boundary.");
         }
 
@@ -5863,17 +5862,17 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             FakeWindowsServiceApi api = new FakeWindowsServiceApi();
             string expectedPath = @"C:\Program Files\KRS\MultiKKT\Provisioner\EsmTspiot.ServiceProvisioner.exe";
             LmGatewaySupervisorService service = new LmGatewaySupervisorService(
-                api,
                 ControllerCapabilityProfile.Supported(),
                 VerifiedProvisionerBinary.CreateForTesting(expectedPath));
 
-            service.EnsureConfigured("00105700000001");
+            WindowsServiceDefinition definition = service.BuildDefinition("00105700000001");
+            api.Create(definition);
 
             AssertEqual(
                 WindowsCommandLine.QuoteArgument(expectedPath) +
                     " --supervise krs-esm-lm-00105700000001",
-                api.LastDefinition.ImagePath,
-                "CreateService must receive the exact verified provisioner image.");
+                definition.ImagePath,
+                "The legacy service definition must carry the exact verified provisioner image.");
             WindowsServiceRecord legacyManaged = api.Query(
                 "krs-esm-lm-00105700000001");
             legacyManaged.DisplayName = "KRS: legacy controller";
@@ -5893,16 +5892,16 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
         private static void ScmAdapterEnforcesRestrictiveServiceDacl()
         {
-            FakeWindowsServiceApi api = new FakeWindowsServiceApi();
             string operatorSid = "S-1-5-21-111-222-333-1001";
-            CreateTestSupervisorService(api).EnsureConfigured("00105700000001", operatorSid);
+            WindowsServiceDefinition definition =
+                CreateTestSupervisorService().BuildDefinition("00105700000001", operatorSid);
 
-            AssertTrue(api.LastDefinition.SecurityDescriptor.IsRestrictive,
+            AssertTrue(definition.SecurityDescriptor.IsRestrictive,
                 "Managed service DACL must contain only the fixed privileged trustees and rights.");
-            AssertEqual(operatorSid, api.LastDefinition.SecurityDescriptor.OperatorSid,
+            AssertEqual(operatorSid, definition.SecurityDescriptor.OperatorSid,
                 "The initiating user may receive only the typed read-only service projection.");
             RawSecurityDescriptor raw = new RawSecurityDescriptor(
-                api.LastDefinition.SecurityDescriptor.Sddl);
+                definition.SecurityDescriptor.Sddl);
             int forbiddenOperatorRights = 0x00000002 | 0x00000010 | 0x00000020 |
                 0x00010000 | 0x00040000;
             for (int index = 0; index < raw.DiscretionaryAcl.Count; index++)
@@ -5918,10 +5917,10 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             AssertThrows<ArgumentException>(delegate {
                 ServiceSecurityDescriptor.CreateRestrictive("S-1-5-11");
             }, "Authenticated Users must never become the service operator trustee.");
-            AssertFalse(api.LastDefinition.SecurityDescriptor.Sddl.IndexOf(";;;AU)", StringComparison.Ordinal) >= 0 ||
-                        api.LastDefinition.SecurityDescriptor.Sddl.IndexOf(";;;BU)", StringComparison.Ordinal) >= 0 ||
-                        api.LastDefinition.SecurityDescriptor.Sddl.IndexOf(";;;IU)", StringComparison.Ordinal) >= 0 ||
-                        api.LastDefinition.SecurityDescriptor.Sddl.IndexOf(";;;WD)", StringComparison.Ordinal) >= 0,
+            AssertFalse(definition.SecurityDescriptor.Sddl.IndexOf(";;;AU)", StringComparison.Ordinal) >= 0 ||
+                        definition.SecurityDescriptor.Sddl.IndexOf(";;;BU)", StringComparison.Ordinal) >= 0 ||
+                        definition.SecurityDescriptor.Sddl.IndexOf(";;;IU)", StringComparison.Ordinal) >= 0 ||
+                        definition.SecurityDescriptor.Sddl.IndexOf(";;;WD)", StringComparison.Ordinal) >= 0,
                 "Interactive or broad user trustees must not control the service.");
         }
 
@@ -6037,13 +6036,13 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
         private static void ScmConfiguresRestrictedServiceSid()
         {
-            FakeWindowsServiceApi api = new FakeWindowsServiceApi();
-            CreateTestSupervisorService(api).EnsureConfigured("00105700000001");
+            WindowsServiceDefinition definition =
+                CreateTestSupervisorService().BuildDefinition("00105700000001");
 
-            AssertEqual(WindowsServiceSidType.Restricted, api.LastDefinition.ServiceSidType,
+            AssertEqual(WindowsServiceSidType.Restricted, definition.ServiceSidType,
                 "Every managed service must use SERVICE_SID_TYPE_RESTRICTED.");
-            AssertTrue(api.LastDefinition.RecoveryPolicy != null &&
-                       api.LastDefinition.RecoveryPolicy.RestartDelaysMilliseconds.Count == 3,
+            AssertTrue(definition.RecoveryPolicy != null &&
+                       definition.RecoveryPolicy.RestartDelaysMilliseconds.Count == 3,
                 "The exact characterized recovery policy must accompany creation.");
             AssertEqual(
                 "S-1-5-80-1562836834-2535112711-1761592931-1687635663-3051341797",
@@ -6064,28 +6063,25 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     out store,
                     out runtime,
                     out instance);
-                FakeWindowsServiceCollectionApi api =
-                    new FakeWindowsServiceCollectionApi();
                 LocalModuleWindowsServicePair pair =
                     new LocalModuleWindowsServicePair(
-                        api,
                         VerifiedProvisionerBinary.CreateForTesting(
                             @"C:\Program Files\KRS\MultiKKT\Provisioner\EsmTspiot.ServiceProvisioner.exe"));
 
-                pair.EnsureConfigured(
+                WindowsServiceDefinition database = pair.BuildDefinition(
                     instance,
+                    LocalModuleProcessRole.Database,
                     "S-1-5-21-111-222-333-1001");
-
-                AssertEqual(2, api.CreatedDefinitions.Count,
-                    "One INN must produce exactly one database and one API service.");
-                WindowsServiceDefinition database = api.CreatedDefinitions[0];
-                WindowsServiceDefinition apiService = api.CreatedDefinitions[1];
+                WindowsServiceDefinition apiService = pair.BuildDefinition(
+                    instance,
+                    LocalModuleProcessRole.Api,
+                    "S-1-5-21-111-222-333-1001");
                 AssertEqual(instance.DatabaseServiceName, database.ServiceName,
-                    "The database service must be created first from the manifest identity.");
+                    "The database service definition must come from the manifest identity.");
                 AssertEqual(0, database.Dependencies.Count,
                     "The database service must have no local-module service dependency.");
                 AssertEqual(instance.ApiServiceName, apiService.ServiceName,
-                    "The API service must be created second from the manifest identity.");
+                    "The API service definition must come from the manifest identity.");
                 AssertEqual(1, apiService.Dependencies.Count,
                     "The API service must depend on exactly the database service.");
                 AssertEqual(instance.DatabaseServiceName, apiService.Dependencies[0],
@@ -6179,9 +6175,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     VerifiedProvisionerBinary.CreateForTesting(
                         @"C:\Program Files\KRS\MultiKKT\Provisioner\EsmTspiot.ServiceProvisioner.exe");
                 LocalModuleWindowsServicePair pair =
-                    new LocalModuleWindowsServicePair(
-                        new FakeWindowsServiceCollectionApi(),
-                        supervisor);
+                    new LocalModuleWindowsServicePair(supervisor);
                 WindowsServiceDefinition definition = pair.BuildDefinition(
                     instance,
                     LocalModuleProcessRole.Api,
@@ -6331,10 +6325,16 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     new FakeWindowsServiceCollectionApi(events);
                 LocalModuleWindowsServicePair pair =
                     new LocalModuleWindowsServicePair(
-                        services,
                         VerifiedProvisionerBinary.CreateForTesting(
                             @"C:\Program Files\KRS\MultiKKT\Provisioner\EsmTspiot.ServiceProvisioner.exe"));
-                pair.EnsureConfigured(instance, null);
+                services.Create(pair.BuildDefinition(
+                    instance, LocalModuleProcessRole.Database, null));
+                services.Create(pair.BuildDefinition(
+                    instance, LocalModuleProcessRole.Api, null));
+                services.Query(instance.DatabaseServiceName).State =
+                    WindowsServiceState.Running;
+                services.Query(instance.ApiServiceName).State =
+                    WindowsServiceState.Running;
                 events.Clear();
                 FakeLocalModuleServiceReadinessProbe readiness =
                     new FakeLocalModuleServiceReadinessProbe(events);
@@ -6355,7 +6355,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                         readiness,
                         epmd);
 
-                lifecycle.Start(instance);
                 LocalModuleServicePairStopOutcome outcome =
                     lifecycle.Stop(instance);
 
@@ -6363,10 +6362,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     "The exact pair and its empty EPMD must stop cleanly.");
                 string[] expected =
                 {
-                    "start:" + instance.DatabaseServiceName,
-                    "ready:Database",
-                    "start:" + instance.ApiServiceName,
-                    "ready:Api",
                     "stop:" + instance.ApiServiceName,
                     "stopped:Api",
                     "stop:" + instance.DatabaseServiceName,
@@ -6651,10 +6646,12 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     new FakeWindowsServiceCollectionApi();
                 LocalModuleWindowsServicePair pair =
                     new LocalModuleWindowsServicePair(
-                        services,
                         VerifiedProvisionerBinary.CreateForTesting(
                             @"C:\Program Files\KRS\MultiKKT\Provisioner\EsmTspiot.ServiceProvisioner.exe"));
-                pair.EnsureConfigured(instance, null);
+                services.Create(pair.BuildDefinition(
+                    instance, LocalModuleProcessRole.Database, null));
+                services.Create(pair.BuildDefinition(
+                    instance, LocalModuleProcessRole.Api, null));
                 WindowsServiceRecord api = services.Query(instance.ApiServiceName);
                 api.State = WindowsServiceState.Running;
                 api.ProcessId = 5001;
@@ -8339,11 +8336,9 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             }
         }
 
-        private static LmGatewaySupervisorService CreateTestSupervisorService(
-            FakeWindowsServiceApi api)
+        private static LmGatewaySupervisorService CreateTestSupervisorService()
         {
             return new LmGatewaySupervisorService(
-                api,
                 ControllerCapabilityProfile.Supported(),
                 VerifiedProvisionerBinary.CreateForTesting(
                     @"C:\Program Files\KRS\MultiKKT\Provisioner\EsmTspiot.ServiceProvisioner.exe"));
@@ -10108,13 +10103,6 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             internal FakeLocalModuleServiceReadinessProbe(IList<string> events)
             {
                 _events = events;
-            }
-
-            public void WaitUntilOwnedListener(
-                LocalModuleInstanceManifest manifest,
-                LocalModuleProcessRole role)
-            {
-                _events.Add("ready:" + role.ToString());
             }
 
             public void WaitUntilStopped(

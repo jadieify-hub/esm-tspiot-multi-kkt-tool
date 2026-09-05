@@ -121,47 +121,17 @@ namespace EsmTspiot.ServiceProvisioner
     {
         internal const string DescriptionPrefix = "KRS.MultiKKT.LmGateway.Managed.v1:";
 
-        private readonly IWindowsServiceApi _serviceApi;
         private readonly ControllerCapabilityProfile _profile;
         private readonly VerifiedProvisionerBinary _supervisorBinary;
 
         internal LmGatewaySupervisorService(
-            IWindowsServiceApi serviceApi,
             ControllerCapabilityProfile profile,
             VerifiedProvisionerBinary supervisorBinary)
         {
-            if (serviceApi == null) throw new ArgumentNullException("serviceApi");
             if (profile == null) throw new ArgumentNullException("profile");
             if (supervisorBinary == null) throw new ArgumentNullException("supervisorBinary");
-            _serviceApi = serviceApi;
             _profile = profile;
             _supervisorBinary = supervisorBinary;
-        }
-
-        internal WindowsServiceRecord EnsureConfigured(string kktSerial)
-        {
-            return EnsureConfigured(kktSerial, null);
-        }
-
-        internal WindowsServiceRecord EnsureConfigured(string kktSerial, string operatorSid)
-        {
-            WindowsServiceDefinition definition = BuildDefinition(kktSerial, operatorSid);
-            WindowsServiceRecord existing = _serviceApi.Query(definition.ServiceName);
-            if (existing == null)
-            {
-                _serviceApi.Create(definition);
-            }
-            else
-            {
-                _serviceApi.Update(definition);
-            }
-
-            WindowsServiceRecord observed = _serviceApi.Query(definition.ServiceName);
-            if (!WindowsServiceDefinitionMatcher.Matches(definition, observed))
-            {
-                throw new InvalidDataException("SCM did not retain the exact managed service definition.");
-            }
-            return observed;
         }
 
         internal WindowsServiceDefinition BuildDefinition(string kktSerial)

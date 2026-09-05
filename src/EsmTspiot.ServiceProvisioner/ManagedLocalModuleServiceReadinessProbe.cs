@@ -151,28 +151,6 @@ namespace EsmTspiot.ServiceProvisioner
             _delay = delay;
         }
 
-        public void WaitUntilOwnedListener(
-            LocalModuleInstanceManifest manifest,
-            LocalModuleProcessRole role)
-        {
-            ValidationResult last = null;
-            for (int attempt = 0; attempt < _attempts; attempt++)
-            {
-                last = ProbeOwnedListener(manifest, role);
-                if (last.IsValid)
-                {
-                    return;
-                }
-                if (attempt + 1 < _attempts)
-                {
-                    _delay();
-                }
-            }
-            throw new InvalidOperationException(
-                "Служба ЛМ не подтвердила собственный порт: " +
-                (last == null ? "неизвестная ошибка" : last.JoinMessages()));
-        }
-
         public void WaitUntilStopped(
             LocalModuleInstanceManifest manifest,
             LocalModuleProcessRole role)

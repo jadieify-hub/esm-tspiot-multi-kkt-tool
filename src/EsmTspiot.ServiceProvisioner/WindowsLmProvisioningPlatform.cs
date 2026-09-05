@@ -64,7 +64,6 @@ namespace EsmTspiot.ServiceProvisioner
             VerifiedProvisionerBinary supervisorBinary =
                 VerifiedProvisionerBinary.ResolveCurrent(pathSafety);
             LmGatewaySupervisorService supervisor = new LmGatewaySupervisorService(
-                serviceApi,
                 profile,
                 supervisorBinary);
             LmServiceReadinessProbe readiness = new LmServiceReadinessProbe(

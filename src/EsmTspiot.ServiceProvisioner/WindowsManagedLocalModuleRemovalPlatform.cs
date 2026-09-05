@@ -434,7 +434,7 @@ namespace EsmTspiot.ServiceProvisioner
             LocalModuleCapabilityProfile capability =
                 LocalModuleCapabilityProfile.Resolve(runtime.ProductVersion);
             LocalModuleWindowsServicePair pair =
-                new LocalModuleWindowsServicePair(_services, _supervisor);
+                new LocalModuleWindowsServicePair(_supervisor);
             WindowsServiceRecord database = _services.Query(
                 instance.DatabaseServiceName);
             WindowsServiceRecord api = _services.Query(instance.ApiServiceName);
@@ -492,7 +492,7 @@ namespace EsmTspiot.ServiceProvisioner
             }
             ValidateInstanceOwnership(snapshot, instance);
             LocalModuleWindowsServicePair pair =
-                new LocalModuleWindowsServicePair(_services, _supervisor);
+                new LocalModuleWindowsServicePair(_supervisor);
             DeleteOne(
                 instance,
                 LocalModuleProcessRole.Api,
