@@ -316,7 +316,7 @@ namespace EsmTspiot.ServiceProvisioner
                 ownershipNonce);
         }
 
-        public void Install(
+        public bool Install(
             LocalModuleMsiProvisioningItemRequest request,
             LocalModuleMsiManifest manifest)
         {
@@ -348,7 +348,7 @@ namespace EsmTspiot.ServiceProvisioner
                 ProvisionerStepTrace.Write(
                     "ИНН " + request.Inn +
                     ": установщик Windows ставит базовый ЛМ в " + installRoot);
-                _installer.Install(
+                uint baseCode = _installer.Install(
                     _source.FullPath,
                     InstallProperties(installRoot));
                 RequireInstalled(
@@ -356,7 +356,7 @@ namespace EsmTspiot.ServiceProvisioner
                     _metadata.ProductName,
                     _metadata.ProductVersion,
                     installRoot);
-                return;
+                return RequiresReboot(baseCode);
             }
 
             Guid packageCode;
@@ -381,6 +381,7 @@ namespace EsmTspiot.ServiceProvisioner
                     _metadata.ProductVersion,
                     request.ApiPort,
                     request.DatabasePort);
+            uint code = 0;
             string stagingOperation = _newGuid().ToString("N");
             using (LocalModuleMsiWorkspace workspace =
                 LocalModuleMsiWorkspace.Create(
@@ -408,7 +409,7 @@ namespace EsmTspiot.ServiceProvisioner
                     ProvisionerStepTrace.Write(
                         "ИНН " + request.Inn +
                         ": установщик Windows ставит ЛМ в " + installRoot);
-                    _installer.Install(
+                    code = _installer.Install(
                         transformed.FullPath,
                         InstallProperties(installRoot));
                     workspace.MarkInstallerReturned();
@@ -419,6 +420,15 @@ namespace EsmTspiot.ServiceProvisioner
                 identity.ProductName,
                 _metadata.ProductVersion,
                 installRoot);
+            return RequiresReboot(code);
+        }
+
+        // 3010 и 1641 — успешная установка, которой нужна перезагрузка:
+        // продукт зарегистрирован, но часть файлов система заменит при
+        // следующей загрузке.
+        private static bool RequiresReboot(uint installerCode)
+        {
+            return installerCode == 3010 || installerCode == 1641;
         }
 
         public LocalModuleMsiManifest AdoptPreExistingBase(

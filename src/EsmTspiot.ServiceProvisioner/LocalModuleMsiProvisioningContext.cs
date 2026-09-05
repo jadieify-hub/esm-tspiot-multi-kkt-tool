@@ -52,7 +52,9 @@ namespace EsmTspiot.ServiceProvisioner
         LocalModuleMsiManifest PrepareInstall(
             LocalModuleMsiProvisioningItemRequest request,
             string ownershipNonce);
-        void Install(
+        // true означает, что установщик поставил продукт, но часть
+        // файлов заменится только при перезагрузке (коды 3010/1641).
+        bool Install(
             LocalModuleMsiProvisioningItemRequest request,
             LocalModuleMsiManifest manifest);
         LocalModuleMsiManifest AdoptPreExistingBase(
