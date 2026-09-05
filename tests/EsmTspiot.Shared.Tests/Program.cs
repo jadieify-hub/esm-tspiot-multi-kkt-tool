@@ -2447,6 +2447,38 @@ namespace EsmTspiot.Shared.Tests
                     "The base port must come from observed inventory, not a clone formula.");
                 AssertTrue(snapshot.Assignments[0].BaseWasPreExisting,
                     "Removal UI must preserve a vendor-owned base product.");
+
+                // Ручная сверка подтверждает контур только при установленном
+                // ЛМ: план выдаёт назначение любому ИНН, инвентарь — нет.
+                AssertTrue(snapshot.HasInstalledModule(
+                        new LocalModuleMsiAssignment
+                        {
+                            Inn = "1234567894",
+                            CloneOrdinal = 0,
+                            ApiPort = 5995,
+                            DatabasePort = 5984
+                        }),
+                    "The recorded base is an installed module for its INN.");
+                AssertFalse(snapshot.HasInstalledModule(
+                        new LocalModuleMsiAssignment
+                        {
+                            Inn = "7707083893",
+                            CloneOrdinal = 1,
+                            ApiPort = 6995,
+                            DatabasePort = 7984
+                        }),
+                    "A planned clone without an inventory record is not installed.");
+                AssertFalse(snapshot.HasInstalledModule(
+                        new LocalModuleMsiAssignment
+                        {
+                            Inn = "7707083893",
+                            CloneOrdinal = 0,
+                            ApiPort = 5995,
+                            DatabasePort = 5984
+                        }),
+                    "The base recorded for another INN does not count.");
+                AssertFalse(snapshot.HasInstalledModule(null),
+                    "No assignment means no installed module.");
             }
             finally
             {

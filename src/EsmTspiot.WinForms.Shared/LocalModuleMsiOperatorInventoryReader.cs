@@ -23,6 +23,25 @@ namespace EsmTspiot.WinForms.Shared
         internal IList<LocalModuleMsiAssignment> Assignments { get; private set; }
         internal IList<LocalModuleMsiInventoryItem> Items { get; private set; }
         internal IList<TcpListenerSnapshotItem> Listeners { get; private set; }
+
+        /// <summary>
+        /// Назначение плана — ещё не установка: планировщик выдаёт ЛМ каждому
+        /// ИНН, в том числе тому, для кого шаг установки не выполнялся.
+        /// Установленным считается ЛМ, чья запись с тем же ИНН и номером
+        /// клона есть в инвентаре помощника.
+        /// </summary>
+        internal bool HasInstalledModule(LocalModuleMsiAssignment planned)
+        {
+            if (planned == null) return false;
+            for (int index = 0; index < Items.Count; index++)
+            {
+                LocalModuleMsiInventoryItem item = Items[index];
+                if (item.CloneOrdinal == planned.CloneOrdinal &&
+                    string.Equals(item.Inn, planned.Inn, StringComparison.Ordinal))
+                    return true;
+            }
+            return false;
+        }
     }
 
     internal sealed class LocalModuleMsiOperatorInventoryReader
