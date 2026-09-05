@@ -135,6 +135,14 @@ namespace EsmTspiot.ServiceProvisioner
                             // службы сейчас бессмысленно. Снимать при этом
                             // установленный ЛМ нельзя — до перезагрузки шаг
                             // просто не завершён.
+                            //
+                            // Стадия Installing записана с командой на откат:
+                            // следующий вызов исполнил бы её и снёс только
+                            // что поставленный продукт. Состояние продолжения
+                            // пишется без этой команды.
+                            context.WriteStage(request, ownershipNonce,
+                                LocalModuleMsiLifecycleStage.RebootPending,
+                                null, false);
                             return Result(request,
                                 LmServiceProvisioningStatus.RequiresAttention,
                                 "Локальный модуль установлен, но установщик " +

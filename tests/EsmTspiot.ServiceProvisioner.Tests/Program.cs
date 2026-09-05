@@ -5345,6 +5345,37 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 "Требование перезагрузки не повод сносить установку.");
             AssertTrue(repository.Read(clone.Inn) != null,
                 "Манифест обязан пережить перезагрузку: шаг продолжится после неё.");
+
+            // Журнал первого вызова велел откатить установку: повтор сносил
+            // только что поставленный ЛМ и ставил его заново. Повтор не
+            // должен удалять продукт — ни до перезагрузки, ни после неё.
+            LocalModuleMsiProvisioningItemResult early =
+                provisioner.Ensure(clone, context);
+            AssertFalse(platform.Events.Contains("uninstall:" + clone.Inn),
+                "Повтор до перезагрузки не должен удалять установленный ЛМ.");
+            AssertTrue(platform.State(clone.Inn).ProductPresent,
+                "Продукт обязан пережить повтор до перезагрузки.");
+            AssertEqual(LmServiceProvisioningStatus.RequiresAttention,
+                early.Status,
+                "До перезагрузки шаг по-прежнему не завершён.");
+
+            // После перезагрузки службы на месте: шаг продолжается с проверки
+            // служб, а не с новой установки.
+            platform.RebootRequiredForInn = null;
+            platform.State(clone.Inn).ServicesMatch = true;
+            LocalModuleMsiProvisioningItemResult resumed =
+                provisioner.Ensure(clone, context);
+            AssertEqual(LmServiceProvisioningStatus.Succeeded, resumed.Status,
+                "После перезагрузки повтор обязан довести ЛМ до готовности.");
+            AssertFalse(platform.Events.Contains("uninstall:" + clone.Inn),
+                "Продолжение после перезагрузки не удаляет продукт.");
+            AssertEqual(1, platform.Events.FindAll(delegate(string value) {
+                return string.Equals(value, "install:" + clone.Inn,
+                    StringComparison.Ordinal);
+            }).Count,
+                "Установка выполняется один раз.");
+            AssertTrue(platform.State(clone.Inn).Running,
+                "После продолжения ЛМ запущен.");
         }
 
         private static void DirectoryQueuedForDeletionIsNotReusedByANewInstall()
