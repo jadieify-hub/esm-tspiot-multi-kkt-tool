@@ -12,36 +12,16 @@ namespace EsmTspiot.ServiceProvisioner
         internal const string DescriptionPrefix =
             "KRS.MultiKKT.LocalModule.Managed.v1:";
 
-        private readonly IWindowsServiceApi _serviceApi;
         private readonly VerifiedProvisionerBinary _supervisorBinary;
 
         internal LocalModuleWindowsServicePair(
-            IWindowsServiceApi serviceApi,
             VerifiedProvisionerBinary supervisorBinary)
         {
-            if (serviceApi == null) throw new ArgumentNullException("serviceApi");
             if (supervisorBinary == null)
             {
                 throw new ArgumentNullException("supervisorBinary");
             }
-            _serviceApi = serviceApi;
             _supervisorBinary = supervisorBinary;
-        }
-
-        internal void EnsureConfigured(
-            LocalModuleInstanceManifest manifest,
-            string operatorSid)
-        {
-            WindowsServiceDefinition database = BuildDefinition(
-                manifest,
-                LocalModuleProcessRole.Database,
-                operatorSid);
-            WindowsServiceDefinition api = BuildDefinition(
-                manifest,
-                LocalModuleProcessRole.Api,
-                operatorSid);
-            EnsureOne(database);
-            EnsureOne(api);
         }
 
         internal WindowsServiceDefinition BuildDefinition(
@@ -93,29 +73,6 @@ namespace EsmTspiot.ServiceProvisioner
             return definition;
         }
 
-        private void EnsureOne(WindowsServiceDefinition definition)
-        {
-            WindowsServiceRecord existing = _serviceApi.Query(
-                definition.ServiceName);
-            if (existing == null)
-            {
-                _serviceApi.Create(definition);
-            }
-            else
-            {
-                _serviceApi.Update(definition);
-            }
-            WindowsServiceRecord observed = _serviceApi.Query(
-                definition.ServiceName);
-            if (!WindowsServiceDefinitionMatcher.Matches(
-                    definition,
-                    observed))
-            {
-                throw new InvalidDataException(
-                    "SCM did not retain the exact local-module service definition.");
-            }
-        }
-
         private static void ValidateManifestIdentity(
             LocalModuleInstanceManifest manifest)
         {
@@ -143,10 +100,6 @@ namespace EsmTspiot.ServiceProvisioner
 
     internal interface ILocalModuleServiceReadinessProbe
     {
-        void WaitUntilOwnedListener(
-            LocalModuleInstanceManifest manifest,
-            LocalModuleProcessRole role);
-
         void WaitUntilStopped(
             LocalModuleInstanceManifest manifest,
             LocalModuleProcessRole role);
@@ -177,51 +130,10 @@ namespace EsmTspiot.ServiceProvisioner
             _epmd = epmd;
         }
 
-        internal LocalModuleServicePairLifecycle(
-            IWindowsServiceApi serviceApi,
-            ILocalModuleServiceReadinessProbe readiness)
-        {
-            if (serviceApi == null) throw new ArgumentNullException("serviceApi");
-            if (readiness == null) throw new ArgumentNullException("readiness");
-            _serviceApi = serviceApi;
-            _readiness = readiness;
-            _epmd = null;
-        }
-
-        internal void Start(LocalModuleInstanceManifest manifest)
-        {
-            ValidateServicePair(manifest);
-            StartDatabase(manifest);
-            StartApi(manifest);
-        }
-
-        internal void StartDatabase(LocalModuleInstanceManifest manifest)
-        {
-            ValidateServicePair(manifest);
-            StartOne(
-                manifest,
-                LocalModuleProcessRole.Database,
-                manifest.DatabaseServiceName);
-        }
-
-        internal void StartApi(LocalModuleInstanceManifest manifest)
-        {
-            ValidateServicePair(manifest);
-            StartOne(
-                manifest,
-                LocalModuleProcessRole.Api,
-                manifest.ApiServiceName);
-        }
-
         internal LocalModuleServicePairStopOutcome Stop(
             LocalModuleInstanceManifest manifest)
         {
             ValidateServicePair(manifest);
-            if (_epmd == null)
-            {
-                throw new InvalidOperationException(
-                    "This lifecycle instance is configured only for ordered start.");
-            }
             StopOne(
                 manifest,
                 LocalModuleProcessRole.Api,
@@ -234,24 +146,6 @@ namespace EsmTspiot.ServiceProvisioner
             return result.Outcome == EpmdShutdownOutcome.LiveNodes
                 ? LocalModuleServicePairStopOutcome.CleanupBlocked
                 : LocalModuleServicePairStopOutcome.Stopped;
-        }
-
-        private void StartOne(
-            LocalModuleInstanceManifest manifest,
-            LocalModuleProcessRole role,
-            string serviceName)
-        {
-            WindowsServiceRecord record = RequireStableService(serviceName);
-            if (record.State == WindowsServiceState.Stopped)
-            {
-                _serviceApi.Start(serviceName);
-            }
-            else if (record.State != WindowsServiceState.Running)
-            {
-                throw new InvalidOperationException(
-                    "Local-module service is in a transitional state.");
-            }
-            _readiness.WaitUntilOwnedListener(manifest, role);
         }
 
         private void StopOne(
