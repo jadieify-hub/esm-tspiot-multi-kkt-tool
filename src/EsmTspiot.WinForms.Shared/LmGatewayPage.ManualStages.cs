@@ -149,7 +149,7 @@ namespace EsmTspiot.WinForms.Shared
                             kkts, plan, cancellation).ConfigureAwait(true);
                     else
                         await ReadbackManuallyAsync(
-                            kkts, plan, cancellation).ConfigureAwait(true);
+                            kkts, plan, inventory, cancellation).ConfigureAwait(true);
                 },
                 "Ручной режим: " + DescribeManualStage(stage) + "...");
         }
@@ -294,6 +294,7 @@ namespace EsmTspiot.WinForms.Shared
         private async Task ReadbackManuallyAsync(
             IList<LmGatewayKkt> kkts,
             LocalModuleMsiPlan plan,
+            LocalModuleMsiOperatorInventorySnapshot inventory,
             CancellationToken cancellation)
         {
             // Сверка идёт по тем же контроллерам, что и привязка: по стоящим
@@ -303,13 +304,30 @@ namespace EsmTspiot.WinForms.Shared
                 BuildInventoryControllerOutcome(kkts, plan);
             for (int index = 0; index < expected.Messages.Count; index++)
                 Log(expected.Messages[index] + "\r\n");
+            // Контроллер и привязка в ЕСМ переживают удаление ЛМ: ЕСМ хранит
+            // адрес контроллера, а не факт установки модуля. Наличие
+            // назначенного ЛМ проверяется по инвентарю; его инициализация и
+            // бизнес-статус здесь не критерий.
+            int modulesMissing = 0;
+            for (int index = 0; index < kkts.Count; index++)
+            {
+                LmGatewayKkt kkt = kkts[index];
+                if (kkt == null) continue;
+                if (inventory.HasInstalledModule(plan.FindByInn(kkt.KktInn)))
+                    continue;
+                modulesMissing++;
+                Log("ККТ " + kkt.KktSerial + ": ЛМ ЧЗ для ИНН " + kkt.KktInn +
+                    " не установлен — сверять контур нечем; выполните " +
+                    "«Шаг 3: ЛМ ЧЗ».\r\n");
+            }
             FullAutomaticLocalSetupOutcome outcome =
                 new FullAutomaticLocalSetupOutcome();
             bool confirmed = await ReadbackContourAsync(
                 kkts,
                 expected,
                 outcome,
-                cancellation).ConfigureAwait(true) && expected.FailedCount == 0;
+                cancellation).ConfigureAwait(true) &&
+                expected.FailedCount == 0 && modulesMissing == 0;
             _statusLabel.Text = (confirmed
                 ? "ЕСМ подтвердил контур: подтверждено "
                 : "ЕСМ не подтвердил контур полностью: подтверждено ") +
@@ -322,6 +340,10 @@ namespace EsmTspiot.WinForms.Shared
                 (expected.FailedCount > 0
                     ? "; контроллер не создан: " +
                         expected.FailedCount.ToString(CultureInfo.InvariantCulture)
+                    : string.Empty) +
+                (modulesMissing > 0
+                    ? "; ЛМ не установлен: " +
+                        modulesMissing.ToString(CultureInfo.InvariantCulture)
                     : string.Empty) +
                 (confirmed ? "." : "; см. журнал.");
             if (confirmed && ContourConfirmed != null)
