@@ -146,7 +146,7 @@ namespace EsmTspiot.ServiceProvisioner
             {
                 RemovalPlanItem item = plan[index];
                 if (!item.Manifest.CanRemove) continue;
-                if (WasRunning(item, context)) runningBefore.Add(item);
+                if (WasRunningOrUnknown(item, context)) runningBefore.Add(item);
                 try
                 {
                     context.Platform.StopAndVerify(item.Request, item.Manifest);
@@ -160,10 +160,11 @@ namespace EsmTspiot.ServiceProvisioner
             return runningBefore;
         }
 
-        // Наблюдение перед остановкой не должно ронять снятие: пара,
-        // состояние которой не читается, просто не попадёт в список
-        // возврата — её отказ проявится на своём шаге.
-        private static bool WasRunning(
+        // Наблюдение перед остановкой не должно ронять снятие. Но «состояние
+        // не прочиталось» — не «не работала»: остановлена пара будет в любом
+        // случае, а её удаление тот же конфликт затем отклонит — и работавший
+        // ЛМ остался бы лежать. Лишний запуск уцелевшей пары безвреден.
+        private static bool WasRunningOrUnknown(
             RemovalPlanItem item,
             LocalModuleMsiProvisioningContext context)
         {
@@ -174,7 +175,7 @@ namespace EsmTspiot.ServiceProvisioner
             }
             catch (Exception)
             {
-                return false;
+                return true;
             }
         }
 
