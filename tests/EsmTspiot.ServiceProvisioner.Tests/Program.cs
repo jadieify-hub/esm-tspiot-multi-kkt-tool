@@ -3583,6 +3583,29 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             AssertEqual(events, services.Events.Count,
                 "An automatic pair must not be touched again.");
 
+            // Вторая служба режим не приняла. Прежние режимы записывает
+            // вызывающий и только после возврата отсюда, поэтому оставленная
+            // в AutoStart первая служба стала бы невозвратимой: снимка нет.
+            controller.Restore(
+                layout,
+                WindowsServiceStartMode.DemandStart,
+                WindowsServiceStartMode.DemandStart);
+            services.Events.Clear();
+            services.RefuseStartModeFor = layout.ApiServiceName;
+            AssertThrows<InvalidOperationException>(delegate
+            {
+                controller.EnsureAutomatic(layout);
+            }, "Отказ SCM обязан дойти до вызывающего.");
+            AssertEqual(WindowsServiceStartMode.DemandStart,
+                services.Query(layout.DatabaseServiceName).StartMode,
+                "Первая служба обязана вернуться на прежний режим.");
+            AssertEqual(WindowsServiceStartMode.DemandStart,
+                services.Query(layout.ApiServiceName).StartMode,
+                "Вторая служба режим не приняла и остаётся прежней.");
+            services.RefuseStartModeFor = null;
+            services.Events.Clear();
+            controller.EnsureAutomatic(layout);
+
             controller.Restore(
                 layout,
                 WindowsServiceStartMode.DemandStart,
@@ -3767,8 +3790,11 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 provisioner.Ensure(failingBase, failingContext);
             AssertEqual(LmServiceProvisioningStatus.Failed, refused.Status,
                 "A refused start-mode change must fail the adoption.");
-            AssertFalse(failing.Events.Contains("restore-startmode:525700335451"),
-                "Nothing must be restored when no adjustment was recorded.");
+            // Снимок прежних режимов теперь записан до первой смены,
+            // поэтому даже отказ SCM оставляет чему возвращаться: откат
+            // обязан вернуть вендорской базе её прежние режимы.
+            AssertTrue(failing.Events.Contains("restore-startmode:525700335451"),
+                "A refused start-mode change must still be rolled back.");
             AssertFalse(failing.Events.Contains("start:525700335451"),
                 "Services must not be started after a refused start-mode change.");
             AssertTrue(failingRepository.Read(failingBase.Inn) == null,
@@ -9321,10 +9347,16 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 _records[serviceName].ProcessId = 0;
             }
 
+            internal string RefuseStartModeFor { get; set; }
+
             public void SetStartMode(
                 string serviceName,
                 WindowsServiceStartMode startMode)
             {
+                if (string.Equals(RefuseStartModeFor, serviceName,
+                        StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException(
+                        "Simulated SCM refusal for " + serviceName + ".");
                 RequireOwnedServiceName(serviceName);
                 EnsureExact(serviceName);
                 Events.Add("startmode:" + serviceName + ":" + startMode);
@@ -10044,6 +10076,12 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     Running = state.Running,
                     Ready = state.Ready,
                     AutomaticStart = state.AutomaticStart,
+                    ApiStartMode = state.AutomaticStart
+                        ? WindowsServiceStartMode.AutoStart
+                        : WindowsServiceStartMode.DemandStart,
+                    DatabaseStartMode = state.AutomaticStart
+                        ? WindowsServiceStartMode.AutoStart
+                        : WindowsServiceStartMode.DemandStart,
                     ConflictMessage = conflict
                 };
             }
