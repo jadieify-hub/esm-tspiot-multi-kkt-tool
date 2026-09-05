@@ -5272,29 +5272,48 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             // Живая очередь на этой машине содержала записи вида
             // "*1\??\C:\Program Files\..." — разбор обязан снимать любой
             // префикс перед путём, а не только "\??\".
-            string[] queue =
+            string[] wholeTree =
             {
                 @"*1\??\D:\Program Files\Regime1\erts-13.0.4\bin\erl.exe", string.Empty,
                 @"!\??\D:\Program Files\Regime1", string.Empty
             };
 
             AssertTrue(
-                PendingRebootDeletion.CoversPath(queue, @"D:\Program Files\Regime1"),
+                PendingRebootDeletion.CoversPath(
+                    wholeTree, @"D:\Program Files\Regime1"),
                 "Каталог из очереди обязан считаться занятым.");
             AssertTrue(
                 PendingRebootDeletion.CoversPath(
-                    queue, @"D:\Program Files\Regime1\etc"),
+                    wholeTree, @"D:\Program Files\Regime1\etc"),
                 "Вложенный путь обязан считаться занятым вместе с каталогом.");
             AssertFalse(
-                PendingRebootDeletion.CoversPath(queue, @"D:\Program Files\Regime2"),
+                PendingRebootDeletion.CoversPath(
+                    wholeTree, @"D:\Program Files\Regime2"),
                 "Соседний клон очередь не затрагивает.");
             AssertFalse(
                 PendingRebootDeletion.CoversPath(
-                    queue, @"D:\Program Files\Regime10"),
+                    wholeTree, @"D:\Program Files\Regime10"),
                 "Совпадение по началу имени не является совпадением каталога.");
             AssertFalse(
-                PendingRebootDeletion.CoversPath(null, @"D:\Program Files\Regime1"),
+                PendingRebootDeletion.CoversPath(
+                    null, @"D:\Program Files\Regime1"),
                 "Пустая очередь никого не блокирует.");
+
+            // MoveFileEx ставит дерево поэлементно, и часть заявок могла не
+            // пройти: в очереди остаются файлы внутри каталога, а сам
+            // каталог — нет. Ставить туда новую установку всё равно нельзя.
+            string[] filesOnly =
+            {
+                @"\??\D:\Program Files\Regime1\erts-13.0.4\bin\erl.exe", string.Empty
+            };
+            AssertTrue(
+                PendingRebootDeletion.CoversPath(
+                    filesOnly, @"D:\Program Files\Regime1"),
+                "Файл в очереди обязан удерживать весь каталог установки.");
+            AssertFalse(
+                PendingRebootDeletion.CoversPath(
+                    filesOnly, @"D:\Program Files\Regime2"),
+                "Файл соседнего клона на чужой каталог не влияет.");
         }
 
         private static void ProtectedDirectoryRefusesReparsePathBeforeTouchingIt()
