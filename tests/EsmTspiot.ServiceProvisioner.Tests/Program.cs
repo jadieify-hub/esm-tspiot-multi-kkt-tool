@@ -3558,7 +3558,47 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             AssertTrue(blockedPlatform.State(blockedClone.Inn).ProductPresent,
                 "Клон с изменённым правилом сети не удаляется.");
             AssertTrue(blockedPlatform.State(blockedClone.Inn).Running,
-                "Клон, чьё состояние не прочиталось, обязан вернуться в работу.");
+                "Работавший клон с конфликтом обязан вернуться в работу.");
+
+            // Тот же конфликт, но клон был остановлен намеренно: состояние
+            // служб известно, и запускать его снятие не вправе.
+            FakeLocalModuleMsiLifecyclePlatform parkedPlatform =
+                new FakeLocalModuleMsiLifecyclePlatform();
+            LocalModuleMsiProvisioningContext parkedContext =
+                CreateMsiContext(
+                    parkedPlatform,
+                    new FakeLocalModuleMsiRepository(),
+                    new FakeLocalModuleMsiJournalStore());
+            provisioner.Ensure(MsiRequest(
+                "7707083893", 0, 5995, 5984, null), parkedContext);
+            provisioner.Ensure(blockedClone, parkedContext);
+            parkedPlatform.State(blockedClone.Inn).Running = false;
+            parkedPlatform.State(blockedClone.Inn).Ready = false;
+            parkedPlatform.State(blockedClone.Inn).FirewallMatches = false;
+            removal.RemoveAll(parkedContext);
+            AssertTrue(parkedPlatform.State(blockedClone.Inn).ProductPresent,
+                "Клон с изменённым правилом сети не удаляется.");
+            AssertFalse(parkedPlatform.State(blockedClone.Inn).Running,
+                "Намеренно остановленный клон не запускается из-за чужого конфликта.");
+
+            // Состояние действительно не читается: пару не трогают вовсе.
+            FakeLocalModuleMsiLifecyclePlatform blindPlatform =
+                new FakeLocalModuleMsiLifecyclePlatform();
+            LocalModuleMsiProvisioningContext blindContext =
+                CreateMsiContext(
+                    blindPlatform,
+                    new FakeLocalModuleMsiRepository(),
+                    new FakeLocalModuleMsiJournalStore());
+            provisioner.Ensure(MsiRequest(
+                "7707083893", 0, 5995, 5984, null), blindContext);
+            provisioner.Ensure(blockedClone, blindContext);
+            blindPlatform.FailObserveForInn = blockedClone.Inn;
+            blindPlatform.Events.Clear();
+            removal.RemoveAll(blindContext);
+            AssertTrue(blindPlatform.State(blockedClone.Inn).Running,
+                "Пара с нечитаемым состоянием остаётся как была.");
+            AssertFalse(blindPlatform.Events.Contains("stop:" + blockedClone.Inn),
+                "Пару с нечитаемым состоянием не останавливают наугад.");
 
             FakeLocalModuleMsiLifecyclePlatform selectivePlatform =
                 new FakeLocalModuleMsiLifecyclePlatform();
@@ -10220,6 +10260,12 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 LocalModuleMsiManifest manifest)
             {
                 FakeLocalModuleMsiState state = State(request.Inn);
+                if (string.Equals(
+                        FailObserveForInn,
+                        request.Inn,
+                        StringComparison.Ordinal))
+                    throw new InvalidOperationException(
+                        "Simulated observe failure.");
                 string conflict = string.Empty;
                 if (state.ProductPresent && !state.ProductMatches)
                     conflict = "Foreign ProductCode conflict.";
@@ -10258,6 +10304,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             }
 
             internal string RebootRequiredForInn { get; set; }
+            internal string FailObserveForInn { get; set; }
 
             public bool Install(
                 LocalModuleMsiProvisioningItemRequest request,
