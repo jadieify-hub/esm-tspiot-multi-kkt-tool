@@ -1296,9 +1296,15 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 new List<LocalModuleMsiProvisioningItemRequest>();
             items.Add(MsiRequest("9900000031", 0, 5995, 5984, null));
             items.Add(MsiRequest("9900000032", 1, 6995, 7984, null));
+            // База живёт там, куда её поставил вендор: продукт берёт её том
+            // из реестра установленных программ, а клон, как и в продукте,
+            // идёт на системный том. Стенд с базой, прибитой к системному
+            // диску, на машине с базой на D: объявлял её пару чужой.
+            items[0].InstallVolumeRoot = SandboxBaseVolumeRoot();
             string failure = null;
             File.WriteAllText(reportPath,
-                "START local-module production sandbox\r\n");
+                "START local-module production sandbox; base volume " +
+                items[0].InstallVolumeRoot + "\r\n");
 
             try
             {
@@ -1560,6 +1566,24 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             File.AppendAllText(reportPath,
                 failure == null ? "SANDBOX_OK\r\n" : "SANDBOX_FAILED\r\n");
             return failure == null ? 0 : 1;
+        }
+
+        private static string SandboxBaseVolumeRoot()
+        {
+            IList<InstalledLocalModuleProduct> products =
+                new InstalledLocalModuleProductReader().ReadAll();
+            for (int index = 0; index < products.Count; index++)
+            {
+                InstalledLocalModuleProduct product = products[index];
+                if (string.Equals(
+                        product.DisplayName,
+                        SupportedLocalModulePackageIdentity.ProductName,
+                        StringComparison.Ordinal) &&
+                    !string.IsNullOrEmpty(product.InstallLocation))
+                    return LocalModuleInstallRootPolicy.GetVolumeRoot(
+                        product.InstallLocation);
+            }
+            return LocalModuleInstallRootPolicy.GetSystemVolumeRoot();
         }
 
         private static LmServiceProvisioningBatchRequest
