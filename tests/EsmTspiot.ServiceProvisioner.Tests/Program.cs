@@ -2515,6 +2515,32 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     "Бесконечно занятый установщик обязан назвать причину отказа.");
                 AssertTrue(stuck.InstallAttempts > 1,
                     "Отказ обязан наступать только после повторов.");
+
+                // 3010 и 1641 — успешные ответы установщика: продукт
+                // установлен или снят, часть файлов доедет после
+                // перезагрузки. Считая их отказом, утилита отправляла
+                // установленный ЛМ в откат и сносила его сама.
+                FakeWindowsInstallerNative rebooting =
+                    new FakeWindowsInstallerNative();
+                rebooting.ReturnCode = 3010;
+                WindowsInstallerApi rebootingApi = new WindowsInstallerApi(
+                    rebooting,
+                    delegate(int milliseconds) { },
+                    delegate { return frozen; });
+                AssertEqual((uint)3010,
+                    rebootingApi.Install(package, "AUTOSERVICE=1"),
+                    "Установка с требованием перезагрузки — успех, а не отказ.");
+
+                FakeWindowsInstallerNative initiated =
+                    new FakeWindowsInstallerNative();
+                initiated.ReturnCode = 1641;
+                WindowsInstallerApi initiatedApi = new WindowsInstallerApi(
+                    initiated,
+                    delegate(int milliseconds) { },
+                    delegate { return frozen; });
+                AssertEqual((uint)1641,
+                    initiatedApi.Uninstall("{9449123B-61C4-40DE-AA6C-1BB9AA02EB67}"),
+                    "Снятие с уже запущенной перезагрузкой — тоже успех.");
             }
             finally
             {
