@@ -181,6 +181,9 @@ namespace EsmTspiot.WinForms.Shared
                     string message = SensitiveDataMasker.Mask(ex.Message);
                     _statusLabel.Text = "Ошибка: " + message;
                     Log("Ошибка на вкладке ЛМ ЧЗ: " + message + "\r\n\r\n");
+                    if (DetailLogger != null)
+                        DetailLogger("Подробности ошибки на вкладке ЛМ ЧЗ:\r\n" +
+                            ex + "\r\n\r\n");
                     if (showErrors)
                     {
                         MessageBox.Show(this, message, "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
@@ -592,6 +595,12 @@ namespace EsmTspiot.WinForms.Shared
                 _logger(SensitiveDataMasker.Mask(text));
             }
         }
+
+        /// <summary>
+        /// Приёмник подробностей сбоя (полное исключение со стеком), который
+        /// хозяин формы направляет только в файл; маскирует он сам.
+        /// </summary>
+        internal Action<string> DetailLogger { get; set; }
 
         // Всё, что требует прав, выполняет отдельный elevated-помощник, и до
         // его ответа журнал молчит: со стороны это неотличимо от зависания.

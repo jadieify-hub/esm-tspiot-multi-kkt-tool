@@ -79,6 +79,7 @@ namespace EsmTspiot.WinForms.Shared
                 delegate { return _baseUrlTextBox.Text; },
                 _client,
                 AppendLog);
+            _lmGatewayPage.DetailLogger = AppendDetailToFile;
             _lmGatewayPage.OperationStateChanged += OnLmGatewayOperationStateChanged;
             _lmGatewayPage.InstallerSelectionChanged += UpdateAutomaticInstallerSelection;
             _lmGatewayPage.ContourConfirmed += delegate { OfferSupportDevelopment(true); };
@@ -815,6 +816,7 @@ namespace EsmTspiot.WinForms.Shared
                 }
 
                 AppendLog("Ошибка приложения: " + ex.Message + "\r\n\r\n");
+                AppendDetailToFile("Подробности ошибки приложения:\r\n" + ex + "\r\n\r\n");
                 MessageBox.Show(this, ex.Message, "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             finally
@@ -2499,6 +2501,14 @@ namespace EsmTspiot.WinForms.Shared
                 _fileLogErrorShown = true;
                 _logTextBox.AppendText("Не удалось записать файловый журнал. Работа программы продолжена.\r\n\r\n");
             }
+        }
+
+        // Стек исключения нужен для разбора полевого сбоя, но не на экране:
+        // оператору хватает сообщения. В файл он уходит с тем же
+        // маскированием, что и остальная диагностика.
+        private void AppendDetailToFile(string text)
+        {
+            _fileLogSink.TryAppend(DiagnosticMasker.Mask(text));
         }
 
         private void ConstrainToWorkingArea()
