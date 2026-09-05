@@ -1314,23 +1314,11 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
                 LocalModuleInstallerSelection installer =
                     MsiTestPackageFactory.DescribeSelection(sourcePath);
-                LmServiceProvisioningBatchRequest request =
-                    new LmServiceProvisioningBatchRequest
-                    {
-                        SchemaVersion = ProvisioningRequestValidator
-                            .CurrentSchemaVersion,
-                        Operation =
-                            LmServiceOperation.EnsureMsiLocalModules,
-                        OperationId = Guid.NewGuid().ToString("N"),
-                        InitiatingSid = initiatingSid,
-                        LocalModuleInstallerSelection = installer
-                    };
-                for (int index = 0; index < items.Count; index++)
-                    request.LocalModuleMsiItems.Add(items[index]);
-                request.PlanHash = CanonicalLmPlanHasher.Compute(request);
 
                 using (LocalModuleMsiProvisioningSession session =
-                    LocalModuleMsiProvisioningSession.CreateWindows(request))
+                    LocalModuleMsiProvisioningSession.CreateWindows(
+                        CreateSandboxEnsureRequest(
+                            installer, items, initiatingSid)))
                 {
                     for (int index = 0; index < items.Count; index++)
                     {
@@ -1404,6 +1392,96 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 RequireOpenSandboxPort(5995);
                 RequireOpenSandboxPort(6995);
                 File.AppendAllText(reportPath, "PASS restart cycle\r\n");
+
+                // Повторная настройка тем же планом с отпечатками манифестов
+                // первого прохода — так интерфейс повторяет «Шаг 3». Оба ЛМ
+                // уже настроены: продукт и службы трогать нельзя, поэтому
+                // сверяются PID всех четырёх служб до и после.
+                string[] everyService =
+                    { "regime", "yenisei", "regime1", "yenisei1" };
+                int[] pidsBeforeRepeat =
+                    SandboxServicePids(services, everyService);
+                using (LocalModuleMsiProvisioningSession repeat =
+                    LocalModuleMsiProvisioningSession.CreateWindows(
+                        CreateSandboxEnsureRequest(
+                            installer, items, initiatingSid)))
+                {
+                    for (int index = 0; index < items.Count; index++)
+                    {
+                        LocalModuleMsiProvisioningItemResult again =
+                            repeat.ExecuteItem(index);
+                        File.AppendAllText(reportPath,
+                            "REPEAT " + again.Inn + " " + again.Status +
+                            ": " + again.Message + "\r\n");
+                        if (again.Status !=
+                                LmServiceProvisioningStatus.Succeeded ||
+                            !string.Equals(
+                                again.ManifestSha256,
+                                items[index].ExpectedManifestSha256,
+                                StringComparison.Ordinal))
+                            throw new InvalidOperationException(
+                                "Repeated ensure did not keep INN " +
+                                again.Inn + " as is: " + again.Status + ".");
+                    }
+                }
+                RequireSandboxPidsUnchanged(
+                    services,
+                    pidsBeforeRepeat,
+                    "Repeated ensure restarted or reinstalled a service",
+                    everyService);
+                File.AppendAllText(reportPath,
+                    "PASS repeated ensure without reinstall\r\n");
+
+                // Снятие одного клона при работающей базе: узел Erlang базы
+                // жив во время msiexec клона, и база не должна ни встать,
+                // ни перезапуститься — её назначение остаётся.
+                string[] baseServices = { "regime", "yenisei" };
+                int[] basePidsBeforeRemoval =
+                    SandboxServicePids(services, baseServices);
+                List<LocalModuleMsiProvisioningItemRequest> cloneOnly =
+                    new List<LocalModuleMsiProvisioningItemRequest>();
+                cloneOnly.Add(items[1]);
+                IList<LocalModuleMsiProvisioningItemResult> cloneRemoved =
+                    new LocalModuleMsiRemovalWorkflow().RemoveAll(
+                        cloneOnly,
+                        LocalModuleMsiProvisioningContext
+                            .CreateWindowsForInstalledProducts(
+                                Guid.NewGuid().ToString("N"),
+                                machineRoot,
+                                initiatingSid));
+                File.AppendAllText(reportPath,
+                    "REMOVE-ONE " + cloneRemoved[0].Inn + " " +
+                    cloneRemoved[0].Status + ": " +
+                    cloneRemoved[0].Message + "\r\n");
+                if (cloneRemoved[0].Status != LmServiceProvisioningStatus
+                        .RemovedLocalArtifactsBindingRetained)
+                    throw new InvalidOperationException(
+                        "Single clone removal failed: " +
+                        cloneRemoved[0].Status + ".");
+                if (services.Query("regime1") != null ||
+                    services.Query("yenisei1") != null ||
+                    manifests.Read(items[1].Inn) != null ||
+                    Directory.Exists(
+                        LocalModuleInstallRootPolicy.BuildCloneInstallDirectory(
+                            LocalModuleInstallRootPolicy.GetSystemVolumeRoot(),
+                            1)))
+                    throw new InvalidOperationException(
+                        "Single clone removal left clone services, " +
+                        "manifest or install root.");
+                if (manifests.Read(items[0].Inn) == null)
+                    throw new InvalidOperationException(
+                        "Single clone removal dropped the base assignment.");
+                RequireRunningSandboxService(services, "regime");
+                RequireRunningSandboxService(services, "yenisei");
+                RequireOpenSandboxPort(5995);
+                RequireOpenSandboxPort(5984);
+                RequireSandboxPidsUnchanged(
+                    services,
+                    basePidsBeforeRemoval,
+                    "Single clone removal disturbed the base",
+                    baseServices);
+                File.AppendAllText(reportPath,
+                    "PASS single clone removal keeps the base running\r\n");
             }
             catch (Exception exception)
             {
@@ -1482,6 +1560,60 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             File.AppendAllText(reportPath,
                 failure == null ? "SANDBOX_OK\r\n" : "SANDBOX_FAILED\r\n");
             return failure == null ? 0 : 1;
+        }
+
+        private static LmServiceProvisioningBatchRequest
+            CreateSandboxEnsureRequest(
+                LocalModuleInstallerSelection installer,
+                IList<LocalModuleMsiProvisioningItemRequest> items,
+                string initiatingSid)
+        {
+            LmServiceProvisioningBatchRequest request =
+                new LmServiceProvisioningBatchRequest
+                {
+                    SchemaVersion = ProvisioningRequestValidator
+                        .CurrentSchemaVersion,
+                    Operation = LmServiceOperation.EnsureMsiLocalModules,
+                    OperationId = Guid.NewGuid().ToString("N"),
+                    InitiatingSid = initiatingSid,
+                    LocalModuleInstallerSelection = installer
+                };
+            for (int index = 0; index < items.Count; index++)
+                request.LocalModuleMsiItems.Add(items[index]);
+            request.PlanHash = CanonicalLmPlanHasher.Compute(request);
+            return request;
+        }
+
+        private static int[] SandboxServicePids(
+            WindowsServiceApi services,
+            string[] serviceNames)
+        {
+            int[] result = new int[serviceNames.Length];
+            for (int index = 0; index < serviceNames.Length; index++)
+            {
+                WindowsServiceRecord service =
+                    services.Query(serviceNames[index]);
+                result[index] = service == null ? 0 : service.ProcessId;
+            }
+            return result;
+        }
+
+        // Живой процесс службы с тем же PID — единственное прямое
+        // доказательство того, что её не останавливали, не переустанавливали
+        // и не перезапускали.
+        private static void RequireSandboxPidsUnchanged(
+            WindowsServiceApi services,
+            int[] before,
+            string what,
+            string[] serviceNames)
+        {
+            int[] now = SandboxServicePids(services, serviceNames);
+            for (int index = 0; index < serviceNames.Length; index++)
+                if (before[index] <= 0 || before[index] != now[index])
+                    throw new InvalidOperationException(
+                        what + ": " + serviceNames[index] +
+                        " had process " + before[index] +
+                        ", now " + now[index] + ".");
         }
 
         private static void RequireRunningSandboxService(
