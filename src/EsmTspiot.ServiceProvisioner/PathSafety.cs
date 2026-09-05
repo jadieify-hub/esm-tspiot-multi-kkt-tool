@@ -416,6 +416,22 @@ namespace EsmTspiot.ServiceProvisioner
                 AccessControlType.Allow));
         }
 
+        /// <summary>
+        /// Снимает завершающий разделитель, но не у корня диска: «C:» в
+        /// Windows означает текущий каталог этого диска, а не его корень.
+        /// Из-за такого «корня» обход вверх начинался ниже проверяемого
+        /// пути (или не начинался вовсе), и связка каталогов оставалась
+        /// незамеченной перед привилегированной записью.
+        /// </summary>
+        private static string TrimSeparator(string path)
+        {
+            string value = (path ?? string.Empty)
+                .TrimEnd(Path.DirectorySeparatorChar);
+            return value.Length == 2 && value[1] == Path.VolumeSeparatorChar
+                ? value + Path.DirectorySeparatorChar
+                : value;
+        }
+
         private static string NormalizeDirectory(string path)
         {
             return Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
@@ -436,10 +452,10 @@ namespace EsmTspiot.ServiceProvisioner
         {
             try
             {
-                string current = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar);
+                string current = TrimSeparator(Path.GetFullPath(path));
                 string root = string.IsNullOrEmpty(stopRoot)
-                    ? Path.GetPathRoot(current).TrimEnd(Path.DirectorySeparatorChar)
-                    : Path.GetFullPath(stopRoot).TrimEnd(Path.DirectorySeparatorChar);
+                    ? TrimSeparator(Path.GetPathRoot(current))
+                    : TrimSeparator(Path.GetFullPath(stopRoot));
                 while (IsUnderRoot(current, root))
                 {
                     if ((File.Exists(current) || Directory.Exists(current)) &&
