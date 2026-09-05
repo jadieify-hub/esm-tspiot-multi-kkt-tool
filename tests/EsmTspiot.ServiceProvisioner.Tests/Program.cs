@@ -3491,6 +3491,52 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 allPlatform.Events.IndexOf("uninstall:7707083893"),
                 "Remove-all must uninstall clones in reverse order before base.");
 
+            // Снятие комплекта глушит все пары до первого удаления.
+            // Если удаление одной из них не прошло, она остаётся
+            // установленной — и раньше оставалась лежащей: касса теряла
+            // работавший ЛМ из-за чужой ошибки.
+            FakeLocalModuleMsiLifecyclePlatform survivorPlatform =
+                new FakeLocalModuleMsiLifecyclePlatform();
+            FakeLocalModuleMsiRepository survivorRepository =
+                new FakeLocalModuleMsiRepository();
+            LocalModuleMsiProvisioningContext survivorContext =
+                CreateMsiContext(
+                    survivorPlatform,
+                    survivorRepository,
+                    new FakeLocalModuleMsiJournalStore());
+            LocalModuleMsiProvisioningItemRequest survivorBase = MsiRequest(
+                "7707083893", 0, 5995, 5984, null);
+            LocalModuleMsiProvisioningItemRequest stuckClone = MsiRequest(
+                "1234567890", 1, 6995, 7984, null);
+            provisioner.Ensure(survivorBase, survivorContext);
+            provisioner.Ensure(stuckClone, survivorContext);
+            survivorPlatform.FailUninstallForInn = stuckClone.Inn;
+            survivorPlatform.Events.Clear();
+            IList<LocalModuleMsiProvisioningItemResult> survivorResults =
+                removal.RemoveAll(survivorContext);
+            LocalModuleMsiProvisioningItemResult stuckResult = null;
+            for (int index = 0; index < survivorResults.Count; index++)
+                if (string.Equals(survivorResults[index].Inn, stuckClone.Inn,
+                        StringComparison.Ordinal))
+                    stuckResult = survivorResults[index];
+
+            AssertFalse(survivorPlatform.State(survivorBase.Inn).ProductPresent,
+                "Застрявший клон не отменяет удаление остального комплекта.");
+            AssertTrue(survivorPlatform.State(stuckClone.Inn).ProductPresent,
+                "Неудавшееся удаление оставляет продукт клона на месте.");
+            AssertTrue(survivorPlatform.State(stuckClone.Inn).Running,
+                "Уцелевший ЛМ обязан вернуться в работу.");
+            AssertTrue(survivorPlatform.Events.IndexOf(
+                    "uninstall:" + survivorBase.Inn) <
+                survivorPlatform.Events.LastIndexOf(
+                    "start:" + stuckClone.Inn),
+                "Возврат уцелевшего ЛМ обязан идти после удаления базы: " +
+                "поднятый раньше узел Erlang заблокировал бы EPMD.");
+            AssertEqual(LmServiceProvisioningStatus.CleanupPending,
+                stuckResult.Status,
+                "Незавершённое удаление остаётся незавершённым.");
+            AssertContains(stuckResult.Message, "возвращён в работу");
+
             FakeLocalModuleMsiLifecyclePlatform selectivePlatform =
                 new FakeLocalModuleMsiLifecyclePlatform();
             FakeLocalModuleMsiRepository selectiveRepository =

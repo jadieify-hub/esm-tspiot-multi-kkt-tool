@@ -100,7 +100,8 @@ namespace EsmTspiot.ServiceProvisioner
                     return right.Manifest.CloneOrdinal.CompareTo(
                         left.Manifest.CloneOrdinal);
                 });
-                StopEveryPairBeforeUninstall(plan, context);
+                IList<RemovalPlanItem> runningBefore =
+                    StopEveryPairBeforeUninstall(plan, context);
                 for (int index = 0; index < plan.Count; index++)
                 {
                     RemovalPlanItem item = plan[index];
@@ -124,6 +125,7 @@ namespace EsmTspiot.ServiceProvisioner
                                 item.Manifest.ManifestSha256);
                     }
                 }
+                RestartSurvivors(runningBefore, results, context);
             }
             return results;
         }
@@ -133,14 +135,18 @@ namespace EsmTspiot.ServiceProvisioner
         // не завершается, а вызов установщика прервать нечем — снятие
         // комплекта встаёт целиком. Поэтому сначала останавливаем все пары
         // и только потом запускаем удаления.
-        private static void StopEveryPairBeforeUninstall(
+        private static IList<RemovalPlanItem> StopEveryPairBeforeUninstall(
             IList<RemovalPlanItem> plan,
             LocalModuleMsiProvisioningContext context)
         {
+            // Кто работал до общей остановки, запоминается здесь: после неё
+            // это уже не узнать, а уцелевший комплект надо вернуть в работу.
+            List<RemovalPlanItem> runningBefore = new List<RemovalPlanItem>();
             for (int index = 0; index < plan.Count; index++)
             {
                 RemovalPlanItem item = plan[index];
                 if (!item.Manifest.CanRemove) continue;
+                if (WasRunning(item, context)) runningBefore.Add(item);
                 try
                 {
                     context.Platform.StopAndVerify(item.Request, item.Manifest);
@@ -149,6 +155,74 @@ namespace EsmTspiot.ServiceProvisioner
                 {
                     // Не сумевшая остановиться пара не должна мешать
                     // остановке остальных: её отказ проявится на своём шаге.
+                }
+            }
+            return runningBefore;
+        }
+
+        // Наблюдение перед остановкой не должно ронять снятие: пара,
+        // состояние которой не читается, просто не попадёт в список
+        // возврата — её отказ проявится на своём шаге.
+        private static bool WasRunning(
+            RemovalPlanItem item,
+            LocalModuleMsiProvisioningContext context)
+        {
+            try
+            {
+                return LocalModuleMsiProvisioner.RequireUnconflicted(
+                    item.Request, item.Manifest, context).Running;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Снятие комплекта начинается с остановки всех пар. Если удаление
+        /// какой-то из них не прошло, она остаётся установленной — и лежащей:
+        /// касса теряет работавший ЛМ из-за чужой ошибки. Пары, пережившие
+        /// снятие, возвращаются в работу.
+        /// </summary>
+        private static void RestartSurvivors(
+            IList<RemovalPlanItem> runningBefore,
+            IList<LocalModuleMsiProvisioningItemResult> results,
+            LocalModuleMsiProvisioningContext context)
+        {
+            for (int index = 0; index < runningBefore.Count; index++)
+            {
+                RemovalPlanItem item = runningBefore[index];
+                if (context.Manifests.Read(item.Manifest.Inn) == null) continue;
+                LocalModuleMsiProvisioningItemResult result =
+                    results[item.OriginalIndex];
+                try
+                {
+                    context.WriteStage(
+                        item.Request,
+                        item.Manifest.OwnershipNonce,
+                        LocalModuleMsiLifecycleStage.CloneCompensation,
+                        null,
+                        false);
+                    context.Platform.StartAndVerify(
+                        item.Request, item.Manifest);
+                    results[item.OriginalIndex] =
+                        LocalModuleMsiProvisioner.Result(
+                            item.Request,
+                            result.Status,
+                            result.Message +
+                                " Уцелевший ЛМ возвращён в работу.",
+                            item.Manifest.ManifestSha256);
+                }
+                catch (Exception exception)
+                {
+                    results[item.OriginalIndex] =
+                        LocalModuleMsiProvisioner.Result(
+                            item.Request,
+                            LmServiceProvisioningStatus.RequiresAttention,
+                            result.Message +
+                                " Уцелевший ЛМ остался остановленным: " +
+                                exception.Message,
+                            item.Manifest.ManifestSha256);
                 }
             }
         }
