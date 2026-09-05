@@ -17,18 +17,22 @@ namespace EsmTspiot.WinForms.Shared
             Assignments = new List<LocalModuleMsiAssignment>();
             Items = new List<LocalModuleMsiInventoryItem>();
             Listeners = new List<TcpListenerSnapshotItem>();
+            InstalledModuleInns = new List<string>();
         }
 
         internal LocalModuleBaseInventory BaseInventory { get; set; }
         internal IList<LocalModuleMsiAssignment> Assignments { get; private set; }
         internal IList<LocalModuleMsiInventoryItem> Items { get; private set; }
         internal IList<TcpListenerSnapshotItem> Listeners { get; private set; }
+        internal IList<string> InstalledModuleInns { get; private set; }
 
         /// <summary>
         /// Назначение плана — ещё не установка: планировщик выдаёт ЛМ каждому
-        /// ИНН, в том числе тому, для кого шаг установки не выполнялся.
-        /// Установленным считается ЛМ, чья запись с тем же ИНН и номером
-        /// клона есть в инвентаре помощника.
+        /// ИНН, в том числе тому, для кого шаг установки не выполнялся. Запись
+        /// инвентаря — тоже не установка: она появляется до вызова MSI и
+        /// переживает удаление продукта средствами Windows. Установленным
+        /// считается ЛМ, чья запись с тем же ИНН и номером клона есть в
+        /// инвентаре и чьи обе вендорские службы стоят в SCM.
         /// </summary>
         internal bool HasInstalledModule(LocalModuleMsiAssignment planned)
         {
@@ -38,7 +42,7 @@ namespace EsmTspiot.WinForms.Shared
                 LocalModuleMsiInventoryItem item = Items[index];
                 if (item.CloneOrdinal == planned.CloneOrdinal &&
                     string.Equals(item.Inn, planned.Inn, StringComparison.Ordinal))
-                    return true;
+                    return InstalledModuleInns.Contains(item.Inn);
             }
             return false;
         }
@@ -49,25 +53,33 @@ namespace EsmTspiot.WinForms.Shared
         private const int VendorApiPort = 5995;
         private const int VendorDatabasePort = 5984;
         private readonly string _inventoryRoot;
+        private readonly Func<string, bool> _serviceExists;
 
-        internal LocalModuleMsiOperatorInventoryReader()
+        internal LocalModuleMsiOperatorInventoryReader(
+            Func<string, bool> serviceExists)
             : this(Path.Combine(
                 Environment.GetFolderPath(
                     Environment.SpecialFolder.CommonApplicationData),
                 "KRS",
                 "MultiKKT",
                 "OperatorInventory",
-                "LocalModuleMsi"))
+                "LocalModuleMsi"),
+                serviceExists)
         {
         }
 
-        internal LocalModuleMsiOperatorInventoryReader(string inventoryRoot)
+        internal LocalModuleMsiOperatorInventoryReader(
+            string inventoryRoot,
+            Func<string, bool> serviceExists)
         {
             if (string.IsNullOrWhiteSpace(inventoryRoot))
                 throw new ArgumentException(
                     "Operator inventory root is required.",
                     "inventoryRoot");
+            if (serviceExists == null)
+                throw new ArgumentNullException("serviceExists");
             _inventoryRoot = Path.GetFullPath(inventoryRoot);
+            _serviceExists = serviceExists;
         }
 
         internal LocalModuleMsiOperatorInventorySnapshot Read()
@@ -75,9 +87,28 @@ namespace EsmTspiot.WinForms.Shared
             LocalModuleMsiOperatorInventorySnapshot result =
                 new LocalModuleMsiOperatorInventorySnapshot();
             ReadItems(result);
+            MarkInstalledModules(result);
             result.BaseInventory = ReadBaseInventory(result.Items);
             ReadListeners(result);
             return result;
+        }
+
+        // Запись инвентаря появляется до установки MSI и переживает удаление
+        // продукта средствами Windows, поэтому сама по себе установку не
+        // доказывает. Установленным ЛМ считается тот, чьи обе вендорские
+        // службы стоят в SCM; их состояние здесь не критерий.
+        private void MarkInstalledModules(
+            LocalModuleMsiOperatorInventorySnapshot result)
+        {
+            for (int index = 0; index < result.Items.Count; index++)
+            {
+                LocalModuleMsiInventoryItem item = result.Items[index];
+                if (_serviceExists(LocalModuleMsiIdentity.ApiServiceName(
+                        item.CloneOrdinal)) &&
+                    _serviceExists(LocalModuleMsiIdentity.DatabaseServiceName(
+                        item.CloneOrdinal)))
+                    result.InstalledModuleInns.Add(item.Inn);
+            }
         }
 
         private void ReadItems(LocalModuleMsiOperatorInventorySnapshot result)
