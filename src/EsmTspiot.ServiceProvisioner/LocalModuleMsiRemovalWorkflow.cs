@@ -146,7 +146,11 @@ namespace EsmTspiot.ServiceProvisioner
             {
                 RemovalPlanItem item = plan[index];
                 if (!item.Manifest.CanRemove) continue;
-                if (WasRunningOrUnknown(item, context)) runningBefore.Add(item);
+                LocalModuleMsiObservedState observed = TryObserve(item, context);
+                // Состояние не прочиталось — пару не трогаем: менять её
+                // наугад нельзя, а отказ проявится на её собственном шаге.
+                if (observed == null) continue;
+                if (observed.Running) runningBefore.Add(item);
                 try
                 {
                     context.Platform.StopAndVerify(item.Request, item.Manifest);
@@ -160,22 +164,22 @@ namespace EsmTspiot.ServiceProvisioner
             return runningBefore;
         }
 
-        // Наблюдение перед остановкой не должно ронять снятие. Но «состояние
-        // не прочиталось» — не «не работала»: остановлена пара будет в любом
-        // случае, а её удаление тот же конфликт затем отклонит — и работавший
-        // ЛМ остался бы лежать. Лишний запуск уцелевшей пары безвреден.
-        private static bool WasRunningOrUnknown(
+        // Здесь нужно фактическое состояние служб, а не пригодность всего
+        // комплекта: конфликт правила сети не делает Running неизвестным.
+        // Через RequireUnconflicted такой конфликт превращался то в «не
+        // работала» (пара оставалась лежать), то в «работала» (намеренно
+        // остановленную пару запускали) — оба ответа выдуманы.
+        private static LocalModuleMsiObservedState TryObserve(
             RemovalPlanItem item,
             LocalModuleMsiProvisioningContext context)
         {
             try
             {
-                return LocalModuleMsiProvisioner.RequireUnconflicted(
-                    item.Request, item.Manifest, context).Running;
+                return context.Platform.Observe(item.Request, item.Manifest);
             }
             catch (Exception)
             {
-                return true;
+                return null;
             }
         }
 
