@@ -127,7 +127,23 @@ namespace EsmTspiot.ServiceProvisioner
                         context.WriteStage(request, ownershipNonce,
                             LocalModuleMsiLifecycleStage.Installing,
                             null, true);
-                        context.Platform.Install(request, manifest);
+                        if (context.Platform.Install(request, manifest))
+                        {
+                            // Установщик поставил продукт и попросил
+                            // перезагрузку: часть файлов появится только
+                            // после неё, поэтому запускать и проверять
+                            // службы сейчас бессмысленно. Снимать при этом
+                            // установленный ЛМ нельзя — до перезагрузки шаг
+                            // просто не завершён.
+                            return Result(request,
+                                LmServiceProvisioningStatus.RequiresAttention,
+                                "Локальный модуль установлен, но установщик " +
+                                "Windows требует перезагрузки: часть файлов " +
+                                "заменится при следующей загрузке. " +
+                                "Перезагрузите кассу и повторите шаг — " +
+                                "установка сохранена.",
+                                manifest.ManifestSha256);
+                        }
                     }
                     observed = RequireUnconflicted(
                         request, manifest, context);

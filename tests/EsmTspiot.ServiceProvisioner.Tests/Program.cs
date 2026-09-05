@@ -171,6 +171,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 ProtectedDirectoryRefusesReparsePathBeforeTouchingIt);
             Run("Directory queued for deletion is not reused by a new install",
                 DirectoryQueuedForDeletionIsNotReusedByANewInstall);
+            Run("Install that demands a reboot keeps the product",
+                InstallThatDemandsARebootKeepsTheProduct);
             Run("Manifest is atomic credential free and projects cleanup state", ManifestIsAtomicCredentialFreeAndProjectsCleanupState);
             Run("Manifest ownership mismatch blocks mutation", ManifestOwnershipMismatchBlocksMutation);
             Run("SCM adapter derives service name internally", ScmAdapterDerivesServiceNameInternally);
@@ -5264,6 +5266,41 @@ namespace EsmTspiot.ServiceProvisioner.Tests
         /// смена прав на подставленной цепочке — это смена прав на чужом
         /// каталоге.
         /// </summary>
+        private static void InstallThatDemandsARebootKeepsTheProduct()
+        {
+            // Установщик Windows ответил 3010: продукт поставлен, часть
+            // файлов заменится при перезагрузке. Раньше это считалось
+            // отказом и уводило свежую установку в TryRollback — утилита
+            // сносила ЛМ, который сама только что поставила.
+            FakeLocalModuleMsiLifecyclePlatform platform =
+                new FakeLocalModuleMsiLifecyclePlatform();
+            FakeLocalModuleMsiRepository repository =
+                new FakeLocalModuleMsiRepository();
+            FakeLocalModuleMsiJournalStore journals =
+                new FakeLocalModuleMsiJournalStore();
+            LocalModuleMsiProvisioningContext context =
+                CreateMsiContext(platform, repository, journals);
+            LocalModuleMsiProvisioner provisioner =
+                new LocalModuleMsiProvisioner();
+            LocalModuleMsiProvisioningItemRequest clone = MsiRequest(
+                "525700335451", 1, 6995, 7984, null);
+            platform.RebootRequiredForInn = clone.Inn;
+
+            LocalModuleMsiProvisioningItemResult result =
+                provisioner.Ensure(clone, context);
+
+            AssertEqual(LmServiceProvisioningStatus.RequiresAttention,
+                result.Status,
+                "Установка с требованием перезагрузки — не отказ и не успех.");
+            AssertContains(result.Message, "перезагруз");
+            AssertTrue(platform.State(clone.Inn).ProductPresent,
+                "Установленный продукт обязан остаться на месте.");
+            AssertFalse(platform.Events.Contains("uninstall:" + clone.Inn),
+                "Требование перезагрузки не повод сносить установку.");
+            AssertTrue(repository.Read(clone.Inn) != null,
+                "Манифест обязан пережить перезагрузку: шаг продолжится после неё.");
+        }
+
         private static void DirectoryQueuedForDeletionIsNotReusedByANewInstall()
         {
             // Снятие занятого клона отдаёт остатки очереди MoveFileEx. Пока
@@ -10112,7 +10149,9 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 return CreateManifest(request, ownershipNonce, true, false);
             }
 
-            public void Install(
+            internal string RebootRequiredForInn { get; set; }
+
+            public bool Install(
                 LocalModuleMsiProvisioningItemRequest request,
                 LocalModuleMsiManifest manifest)
             {
@@ -10140,6 +10179,19 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                         StringComparison.Ordinal))
                     throw new InvalidOperationException(
                         "Simulated post-install failure.");
+                if (string.Equals(
+                        RebootRequiredForInn,
+                        request.Inn,
+                        StringComparison.Ordinal))
+                {
+                    // Коду 3010 соответствует установленный продукт, службы
+                    // которого до перезагрузки могут быть не на месте.
+                    state.ServicesMatch = false;
+                    state.Running = false;
+                    state.Ready = false;
+                    return true;
+                }
+                return false;
             }
 
             public LocalModuleMsiManifest AdoptPreExistingBase(
