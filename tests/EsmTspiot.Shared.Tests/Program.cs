@@ -2542,7 +2542,11 @@ namespace EsmTspiot.Shared.Tests
             AssertContains(partial, "снято 1 из 5");
             AssertContains(partial, "сохранён");
 
-            AssertContains(preserving, "останется установленным");
+            AssertContains(preserving, "останется установленным и запущенным");
+            // Договор удаления называет то, что остаётся: регистрации и
+            // привязки в ЕСМ снятие не трогает, полного возврата машины нет.
+            AssertContains(owned, "Регистрации ККТ и привязки в ЕСМ сохраняются");
+            AssertContains(owned, "не полный возврат машины");
             AssertFalse(owned.IndexOf(
                     "останется установленным",
                     StringComparison.Ordinal) >= 0,
