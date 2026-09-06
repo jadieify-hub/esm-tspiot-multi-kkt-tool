@@ -13,17 +13,16 @@ namespace EsmTspiot.Shared.Services
         LocalModuleEnsure = 1,
         ControllerEnsure = 2,
         EsmBinding = 3,
-        EsmReadback = 4,
         InitializationDeferred = 5
     }
 
     public sealed class LmAutomaticSetupResult
     {
+        public bool FmuApiMode { get; internal set; }
         public bool RegistrationSucceeded { get; internal set; }
         public bool ControllerEnsureSucceeded { get; internal set; }
         public bool LocalModuleEnsureSucceeded { get; internal set; }
         public bool EsmBindingSucceeded { get; internal set; }
-        public bool EsmReadbackSucceeded { get; internal set; }
         public bool InitializationDeferred { get; internal set; }
 
         public bool LocalModuleDeferred
@@ -31,19 +30,17 @@ namespace EsmTspiot.Shared.Services
             get { return !LocalModuleEnsureSucceeded; }
         }
 
-        // The contour counts as complete only when everything the cash desk
-        // relies on after a reboot is confirmed: registration, controllers,
-        // local modules, the ESM binding, and the ESM read-back of that
-        // binding. LM business initialization is a separate deferred step.
+        // FMU mode completes preparation only: registration and local modules.
+        // The standard contour additionally requires controllers and accepted
+        // ESM settings. LM readiness is checked only in manual diagnostics.
         public bool Complete
         {
             get
             {
                 return RegistrationSucceeded &&
-                    ControllerEnsureSucceeded &&
                     LocalModuleEnsureSucceeded &&
-                    EsmBindingSucceeded &&
-                    EsmReadbackSucceeded;
+                    (FmuApiMode || (ControllerEnsureSucceeded &&
+                        EsmBindingSucceeded));
             }
         }
 
@@ -55,12 +52,12 @@ namespace EsmTspiot.Shared.Services
                     return "регистрация ККТ не завершена";
                 if (!LocalModuleEnsureSucceeded)
                     return "ЛМ ЧЗ не установлены или отложены";
+                if (FmuApiMode)
+                    return string.Empty;
                 if (!ControllerEnsureSucceeded)
                     return "не все контроллеры готовы";
                 if (!EsmBindingSucceeded)
-                    return "привязка к ЕСМ не подтверждена";
-                if (!EsmReadbackSucceeded)
-                    return "ЕСМ не подтвердил привязку при контрольном чтении";
+                    return "настройки привязки к ЕСМ не применены";
                 return string.Empty;
             }
         }
@@ -97,9 +94,9 @@ namespace EsmTspiot.Shared.Services
             Func<CancellationToken, Task<bool>> ensureLocalModules,
             Func<CancellationToken, Task<bool>> ensureControllers,
             Func<CancellationToken, Task<bool>> bindEsm,
-            Func<CancellationToken, Task<bool>> readbackEsm,
             Action<LmAutomaticSetupStage> reportStage,
-            CancellationToken cancellation)
+            CancellationToken cancellation,
+            bool fmuApiMode = false)
         {
             if (register == null) throw new ArgumentNullException("register");
             if (ensureLocalModules == null)
@@ -107,9 +104,11 @@ namespace EsmTspiot.Shared.Services
             if (ensureControllers == null)
                 throw new ArgumentNullException("ensureControllers");
             if (bindEsm == null) throw new ArgumentNullException("bindEsm");
-            if (readbackEsm == null) throw new ArgumentNullException("readbackEsm");
 
-            LmAutomaticSetupResult result = new LmAutomaticSetupResult();
+            LmAutomaticSetupResult result = new LmAutomaticSetupResult
+            {
+                FmuApiMode = fmuApiMode
+            };
             Report(reportStage, LmAutomaticSetupStage.Registration);
             cancellation.ThrowIfCancellationRequested();
             result.RegistrationSucceeded = await register(cancellation);
@@ -120,19 +119,24 @@ namespace EsmTspiot.Shared.Services
             result.LocalModuleEnsureSucceeded =
                 await ensureLocalModules(cancellation);
 
-            Report(reportStage, LmAutomaticSetupStage.ControllerEnsure);
-            cancellation.ThrowIfCancellationRequested();
-            result.ControllerEnsureSucceeded =
-                await ensureControllers(cancellation);
+            if (fmuApiMode)
+            {
+                cancellation.ThrowIfCancellationRequested();
+            }
+            else
+            {
+                Report(reportStage, LmAutomaticSetupStage.ControllerEnsure);
+                cancellation.ThrowIfCancellationRequested();
+                result.ControllerEnsureSucceeded =
+                    await ensureControllers(cancellation);
 
-            Report(reportStage, LmAutomaticSetupStage.EsmBinding);
-            cancellation.ThrowIfCancellationRequested();
-            result.EsmBindingSucceeded = await bindEsm(cancellation);
+                Report(reportStage, LmAutomaticSetupStage.EsmBinding);
+                cancellation.ThrowIfCancellationRequested();
+                result.EsmBindingSucceeded = await bindEsm(cancellation);
 
-            Report(reportStage, LmAutomaticSetupStage.EsmReadback);
-            cancellation.ThrowIfCancellationRequested();
-            result.EsmReadbackSucceeded = await readbackEsm(cancellation);
+            }
 
+            cancellation.ThrowIfCancellationRequested();
             Report(reportStage, LmAutomaticSetupStage.InitializationDeferred);
             result.InitializationDeferred = true;
             return result;

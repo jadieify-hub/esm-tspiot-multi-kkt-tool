@@ -29,6 +29,8 @@ namespace EsmTspiot.WinForms.Shared
         private readonly Label _localModuleInstallerStatusLabel = new Label();
         private readonly Label _setupActionHintLabel = new Label();
         private readonly ToolTip _serviceToolTip = new ToolTip();
+        private GroupBox _installerGroup;
+        private Label _installerDescriptionLabel;
         private readonly Dictionary<string, LmGatewayDraft> _serviceDrafts =
             new Dictionary<string, LmGatewayDraft>(StringComparer.Ordinal);
         private readonly List<LmServiceInventoryItem> _serviceInventory =
@@ -75,9 +77,8 @@ namespace EsmTspiot.WinForms.Shared
 
         private Control BuildInstallerPanel()
         {
-            GroupBox group = new GroupBox
+            GroupBox group = _installerGroup = new GroupBox
             {
-                Text = "Независимые контроллеры ЛМ ЧЗ",
                 Dock = DockStyle.Fill,
                 AutoSize = true,
                 Margin = new Padding(0, 0, 0, 6)
@@ -93,11 +94,8 @@ namespace EsmTspiot.WinForms.Shared
             table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
             table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            Label description = new Label
+            Label description = _installerDescriptionLabel = new Label
             {
-                Text = "Используется установленный официальный контроллер ЛМ ЧЗ от ЕСП. " +
-                    "Для каждой ККТ создаётся отдельная служба; ЛМ ЧЗ можно " +
-                    "установить и инициализировать позже.",
                 AutoSize = true,
                 Anchor = AnchorStyles.Left,
                 Margin = new Padding(0, 6, 0, 5)
@@ -117,8 +115,7 @@ namespace EsmTspiot.WinForms.Shared
             };
             _localModuleInstallerStatusLabel.AutoSize = true;
             _localModuleInstallerStatusLabel.Dock = DockStyle.Fill;
-            _localModuleInstallerStatusLabel.Text = "MSI ЛМ ЧЗ не выбран; " +
-                "контроллеры всё равно можно настроить.";
+            _localModuleInstallerStatusLabel.Text = "MSI ЛМ ЧЗ не выбран.";
             ConfigureButton(
                 _installControllerButton,
                 "Настроить контроллеры и ЛМ ЧЗ");
@@ -228,7 +225,9 @@ namespace EsmTspiot.WinForms.Shared
                     }
                     await RunFullAutomaticLocalSetupFromHostAsync(kkts, token);
                 },
-                "Подготовка контроллеров и независимых ЛМ ЧЗ...");
+                FmuApiMode
+                    ? "Подготовка ЛМ ЧЗ для FMU-API..."
+                    : "Подготовка контроллеров и независимых ЛМ ЧЗ...");
         }
 
         public async Task<IList<LmGatewayKkt>>
@@ -273,6 +272,7 @@ namespace EsmTspiot.WinForms.Shared
             return new LmGatewayKkt
             {
                 InstanceId = (source.InstanceId ?? string.Empty).Trim(),
+                RegistrationConfirmed = source.RegistrationConfirmed,
                 KktSerial = (source.KktSerial ?? string.Empty).Trim(),
                 KktInn = (source.KktInn ?? string.Empty).Trim(),
                 FnSerial = (source.FnSerial ?? string.Empty).Trim(),
@@ -394,6 +394,12 @@ namespace EsmTspiot.WinForms.Shared
 
         private void UpdateOfficialControllerStatus()
         {
+            if (FmuApiMode)
+            {
+                _officialControllerStatusLabel.Text = FmuControllerNotApplicable +
+                    " Существующие службы сохраняются.";
+                return;
+            }
             if (!string.IsNullOrEmpty(_serviceInventoryWarning))
             {
                 _officialControllerStatusLabel.Text =
@@ -929,13 +935,25 @@ namespace EsmTspiot.WinForms.Shared
 
         private void UpdateServiceActionState(bool idle, bool hasKkts)
         {
+            _installerGroup.Text = FmuApiMode
+                ? "Подготовка ЛМ ЧЗ для FMU-API"
+                : "Независимые контроллеры ЛМ ЧЗ";
+            _installerDescriptionLabel.Text = FmuApiMode
+                ? "ЛМ ЧЗ устанавливаются по ИНН. Установка и настройка FMU-API, " +
+                    "а также инициализация ЛМ выполняются отдельно."
+                : "Используется установленный официальный контроллер ЛМ ЧЗ от ЕСП. " +
+                    "Для каждой ККТ создаётся отдельная служба; ЛМ ЧЗ можно " +
+                    "установить и инициализировать позже.";
+            _installControllerButton.Text = FmuApiMode
+                ? "Подготовить ЛМ для FMU-API"
+                : "Настроить контроллеры и ЛМ ЧЗ";
             LmServiceInventoryItem selected = GetSelectedInventoryItem();
             bool managed = selected != null && selected.Role == LmServiceRole.Managed;
             LmGatewayBindingSessionRow selectedSession = GetSelectedSessionRow();
             _selectLocalModuleInstallerButton.Enabled = idle;
             _installControllerButton.Enabled = idle && _helperAvailable && hasKkts;
             UpdateManualStageActionState(idle, hasKkts);
-            _bindButton.Enabled = idle && selectedSession != null && managed &&
+            _bindButton.Enabled = idle && !FmuApiMode && selectedSession != null && managed &&
                 selected.IsRunning && selected.IsReady;
             _removeServiceButton.Enabled = idle && managed && _helperAvailable &&
                 selected.Status != LmServiceProvisioningStatus.CleanupPending;
@@ -947,11 +965,15 @@ namespace EsmTspiot.WinForms.Shared
                 ? _helperUnavailableReason
                 : !hasKkts
                     ? "В таблице нет зарегистрированных ККТ."
-                    : "Создать или обновить независимый контроллер для каждой ККТ.";
+                    : FmuApiMode
+                        ? FmuControllerNotApplicable
+                        : "Создать или обновить независимый контроллер для каждой ККТ.";
             _setupActionHintLabel.Text = setupReason;
             _serviceToolTip.SetToolTip(_installControllerButton, setupReason);
             _serviceToolTip.SetToolTip(_bindButton,
-                selectedSession == null
+                FmuApiMode
+                    ? FmuControllerNotApplicable
+                : selectedSession == null
                     ? "Выберите зарегистрированную ККТ."
                     : !managed || !selected.IsRunning || !selected.IsReady
                         ? "Сначала создайте и проверьте локальный комплект выбранной ККТ."
@@ -973,6 +995,11 @@ namespace EsmTspiot.WinForms.Shared
             {
                 _selectionActionHintLabel.Text =
                     "Выберите строку ККТ — здесь появятся доступные действия.";
+            }
+            else if (FmuApiMode && selectedSession != null)
+            {
+                _selectionActionHintLabel.Text = FmuControllerNotApplicable +
+                    " Существующие компоненты удаляются отдельной командой.";
             }
             else if (selected == null)
             {
@@ -1371,7 +1398,7 @@ namespace EsmTspiot.WinForms.Shared
         {
             if (session == null || !session.LastBindingStatus.HasValue)
             {
-                return "Не привязана";
+                return "Не проверялась";
             }
             switch (session.LastBindingStatus.Value)
             {

@@ -10,5 +10,6 @@ namespace EsmTspiot.Shared.Models
         public string SoftPort { get; set; }
         public string DkktPort { get; set; }
         public string ServiceState { get; set; }
+        public bool RegistrationConfirmed { get; set; }
     }
 }

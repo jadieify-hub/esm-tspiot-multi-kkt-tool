@@ -36,6 +36,9 @@ namespace EsmTspiot.WinForms.Shared
         private readonly Button _registerButton = new Button();
         private readonly Button _bulkRegisterButton = new Button();
         private readonly Button _automaticStopButton = new Button();
+        private readonly CheckBox _fmuApiCheckBox = new CheckBox();
+        private readonly Button _configureFrontolButton = new Button();
+        private readonly Button _restoreFrontolButton = new Button();
         private readonly TextBox _automaticLmInstallerTextBox = new TextBox();
         private readonly ToolTip _automaticToolTip = new ToolTip();
         private readonly Button _refreshInstancesButton = new Button();
@@ -68,6 +71,7 @@ namespace EsmTspiot.WinForms.Shared
         private string _lastControlModulePath = string.Empty;
         private bool _fileLogErrorShown;
         private bool _busy;
+        private bool _frontolWriteInProgress;
         private bool _supportDialogOffered;
         private System.Threading.CancellationTokenSource _automaticCancellation;
 
@@ -103,8 +107,14 @@ namespace EsmTspiot.WinForms.Shared
             FillDefaults();
             UpdateAutomaticInstallerSelection();
             Shown += delegate { ConstrainToWorkingArea(); };
-            FormClosing += delegate
+            FormClosing += delegate(object sender, FormClosingEventArgs e)
             {
+                if (_frontolWriteInProgress)
+                {
+                    e.Cancel = true;
+                    _operationStatusLabel.Text = "Дождитесь завершения записи и проверки настроек Frontol.";
+                    return;
+                }
                 if (_automaticCancellation != null)
                 {
                     _automaticCancellation.Cancel();
@@ -535,15 +545,16 @@ namespace EsmTspiot.WinForms.Shared
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
 
             GroupBox group = CreateGroup(
-                "Регистрация ККТ, независимые контроллеры и ЛМ ЧЗ");
+                "Регистрация ККТ и настройка ЛМ ЧЗ");
             TableLayoutPanel commands = new TableLayoutPanel();
             commands.Dock = DockStyle.Fill;
             commands.AutoSize = true;
             commands.ColumnCount = 3;
-            commands.RowCount = 2;
+            commands.RowCount = 3;
             commands.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             commands.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
             commands.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            commands.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             commands.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             commands.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
@@ -581,16 +592,44 @@ namespace EsmTspiot.WinForms.Shared
             hint.Text =
                 "Программа найдёт USB/VCOM ККТ через установленный драйвер АТОЛ, " +
                 "поочерёдно зарегистрирует ККТ в ЕСМ, закроет связь после каждой регистрации, " +
-                "затем предложит создать независимые контроллеры ЛМ ЧЗ, " +
-                "установить по одному ЛМ ЧЗ на ИНН и привязать контроллеры к ЕСМ. " +
-                "Инициализация ЛМ выполняется отдельно и автомат не блокирует. " +
-                "Если кассы удерживает Frontol/«Тест драйвера», программа попросит закрыть его и повторить.";
+                "затем установит по одному ЛМ ЧЗ на ИНН. В обычном режиме также настраиваются " +
+                "контроллеры и их привязка к ЕСМ; в режиме FMU-API эти этапы пропускаются. " +
+                "FMU-API и инициализация ЛМ настраиваются отдельно. " +
+                "Frontol можно настроить отдельной кнопкой после автоматической или ручной регистрации ККТ.";
             hint.Margin = new Padding(0, 5, 0, 0);
+
+            var options = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.TopDown, WrapContents = false };
+            _fmuApiCheckBox.Text = "Использовать FMU-API (без контроллеров ЛМ ЧЗ)";
+            _fmuApiCheckBox.AutoSize = true;
+            _fmuApiCheckBox.Tag = "FmuApiMode";
+            _fmuApiCheckBox.CheckedChanged += delegate
+            {
+                try { _lmGatewayPage.FmuApiMode = _fmuApiCheckBox.Checked; }
+                catch (InvalidOperationException ex)
+                {
+                    _fmuApiCheckBox.Checked = _lmGatewayPage.FmuApiMode;
+                    MessageBox.Show(this, ex.Message, "Режим настройки", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+            };
+            _automaticToolTip.SetToolTip(_fmuApiCheckBox,
+                "Действует и на вкладке «ЛМ ЧЗ». Регистрация ККТ и ЛМ сохраняются. Существующие контроллеры не изменяются.");
+            ConfigureButton(_configureFrontolButton, "Настроить Frontol...", ConfigureFrontolAsync);
+            _configureFrontolButton.Tag = "ConfigureFrontol";
+            _automaticToolTip.SetToolTip(_configureFrontolButton,
+                "Frontol 6.28: заново прочитать базу текущего РМ, проверить ККТ по COM и записать фактические порты ЕСМ.");
+            ConfigureButton(_restoreFrontolButton, "Восстановить настройки Frontol из снимка...", RestoreFrontolAsync);
+            _restoreFrontolButton.Tag = "RestoreFrontol";
+            options.Controls.Add(_fmuApiCheckBox);
+            options.Controls.Add(_configureFrontolButton);
+            options.Controls.Add(_restoreFrontolButton);
 
             commands.Controls.Add(_bulkRegisterButton, 0, 0);
             commands.Controls.Add(_automationStatusLabel, 1, 0);
             commands.Controls.Add(_automaticStopButton, 2, 0);
-            commands.Controls.Add(hint, 0, 1);
+            commands.Controls.Add(options, 0, 1);
+            commands.SetColumnSpan(options, 3);
+            commands.Controls.Add(hint, 0, 2);
             commands.SetColumnSpan(hint, 3);
             group.Controls.Add(commands);
             root.Controls.Add(group, 0, 0);
@@ -1129,6 +1168,7 @@ namespace EsmTspiot.WinForms.Shared
 
         private async Task ConfigureAllKktsAutomaticallyAsync()
         {
+            bool fmuApiMode = _lmGatewayPage.FmuApiMode;
             string baseUrl = (_baseUrlTextBox.Text ?? string.Empty).Trim();
             string dkktPort = (_dkktPortTextBox.Text ?? string.Empty).Trim();
             ValidationResult settingsValidation = TspiotInputValidator.ValidateBulkSettings(baseUrl, dkktPort);
@@ -1163,7 +1203,8 @@ namespace EsmTspiot.WinForms.Shared
             try
             {
                 AppendLog(
-                    "=== Полная автоматическая настройка ККТ, контроллеров и ЛМ ЧЗ ===\r\n");
+                    fmuApiMode ? "=== Подготовка ККТ и ЛМ ЧЗ для FMU-API ===\r\n"
+                    : "=== Полная автоматическая настройка ККТ, контроллеров и ЛМ ЧЗ ===\r\n");
                 System.Threading.CancellationToken token =
                     _automaticCancellation.Token;
                 _automationStatusLabel.Text =
@@ -1373,7 +1414,7 @@ namespace EsmTspiot.WinForms.Shared
                 bool controllersDeferred = true;
                 if (registeredAfter.Count > 0)
                 {
-                    DialogResult controllerChoice = MessageBox.Show(
+                    DialogResult controllerChoice = fmuApiMode ? DialogResult.Yes : MessageBox.Show(
                         this,
                         "Регистрация ККТ завершена. Следующая фаза кратковременно " +
                             "перезапустит службы экземпляров ЕСМ:\r\n\r\n" +
@@ -1396,7 +1437,8 @@ namespace EsmTspiot.WinForms.Shared
                 if (controllersDeferred)
                 {
                     AppendLog(
-                        "Фаза прямых контроллеров отложена оператором; регистрация ККТ сохранена.\r\n");
+                        "Настройка ЛМ ЧЗ" + (fmuApiMode ? "" : " и контроллеров") +
+                        " не выполнялась; регистрация ККТ сохранена.\r\n");
                 }
 
                 bool registrationHasFailures = registrationOutcome.Cancelled ||
@@ -1406,10 +1448,10 @@ namespace EsmTspiot.WinForms.Shared
                     localSetupOutcome.Complete;
                 _automationStatusLabel.Text = !registrationHasFailures &&
                     (controllersDeferred || controllersComplete)
-                    ? "Статус: регистрация завершена"
+                    ? (fmuApiMode && controllersComplete ? "Статус: подготовлено для FMU-API" : "Статус: регистрация завершена")
                     : "Статус: завершено, требуется внимание";
                 string stackSummary = controllersDeferred
-                    ? "Регистрация завершена; настройка контроллеров отложена."
+                    ? "Регистрация завершена; настройка ЛМ ЧЗ" + (fmuApiMode ? "" : " и контроллеров") + " не выполнялась."
                     : localSetupOutcome.FormatSummary();
                 if (!string.IsNullOrWhiteSpace(finalVcomError))
                 {
@@ -1453,6 +1495,155 @@ namespace EsmTspiot.WinForms.Shared
                     _automaticCancellation.Dispose();
                     _automaticCancellation = null;
                 }
+            }
+        }
+
+        private async Task ConfigureFrontolAsync()
+        {
+            TspiotFormInput input = ReadEndpointInput();
+            ValidationResult validation = TspiotInputValidator.ValidateForCheck(input);
+            if (!ShowValidation(validation) || !ConfirmWarnings(validation) ||
+                !ConfirmFrontolClosed()) return;
+
+            System.Threading.CancellationToken token =
+                System.Threading.CancellationToken.None;
+            string baseUrl = input.BaseUrl;
+            AppendLog("=== Настройка Frontol ===\r\n");
+            _operationStatusLabel.Text = "Чтение Frontol.ini и ККТ текущего РМ...";
+            FrontolDatabase database = new FrontolDatabase(
+                FrontolConfiguration.LoadSettings(
+                    FrontolConfiguration.DefaultIniPath));
+            IList<FrontolDevice> devices = await Task.Run(
+                delegate { return database.ReadDevices(token); });
+            if (devices.Count == 0)
+                throw new InvalidOperationException(
+                    "На текущем рабочем месте Frontol не найдены ККТ.");
+            AppendLog("Frontol.ini прочитан. ККТ текущего РМ: " +
+                devices.Count + ".\r\n");
+
+            _operationStatusLabel.Text =
+                "Проверка физических ККТ и регистрации в ЕСМ...";
+            var coordinator = new SequentialKktRegistrationCoordinator(
+                _client,
+                new AtolFptrConnectionProvider());
+            SequentialKktDiscovery discovery =
+                await DiscoverSequentialKktsWithRetryAsync(
+                    coordinator,
+                    baseUrl,
+                    token);
+            if (discovery == null) return;
+            IList<LmGatewayKkt> registered = await _lmGatewayPage
+                .DiscoverRegisteredKktsForAutomaticPlanAsync(baseUrl, token);
+            var identities = new List<KktConnectionIdentity>();
+            foreach (SequentialKktRegistrationTarget target in discovery.Targets)
+                identities.Add(target.Identity);
+            List<FrontolChange> plan = FrontolConfiguration.BuildPlan(
+                devices,
+                identities,
+                registered,
+                baseUrl);
+
+            StringBuilder confirmation = new StringBuilder();
+            confirmation.AppendLine(
+                "Проверены физические ККТ, их регистрация и порты ЕСМ.");
+            confirmation.AppendLine();
+            bool hasChanges = false;
+            foreach (FrontolChange change in plan)
+            {
+                confirmation.Append("• ").Append(change.Device.Name)
+                    .Append(" (").Append(change.ComPort).Append(", № ")
+                    .Append(change.KktSerial).Append("): ");
+                bool changed = !string.Equals(
+                    change.OldHost,
+                    change.NewHost,
+                    StringComparison.Ordinal) || change.OldPort != change.NewPort;
+                if (changed)
+                {
+                    hasChanges = true;
+                    confirmation.Append(change.OldHost ?? "<не задан>")
+                        .Append(":")
+                        .Append(change.OldPort.HasValue
+                            ? change.OldPort.Value.ToString()
+                            : "<не задан>")
+                        .Append(" → ");
+                }
+                confirmation.Append(change.NewHost).Append(":")
+                    .Append(change.NewPort);
+                confirmation.AppendLine(changed ? string.Empty : " (без изменений)");
+            }
+            confirmation.AppendLine();
+            confirmation.Append(hasChanges
+                ? "Записать изменения в Frontol? Прежние значения будут сохранены для отката."
+                : "Изменения не требуются. Повторно проверить значения в базе Frontol?");
+            if (MessageBox.Show(
+                this,
+                confirmation.ToString(),
+                "Настройка Frontol",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+            {
+                AppendLog("Запись настроек Frontol отменена оператором.\r\n\r\n");
+                return;
+            }
+            if (!ConfirmFrontolClosed()) return;
+
+            string backup;
+            _frontolWriteInProgress = true;
+            try { backup = await Task.Run(delegate { return database.Apply(plan, token); }); }
+            finally { _frontolWriteInProgress = false; }
+            foreach (FrontolChange change in plan)
+                AppendLog("Frontol «" + change.Device.Name + "»: " + change.ComPort +
+                    " → " + change.NewHost + ":" + change.NewPort + "\r\n");
+            if (!string.IsNullOrEmpty(backup)) AppendLog("Снимок для отката Frontol: " + backup + "\r\n");
+            string result = "Настройки " + plan.Count + " ККТ проверены в базе. " +
+                (string.IsNullOrEmpty(backup) ? "Изменения не потребовались." :
+                "Прежние значения сохранены для отката. Запустите Frontol заново для применения.");
+            AppendLog(result + "\r\n\r\n");
+            MessageBox.Show(this, result, "Frontol", MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+        }
+
+        private bool ConfirmFrontolClosed()
+        {
+            while (true)
+            {
+                bool open = false;
+                foreach (string name in new[] { "Frontol", "Frontol_Demo", "FrontolAdmin" })
+                {
+                    foreach (Process process in Process.GetProcessesByName(name))
+                    {
+                        using (process) { open = true; }
+                    }
+                }
+                if (!open) return true;
+                if (MessageBox.Show(this,
+                    "Закройте Frontol и Frontol Администратор на время настройки, затем нажмите «Повторить». " +
+                    "Программа не завершает их принудительно.",
+                    "Настройка Frontol", MessageBoxButtons.RetryCancel, MessageBoxIcon.Information,
+                    MessageBoxDefaultButton.Button2) != DialogResult.Retry) return false;
+            }
+        }
+
+        private async Task RestoreFrontolAsync()
+        {
+            using (var picker = new OpenFileDialog { Title = "Снимок настроек Frontol",
+                Filter = "Снимок Frontol (*.json)|*.json", CheckFileExists = true,
+                InitialDirectory = FrontolDatabase.BackupDirectory })
+            {
+                if (picker.ShowDialog(this) != DialogResult.OK) return;
+                if (MessageBox.Show(this,
+                    "Восстановить прежние адреса и порты ЕСМ? Если база, РМ или настройки ККТ изменились после записи, " +
+                    "откат будет отменён целиком.", "Откат настроек Frontol",
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes ||
+                    !ConfirmFrontolClosed()) return;
+                var database = new FrontolDatabase(FrontolConfiguration.LoadSettings(FrontolConfiguration.DefaultIniPath));
+                _frontolWriteInProgress = true;
+                try { await Task.Run(delegate { database.Restore(picker.FileName, System.Threading.CancellationToken.None); }); }
+                finally { _frontolWriteInProgress = false; }
+                AppendLog("Прежние настройки ЕСМ в Frontol восстановлены и проверены. Запустите Frontol заново.\r\n");
+                MessageBox.Show(this, "Настройки восстановлены и проверены в базе. Запустите Frontol заново.",
+                    "Frontol", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
         }
 
@@ -2056,7 +2247,7 @@ namespace EsmTspiot.WinForms.Shared
             message.Append("\r\n\r\n");
             message.Append(stackSummary);
             message.Append(
-                "\r\n\r\nКонтроллеры и порты кассового ПО показаны " +
+                "\r\n\r\nРезультаты настройки и порты кассового ПО показаны " +
                 "на вкладке «ЛМ ЧЗ».");
             return message.ToString();
         }
@@ -2537,6 +2728,7 @@ namespace EsmTspiot.WinForms.Shared
             }
 
             _operationsMenuItem.Enabled = !busy;
+            _fmuApiCheckBox.Enabled = !busy;
             _lmGatewayPage.SetHostBusy(busy);
             UpdateDeleteButtonState();
         }

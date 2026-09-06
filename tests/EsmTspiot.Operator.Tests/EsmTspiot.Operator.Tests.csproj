@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\EsmTspiot.Shared\EsmTspiot.Shared.csproj" />
+    <Compile Include="..\..\src\EsmTspiot.WinForms.Shared\FrontolDatabase.cs" Link="FrontolDatabase.cs" />
     <Compile Include="..\..\src\EsmTspiot.WinForms.Shared\AtolDriverRuntimeLocator.cs" Link="AtolDriverRuntimeLocator.cs" />
     <Compile Include="..\..\src\EsmTspiot.WinForms.Shared\AtolVcomEnumerator.cs" Link="AtolVcomEnumerator.cs" />
     <Compile Include="..\..\src\EsmTspiot.WinForms.Shared\AtolFptrConnectionProvider.cs" Link="AtolFptrConnectionProvider.cs" />

@@ -23,10 +23,10 @@ namespace EsmTspiot.WinForms.Shared
         }
 
         internal DirectControllerSetupOutcome Controllers { get; set; }
+        internal bool FmuApiMode { get; set; }
         internal bool LocalModulesDeferred { get; set; }
         internal int LocalModulesReady { get; set; }
         internal int LocalModulesFailed { get; set; }
-        internal bool EsmReadbackSucceeded { get; set; }
         internal int EsmVerifiedCount { get; set; }
         internal int EsmLocalModulePendingCount { get; set; }
         internal int EsmAttentionCount { get; set; }
@@ -37,22 +37,31 @@ namespace EsmTspiot.WinForms.Shared
 
         internal string FormatSummary()
         {
-            string controllers = Controllers == null
-                ? "контроллеры не запускались."
-                : Controllers.FormatSummary();
             StringBuilder text = new StringBuilder();
+            if (FmuApiMode) text.Append("Подготовка FMU-API. ");
             text.Append("ЛМ готовы: " +
                 LocalModulesReady.ToString(CultureInfo.InvariantCulture) +
                 "; ЛМ отложены/с ошибкой: " +
                 LocalModulesFailed.ToString(CultureInfo.InvariantCulture) +
-                ". " + controllers + " ЕСМ подтвердил привязку: " +
-                EsmVerifiedCount.ToString(CultureInfo.InvariantCulture) +
-                "; ЛМ ждёт инициализации: " +
-                EsmLocalModulePendingCount.ToString(CultureInfo.InvariantCulture) +
-                "; требуется проверка: " +
-                EsmAttentionCount.ToString(CultureInfo.InvariantCulture) + ".");
+                ". ");
+            if (FmuApiMode)
+            {
+                text.Append("Контроллеры, привязка и проверка привязки ЕСМ " +
+                    "не применяются. Установка и настройка FMU-API, " +
+                    "инициализация ЛМ выполняются отдельно.");
+            }
+            else
+            {
+                text.Append((Controllers == null
+                        ? "контроллеры не запускались."
+                        : Controllers.FormatSummary()) +
+                    " Готовность ЛМ по ЕСМ не проверялась; " +
+                    "диагностика доступна отдельной кнопкой.");
+            }
             if (!Complete && !string.IsNullOrEmpty(IncompleteReason))
-                text.Append(" Контур не завершён: " + IncompleteReason + ".");
+                text.Append((FmuApiMode
+                        ? " Подготовка не завершена: "
+                        : " Контур не завершён: ") + IncompleteReason + ".");
             for (int index = 0; index < LocalModuleLines.Count; index++)
                 text.Append("\r\n" + LocalModuleLines[index]);
             for (int index = 0; index < EsmLines.Count; index++)
@@ -270,6 +279,7 @@ namespace EsmTspiot.WinForms.Shared
                 IList<LmGatewayKkt> registeredKkts,
                 CancellationToken cancellation)
         {
+            bool fmuApiMode = FmuApiMode;
             if (registeredKkts == null || registeredKkts.Count == 0)
                 throw new InvalidOperationException(
                     "В ЕСМ нет зарегистрированных ККТ для настройки.");
@@ -283,7 +293,7 @@ namespace EsmTspiot.WinForms.Shared
                     "«Выбрать MSI...» и повторите настройку.");
 
             FullAutomaticLocalSetupOutcome outcome =
-                new FullAutomaticLocalSetupOutcome();
+                new FullAutomaticLocalSetupOutcome { FmuApiMode = fmuApiMode };
             _lastAutomaticLocalModulesReady = 0;
             _lastAutomaticLocalModulesFailed = 0;
             _lastAutomaticLocalModuleLines.Clear();
@@ -328,7 +338,9 @@ namespace EsmTspiot.WinForms.Shared
                                 outcome.LocalModulesFailed,
                                 plan.Assignments.Count);
                             Log("MSI ЛМ ЧЗ не выбран или установка отложена; " +
-                                "регистрация и контроллеры не отменяются.\r\n");
+                                (fmuApiMode
+                                    ? "подготовка FMU-API не завершена.\r\n"
+                                    : "регистрация и контроллеры не отменяются.\r\n"));
                             return false;
                         }
                         return await EnsureMsiLocalModulesAsync(
@@ -360,16 +372,9 @@ namespace EsmTspiot.WinForms.Shared
                         FinalizeDirectControllerOutcome(controllers);
                         return controllers.Complete;
                     },
-                    async delegate(CancellationToken operationCancellation)
-                    {
-                        return await ReadbackContourAsync(
-                            registeredKkts,
-                            controllers,
-                            outcome,
-                            operationCancellation).ConfigureAwait(true);
-                    },
                     ReportFullAutomaticStage,
-                    cancellation).ConfigureAwait(true);
+                    cancellation,
+                    fmuApiMode).ConfigureAwait(true);
 
             // Отложил оператор — это одно, а ЛМ не встал — совсем другое.
             // Раньше любая ошибка ЛМ печаталась как «отложена оператором»,
@@ -378,7 +383,6 @@ namespace EsmTspiot.WinForms.Shared
             outcome.LocalModulesFailed = Math.Max(
                 outcome.LocalModulesFailed,
                 _lastAutomaticLocalModulesFailed);
-            outcome.EsmReadbackSucceeded = coordinated.EsmReadbackSucceeded;
             outcome.Complete = coordinated.Complete;
             outcome.IncompleteReason = coordinated.IncompleteReason;
             for (int index = 0;
@@ -388,18 +392,25 @@ namespace EsmTspiot.WinForms.Shared
             if (outcome.LocalModulesDeferred)
                 outcome.LocalModuleLines.Add(
                     "ЛМ ЧЗ: установка отложена оператором или MSI не выбран; " +
-                    "контур без ЛМ не считается завершённым.");
+                    (fmuApiMode
+                        ? "подготовка без ЛМ не считается завершённой."
+                        : "контур без ЛМ не считается завершённым."));
             else if (outcome.LocalModulesFailed > 0)
                 outcome.LocalModuleLines.Add(
                     "ЛМ ЧЗ: часть модулей не готова; причина указана выше " +
                     "в строке по этому ИНН.");
-            Log("Инициализация ЛМ ЧЗ не блокирует автомат: она выполняется " +
-                "ЛМ отдельно после запуска.\r\n");
-            _statusLabel.Text = outcome.Complete
-                ? "Контур настроен: контроллеры, ЛМ ЧЗ и привязка подтверждены " +
-                    "ЕСМ; инициализация ЛМ выполняется отдельно."
-                : "Настройка завершена частично: " + outcome.IncompleteReason +
-                    ". Проверьте журнал.";
+            Log("Готовность и инициализация ЛМ ЧЗ не проверяются при настройке. " +
+                "Проверка по ЕСМ доступна отдельно на вкладке «ЛМ ЧЗ».\r\n");
+            string completionStatus = outcome.Complete
+                ? fmuApiMode
+                    ? "Подготовка FMU-API завершена: ККТ зарегистрированы, ЛМ ЧЗ готовы. " +
+                        "FMU-API и инициализация ЛМ настраиваются отдельно."
+                    : "Настройка завершена: ЛМ ЧЗ и контроллеры установлены, " +
+                        "параметры привязки применены. Готовность ЛМ проверяется отдельно."
+                : (fmuApiMode ? "Подготовка FMU-API не завершена: "
+                    : "Настройка завершена частично: ") +
+                    outcome.IncompleteReason + ". Проверьте журнал.";
+            _statusLabel.Text = completionStatus;
             Log("=== Итог полного автомата ===\r\n" +
                 outcome.FormatSummary() + "\r\n");
 
@@ -419,6 +430,8 @@ namespace EsmTspiot.WinForms.Shared
                 Log("Таблицу ЛМ ЧЗ не удалось обновить после настройки: " +
                     SensitiveDataMasker.Mask(ex.Message) + Environment.NewLine);
             }
+
+            _statusLabel.Text = completionStatus;
 
             return outcome;
         }
@@ -569,8 +582,6 @@ namespace EsmTspiot.WinForms.Shared
                 _statusLabel.Text = "Установка независимых ЛМ ЧЗ...";
             else if (stage == LmAutomaticSetupStage.EsmBinding)
                 _statusLabel.Text = "Привязка контроллеров к ЕСМ...";
-            else if (stage == LmAutomaticSetupStage.EsmReadback)
-                _statusLabel.Text = "Контрольное чтение настроек ЕСМ...";
             else if (stage == LmAutomaticSetupStage.InitializationDeferred)
                 _statusLabel.Text = "Инициализация ЛМ выполняется отдельно.";
         }
