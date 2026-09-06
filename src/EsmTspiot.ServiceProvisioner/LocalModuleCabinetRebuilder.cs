@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
+using WixToolset.Dtf.Compression;
 using WixToolset.Dtf.Compression.Cab;
 using WixToolset.Dtf.WindowsInstaller;
 
@@ -168,7 +169,9 @@ namespace EsmTspiot.ServiceProvisioner
             {
                 throw new InvalidDataException("MSI cabinet sequence is empty.");
             }
-            new CabInfo(cabinetPath).PackFiles(sourceRoot, members, members);
+            // Для временного MSI на слабой кассе скорость важнее размера CAB.
+            new CabInfo(cabinetPath).PackFiles(
+                sourceRoot, members, members, CompressionLevel.Min, null);
         }
 
         // Число встроенных cab-архивов берётся из самого пакета: вендор может

@@ -31,6 +31,9 @@ namespace EsmTspiot.WinForms.Shared
         private bool _hostBusy;
         private bool _loadingGrid;
         private bool _hasLoaded;
+        private bool _fmuApiMode;
+        private const string FmuControllerNotApplicable =
+            "FMU-API: контроллеры и привязка к ЕСМ не применяются.";
         public LmGatewayPage(
             Func<string> baseUrlProvider,
             ITspiotApiClient apiClient,
@@ -81,6 +84,25 @@ namespace EsmTspiot.WinForms.Shared
         public string AutomaticSetupStatus
         {
             get { return _statusLabel.Text ?? string.Empty; }
+        }
+
+        public bool FmuApiMode
+        {
+            get { return _fmuApiMode; }
+            set
+            {
+                if (_fmuApiMode == value) return;
+                if (_running || _hostBusy)
+                    throw new InvalidOperationException(
+                        "Режим FMU-API нельзя менять во время операции.");
+                _fmuApiMode = value;
+                _hasLoaded = false;
+                UpdateOfficialControllerStatus();
+                FillRows(null);
+                _statusLabel.Text = value
+                    ? FmuControllerNotApplicable + " Установка FMU-API выполняется отдельно."
+                    : "Нажмите «Обновить», чтобы загрузить ККТ и их настройки.";
+            }
         }
 
         public void SetHostBusy(bool busy)
@@ -228,83 +250,28 @@ namespace EsmTspiot.WinForms.Shared
             RefreshServiceInventory();
             await ProbeManagedServicesAsync(cancellationToken);
             MergeServiceDrafts();
-            IList<LmGatewayReadbackObservation> readback =
-                await _readbackWorkflow.ReadAllAsync(
-                    baseUrl,
-                    discovery.Items,
-                    GetExpectedLmTarget,
-                    delegate(int current, int total, string serial)
-                    {
-                        PostToUi(delegate
-                        {
-                            _statusLabel.Text = "Проверка настроек ЕСМ " +
-                                current.ToString() + "/" + total.ToString() +
-                                ": " + serial + "...";
-                        });
-                    },
-                    cancellationToken);
-            cancellationToken.ThrowIfCancellationRequested();
-            _session.ApplyReadback(readback);
+            // Обновление инвентаря не является проверкой готовности ЛМ.
+            // /api/v2/info вызывается отдельной кнопкой диагностики.
             FillRows(null);
             _hasLoaded = true;
-            int verifiedReadback = 0;
-            int unavailableReadback = 0;
-            int attentionReadback = 0;
-            int notConfiguredReadback = 0;
-            int observedReadback = 0;
-            for (int index = 0; index < readback.Count; index++)
-            {
-                LmGatewayReadbackObservation observation = readback[index];
-                if (observation != null && observation.IsAvailable &&
-                    observation.IdentityMatches && observation.HasLmConfiguration &&
-                    LmContourReadbackPolicy.IsLocalModulePending(observation.LmStatus))
-                {
-                    observedReadback++;
-                }
-                else if (observation != null && observation.IsVerified)
-                {
-                    verifiedReadback++;
-                }
-                else if (observation == null || !observation.IsAvailable)
-                {
-                    unavailableReadback++;
-                }
-                else if (!observation.HasLmConfiguration)
-                {
-                    notConfiguredReadback++;
-                }
-                else
-                {
-                    attentionReadback++;
-                }
-            }
             _statusLabel.Text = discovery.Items.Count == 0
                 ? "Зарегистрированные ККТ для настройки не найдены."
-                : "Загружено ККТ: " + discovery.Items.Count.ToString() +
-                    ". Подтверждено ЕСМ: " + verifiedReadback.ToString() +
-                    "; не настроено: " + notConfiguredReadback.ToString() +
-                    "; обнаружено без сверки: " + observedReadback.ToString() +
-                    "; требуется проверка: " + attentionReadback.ToString() +
-                    "; read-back недоступен: " + unavailableReadback.ToString() + ".";
+                : "Загружено ККТ: " + discovery.Items.Count.ToString() + ". " +
+                    (FmuApiMode ? FmuControllerNotApplicable
+                        : "Готовность ЛМ по ЕСМ проверяется отдельно.");
             AppendServiceCapabilityStatus();
 
             StringBuilder log = new StringBuilder();
-            log.AppendLine("=== ККТ, контроллеры и управляемые ЛМ ЧЗ ===");
+            log.AppendLine(FmuApiMode
+                ? "=== ККТ и ЛМ ЧЗ для подготовки FMU-API ==="
+                : "=== ККТ, контроллеры и управляемые ЛМ ЧЗ ===");
             log.AppendLine("Экземпляров в ЕСМ: " + discovery.Items.Count.ToString() + ".");
+            if (FmuApiMode) log.AppendLine(FmuControllerNotApplicable);
             for (int index = 0; index < discovery.Issues.Count; index++)
             {
                 LmGatewayDiscoveryIssue issue = discovery.Issues[index];
                 log.AppendLine("Пропущен экземпляр " + (issue.InstanceId ?? string.Empty) + ": " +
                     (issue.Message ?? string.Empty));
-            }
-            for (int index = 0; index < readback.Count; index++)
-            {
-                LmGatewayReadbackObservation observation = readback[index];
-                if (observation != null)
-                {
-                    log.AppendLine((observation.KktSerial ?? string.Empty) + ": " +
-                        (observation.Details ?? string.Empty));
-                }
             }
             log.AppendLine();
             Log(log.ToString());
@@ -377,13 +344,17 @@ namespace EsmTspiot.WinForms.Shared
                         item.Kkt.KktSerial,
                         item.Kkt.KktInn,
                         item.Kkt.SoftPort ?? string.Empty,
-                        GetLmEndpointText(
-                            item, draft, inventory, managedLm, msiLm),
+                        FmuApiMode && msiLm == null && managedLm == null
+                            ? "Не установлен"
+                            : GetLmEndpointText(
+                                item, draft, inventory, managedLm, msiLm),
                         GetLmStateText(inventory, managedLm, msiLm),
                         GetMsiRoleText(msiLm),
                         msiLm == null ? string.Empty : msiLm.InstallRoot,
                         GetMsiOwnershipText(msiLm),
-                        GetEsmLinkStateText(item));
+                        FmuApiMode
+                            ? "Не применяется (FMU-API)"
+                            : GetEsmLinkStateText(item));
                     LmServiceInventoryItem removable = FindRemovalInventory(
                         removalInventory,
                         item.Kkt.KktSerial);
@@ -391,7 +362,12 @@ namespace EsmTspiot.WinForms.Shared
                         item,
                         removable ?? inventory,
                         item.Kkt.KktInn);
-                    if (item.LastBindingStatus == LmGatewayBindingStatus.BindingVerified)
+                    if (FmuApiMode)
+                    {
+                        _grid.Rows[rowIndex].Cells["EsmLinkState"].Style.ForeColor =
+                            SystemColors.GrayText;
+                    }
+                    else if (item.LastBindingStatus == LmGatewayBindingStatus.BindingVerified)
                     {
                         _grid.Rows[rowIndex].DefaultCellStyle.BackColor = Color.Honeydew;
                     }

@@ -181,6 +181,7 @@ namespace EsmTspiot.WinForms.Shared
                 }
                 LmGatewayBindingPlan bindingPlan =
                     LmGatewayBindingPlanner.Build(discovery, inputs);
+                _session.ReplaceDiscovery(discovery);
                 LmGatewayBindingOutcome binding =
                     await _bindingWorkflow.ExecuteAsync(
                         _baseUrlProvider(),
@@ -199,6 +200,7 @@ namespace EsmTspiot.WinForms.Shared
                                 Log(progress.Diagnostics + Environment.NewLine);
                         },
                         cancellation).ConfigureAwait(true);
+                _session.ApplyOutcome(binding);
                 for (int index = 0; index < binding.Results.Count; index++)
                 {
                     LmGatewayBindingResult result = binding.Results[index];
@@ -213,15 +215,15 @@ namespace EsmTspiot.WinForms.Shared
                     {
                         continue;
                     }
+                    outcome.FailedCount++;
                     if (lmNotReady)
                     {
-                        outcome.WarningCount++;
                         outcome.Messages.Add(
                             "ККТ " + result.KktSerial +
-                            ": контроллер настроен; ЛМ ЧЗ пока не готов (2025/2055)." );
+                            ": контроллер настроен, но ЕСМ отклонил привязку " +
+                            "(2025/2055). После запуска ЛМ повторите «Шаг 3: привязка к ЕСМ».");
                         continue;
                     }
-                    outcome.FailedCount++;
                     outcome.Messages.Add(
                         "ККТ " + result.KktSerial +
                         ": привязка ЕСМ требует проверки: " +
