@@ -107,6 +107,10 @@ function Test-AllowedForbiddenHit {
         return $Hit.Text -match '^\s*if \(!TerminateProcess\(process, 0x4B52534C\)\)\s*$' -or
             $Hit.Text -match '^\s*private static extern bool TerminateProcess\(IntPtr process, uint exitCode\);\s*$'
     }
+    if ($relative -eq "src/EsmTspiot.WinForms.Shared/FrontolDatabase.cs") {
+        # Only the isql child created by this operation, never Frontol or an LM service.
+        return $Hit.Text -match '^\s*process\.Kill\(\);\s*$'
+    }
     return $false
 }
 

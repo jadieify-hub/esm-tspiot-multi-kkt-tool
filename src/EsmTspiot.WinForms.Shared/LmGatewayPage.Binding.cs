@@ -17,7 +17,7 @@ namespace EsmTspiot.WinForms.Shared
 
         private async Task BindSelectedAsync()
         {
-            if (_running || _hostBusy)
+            if (_running || _hostBusy || FmuApiMode)
             {
                 return;
             }
@@ -206,7 +206,7 @@ namespace EsmTspiot.WinForms.Shared
                 case LmGatewayBindingStatus.BindingVerified:
                     return "привязка подтверждена";
                 case LmGatewayBindingStatus.BindingAccepted:
-                    return "запрос принят, требуется проверка";
+                    return "настройки приняты, готовность ЛМ не проверялась";
                 case LmGatewayBindingStatus.BindingObserved:
                     return "настройка обнаружена, требуется сверка";
                 case LmGatewayBindingStatus.Cancelled:

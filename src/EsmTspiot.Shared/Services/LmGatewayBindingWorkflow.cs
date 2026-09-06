@@ -9,41 +9,12 @@ namespace EsmTspiot.Shared.Services
 {
     public sealed class LmGatewayBindingWorkflow
     {
-        private const int VerificationBudgetSeconds = 45;
-        private const int VerificationAttemptSeconds = 5;
-        private const int VerificationRetryDelayMilliseconds = 3000;
-
         private readonly ITspiotApiClient _apiClient;
-        private readonly LmGatewayReadbackWorkflow _readbackWorkflow;
-        private readonly TimeSpan _verificationBudget;
-        private readonly TimeSpan _verificationRetryDelay;
 
         public LmGatewayBindingWorkflow(ITspiotApiClient apiClient)
-            : this(
-                apiClient,
-                TimeSpan.FromSeconds(VerificationBudgetSeconds),
-                TimeSpan.FromMilliseconds(VerificationRetryDelayMilliseconds))
         {
-        }
-
-        /// <summary>
-        /// Бюджет проверки вынесен в конструктор: в поле ждём ЕСМ десятками
-        /// секунд, а тестам ждать реальное время незачем.
-        /// </summary>
-        public LmGatewayBindingWorkflow(
-            ITspiotApiClient apiClient,
-            TimeSpan verificationBudget,
-            TimeSpan verificationRetryDelay)
-        {
-            if (apiClient == null)
-            {
-                throw new ArgumentNullException("apiClient");
-            }
-
+            if (apiClient == null) throw new ArgumentNullException("apiClient");
             _apiClient = apiClient;
-            _readbackWorkflow = new LmGatewayReadbackWorkflow(apiClient);
-            _verificationBudget = verificationBudget;
-            _verificationRetryDelay = verificationRetryDelay;
         }
 
         public async Task<LmGatewayBindingOutcome> ExecuteAsync(
@@ -159,21 +130,10 @@ namespace EsmTspiot.Shared.Services
                         continue;
                     }
 
-                    LmGatewayBindingResult bindingResult;
-                    if (response != null && response.IsSuccess)
-                    {
-                        bindingResult = await VerifyAcceptedBindingAsync(
-                            baseUrl,
-                            item,
-                            progress,
-                            index + 1,
-                            plan.Items.Count,
-                            cancellationToken).ConfigureAwait(false);
-                    }
-                    else
-                    {
-                        bindingResult = BuildTransportResult(item, response);
-                    }
+                    // Запись привязки и готовность ЛМ — разные операции.
+                    // /api/v2/info читается только по запросу диагностики.
+                    LmGatewayBindingResult bindingResult =
+                        BuildTransportResult(item, response);
                     outcome.Results.Add(bindingResult);
                     Report(
                         progress,
@@ -191,203 +151,6 @@ namespace EsmTspiot.Shared.Services
             }
 
             return outcome;
-        }
-
-        /// <summary>
-        /// ЕСМ принимает запрос привязки раньше, чем успевает поднять сессию
-        /// с контроллером и локальным модулем. Одной проверки на четыре
-        /// секунды хватало только уже привязанной ККТ: новая привязка
-        /// объявлялась неподтверждённой, хотя ЕСМ сообщал её через несколько
-        /// секунд. Поэтому проверка повторяется до общего бюджета.
-        /// </summary>
-        private async Task<LmGatewayBindingResult> VerifyAcceptedBindingAsync(
-            string baseUrl,
-            LmGatewayBindingItem item,
-            Action<LmGatewayBindingProgress> progress,
-            int current,
-            int total,
-            CancellationToken cancellationToken)
-        {
-            if (cancellationToken.IsCancellationRequested)
-            {
-                return CreateResult(
-                    item,
-                    LmGatewayBindingStatus.BindingAccepted,
-                    "ЕСМ принял запрос настройки; проверка результата отменена.");
-            }
-
-            DateTime deadline = DateTime.UtcNow.Add(_verificationBudget);
-            LmGatewayReadbackObservation observation = null;
-            int attempt = 0;
-            bool waitedOut = false;
-            while (true)
-            {
-                attempt++;
-                observation = await ReadBindingOnceAsync(
-                    baseUrl,
-                    item,
-                    cancellationToken).ConfigureAwait(false);
-                if (cancellationToken.IsCancellationRequested)
-                {
-                    return CreateResult(
-                        item,
-                        LmGatewayBindingStatus.BindingAccepted,
-                        "ЕСМ принял запрос настройки; проверка результата отменена.");
-                }
-
-                // Ждать нечего, если ЕСМ уже сказал, что ЛМ инициализируется:
-                // инициализация идёт минутами и выполняется не нами. Проверка
-                // идёт раньше подтверждения: привязка при этом уже принята, но
-                // оператору важнее знать, что модуль ещё не готов.
-                if (observation != null && observation.IsAvailable &&
-                    observation.IdentityMatches && observation.HasLmConfiguration &&
-                    LmContourReadbackPolicy.IsLocalModulePending(observation.LmStatus))
-                {
-                    break;
-                }
-
-                if (observation != null && observation.IsVerified)
-                {
-                    return CreateResult(
-                        item,
-                        LmGatewayBindingStatus.BindingVerified,
-                        observation.Details,
-                        observation.InfoResponseBody);
-                }
-
-                if (DateTime.UtcNow >= deadline)
-                {
-                    waitedOut = true;
-                    break;
-                }
-
-                ReportWaitingForBinding(progress, current, total, item, attempt);
-                try
-                {
-                    await Task.Delay(
-                        _verificationRetryDelay,
-                        cancellationToken).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                    return CreateResult(
-                        item,
-                        LmGatewayBindingStatus.BindingAccepted,
-                        "ЕСМ принял запрос настройки; проверка результата отменена.");
-                }
-            }
-
-            // Про ожидание пишем только когда действительно ждали: ранний
-            // выход по состоянию ЛМ не должен выглядеть как исчерпанный бюджет.
-            string waited = waitedOut
-                ? " Проверка повторялась " +
-                    ((int)Math.Round(_verificationBudget.TotalSeconds)).ToString(
-                        CultureInfo.InvariantCulture) +
-                    " с, попыток: " +
-                    attempt.ToString(CultureInfo.InvariantCulture) + "."
-                : string.Empty;
-            if (observation == null)
-            {
-                return CreateResult(
-                    item,
-                    LmGatewayBindingStatus.BindingAccepted,
-                    "ЕСМ принял запрос, но ответ на проверку не пришёл." + waited);
-            }
-
-            if (!observation.IsAvailable)
-            {
-                return CreateResult(
-                    item,
-                    LmGatewayBindingStatus.BindingAccepted,
-                    "ЕСМ принял запрос, но результат не удалось проверить: " +
-                        observation.Details + waited,
-                    observation.InfoResponseBody);
-            }
-
-            if (observation.IdentityMatches && observation.HasLmConfiguration &&
-                LmContourReadbackPolicy.IsLocalModulePending(observation.LmStatus))
-            {
-                return CreateResult(
-                    item,
-                    LmGatewayBindingStatus.BindingObserved,
-                    observation.Details,
-                    observation.InfoResponseBody);
-            }
-
-            if (observation.IsVerified)
-            {
-                return CreateResult(
-                    item,
-                    LmGatewayBindingStatus.BindingVerified,
-                    observation.Details,
-                    observation.InfoResponseBody);
-            }
-
-            return CreateResult(
-                item,
-                LmGatewayBindingStatus.RequiresAttention,
-                observation.Details + waited,
-                observation.InfoResponseBody);
-        }
-
-        private async Task<LmGatewayReadbackObservation> ReadBindingOnceAsync(
-            string baseUrl,
-            LmGatewayBindingItem item,
-            CancellationToken cancellationToken)
-        {
-            using (CancellationTokenSource timeout =
-                CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
-            {
-                TimeSpan attemptBudget =
-                    TimeSpan.FromSeconds(VerificationAttemptSeconds);
-                if (_verificationBudget < attemptBudget)
-                {
-                    attemptBudget = _verificationBudget;
-                }
-
-                timeout.CancelAfter(attemptBudget);
-                try
-                {
-                    return await _readbackWorkflow.ReadAsync(
-                        baseUrl,
-                        item.Kkt,
-                        item.Input.ExpectedLmAddress,
-                        item.Input.ExpectedLmPort,
-                        timeout.Token).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                    return null;
-                }
-            }
-        }
-
-        private static void ReportWaitingForBinding(
-            Action<LmGatewayBindingProgress> progress,
-            int current,
-            int total,
-            LmGatewayBindingItem item,
-            int attempt)
-        {
-            // Оператор смотрит в журнал: без этой строки ожидание выглядит
-            // так же, как зависание.
-            if (progress == null || (attempt != 1 && attempt % 3 != 0))
-            {
-                return;
-            }
-
-            progress(new LmGatewayBindingProgress
-            {
-                Current = current,
-                Total = total,
-                KktSerial = item == null || item.Kkt == null
-                    ? string.Empty
-                    : (item.Kkt.KktSerial ?? string.Empty),
-                Stage = "Ожидание ЕСМ",
-                Message = "ЕСМ принял привязку, но ещё не сообщает её обратно; " +
-                    "проверка повторяется (попытка " +
-                    attempt.ToString(CultureInfo.InvariantCulture) + ")."
-            });
         }
 
         private static LmGatewayBindingResult BuildTransportResult(
@@ -426,15 +189,6 @@ namespace EsmTspiot.Shared.Services
             LmGatewayBindingStatus status,
             string details)
         {
-            return CreateResult(item, status, details, null);
-        }
-
-        private static LmGatewayBindingResult CreateResult(
-            LmGatewayBindingItem item,
-            LmGatewayBindingStatus status,
-            string details,
-            string diagnostics)
-        {
             LmGatewayKkt kkt = item == null ? null : item.Kkt;
             return new LmGatewayBindingResult
             {
@@ -442,10 +196,7 @@ namespace EsmTspiot.Shared.Services
                 KktSerial = kkt == null ? string.Empty : (kkt.KktSerial ?? string.Empty),
                 KktInn = kkt == null ? string.Empty : (kkt.KktInn ?? string.Empty),
                 Status = status,
-                Details = SensitiveDataMasker.Mask(details),
-                Diagnostics = string.IsNullOrWhiteSpace(diagnostics)
-                    ? string.Empty
-                    : "    Ответ /api/v2/info: " + diagnostics
+                Details = SensitiveDataMasker.Mask(details)
             };
         }
 

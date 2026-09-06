@@ -289,6 +289,7 @@ namespace EsmTspiot.Shared.Services
             return new LmGatewayKkt
             {
                 InstanceId = Trim(source.InstanceId),
+                RegistrationConfirmed = source.RegistrationConfirmed,
                 KktSerial = Trim(source.KktSerial),
                 KktInn = Trim(source.KktInn),
                 FnSerial = Trim(source.FnSerial),

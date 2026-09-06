@@ -101,6 +101,7 @@ namespace EsmTspiot.Shared.Services
                     result.Add(new LmGatewayKkt
                     {
                         InstanceId = Trim(source.InstanceId),
+                        RegistrationConfirmed = source.RegistrationConfirmed,
                         KktSerial = serial,
                         KktInn = inn,
                         FnSerial = Trim(source.FnSerial),

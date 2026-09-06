@@ -26,6 +26,25 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
 $assembly = [System.Reflection.Assembly]::LoadFrom($appPath)
+$refreshCheckPath = Join-Path ([IO.Path]::GetTempPath()) (
+    "LmRefreshCheck-" + [Guid]::NewGuid().ToString("N") + ".dll")
+try {
+    $sharedPath = Join-Path (Split-Path -Parent $appPath) "EsmTspiot.Shared.dll"
+    [System.Reflection.Assembly]::LoadFrom($sharedPath) | Out-Null
+    $compiler = Join-Path $env:WINDIR "Microsoft.NET\Framework\v4.0.30319\csc.exe"
+    & $compiler /nologo /target:library /platform:x86 "/out:$refreshCheckPath" `
+        /r:System.Windows.Forms.dll /r:System.Drawing.dll `
+        "/r:$appPath" "/r:$sharedPath" `
+        (Join-Path $repoRoot "tests\WinFormsChecks\LmRefreshCheck.cs")
+    if ($LASTEXITCODE -ne 0) { throw "LM refresh check compilation failed." }
+    [System.Reflection.Assembly]::Load([IO.File]::ReadAllBytes($refreshCheckPath)) | Out-Null
+    [LmRefreshCheck]::Run()
+}
+finally {
+    if (Test-Path -LiteralPath $refreshCheckPath) {
+        Remove-Item -LiteralPath $refreshCheckPath -Force
+    }
+}
 $formType = $assembly.GetType("EsmTspiot.WinForms.Shared.MainForm", $true)
 $flags = [System.Reflection.BindingFlags]::Instance -bor [System.Reflection.BindingFlags]::NonPublic
 $allInstanceFlags = $flags -bor [System.Reflection.BindingFlags]::Public
@@ -108,6 +127,35 @@ $supportDialogCloseTimer = $null
 try {
     $form = [Activator]::CreateInstance($formType)
     $page = Get-PrivateFieldValue -Instance $form -Name "_lmGatewayPage"
+    $fmuOption = Get-PrivateFieldValue -Instance $form -Name "_fmuApiCheckBox"
+    $frontolButton = Get-PrivateFieldValue -Instance $form -Name "_configureFrontolButton"
+    if ($fmuOption.Checked -or $frontolButton -isnot [System.Windows.Forms.Button] -or
+        $frontolButton.Tag -ne "ConfigureFrontol" -or -not $frontolButton.Enabled) {
+        throw "FMU must be opt-in; Frontol must be an independent, available button."
+    }
+    $fmuOption.Checked = $true
+    if (-not $page.FmuApiMode -or -not $frontolButton.Enabled) {
+        throw "FMU option must not prevent standalone Frontol setup."
+    }
+    $fmuOption.Checked = $false
+    $setBusy = $formType.GetMethod("SetBusy", $flags)
+    $setBusy.Invoke($form, @($true)) | Out-Null
+    if ($frontolButton.Enabled) { throw "Frontol must be disabled during another operation." }
+    $setBusy.Invoke($form, @($false)) | Out-Null
+    if (-not $frontolButton.Enabled) { throw "Frontol must be available after manual setup." }
+    $criticalField = $formType.GetField("_frontolWriteInProgress", $flags)
+    $criticalField.SetValue($form, $true)
+    try {
+        $closingArgs = New-Object System.Windows.Forms.FormClosingEventArgs(
+            [System.Windows.Forms.CloseReason]::UserClosing, $false)
+        $formType.GetMethod("OnFormClosing", $flags).Invoke($form, @($closingArgs.PSObject.BaseObject)) | Out-Null
+        if (-not $closingArgs.Cancel) {
+            throw "Closing must wait for the Frontol COMMIT and its readback."
+        }
+    }
+    finally {
+        $criticalField.SetValue($form, $false)
+    }
     $clearMethod = $page.GetType().GetMethod(
         "ClearLocalModuleInstallerSelection",
         $flags)
@@ -867,15 +915,6 @@ try {
     if ($emptyLmState -ne $controllerOnlyState) {
         throw "The LM state must use one unambiguous not-created label."
     }
-    $esmStateFormatter = $page.GetType().GetMethod(
-        "GetEsmLinkStateText", $staticFlags)
-    $expectedUnboundState = Get-Utf8Text(
-        "0J3QtSDQv9GA0LjQstGP0LfQsNC90LA=")
-    $unboundStateArguments = New-Object object[] 1
-    if ($esmStateFormatter.Invoke($null, $unboundStateArguments) -ne
-            $expectedUnboundState) {
-        throw "A KKT without binding evidence must be labelled as not bound."
-    }
     $batchMatcher = $page.GetType().GetMethod(
         "RemovalBatchStillMatches",
         $staticFlags)
@@ -1003,6 +1042,13 @@ try {
     if ($automaticStopButton.Right -gt $automaticCommands.ClientSize.Width) {
         throw "Automatic-mode stop button overflows the normal page width."
     }
+    foreach ($option in @($fmuOption, $frontolButton,
+        (Get-PrivateFieldValue -Instance $form -Name "_restoreFrontolButton"))) {
+        if ($option.Right -gt $option.Parent.ClientSize.Width -or
+            $option.Bottom -gt $option.Parent.ClientSize.Height) {
+            throw "FMU/Frontol option overflows the automatic page."
+        }
+    }
 
     if ($null -eq $localModulePathBox.Parent -or
         $null -eq $selectLocalModuleButton.Parent) {
@@ -1035,7 +1081,7 @@ try {
         @{ Field = "_ensureLocalModulesButton"; Tag = "EnsureLocalModules"; Text = "0KjQsNCzIDE6INCb0Jwg0KfQlw==" },
         @{ Field = "_ensureControllersButton"; Tag = "EnsureControllers"; Text = "0KjQsNCzIDI6INC60L7QvdGC0YDQvtC70LvQtdGA0Ys=" },
         @{ Field = "_bindAllEsmButton"; Tag = "BindReadyEsm"; Text = "0KjQsNCzIDM6INC/0YDQuNCy0Y/Qt9C60LAg0Log0JXQodCc" },
-        @{ Field = "_readbackEsmButton"; Tag = "ReadbackEsm"; Text = "0KjQsNCzIDQ6INC/0YDQvtCy0LXRgNC40YLRjCDQv9C+INCV0KHQnA==" })
+        @{ Field = "_readbackEsmButton"; Tag = "ReadbackEsm"; Text = "0JTQuNCw0LPQvdC+0YHRgtC40LrQsCDQv9C+INCV0KHQnA==" })
     foreach ($manualStage in $manualStageActions) {
         $manualStageButton = Get-PrivateFieldValue -Instance $page -Name $manualStage.Field
         if ($null -eq $manualStageButton.Parent) {
@@ -1098,7 +1144,8 @@ try {
     }
     if ([regex]::Matches(
             $mainFormSource,
-            'MessageBoxButtons\.YesNo,\s*MessageBoxIcon\.Warning,\s*MessageBoxDefaultButton\.Button2').Count -ne 4) {
+            'MessageBoxButtons\.YesNo,\s*MessageBoxIcon\.Warning,\s*MessageBoxDefaultButton\.Button2').Count -ne
+        [regex]::Matches($mainFormSource, 'MessageBoxButtons\.YesNo,\s*MessageBoxIcon\.Warning').Count) {
         throw "Every destructive or warning Yes/No prompt must default to No."
     }
     if ($directControllersSource -notmatch '(?s)EnsureDirectControllersFromHostAsync\(.*?for \(int index = 0; index < provisioned\.Items\.Count; index\+\+\).*?ReadyAssignments\[item\.KktSerial\] = assignment' -or

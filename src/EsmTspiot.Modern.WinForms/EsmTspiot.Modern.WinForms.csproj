@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\EsmTspiot.Shared\EsmTspiot.Shared.csproj" />
+    <Compile Include="..\EsmTspiot.WinForms.Shared\FrontolDatabase.cs" Link="FrontolDatabase.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\Program.cs" Link="Program.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\AssemblyInfo.cs" Link="Properties\AssemblyInfo.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\MainForm.cs" Link="MainForm.cs" />

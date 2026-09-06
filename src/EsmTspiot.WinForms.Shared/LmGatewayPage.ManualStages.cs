@@ -68,7 +68,7 @@ namespace EsmTspiot.WinForms.Shared
             {
                 await RunManualStageAsync(ManualContourStage.Binding);
             };
-            ConfigureButton(_readbackEsmButton, "Шаг 4: проверить по ЕСМ");
+            ConfigureButton(_readbackEsmButton, "Диагностика по ЕСМ");
             _readbackEsmButton.Tag = "ReadbackEsm";
             _readbackEsmButton.Click += async delegate
             {
@@ -85,10 +85,10 @@ namespace EsmTspiot.WinForms.Shared
         private void UpdateManualStageActionState(bool idle, bool hasKkts)
         {
             bool mutation = idle && _helperAvailable && hasKkts;
-            _ensureControllersButton.Enabled = mutation;
+            _ensureControllersButton.Enabled = mutation && !FmuApiMode;
             _ensureLocalModulesButton.Enabled = mutation;
-            _bindAllEsmButton.Enabled = idle && hasKkts;
-            _readbackEsmButton.Enabled = idle && hasKkts;
+            _bindAllEsmButton.Enabled = idle && hasKkts && !FmuApiMode;
+            _readbackEsmButton.Enabled = idle && hasKkts && !FmuApiMode;
             string unavailable = !_helperAvailable
                 ? _helperUnavailableReason
                 : !hasKkts
@@ -96,21 +96,22 @@ namespace EsmTspiot.WinForms.Shared
                     : null;
             _serviceToolTip.SetToolTip(
                 _ensureControllersButton,
-                unavailable ?? "Создать или проверить независимый контроллер " +
-                    "для каждой ККТ; подтверждение UAC.");
+                FmuApiMode ? FmuControllerNotApplicable :
+                    unavailable ?? "Создать или проверить независимый контроллер " +
+                        "для каждой ККТ; подтверждение UAC.");
             _serviceToolTip.SetToolTip(
                 _ensureLocalModulesButton,
                 unavailable ?? "Установить или проверить ЛМ ЧЗ для каждого ИНН " +
                     "из выбранного MSI; автозапуск включается; подтверждение UAC.");
             _serviceToolTip.SetToolTip(
                 _bindAllEsmButton,
-                hasKkts
+                FmuApiMode ? FmuControllerNotApplicable : hasKkts
                     ? "Передать ЕСМ адрес уже созданного контроллера каждой ККТ; " +
                         "контроллеры не пересоздаются, UAC не требуется."
                     : "В таблице нет зарегистрированных ККТ.");
             _serviceToolTip.SetToolTip(
                 _readbackEsmButton,
-                hasKkts
+                FmuApiMode ? FmuControllerNotApplicable : hasKkts
                     ? "Прочитать /api/v2/info каждой ККТ и сверить с планом " +
                         "контура; без UAC."
                     : "В таблице нет зарегистрированных ККТ.");
@@ -118,6 +119,11 @@ namespace EsmTspiot.WinForms.Shared
 
         private async Task RunManualStageAsync(ManualContourStage stage)
         {
+            if (FmuApiMode && stage != ManualContourStage.LocalModules)
+            {
+                _statusLabel.Text = FmuControllerNotApplicable;
+                return;
+            }
             await RunOperationAsync(
                 async delegate(CancellationToken cancellation)
                 {
@@ -318,7 +324,7 @@ namespace EsmTspiot.WinForms.Shared
                 modulesMissing++;
                 Log("ККТ " + kkt.KktSerial + ": ЛМ ЧЗ для ИНН " + kkt.KktInn +
                     " не установлен — сверять контур нечем; выполните " +
-                    "«Шаг 3: ЛМ ЧЗ».\r\n");
+                    "«Шаг 1: ЛМ ЧЗ».\r\n");
             }
             FullAutomaticLocalSetupOutcome outcome =
                 new FullAutomaticLocalSetupOutcome();
@@ -416,6 +422,8 @@ namespace EsmTspiot.WinForms.Shared
                         });
                     },
                     cancellation).ConfigureAwait(true);
+            _session.ApplyReadback(readback);
+            FillRows(null);
             bool acceptable = readback.Count == kkts.Count;
             for (int index = 0; index < readback.Count; index++)
             {
