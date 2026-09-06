@@ -42,10 +42,8 @@ namespace EsmTspiot.Shared.Tests
             Run("Error 1013 is decoded as manual service recovery", Error1013IsDecodedAsManualServiceRecovery);
             Run("Error 1026 explains multiple INN limitation", Error1026ExplainsMultipleInnLimitation);
             Run("Unknown HTTP error shows the service response body", UnknownHttpErrorShowsServiceResponseBody);
-            Run("LM binding waits until ESM reports the binding", LmBindingWorkflowWaitsUntilEsmReportsTheBinding);
-            Run("LM binding diagnostics carry the info response", LmBindingDiagnosticsCarryTheInfoResponse);
+            Run("LM readback diagnostics carry the info response", LmReadbackDiagnosticsCarryTheInfoResponse);
             Run("LM readback treats an initializing module as pending", LmReadbackTreatsInitializingModuleAsPending);
-            Run("LM binding accepts while the local module initializes", LmBindingAcceptsWhileLocalModuleInitializes);
             Run("Service recovery command uses KKT serial and ports", ServiceRecoveryCommandUsesKktSerialAndPorts);
             Run("Service recovery command recreates service with wrong ports", ServiceRecoveryCommandRecreatesServiceWithWrongPorts);
             Run("Service recovery command writes diagnostics", ServiceRecoveryCommandWritesDiagnostics);
@@ -148,9 +146,9 @@ namespace EsmTspiot.Shared.Tests
             Run("LM binding session can select all KKT for full automatic setup", LmBindingSessionCanSelectAllForAutomaticSetup);
             Run("LM binding session masks outcome details", LmBindingSessionMasksOutcomeDetails);
             Run("LM binding workflow sends items sequentially", LmBindingWorkflowSendsItemsSequentially);
-            Run("LM binding workflow verifies accepted settings through info", LmBindingWorkflowVerifiesAcceptedSettingsThroughInfo);
-            Run("LM binding workflow keeps accepted when info is unavailable", LmBindingWorkflowKeepsAcceptedWhenInfoIsUnavailable);
-            Run("LM binding workflow flags an info mismatch", LmBindingWorkflowFlagsInfoMismatch);
+            Run("LM binding does not poll readiness after accepted settings", LmBindingDoesNotPollReadinessAfterAcceptedSettings);
+            Run("LM manual readback verifies target settings", LmManualReadbackVerifiesTargetSettings);
+            Run("LM manual readback accepts the ESM default port report", LmManualReadbackAcceptsEsmDefaultPortReport);
             Run("LM binding workflow skips invalid item and continues", LmBindingWorkflowSkipsInvalidItemAndContinues);
             Run("LM binding workflow marks lost response for attention", LmBindingWorkflowMarksLostResponseForAttention);
             Run("LM binding workflow does not retry permanent HTTP error", LmBindingWorkflowDoesNotRetryPermanentHttpError);
@@ -159,7 +157,7 @@ namespace EsmTspiot.Shared.Tests
             Run("API client preserves an injected timeout", ApiClientPreservesInjectedTimeout);
             Run("Canonical hasher validates SHA-256 syntax", CanonicalHasherValidatesSha256Syntax);
             Run("Instruction selector uses the newest file time", InstructionSelectorUsesNewestFileTime);
-            Run("Instruction selector falls back to the field guide", InstructionSelectorFallsBackToFieldGuide);
+            Run("Instruction selector prefers the bundled guide and keeps the fallback", InstructionSelectorPrefersBundledGuide);
             Run("KKT service states are localized for operators", KktServiceStatesAreLocalizedForOperators);
             Run("Unknown KKT service state remains diagnosable", UnknownKktServiceStateRemainsDiagnosable);
             Run("Deletion planner allows primary KKT with stronger confirmation", DeletionPlannerAllowsPrimaryKktWithStrongerConfirmation);
@@ -226,7 +224,10 @@ namespace EsmTspiot.Shared.Tests
 #if !NETFRAMEWORK
             Run("Full automatic setup keeps LM initialization deferred", FullAutomaticSetupKeepsLmInitializationDeferred);
             Run("Full automatic setup does not stop after LM failure", FullAutomaticSetupDoesNotStopAfterLmFailure);
-            Run("Full automatic setup reads back ESM after binding", FullAutomaticSetupReadsBackEsmAfterBinding);
+            Run("Full automatic setup ends after applying settings", FullAutomaticSetupEndsAfterApplyingSettings);
+            Run("FMU preparation skips controller and ESM binding stages", FmuPreparationSkipsControllerAndBindingStages);
+            Run("FMU preparation requires registration and local modules", FmuPreparationRequiresRegistrationAndLocalModules);
+            Run("FMU preparation honors cancellation after local modules", FmuPreparationHonorsCancellationAfterLocalModules);
             Run("LM contour read-back policy classifies ESM observations", LmContourReadbackPolicyClassifiesEsmObservations);
 #endif
             Run("LM automatic setup reports incomplete controller configuration", LmAutomaticSetupReportsIncompleteControllerConfiguration);
@@ -479,35 +480,6 @@ namespace EsmTspiot.Shared.Tests
             AssertContains(message, "несколько ИНН");
             AssertContains(message, "автоматическую настройку");
             AssertContains(message, "только с кассами одного ИНН");
-        }
-
-        /// <summary>
-        /// Проверка привязки в поле ждёт ЕСМ десятками секунд. Тестам ждать
-        /// реальное время незачем, поэтому бюджет укорочен.
-        /// </summary>
-        private static LmGatewayBindingWorkflow NewFastBindingWorkflow(
-            ITspiotApiClient api)
-        {
-            return new LmGatewayBindingWorkflow(
-                api,
-                TimeSpan.FromMilliseconds(600),
-                TimeSpan.FromMilliseconds(50));
-        }
-
-        /// <summary>
-        /// Для проверок самого опроса бюджет должен быть заведомо больше его
-        /// стоимости: на холодном net48-раннере CI первая попытка вместе с JIT
-        /// съедала все 600 мс, опрос обрывался после одной итерации, и тест
-        /// падал не по существу. Бюджет здесь — верхняя граница, а не время
-        /// прогона: тест завершается, как только ЕСМ сообщает привязку.
-        /// </summary>
-        private static LmGatewayBindingWorkflow NewPollingBindingWorkflow(
-            ITspiotApiClient api)
-        {
-            return new LmGatewayBindingWorkflow(
-                api,
-                TimeSpan.FromSeconds(30),
-                TimeSpan.FromMilliseconds(1));
         }
 
         private static void UnknownHttpErrorShowsServiceResponseBody()
@@ -1434,9 +1406,9 @@ namespace EsmTspiot.Shared.Tests
             api.InstancesResponse = Success(
                 "{\"instances\":[" +
                 "{\"id\":\"00105700000002\",\"port\":50402,\"softPort\":51402,\"dkktPort\":4041,\"serviceState\":\"RUNNING\"}," +
-                "{\"id\":\"00105700000001\",\"port\":50401,\"softPort\":51401,\"dkktPort\":4041,\"serviceState\":\"STOPPED\"}]}");
+                "{\"id\":\"00105700000001\",\"port\":50401,\"softPort\":0,\"dkktPort\":4041,\"serviceState\":\"STOPPED\"}]}");
             api.InstanceResponses.Enqueue(Success(
-                "{\"clientPort\":51402,\"regData\":{\"kktSerial\":\"00105700000002\"," +
+                "{\"state\":\"Registered\",\"clientPort\":51402,\"regData\":{\"kktSerial\":\"00105700000002\"," +
                 "\"fnSerial\":\"7300000000000002\",\"kktInn\":\"1234567894\"}}"));
             api.InstanceResponses.Enqueue(Success(
                 "{\"clientPort\":51401,\"regData\":{\"kktSerial\":\"00105700000001\"," +
@@ -1454,7 +1426,10 @@ namespace EsmTspiot.Shared.Tests
             AssertEqual("51402", discovery.Items[0].SoftPort, "Expected ESM soft port.");
             AssertEqual("4041", discovery.Items[0].DkktPort, "Expected ESM dkkt port.");
             AssertEqual("RUNNING", discovery.Items[0].ServiceState, "Expected ESM service state.");
+            AssertTrue(discovery.Items[0].RegistrationConfirmed, "Registration must be confirmed by ESM state, not only regData.");
+            AssertFalse(discovery.Items[1].RegistrationConfirmed, "Missing ESM state must not confirm registration for Frontol.");
             AssertEqual("00105700000001", discovery.Items[1].InstanceId, "Expected stable second item.");
+            AssertEqual("51401", discovery.Items[1].SoftPort, "Use the confirmed clientPort when the primary instance list reports softPort=0.");
             AssertEqual("7707083893", discovery.Items[1].KktInn, "Expected a different second INN.");
             AssertEqual(0, discovery.Issues.Count, "Expected no issues for valid details.");
         }
@@ -3313,7 +3288,7 @@ namespace EsmTspiot.Shared.Tests
             {
                 events.Add("put:" + api.LmGatewayCalls[callNumber - 1].Id);
             };
-            LmGatewayBindingWorkflow workflow = NewFastBindingWorkflow(api);
+            LmGatewayBindingWorkflow workflow = new LmGatewayBindingWorkflow(api);
 
             LmGatewayBindingOutcome outcome = workflow.ExecuteAsync(
                 "http://127.0.0.1:51077",
@@ -3337,63 +3312,62 @@ namespace EsmTspiot.Shared.Tests
             AssertEqual(LmGatewayBindingStatus.BindingAccepted, outcome.Results[1].Status, "Expected accepted second binding.");
         }
 
-        private static void LmBindingWorkflowVerifiesAcceptedSettingsThroughInfo()
+        private static void LmBindingDoesNotPollReadinessAfterAcceptedSettings()
+        {
+            FakeTspiotApiClient api = new FakeTspiotApiClient();
+            // Реальный инцидент: последний ЛМ ещё стартует, INN в API2 пустой.
+            api.LmInfoResponses.Enqueue(Success(
+                "{\"kktSerial\":\"00105700000002\",\"kktInn\":\"\"," +
+                "\"lm\":{\"version\":\"2.6.1-7\",\"status\":\"not_configured\"," +
+                "\"ip\":\"127.0.0.1\",\"port\":5995}}"));
+            LmGatewayBindingOutcome outcome = new LmGatewayBindingWorkflow(api).ExecuteAsync(
+                "http://127.0.0.1:51077", CreateValidLmBindingPlan(2),
+                delegate { return new LmGatewayCredentials { Login = "operator", Password = "test-password" }; },
+                null, CancellationToken.None).GetAwaiter().GetResult();
+
+            AssertEqual(2, api.LmGatewayCalls.Count, "Both controller addresses must be sent to ESM.");
+            AssertEqual(0, api.LmInfoCalls, "Writing settings must not poll LM readiness.");
+            AssertEqual(2, outcome.Results.Count, "Each KKT must retain its configuration result.");
+            AssertEqual(LmGatewayBindingStatus.BindingAccepted, outcome.Results[0].Status,
+                "An accepted write must complete without asserting business readiness.");
+            AssertEqual(LmGatewayBindingStatus.BindingAccepted, outcome.Results[1].Status,
+                "The last KKT must not depend on LM startup timing.");
+        }
+
+        private static void LmManualReadbackVerifiesTargetSettings()
         {
             FakeTspiotApiClient api = new FakeTspiotApiClient();
             api.LmInfoResponses.Enqueue(Success(CreateLmInfoJson(
                 "00105700000001", "1234567894", "127.0.0.1", 5995)));
-            LmGatewayBindingWorkflow workflow = NewFastBindingWorkflow(api);
+            LmGatewayBindingItem item = CreateValidLmBindingPlan(1).Items[0];
+            LmGatewayReadbackObservation observation =
+                new LmGatewayReadbackWorkflow(api).ReadAsync(
+                    "http://127.0.0.1:51077", item.Kkt,
+                    item.Input.ExpectedLmAddress, item.Input.ExpectedLmPort,
+                    CancellationToken.None).GetAwaiter().GetResult();
 
-            LmGatewayBindingOutcome outcome = workflow.ExecuteAsync(
-                "http://127.0.0.1:51077",
-                CreateValidLmBindingPlan(1),
-                delegate { return new LmGatewayCredentials { Login = "operator", Password = "test-password" }; },
-                null,
-                CancellationToken.None).Result;
-
-            AssertEqual(1, api.LmInfoCalls, "A successful PUT must be followed by one documented readback.");
-            AssertEqual(LmGatewayBindingStatus.BindingVerified, outcome.Results[0].Status,
-                "Matching KKT identity and target LM endpoint must be verified.");
-            AssertContains(outcome.Results[0].Details, "127.0.0.1:5995");
+            AssertEqual(1, api.LmInfoCalls, "Explicit diagnostics must read the current ESM response.");
+            AssertTrue(observation.IsVerified, "Matching identity and settings must remain verifiable.");
+            AssertContains(observation.Details, "127.0.0.1:5995");
         }
 
-        private static void LmBindingWorkflowKeepsAcceptedWhenInfoIsUnavailable()
-        {
-            FakeTspiotApiClient api = new FakeTspiotApiClient();
-            api.LmInfoResponses.Enqueue(ConnectionFailure());
-            LmGatewayBindingWorkflow workflow = NewFastBindingWorkflow(api);
 
-            LmGatewayBindingOutcome outcome = workflow.ExecuteAsync(
-                "http://127.0.0.1:51077",
-                CreateValidLmBindingPlan(1),
-                delegate { return new LmGatewayCredentials { Login = "operator", Password = "test-password" }; },
-                null,
-                CancellationToken.None).Result;
-
-            AssertEqual(LmGatewayBindingStatus.BindingAccepted, outcome.Results[0].Status,
-                "An unavailable optional readback must not turn a successful PUT into a failure.");
-            AssertContains(outcome.Results[0].Details, "не удалось проверить");
-        }
-
-        private static void LmBindingWorkflowFlagsInfoMismatch()
+        private static void LmManualReadbackAcceptsEsmDefaultPortReport()
         {
             FakeTspiotApiClient api = new FakeTspiotApiClient();
             api.LmInfoResponses.Enqueue(Success(CreateLmInfoJson(
                 "00105700000001", "1234567894", "127.0.0.1", 6995)));
-            LmGatewayBindingWorkflow workflow = NewFastBindingWorkflow(api);
+            LmGatewayBindingItem item = CreateValidLmBindingPlan(1).Items[0];
+            LmGatewayReadbackObservation observation =
+                new LmGatewayReadbackWorkflow(api).ReadAsync(
+                    "http://127.0.0.1:51077", item.Kkt,
+                    item.Input.ExpectedLmAddress, item.Input.ExpectedLmPort,
+                    CancellationToken.None).GetAwaiter().GetResult();
 
-            LmGatewayBindingOutcome outcome = workflow.ExecuteAsync(
-                "http://127.0.0.1:51077",
-                CreateValidLmBindingPlan(1),
-                delegate { return new LmGatewayCredentials { Login = "operator", Password = "test-password" }; },
-                null,
-                CancellationToken.None).Result;
-
-            AssertEqual(LmGatewayBindingStatus.BindingVerified, outcome.Results[0].Status,
-                "ESM answers lm.ip/lm.port with its default module, so a differing " +
-                "address cannot deny a binding ESM itself reports as ready.");
-            AssertContains(outcome.Results[0].Details, "6995");
-            AssertContains(outcome.Results[0].Details, "по умолчанию");
+            AssertTrue(observation.IsVerified,
+                "ESM's default LM port report must not deny an otherwise healthy binding.");
+            AssertContains(observation.Details, "6995");
+            AssertContains(observation.Details, "по умолчанию");
         }
 
         private static string CreateLmInfoJson(
@@ -3407,53 +3381,22 @@ namespace EsmTspiot.Shared.Tests
                 "\",\"port\":" + port.ToString() + ",\"login\":\"operator\",\"pass\":\"secret\"}}";
         }
 
-        private static void LmBindingWorkflowWaitsUntilEsmReportsTheBinding()
-        {
-            // Поле: ЕСМ принимает привязку, а сообщает её обратно только
-            // через несколько секунд. Одна проверка сразу после запроса
-            // объявляла новую привязку неподтверждённой.
-            FakeTspiotApiClient api = new FakeTspiotApiClient();
-            api.LmInfoResponses.Enqueue(Success(CreateLmInfoWithoutLocalModuleJson(
-                "00105700000001", "1234567894")));
-            api.LmInfoResponses.Enqueue(Success(CreateLmInfoWithoutLocalModuleJson(
-                "00105700000001", "1234567894")));
-            api.LmInfoResponses.Enqueue(Success(CreateLmInfoJson(
-                "00105700000001", "1234567894", "127.0.0.1", 5995)));
-            LmGatewayBindingWorkflow workflow = NewPollingBindingWorkflow(api);
 
-            LmGatewayBindingOutcome outcome = workflow.ExecuteAsync(
-                "http://127.0.0.1:51077",
-                CreateValidLmBindingPlan(1),
-                delegate { return new LmGatewayCredentials { Login = "operator", Password = "test-password" }; },
-                null,
-                CancellationToken.None).Result;
-
-            AssertEqual(3, api.LmInfoCalls,
-                "Expected the verification to poll until ESM reports the binding.");
-            AssertEqual(LmGatewayBindingStatus.BindingVerified, outcome.Results[0].Status,
-                "A binding reported a few seconds later must still be verified.");
-        }
-
-        private static void LmBindingDiagnosticsCarryTheInfoResponse()
+        private static void LmReadbackDiagnosticsCarryTheInfoResponse()
         {
             FakeTspiotApiClient api = new FakeTspiotApiClient();
             api.LmInfoResponses.Enqueue(Success(CreateLmInfoWithoutLocalModuleJson(
                 "00105700000001", "1234567894")));
-            LmGatewayBindingWorkflow workflow = NewFastBindingWorkflow(api);
+            LmGatewayBindingItem item = CreateValidLmBindingPlan(1).Items[0];
+            LmGatewayReadbackObservation observation =
+                new LmGatewayReadbackWorkflow(api).ReadAsync(
+                    "http://127.0.0.1:51077", item.Kkt,
+                    item.Input.ExpectedLmAddress, item.Input.ExpectedLmPort,
+                    CancellationToken.None).GetAwaiter().GetResult();
 
-            LmGatewayBindingOutcome outcome = workflow.ExecuteAsync(
-                "http://127.0.0.1:51077",
-                CreateValidLmBindingPlan(1),
-                delegate { return new LmGatewayCredentials { Login = "operator", Password = "test-password" }; },
-                null,
-                CancellationToken.None).Result;
-
-            AssertEqual(LmGatewayBindingStatus.RequiresAttention, outcome.Results[0].Status,
-                "A missing LM configuration must still require attention after the wait.");
-            AssertContains(outcome.Results[0].Diagnostics, "/api/v2/info");
-            AssertContains(outcome.Results[0].Diagnostics, "00105700000001");
-            AssertFalse(
-                outcome.Results[0].Details.Contains("kktSerial"),
+            AssertFalse(observation.HasLmConfiguration, "Manual diagnostics must still show missing LM settings.");
+            AssertContains(observation.InfoResponseBody, "00105700000001");
+            AssertFalse(observation.Details.Contains("kktSerial"),
                 "The raw response must stay out of the decision text.");
         }
 
@@ -3509,27 +3452,6 @@ namespace EsmTspiot.Shared.Tests
                 "ЛМ ЧЗ пока не работает");
         }
 
-        private static void LmBindingAcceptsWhileLocalModuleInitializes()
-        {
-            FakeTspiotApiClient api = new FakeTspiotApiClient();
-            api.LmInfoResponses.Enqueue(Success(
-                "{\"kktSerial\":\"00105700000001\",\"kktInn\":\"1234567894\"," +
-                "\"lm\":{\"version\":\"2.6.1-7\",\"status\":\"initialization\"," +
-                "\"ip\":\"127.0.0.1\",\"port\":7995}}"));
-            LmGatewayBindingWorkflow workflow = NewFastBindingWorkflow(api);
-
-            LmGatewayBindingOutcome outcome = workflow.ExecuteAsync(
-                "http://127.0.0.1:51077",
-                CreateValidLmBindingPlan(1),
-                delegate { return new LmGatewayCredentials { Login = "operator", Password = "test-password" }; },
-                null,
-                CancellationToken.None).Result;
-
-            AssertEqual(LmGatewayBindingStatus.BindingObserved, outcome.Results[0].Status,
-                "A binding whose LM is still initializing must not require attention.");
-            AssertEqual(1, api.LmInfoCalls,
-                "Waiting out the budget is pointless once ESM reports initialization.");
-        }
 
         private static void LmBindingWorkflowSkipsInvalidItemAndContinues()
         {
@@ -3543,7 +3465,7 @@ namespace EsmTspiot.Shared.Tests
             };
             LmGatewayBindingPlan plan = LmGatewayBindingPlanner.Build(discovery, inputs);
             List<string> credentialCalls = new List<string>();
-            LmGatewayBindingWorkflow workflow = NewFastBindingWorkflow(api);
+            LmGatewayBindingWorkflow workflow = new LmGatewayBindingWorkflow(api);
 
             LmGatewayBindingOutcome outcome = workflow.ExecuteAsync(
                 "http://127.0.0.1:51077",
@@ -3567,7 +3489,7 @@ namespace EsmTspiot.Shared.Tests
         {
             FakeTspiotApiClient api = new FakeTspiotApiClient();
             api.LmGatewayResponses.Enqueue(ConnectionFailure());
-            LmGatewayBindingWorkflow workflow = NewFastBindingWorkflow(api);
+            LmGatewayBindingWorkflow workflow = new LmGatewayBindingWorkflow(api);
 
             LmGatewayBindingOutcome outcome = workflow.ExecuteAsync(
                 "http://127.0.0.1:51077",
@@ -3585,7 +3507,7 @@ namespace EsmTspiot.Shared.Tests
         {
             FakeTspiotApiClient api = new FakeTspiotApiClient();
             api.LmGatewayResponses.Enqueue(Failure(400, "{\"error\":\"invalid settings\"}"));
-            LmGatewayBindingWorkflow workflow = NewFastBindingWorkflow(api);
+            LmGatewayBindingWorkflow workflow = new LmGatewayBindingWorkflow(api);
 
             LmGatewayBindingOutcome outcome = workflow.ExecuteAsync(
                 "http://127.0.0.1:51077",
@@ -3611,7 +3533,7 @@ namespace EsmTspiot.Shared.Tests
                 }
             };
             int credentialCalls = 0;
-            LmGatewayBindingWorkflow workflow = NewFastBindingWorkflow(api);
+            LmGatewayBindingWorkflow workflow = new LmGatewayBindingWorkflow(api);
 
             LmGatewayBindingOutcome outcome = workflow.ExecuteAsync(
                 "http://127.0.0.1:51077",
@@ -3646,7 +3568,7 @@ namespace EsmTspiot.Shared.Tests
                 DecodedMessage = "password=" + password
             });
             List<LmGatewayBindingProgress> progressItems = new List<LmGatewayBindingProgress>();
-            LmGatewayBindingWorkflow workflow = NewFastBindingWorkflow(api);
+            LmGatewayBindingWorkflow workflow = new LmGatewayBindingWorkflow(api);
 
             LmGatewayBindingOutcome outcome = workflow.ExecuteAsync(
                 "http://127.0.0.1:51077",
@@ -3748,7 +3670,7 @@ namespace EsmTspiot.Shared.Tests
                 "A missing fingerprint must be rejected.");
         }
 
-        private static void InstructionSelectorFallsBackToFieldGuide()
+        private static void InstructionSelectorPrefersBundledGuide()
         {
             string directory = Path.Combine(
                 Path.GetTempPath(),
@@ -3761,6 +3683,12 @@ namespace EsmTspiot.Shared.Tests
 
                 AssertEqual(guide, InstructionFileSelector.SelectAvailable(directory),
                     "The compact package field guide must keep the Help command usable.");
+
+                string instruction = Path.Combine(directory, "INSTRUCTION_FOR_DUMMIES.txt");
+                File.WriteAllText(instruction, "current operator guide");
+                File.WriteAllText(Path.Combine(directory, "Instruction-MultiKKT-v11.pdf"), "old PDF");
+                AssertEqual(instruction, InstructionFileSelector.SelectAvailable(directory),
+                    "Help must open the bundled operator guide, not an old PDF or field checklist.");
             }
             finally
             {
@@ -5559,18 +5487,16 @@ namespace EsmTspiot.Shared.Tests
                 delegate { return Task.FromResult(true); },
                 delegate { return Task.FromResult(true); },
                 delegate { return Task.FromResult(true); },
-                delegate { return Task.FromResult(true); },
                 delegate(LmAutomaticSetupStage stage) { stages.Add(stage); },
                 CancellationToken.None).GetAwaiter().GetResult();
 
             AssertTrue(result.Complete,
-                "Registration, controllers, local modules, ESM binding and " +
-                "read-back must complete the run.");
+                "Registration, controllers, local modules and ESM settings complete installation.");
             AssertEqual(string.Empty, result.IncompleteReason,
                 "A complete contour must not report a missing stage.");
             AssertTrue(result.InitializationDeferred,
                 "LM initialization must remain an explicit deferred state.");
-            AssertEqual(6, stages.Count,
+            AssertEqual(5, stages.Count,
                 "The operator must see every full-automatic stage.");
             AssertEqual(LmAutomaticSetupStage.Registration, stages[0],
                 "Registration must remain the first stage.");
@@ -5580,9 +5506,7 @@ namespace EsmTspiot.Shared.Tests
                 "Controllers must start after their local modules listen.");
             AssertEqual(LmAutomaticSetupStage.EsmBinding, stages[3],
                 "ESM binding must run after provisioning attempts.");
-            AssertEqual(LmAutomaticSetupStage.EsmReadback, stages[4],
-                "The ESM read-back must follow binding.");
-            AssertEqual(LmAutomaticSetupStage.InitializationDeferred, stages[5],
+            AssertEqual(LmAutomaticSetupStage.InitializationDeferred, stages[4],
                 "Initialization must be reported without being executed.");
         }
 
@@ -5601,7 +5525,6 @@ namespace EsmTspiot.Shared.Tests
                     bindingCalled = true;
                     return Task.FromResult(true);
                 },
-                delegate { return Task.FromResult(true); },
                 null,
                 CancellationToken.None).GetAwaiter().GetResult();
 
@@ -5617,49 +5540,122 @@ namespace EsmTspiot.Shared.Tests
                 "The incomplete reason must name the missing local modules.");
         }
 
-        private static void FullAutomaticSetupReadsBackEsmAfterBinding()
+        private static void FullAutomaticSetupEndsAfterApplyingSettings()
         {
-            LmAutomaticSetupCoordinator coordinator =
-                new LmAutomaticSetupCoordinator();
             List<string> order = new List<string>();
-
-            LmAutomaticSetupResult unconfirmed = coordinator.ExecuteFullAsync(
+            LmAutomaticSetupCoordinator coordinator = new LmAutomaticSetupCoordinator();
+            LmAutomaticSetupResult result = coordinator.ExecuteFullAsync(
                 delegate { order.Add("register"); return Task.FromResult(true); },
                 delegate { order.Add("local-modules"); return Task.FromResult(true); },
                 delegate { order.Add("controllers"); return Task.FromResult(true); },
                 delegate { order.Add("bind"); return Task.FromResult(true); },
-                delegate { order.Add("readback"); return Task.FromResult(false); },
-                null,
-                CancellationToken.None).GetAwaiter().GetResult();
+                null, CancellationToken.None).GetAwaiter().GetResult();
 
-            AssertEqual(5, order.Count, "Every contour stage must run exactly once.");
-            AssertEqual("local-modules", order[1],
-                "The LM must be installed before its controller starts.");
-            AssertEqual("controllers", order[2],
-                "Controllers follow the local modules they connect to.");
-            AssertEqual("bind", order[3], "ESM binding must precede the read-back.");
-            AssertEqual("readback", order[4], "The ESM read-back must run after binding.");
-            AssertTrue(unconfirmed.EsmBindingSucceeded,
-                "The binding result must be preserved when the read-back fails.");
-            AssertFalse(unconfirmed.EsmReadbackSucceeded,
-                "A failed read-back must be recorded.");
-            AssertFalse(unconfirmed.Complete,
-                "An unconfirmed binding must leave the contour incomplete.");
-            AssertTrue(unconfirmed.IncompleteReason.IndexOf("ЕСМ", StringComparison.Ordinal) >= 0,
-                "The incomplete reason must point at the ESM read-back.");
+            AssertEqual("register,local-modules,controllers,bind", string.Join(",", order),
+                "Installation must end after writing settings; LM diagnostics is separate.");
+            AssertTrue(result.Complete, "Applied settings must complete installation.");
+            AssertEqual(string.Empty, result.IncompleteReason, "No readiness requirement remains.");
 
-            LmAutomaticSetupResult confirmed = coordinator.ExecuteFullAsync(
-                delegate { return Task.FromResult(true); },
-                delegate { return Task.FromResult(true); },
-                delegate { return Task.FromResult(true); },
-                delegate { return Task.FromResult(true); },
-                delegate { return Task.FromResult(true); },
-                null,
-                CancellationToken.None).GetAwaiter().GetResult();
-            AssertTrue(confirmed.Complete,
-                "A confirmed read-back completes the contour.");
-            AssertEqual(string.Empty, confirmed.IncompleteReason,
-                "A complete contour has no missing stage.");
+            foreach (bool controllerFailed in new[] { true, false })
+            {
+                LmAutomaticSetupResult failed = coordinator.ExecuteFullAsync(
+                    delegate { return Task.FromResult(true); },
+                    delegate { return Task.FromResult(true); },
+                    delegate { return Task.FromResult(!controllerFailed); },
+                    delegate { return Task.FromResult(controllerFailed); },
+                    null, CancellationToken.None).GetAwaiter().GetResult();
+                AssertFalse(failed.Complete, "A real controller or ESM write failure must still fail installation.");
+                AssertContains(failed.IncompleteReason, controllerFailed ? "контроллеры" : "ЕСМ");
+            }
+        }
+
+        private static void FmuPreparationSkipsControllerAndBindingStages()
+        {
+            List<string> calls = new List<string>();
+            List<LmAutomaticSetupStage> stages = new List<LmAutomaticSetupStage>();
+            LmAutomaticSetupResult result = new LmAutomaticSetupCoordinator()
+                .ExecuteFullAsync(
+                    delegate { calls.Add("register"); return Task.FromResult(true); },
+                    delegate { calls.Add("local-modules"); return Task.FromResult(true); },
+                    delegate { calls.Add("controllers"); return Task.FromResult(false); },
+                    delegate { calls.Add("bind"); return Task.FromResult(false); },
+                    delegate(LmAutomaticSetupStage stage) { stages.Add(stage); },
+                    CancellationToken.None,
+                    fmuApiMode: true).GetAwaiter().GetResult();
+
+            AssertEqual("register,local-modules", string.Join(",", calls),
+                "FMU preparation must never create controllers or touch ESM binding.");
+            AssertTrue(result.Complete,
+                "Registration and local modules complete FMU preparation.");
+            AssertEqual(string.Empty, result.IncompleteReason,
+                "Skipped controller stages must not become missing prerequisites.");
+            AssertFalse(result.ControllerEnsureSucceeded || result.EsmBindingSucceeded,
+                "Skipped stages must not pretend to have succeeded.");
+            AssertTrue(result.InitializationDeferred,
+                "FMU preparation must leave LM initialization separate.");
+            AssertEqual(3, stages.Count, "Only applicable stages must be reported.");
+            AssertEqual(LmAutomaticSetupStage.Registration, stages[0],
+                "Registration comes first.");
+            AssertEqual(LmAutomaticSetupStage.LocalModuleEnsure, stages[1],
+                "Local modules follow registration.");
+            AssertEqual(LmAutomaticSetupStage.InitializationDeferred, stages[2],
+                "The final stage must preserve deferred initialization.");
+        }
+
+        private static void FmuPreparationRequiresRegistrationAndLocalModules()
+        {
+            foreach (bool registrationSucceeded in new[] { false, true })
+            {
+                int moduleCalls = 0;
+                int controllerCalls = 0;
+                LmAutomaticSetupResult result = new LmAutomaticSetupCoordinator()
+                    .ExecuteFullAsync(
+                        delegate { return Task.FromResult(registrationSucceeded); },
+                        delegate { moduleCalls++; return Task.FromResult(false); },
+                        delegate { controllerCalls++; return Task.FromResult(true); },
+                        delegate { controllerCalls++; return Task.FromResult(true); },
+                        null,
+                        CancellationToken.None,
+                        fmuApiMode: true).GetAwaiter().GetResult();
+
+                AssertFalse(result.Complete,
+                    "A failed prerequisite must leave FMU preparation incomplete.");
+                AssertEqual(registrationSucceeded ? 1 : 0, moduleCalls,
+                    "Local modules must run only after successful registration.");
+                AssertEqual(0, controllerCalls,
+                    "Failure must not fall back to controller setup or binding.");
+                AssertContains(result.IncompleteReason,
+                    registrationSucceeded ? "ЛМ" : "регистрация");
+            }
+        }
+
+        private static void FmuPreparationHonorsCancellationAfterLocalModules()
+        {
+            using (CancellationTokenSource cancellation = new CancellationTokenSource())
+            {
+                bool cancelled = false;
+                try
+                {
+                    new LmAutomaticSetupCoordinator().ExecuteFullAsync(
+                        delegate { return Task.FromResult(true); },
+                        delegate
+                        {
+                            cancellation.Cancel();
+                            return Task.FromResult(true);
+                        },
+                        delegate { return Task.FromResult(true); },
+                        delegate { return Task.FromResult(true); },
+                        null,
+                        cancellation.Token,
+                        fmuApiMode: true).GetAwaiter().GetResult();
+                }
+                catch (OperationCanceledException)
+                {
+                    cancelled = true;
+                }
+                AssertTrue(cancelled,
+                    "A cancelled preparation must not report completion after LM setup.");
+            }
         }
 
         private static void LmContourReadbackPolicyClassifiesEsmObservations()

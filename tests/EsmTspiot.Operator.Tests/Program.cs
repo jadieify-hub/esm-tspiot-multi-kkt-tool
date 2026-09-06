@@ -11,13 +11,22 @@ namespace EsmTspiot.Operator.Tests
     {
         private static int _failed;
 
-        private static int Main()
+        private static int Main(string[] args)
         {
+            if (args.Length == 1 && args[0] == "--frontol-rollback-check")
+            {
+                Run("Installed Firebird applies atomically and rolls test changes back", FrontolTests.CheckLocalTransaction);
+                return _failed == 0 ? 0 : 1;
+            }
             Run("PE architecture accepts only the current process machine", PeArchitectureAcceptsOnlyCurrentMachine);
             Run("ATOL runtime locator skips incompatible installations", RuntimeLocatorSkipsIncompatibleInstallation);
             Run("ATOL VCOM enumeration keeps MI_00 and numeric order", VcomEnumerationKeepsMi00AndNumericOrder);
             Run("ATOL provider uses exact COM and releases a normal lease", ProviderUsesExactComAndReleasesNormalLease);
             Run("ATOL provider closes and destroys after identity failure", ProviderCleansUpAfterIdentityFailure);
+            Run("Frontol reads the cashier INI and COM settings", FrontolTests.ReadsCashierSettings);
+            Run("Frontol uses confirmed API v1 client ports", FrontolTests.UsesConfirmedApi1ClientPorts);
+            Run("Frontol maps physical serials to software ports", FrontolTests.MapsSoftwarePorts);
+            Run("Frontol rejects ambiguous or missing KKT matches", FrontolTests.RejectsUnsafeMatches);
 
             if (_failed != 0)
             {

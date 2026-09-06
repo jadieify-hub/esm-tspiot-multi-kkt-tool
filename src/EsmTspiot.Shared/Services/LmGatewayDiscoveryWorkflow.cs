@@ -82,14 +82,20 @@ namespace EsmTspiot.Shared.Services
                     continue;
                 }
 
+                string softPort = (instance.SoftPort ?? string.Empty).Trim();
+                int portNumber;
+                if (!int.TryParse(softPort, out portNumber) || portNumber < 1 || portNumber > 65535)
+                    softPort = (details.ClientPort ?? string.Empty).Trim();
+
                 discovery.Items.Add(new LmGatewayKkt
                 {
                     InstanceId = instanceId,
+                    RegistrationConfirmed = details.IsRegistered,
                     KktSerial = kktSerial,
                     KktInn = (registration.KktInn ?? string.Empty).Trim(),
                     FnSerial = (registration.FnSerial ?? string.Empty).Trim(),
                     Port = (instance.Port ?? string.Empty).Trim(),
-                    SoftPort = (instance.SoftPort ?? string.Empty).Trim(),
+                    SoftPort = softPort,
                     DkktPort = (instance.DkktPort ?? string.Empty).Trim(),
                     ServiceState = (instance.ServiceState ?? string.Empty).Trim()
                 });

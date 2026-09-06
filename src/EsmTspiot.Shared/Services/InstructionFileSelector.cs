@@ -13,6 +13,12 @@ namespace EsmTspiot.Shared.Services
                 return string.Empty;
             }
 
+            string bundledGuide = Path.Combine(directory, "INSTRUCTION_FOR_DUMMIES.txt");
+            if (File.Exists(bundledGuide))
+            {
+                return bundledGuide;
+            }
+
             string[] files = Directory.GetFiles(directory, "Instruction-MultiKKT*.pdf");
             if (files.Length == 0)
             {

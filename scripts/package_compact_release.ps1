@@ -92,6 +92,8 @@ Assert-ChildPath $releaseRoot $zipPath
 Assert-ChildPath $releaseRoot $outerSumsPath
 Copy-RequiredFile $sourceShared (Join-Path $stageRoot "EsmTspiot.Shared.dll")
 Copy-RequiredFile $fieldGuide (Join-Path $stageRoot "FIELD_TEST.md")
+Copy-RequiredFile (Join-Path $repositoryRoot "INSTRUCTION_FOR_DUMMIES.md") (Join-Path $stageRoot "INSTRUCTION_FOR_DUMMIES.txt")
+Copy-RequiredFile (Join-Path $repositoryRoot "LICENSE") (Join-Path $stageRoot "LICENSE.txt")
 
 $helperClosure = @(
     Get-Item -LiteralPath $sourceHelper
@@ -119,21 +121,45 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $readme = @"
-Multi-KKT for ESM/TS PIOT - compact package, version $productVersion
+Мульти-ККТ в ЕСМ/ТС ПИоТ — компактная поставка, версия $productVersion
 
-Publisher and owner: KRS
-Author: Ruslan Kerusov
+Разработчик: Руслан Керусов
+Издатель и владелец: KRS
 
-1. Verify the SHA-256 checksums before use.
-2. Extract the complete archive to any local folder (Downloads, Desktop, a USB stick) and run it from there. Keep EsmTspiot.Shared.dll and the Provisioner folder next to the executable; a lone EXE does not start. There is no installer and nothing is copied into system folders.
-3. Before every Windows-service operation the application checks that all helper files are present, that their SHA-256 match the values embedded in the main executable and that the versions match. The application requests administrator rights at startup: it configures Windows services, installs the LM CHZ MSI and edits firewall rules, and without those rights it fails midway. Confirm the single UAC prompt when the application starts; service operations then need no further prompt.
-4. Install the official ESM LM Controller (any current vendor build) before controller setup and keep the official CRPT LM CHZ installer at hand. Vendor binaries are discovered and verified in their installed or original locations; they are not included in this archive.
-5. This archive contains no ESP/CHZ vendor binaries, extracted runtime, credentials, LM CHZ database or managed Erlang runtime.
-6. Before a real installation, follow FIELD_TEST.md.
-7. Registration, controllers and LM CHZ are independent stages. A controller, LM or binding failure never rolls back a KKT that ESM has already registered. LM CHZ instances are installed from the operator-supplied official MSI, one per INN with automatic start; the contour is reported complete only after ESM confirms every binding. LM business initialization is intentionally left to ESM or the operator.
-8. Provisioner contains unmodified WiX Toolset DTF 4.0.6 libraries licensed under the Microsoft Reciprocal License (MS-RL). See THIRD-PARTY-NOTICES.txt.
+Начало работы
+1. Нужны Windows, .NET Framework 4.8 и права администратора.
+2. Проверьте SHA-256 ZIP по опубликованному рядом файлу контрольных сумм.
+3. Распакуйте архив целиком в локальную папку и запустите MultiKKT-ESM-TSPioT.exe.
+   EsmTspiot.Shared.dll и папка Provisioner должны лежать рядом с EXE.
+   Подтвердите единственный запрос UAC при запуске.
+4. Откройте INSTRUCTION_FOR_DUMMIES.txt: это пошаговое руководство оператора.
+   В программе оно доступно через Справка -> Инструкция.
+   FIELD_TEST.md — отдельный чек-лист для подготовленного физического стенда.
 
-Run: MultiKKT-ESM-TSPioT.exe
+Обновление
+Закройте MultiKKT и распакуйте новый ZIP целиком в отдельную папку.
+Не смешивайте EXE, DLL и Provisioner от разных версий. Сама замена утилиты
+не переустанавливает ЕСМ/ЛМ и не удаляет созданные службы.
+
+Важно
+- Для обоих режимов нужны ЕСМ/ТС ПИоТ и официальный MSI ЛМ ЧЗ от ЦРПТ.
+  Для обычного режима также нужен штатно установленный ЕСП Контроллер ЛМ ЧЗ.
+- Режим FMU-API пропускает контроллеры, но не ЕСМ или ЛМ ЧЗ.
+  Сам FMU-API и бизнес-инициализация ЛМ настраиваются отдельно.
+- Настройка завершается после установки и принятия настроек ЕСМ.
+  Ожидания готовности ЛМ в конце нет; диагностика запускается отдельно.
+- Настроить Frontol можно отдельной кнопкой после ручной или автоматической
+  настройки. Закройте Frontol и администратор, сделайте резервную копию базы.
+  Источник — кассовый Frontol.ini; меняются только адрес и порт ЕСМ.
+  Используется isql.exe штатного Firebird. После записи перезапустите Frontol.
+- В ZIP нет Firebird, FMU-API, вендорного MSI, Erlang runtime или данных клиента.
+  Пересборка клона использует быстрое минимальное сжатие с проверкой содержимого.
+- Новые сценарии перед использованием у клиента проверяйте на физическом стенде.
+
+LICENSE.txt — условия использования программы.
+THIRD-PARTY-NOTICES.txt — сведения о включённых библиотеках WiX DTF 4.0.6.
+SHA256SUMS — контрольные суммы файлов внутри архива.
+Официальные сборки: https://github.com/jadieify-hub/esm-tspiot-multi-kkt-tool/releases
 "@
 [IO.File]::WriteAllText((Join-Path $stageRoot "README.txt"), $readme, [Text.UTF8Encoding]::new($true))
 
@@ -171,6 +197,8 @@ if ($forbiddenStage.Count -gt 0) {
 $expectedExact = @(
     "EsmTspiot.Shared.dll",
     "FIELD_TEST.md",
+    "INSTRUCTION_FOR_DUMMIES.txt",
+    "LICENSE.txt",
     "MultiKKT-ESM-TSPioT.exe",
     "README.txt",
     "THIRD-PARTY-NOTICES.txt"
