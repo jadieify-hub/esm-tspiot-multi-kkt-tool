@@ -17,6 +17,7 @@ if ([IntPtr]::Size -ne 4) {
 }
 
 $stage = [IO.Path]::GetFullPath($StageRoot).TrimEnd('\')
+$repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..')).TrimEnd('\')
 $mainPath = Join-Path $stage 'MultiKKT-ESM-TSPioT.exe'
 $helperPath = Join-Path $stage 'Provisioner\EsmTspiot.ServiceProvisioner.exe'
 
@@ -24,6 +25,19 @@ foreach ($path in @($mainPath, $helperPath)) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Compact security-contract file is missing: $path"
     }
+}
+
+$leakedPaths = @(Get-ChildItem -LiteralPath $stage -Recurse -File |
+    Where-Object {
+        $_.Extension -in @('.exe', '.dll') -and
+        $_.VersionInfo.CompanyName -eq 'KRS' -and
+        [Text.Encoding]::UTF8.GetString(
+            [IO.File]::ReadAllBytes($_.FullName)).IndexOf(
+                $repositoryRoot,
+                [StringComparison]::OrdinalIgnoreCase) -ge 0
+    })
+if ($leakedPaths.Count -gt 0) {
+    throw "Compact KRS binaries contain the absolute repository path: $($leakedPaths.FullName -join ', ')."
 }
 
 $provisionerRoot = Join-Path $stage 'Provisioner'

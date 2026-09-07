@@ -6,4 +6,7 @@
     <RepositoryUrl>https://github.com/jadieify-hub/esm-tspiot-multi-kkt-tool</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <PathMap>$(MSBuildThisFileDirectory)=/_/</PathMap>
+  </PropertyGroup>
 </Project>
