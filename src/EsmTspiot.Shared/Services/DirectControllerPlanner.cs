@@ -6,6 +6,9 @@ namespace EsmTspiot.Shared.Services
 {
     public static class DirectControllerPlanner
     {
+        public const string OfficialServiceNotVerifiedMessage =
+            "Штатная служба esm-lm-controller не подтверждена.";
+
         public static DirectControllerPlan Build(
             IList<LmGatewayKkt> kkts,
             IList<DirectControllerAssignment> savedAssignments,
@@ -45,8 +48,7 @@ namespace EsmTspiot.Shared.Services
 
             if (current.Count > 0 && !HasVerifiedOfficialService(safeServices))
             {
-                plan.ValidationMessages.Add(
-                    "Штатная служба esm-lm-controller не подтверждена.");
+                plan.ValidationMessages.Add(OfficialServiceNotVerifiedMessage);
                 return plan;
             }
 

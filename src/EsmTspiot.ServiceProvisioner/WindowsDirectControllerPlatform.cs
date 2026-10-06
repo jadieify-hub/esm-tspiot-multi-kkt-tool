@@ -385,13 +385,13 @@ namespace EsmTspiot.ServiceProvisioner
                 service = null;
             }
             WindowsServiceRecord official = _services.Query("esm-lm-controller");
-            if (official == null || !MatchesOfficialBase(official) ||
-                official.RecoveryPolicy == null)
+            if (official == null || !MatchesOfficialBase(official))
             {
                 throw new InvalidOperationException(
                     "Нельзя скопировать параметры неподтверждённой штатной службы контроллера.");
             }
-            definition.RecoveryPolicy = official.RecoveryPolicy;
+            if (official.RecoveryPolicy != null)
+                definition.RecoveryPolicy = official.RecoveryPolicy;
             definition.Validate();
             if (service != null &&
                 (service.State != WindowsServiceState.Stopped || service.ProcessId != 0))
@@ -461,18 +461,14 @@ namespace EsmTspiot.ServiceProvisioner
                  actual.EnvironmentVariables.Count == 0);
         }
 
+        // Штатная служба опознаётся по имени и пути к проверенному файлу.
+        // Режим запуска, восстановление и прочие настройки меняются от версии
+        // к версии вендора и не делают службу чужой.
         private bool MatchesOfficialBase(WindowsServiceRecord service)
         {
+            string imagePath = (service.ImagePath ?? string.Empty).Trim().Trim('"');
             return string.Equals(service.ServiceName, "esm-lm-controller", StringComparison.Ordinal) &&
-                string.Equals(
-                    service.ImagePath,
-                    WindowsCommandLine.QuoteArgument(_binary.FullPath),
-                    StringComparison.Ordinal) &&
-                string.Equals(service.AccountName, _profile.ServiceAccountName, StringComparison.Ordinal) &&
-                service.Dependencies != null && service.Dependencies.Count == 0 &&
-                service.StartMode == _profile.ServiceStartMode &&
-                service.ErrorControl == _profile.ServiceErrorControl &&
-                service.ServiceSidType == WindowsServiceSidType.None;
+                string.Equals(imagePath, _binary.FullPath, StringComparison.OrdinalIgnoreCase);
         }
 
         private void RequireOwnedService(

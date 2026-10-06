@@ -6,6 +6,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
 using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
 using EsmTspiot.Shared.Models;
@@ -633,8 +634,7 @@ namespace EsmTspiot.WinForms.Shared
 
     internal static class LmControllerFileIdentity
     {
-        private const string ExpectedSha256 =
-            "0a25b29a39b100fe461eb3ffa06a6b18f2b474f337efdba9f7a9ca89740ffd0a";
+        private const string SignerName = "JSC ESP";
 
         internal static string GetOfficialControllerPath()
         {
@@ -646,21 +646,58 @@ namespace EsmTspiot.WinForms.Shared
             return Path.Combine(programFiles, "ESP", "LMController", "bin", "lmcontroller.exe");
         }
 
+        // Сборка контроллера не фиксируется, как и в helper: вендор обновляет
+        // его постоянно. Принимается файл на штатном пути с подписью ЕСП;
+        // полную проверку цепочки подписи выполняет helper перед операцией.
         internal static bool IsSupportedController(string path)
+        {
+            return DescribeControllerProblem(path) == null;
+        }
+
+        internal static string DescribeControllerProblem(string path)
         {
             try
             {
                 FileInfo file = new FileInfo(path);
-                return file.Exists && file.Length == 14668016 &&
-                    (file.Attributes & FileAttributes.ReparsePoint) == 0 &&
-                    FixedTimeEquals(LmServiceInventoryReader.ComputeSha256(path), ExpectedSha256);
+                if (!file.Exists)
+                {
+                    return "нет файла " + path +
+                        "; установите «ЕСП Контроллер ЛМ ЧЗ»";
+                }
+                if ((file.Attributes & FileAttributes.ReparsePoint) != 0)
+                {
+                    return path + " является ссылкой, а не файлом";
+                }
+                X509Certificate certificate;
+                try
+                {
+                    certificate = X509Certificate.CreateFromSignedFile(path);
+                }
+                catch (CryptographicException)
+                {
+                    certificate = null;
+                }
+                if (certificate == null)
+                {
+                    return path + " не подписан";
+                }
+                using (certificate)
+                using (X509Certificate2 signer = new X509Certificate2(certificate))
+                {
+                    return string.Equals(
+                            signer.GetNameInfo(X509NameType.SimpleName, false),
+                            SignerName,
+                            StringComparison.Ordinal)
+                        ? null
+                        : path + " подписан не ЕСП: " + signer.Subject;
+                }
             }
             catch (Exception ex)
             {
                 if (ex is IOException || ex is UnauthorizedAccessException ||
                     ex is CryptographicException || ex is ArgumentException)
                 {
-                    return false;
+                    return path + " недоступен: " + ex.Message;
                 }
                 throw;
             }
