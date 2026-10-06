@@ -212,6 +212,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Direct controller profile writes isolated ports without credentials", DirectControllerProfileWritesIsolatedPortsWithoutCredentials);
             Run("Direct controller manifest safely upgrades legacy target port", DirectControllerManifestSafelyUpgradesLegacyTargetPort);
             Run("Windows direct controller platform creates and removes exact clone", WindowsDirectControllerPlatformCreatesAndRemovesExactClone);
+            Run("Windows direct controller platform accepts official base of any vendor build", WindowsDirectControllerPlatformAcceptsOfficialBaseOfAnyVendorBuild);
             Run("Remove deletes only fully owned freshly confirmed service", RemoveDeletesOnlyFullyOwnedFreshlyConfirmedService);
             Run("Remove all managed processes every confirmed service in one batch", RemoveAllManagedProcessesEveryConfirmedServiceInOneBatch);
             Run("Remove blocks official base service", RemoveBlocksOfficialBaseService);
@@ -7916,6 +7917,92 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 AssertContains(persisted, "TargetLocalModulePort");
                 AssertFalse(persisted.Contains("FutureLocalModulePort"),
                     "Rewritten manifests must not retain the obsolete field.");
+            }
+            finally
+            {
+                DeleteTestTreeWithReadOnlyFiles(root);
+            }
+        }
+
+        // Другая сборка вендора может записать службу без кавычек, с другим
+        // режимом запуска и без политики восстановления: это не повод
+        // считать штатный контроллер чужим.
+        private static void WindowsDirectControllerPlatformAcceptsOfficialBaseOfAnyVendorBuild()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                string officialRoot = Path.Combine(root, "official");
+                Directory.CreateDirectory(officialRoot);
+                File.WriteAllText(Path.Combine(officialRoot, "ca.crt"),
+                    "-----BEGIN CERTIFICATE-----\nfield-ca\n-----END CERTIFICATE-----\n",
+                    Encoding.ASCII);
+                File.WriteAllText(Path.Combine(officialRoot, "ca.pem"),
+                    "-----BEGIN PRIVATE KEY-----\nfield-key\n-----END PRIVATE KEY-----\n",
+                    Encoding.ASCII);
+                FakePathSafety paths = new FakePathSafety(true);
+                DirectControllerManifestStore manifests = new DirectControllerManifestStore(
+                    Path.Combine(root, "DirectControllers"),
+                    paths,
+                    null,
+                    Path.Combine(root, "ProgramData"));
+                ControllerCapabilityProfile profile =
+                    ControllerCapabilityProfile.Supported();
+                DirectControllerProfileStore profiles = new DirectControllerProfileStore(
+                    profile,
+                    manifests,
+                    new DirectControllerCaStager(
+                        profile,
+                        new AtomicFileWriter(),
+                        paths,
+                        officialRoot),
+                    new AtomicFileWriter(),
+                    paths);
+                FakeWindowsServiceApi services = new FakeWindowsServiceApi();
+                services.SetRecord(new WindowsServiceRecord
+                {
+                    ServiceName = "esm-lm-controller",
+                    ImagePath = "C:\\Program Files\\ESP\\LMController\\bin\\LMController.exe",
+                    AccountName = "LocalSystem",
+                    Dependencies = new List<string> { "Tcpip" },
+                    StartMode = WindowsServiceStartMode.DemandStart,
+                    ErrorControl = WindowsServiceErrorControl.Normal,
+                    ServiceSidType = WindowsServiceSidType.None,
+                    RecoveryPolicy = null,
+                    State = WindowsServiceState.Running,
+                    ProcessId = 100
+                });
+                WindowsDirectControllerPlatform platform = new WindowsDirectControllerPlatform(
+                    profile,
+                    new VerifiedControllerBinary
+                    {
+                        FullPath = @"C:\Program Files\ESP\LMController\bin\lmcontroller.exe",
+                        Version = "1.7.0.0",
+                        Sha256 = new string('b', 64),
+                        SignerThumbprint = ControllerSignerThumbprint,
+                        Machine = PeMachine.Amd64
+                    },
+                    manifests,
+                    profiles,
+                    services,
+                    new FakeDirectControllerReadiness(true));
+                LmServiceProvisioningBatchRequest request =
+                    CreateDirectControllerRequest(
+                        2,
+                        LmServiceOperation.EnsureDirectControllers);
+
+                for (int index = 0; index < 2; index++)
+                {
+                    LmServiceProvisioningItemResult ensured = platform.Ensure(
+                        request.DirectControllers[index],
+                        Guid.NewGuid().ToString("N"),
+                        "S-1-5-21-111-222-333-1001");
+                    AssertEqual(LmServiceProvisioningStatus.Succeeded, ensured.Status,
+                        "Any vendor build of the official controller must be accepted: " +
+                        ensured.Message);
+                }
+                AssertEqual("esm-lm-controller-2", services.LastDefinition.ServiceName,
+                    "The clone must still be created next to the official service.");
             }
             finally
             {

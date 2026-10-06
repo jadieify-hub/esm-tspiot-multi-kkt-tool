@@ -76,7 +76,7 @@ namespace EsmTspiot.WinForms.Shared
             IList<TcpListenerSnapshotItem> listeners = ReadForeignListeners(
                 saved,
                 serviceInventory);
-            return targetLmPortsByInn == null
+            DirectControllerPlan plan = targetLmPortsByInn == null
                 ? DirectControllerPlanner.Build(
                     kkts,
                     saved,
@@ -88,6 +88,37 @@ namespace EsmTspiot.WinForms.Shared
                     serviceInventory,
                     listeners,
                     targetLmPortsByInn);
+            int rejected = plan.ValidationMessages.IndexOf(
+                DirectControllerPlanner.OfficialServiceNotVerifiedMessage);
+            if (rejected >= 0)
+            {
+                plan.ValidationMessages[rejected] +=
+                    " " + DescribeOfficialServiceProblem();
+            }
+            return plan;
+        }
+
+        private string DescribeOfficialServiceProblem()
+        {
+            ReadOnlyWindowsService service = _services.Query(
+                DirectControllerIdentity.ServiceNameForOrdinal(1));
+            if (service == null)
+            {
+                return "Служба не установлена; установите «ЕСП Контроллер ЛМ ЧЗ».";
+            }
+            string officialPath = LmControllerFileIdentity.GetOfficialControllerPath();
+            string servicePath = NormalizeExecutablePath(service.ImagePath);
+            if (!string.Equals(
+                    servicePath,
+                    Path.GetFullPath(officialPath),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return "Служба запускает " + servicePath +
+                    ", ожидается " + officialPath + ".";
+            }
+            string problem =
+                LmControllerFileIdentity.DescribeControllerProblem(officialPath);
+            return problem == null ? string.Empty : "Причина: " + problem + ".";
         }
 
         private IList<DirectControllerAssignment> ReadAssignments()
@@ -332,8 +363,9 @@ namespace EsmTspiot.WinForms.Shared
             }
             else
             {
-                int space = value.IndexOf(' ');
-                if (space > 0) value = value.Substring(0, space);
+                // Путь без кавычек может содержать пробелы (C:\Program Files\...).
+                int exe = value.IndexOf(".exe", StringComparison.OrdinalIgnoreCase);
+                if (exe > 0) value = value.Substring(0, exe + 4);
             }
             return Path.GetFullPath(Environment.ExpandEnvironmentVariables(value));
         }
