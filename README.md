@@ -6,9 +6,9 @@ Windows-приложение для регистрации одной или н�
 
 ![Автоматическая настройка, FMU-API и Frontol](docs/images/automatic-setup.png)
 
-Текущая версия — **11.3.19.0**.
+Текущая версия — **11.3.20.0**.
 
-[Скачать полный ZIP](https://github.com/jadieify-hub/esm-tspiot-multi-kkt-tool/releases/tag/v11.3.19.0) · [Инструкция оператора](INSTRUCTION_FOR_DUMMIES.md) · [Изменения](docs/releases/11.3.19.0.md) · [Документация](docs/README.md)
+[Скачать полный ZIP](https://github.com/jadieify-hub/esm-tspiot-multi-kkt-tool/releases/tag/v11.3.20.0) · [Инструкция оператора](INSTRUCTION_FOR_DUMMIES.md) · [Изменения](docs/releases/11.3.20.0.md) · [Документация](docs/README.md)
 
 ## Возможности
 
@@ -23,14 +23,14 @@ Windows-приложение для регистрации одной или н�
 
 - Windows, .NET Framework 4.8 и права администратора;
 - штатно установленные ЕСМ/ТС ПИоТ и Драйвер ККТ АТОЛ v.10;
-- официальный MSI ЛМ ЧЗ от ЦРПТ; в обычном режиме также нужен установленный `ЕСП Контроллер ЛМ ЧЗ`;
+- официальный MSI ЛМ ЧЗ от ЦРПТ; в обычном режиме также нужен установленный `ЕСП Контроллер ЛМ ЧЗ` (любая сборка);
 - для Frontol: Frontol 6.28, его кассовый `Frontol.ini` и штатный Firebird с `isql.exe`.
 
 Проверенная конфигурация Frontol — 6.28.8.87 / Firebird 2.1 / COM АТОЛ. Совместимость с другими схемами базы не заявляется.
 
 ## Установка и обновление
 
-1. Скачайте `MultiKKT-ESM-TSPioT-11.3.19.0.zip` и `SHA256SUMS-MultiKKT-11.3.19.0.txt` из выпуска и проверьте SHA-256.
+1. Скачайте `MultiKKT-ESM-TSPioT-11.3.20.0.zip` и `SHA256SUMS-MultiKKT-11.3.20.0.txt` из выпуска и проверьте SHA-256.
 2. Распакуйте ZIP целиком в отдельную локальную папку.
 3. Запустите `MultiKKT-ESM-TSPioT.exe` и подтвердите запрос UAC.
 4. Откройте `INSTRUCTION_FOR_DUMMIES.txt` из поставки или меню `Справка` → `Инструкция`.
