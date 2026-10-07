@@ -15,13 +15,16 @@ namespace EsmTspiot.ServiceProvisioner
         internal string ProgramPath { get; private set; }
         internal int LocalPort { get; private set; }
         internal string RemoteAddress { get; private set; }
+        // Сервер ЛМ: правило действует и в общедоступной сети (Public).
+        internal bool AllProfiles { get; private set; }
         internal string ExpectedFieldHash { get; private set; }
 
         internal static LocalModuleFirewallRule Create(
             string ownershipId,
             string programPath,
             int localPort,
-            string remoteAddress)
+            string remoteAddress,
+            bool allProfiles = false)
         {
             if (!LocalModuleManagedIdentity.IsLowerHex(ownershipId, 32))
                 throw new ArgumentException(
@@ -45,7 +48,8 @@ namespace EsmTspiot.ServiceProvisioner
                 OwnershipId = ownershipId,
                 ProgramPath = Path.GetFullPath(programPath),
                 LocalPort = localPort,
-                RemoteAddress = normalizedRemote
+                RemoteAddress = normalizedRemote,
+                AllProfiles = allProfiles
             };
             result.ExpectedFieldHash = ComputeExpectedFieldHash(result);
             return result;
@@ -143,7 +147,7 @@ namespace EsmTspiot.ServiceProvisioner
                 string.Equals(RemoteAddress, expected.RemoteAddress,
                     StringComparison.Ordinal) &&
                 Enabled && Inbound && Allow && Tcp &&
-                Domain && Private && !Public;
+                Domain && Private && Public == expected.AllProfiles;
         }
 
         internal WindowsFirewallRuleRecord Clone()
@@ -163,9 +167,7 @@ namespace EsmTspiot.ServiceProvisioner
                 Tcp ? "TCP" : "NotTCP",
                 Inbound ? "Inbound" : "NotInbound",
                 Allow ? "Allow" : "NotAllow",
-                Domain && Private && !Public
-                    ? "Domain|Private"
-                    : "OtherProfiles",
+                DescribeProfiles(),
                 Enabled ? "Enabled" : "Disabled"
             });
             byte[] digest;
@@ -179,6 +181,14 @@ namespace EsmTspiot.ServiceProvisioner
             for (int index = 0; index < digest.Length; index++)
                 value.Append(digest[index].ToString("x2"));
             return value.ToString();
+        }
+
+        // Строка «Domain|Private» входит в хеши уже выданных правил касс и
+        // не меняется; все три профиля описываются отдельной строкой.
+        private string DescribeProfiles()
+        {
+            if (!Domain || !Private) return "OtherProfiles";
+            return Public ? "Domain|Private|Public" : "Domain|Private";
         }
 
         internal static WindowsFirewallRuleRecord FromExpected(
@@ -198,7 +208,7 @@ namespace EsmTspiot.ServiceProvisioner
                 Tcp = true,
                 Domain = true,
                 Private = true,
-                Public = false
+                Public = expected.AllProfiles
             };
         }
 

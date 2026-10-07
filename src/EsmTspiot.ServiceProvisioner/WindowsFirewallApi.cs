@@ -116,7 +116,8 @@ namespace EsmTspiot.ServiceProvisioner
                 SetProperty(ruleObject, "Direction", InboundDirection);
                 SetProperty(ruleObject, "Action", AllowAction);
                 SetProperty(ruleObject, "Profiles",
-                    DomainProfile | PrivateProfile);
+                    DomainProfile | PrivateProfile |
+                    (expected.AllProfiles ? PublicProfile : 0));
                 SetProperty(ruleObject, "Enabled", true);
                 SetProperty(ruleObject, "EdgeTraversal", false);
                 Invoke(rulesObject, "Add", ruleObject);

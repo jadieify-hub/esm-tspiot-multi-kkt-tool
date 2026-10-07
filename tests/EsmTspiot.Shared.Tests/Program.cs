@@ -111,6 +111,7 @@ namespace EsmTspiot.Shared.Tests
             Run("Direct controller planner tolerates an absent saved KKT", DirectControllerPlannerToleratesAbsentSavedKkt);
             Run("Direct controller planner never shares one LM port between INNs", DirectControllerPlannerNeverSharesLocalModulePort);
             Run("MSI local module planner groups KKT by INN", MsiLocalModulePlannerGroupsKktByInn);
+            Run("LM server keys never collide with INN and plan in number order", LocalModuleServerKeysPlanInNumberOrder);
             Run("MSI local module planner uses actual base and clone ports", MsiLocalModulePlannerUsesActualBaseAndClonePorts);
             Run("MSI local module planner preserves saved ordinals", MsiLocalModulePlannerPreservesSavedOrdinals);
             Run("MSI local module root policy accepts only fixed Program Files volumes", MsiLocalModuleRootPolicyAcceptsOnlyFixedProgramFilesVolumes);
@@ -1984,6 +1985,42 @@ namespace EsmTspiot.Shared.Tests
             AssertEqual(1, plan.Assignments.Count,
                 "Only the KKT assigned before exhaustion may remain in the plan.");
             AssertContains(string.Join("; ", plan.ValidationMessages), "32");
+        }
+
+        private static void LocalModuleServerKeysPlanInNumberOrder()
+        {
+            AssertEqual("0000000001", LocalModuleServerKey.Format(1), "server key 1");
+            AssertEqual("0000000032", LocalModuleServerKey.Format(32), "server key 32");
+            AssertTrue(LocalModuleMsiIdentity.IsInn(LocalModuleServerKey.Format(7)),
+                "A server key must pass the MSI ledger INN check.");
+            AssertTrue(!LocalModuleServerKey.IsServerKey("1234567894"), "real INN");
+            AssertTrue(!LocalModuleServerKey.IsServerKey("0000000000"), "number 0");
+            AssertTrue(!LocalModuleServerKey.IsServerKey("0000000033"), "number 33");
+            AssertTrue(!LocalModuleServerKey.IsServerKey("000000000001"), "12 digits");
+            int number;
+            AssertTrue(LocalModuleServerKey.TryGetNumber("0000000012", out number) &&
+                number == 12, "server key number");
+
+            string systemVolume = Path.GetPathRoot(Environment.SystemDirectory);
+            LocalModuleMsiPlan plan = LocalModuleMsiPlanner.Build(
+                LocalModuleServerKey.CreatePlanInput(3),
+                new List<LocalModuleMsiAssignment>(),
+                new LocalModuleBaseInventory
+                {
+                    IsInstalled = false,
+                    InstallDirectory = Path.Combine(systemVolume, "Program Files", "Regime"),
+                    ApiPort = 5995,
+                    DatabasePort = 5984
+                },
+                null,
+                new List<TcpListenerSnapshotItem>());
+            AssertTrue(plan.IsValid, string.Join("; ", plan.ValidationMessages));
+            AssertEqual(3, plan.Assignments.Count, "three server LM");
+            AssertEqual(0, plan.FindByInn("0000000001").CloneOrdinal, "#1 is the base");
+            AssertEqual(5995, plan.FindByInn("0000000001").ApiPort, "#1 API port");
+            AssertEqual(1, plan.FindByInn("0000000002").CloneOrdinal, "#2 is clone 1");
+            AssertEqual(6995, plan.FindByInn("0000000002").ApiPort, "#2 API port");
+            AssertEqual(2, plan.FindByInn("0000000003").CloneOrdinal, "#3 is clone 2");
         }
 
         private static void MsiLocalModulePlannerGroupsKktByInn()

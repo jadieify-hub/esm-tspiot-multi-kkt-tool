@@ -223,12 +223,19 @@ namespace EsmTspiot.WinForms.Shared
             CreateMsiRemovalItems(
                 LocalModuleMsiOperatorInventorySnapshot inventory)
         {
+            return CreateMsiRemovalItems(inventory == null
+                ? new List<LocalModuleMsiInventoryItem>()
+                : inventory.Items);
+        }
+
+        private static IList<LocalModuleMsiProvisioningItemRequest>
+            CreateMsiRemovalItems(IList<LocalModuleMsiInventoryItem> items)
+        {
             List<LocalModuleMsiProvisioningItemRequest> result =
                 new List<LocalModuleMsiProvisioningItemRequest>();
-            if (inventory == null) return result;
-            for (int index = 0; index < inventory.Items.Count; index++)
+            for (int index = 0; index < items.Count; index++)
             {
-                LocalModuleMsiInventoryItem item = inventory.Items[index];
+                LocalModuleMsiInventoryItem item = items[index];
                 result.Add(new LocalModuleMsiProvisioningItemRequest
                 {
                     Inn = item.Inn,

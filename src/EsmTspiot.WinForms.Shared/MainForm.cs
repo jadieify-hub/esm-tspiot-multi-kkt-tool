@@ -176,12 +176,15 @@ namespace EsmTspiot.WinForms.Shared
             automatic.Click += delegate { _workspaceTabs.SelectedTab = _automationTab; };
             ToolStripMenuItem lmGateways = new ToolStripMenuItem("ЛМ ЧЗ");
             lmGateways.Click += delegate { _workspaceTabs.SelectedTab = _lmGatewayTab; };
+            ToolStripMenuItem lmServer = new ToolStripMenuItem("Сервер ЛМ ЧЗ...");
+            lmServer.Click += delegate { _lmGatewayPage.ShowLocalModuleServer(this); };
             _deleteMenuItem.Enabled = false;
             _deleteMenuItem.Click += async delegate { await RunButtonActionAsync(DeleteSelectedKktAsync); };
             _operationsMenuItem.DropDownItems.Add(refresh);
             _operationsMenuItem.DropDownItems.Add(fillNext);
             _operationsMenuItem.DropDownItems.Add(automatic);
             _operationsMenuItem.DropDownItems.Add(lmGateways);
+            _operationsMenuItem.DropDownItems.Add(lmServer);
             _operationsMenuItem.DropDownItems.Add(new ToolStripSeparator());
             _operationsMenuItem.DropDownItems.Add(_deleteMenuItem);
 

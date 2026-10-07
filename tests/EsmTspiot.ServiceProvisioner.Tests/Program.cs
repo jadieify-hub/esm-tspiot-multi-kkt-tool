@@ -3231,6 +3231,47 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             AssertEqual("192.168.10.0/24", api.Rule.RemoteAddress,
                 "An explicit validated CIDR must be preserved.");
 
+            // Хеш правила кассы (Domain|Private) выдан в манифестах раньше
+            // и обязан остаться прежним.
+            LocalModuleFirewallRule cashier = LocalModuleFirewallRule.Create(
+                ownershipId,
+                Path.Combine(layout.ErtsBinPath, "erl.exe"),
+                6995,
+                "LocalSubnet");
+            AssertEqual(
+                Sha256Hex(Encoding.UTF8.GetBytes(string.Join(
+                    ((char)10).ToString(), new[]
+                {
+                    cashier.RuleName, cashier.RuleName, cashier.ProgramPath,
+                    "6995", "LocalSubnet", "TCP", "Inbound", "Allow",
+                    "Domain|Private", "Enabled"
+                }))),
+                cashier.ExpectedFieldHash,
+                "The cashier rule hash must not change.");
+
+            FakeWindowsFirewallApi serverApi = new FakeWindowsFirewallApi();
+            LocalModuleFirewallManager serverManager =
+                new LocalModuleFirewallManager(serverApi);
+            LocalModuleFirewallRule server = serverManager.EnsureApiRule(
+                layout,
+                ownershipId,
+                "LocalSubnet",
+                true);
+            AssertTrue(serverApi.Rule.Domain && serverApi.Rule.Private &&
+                serverApi.Rule.Public,
+                "The LM server rule must cover every network profile.");
+            AssertTrue(server.ExpectedFieldHash != cashier.ExpectedFieldHash,
+                "The LM server rule must have its own hash.");
+            serverManager.EnsureApiRule(layout, ownershipId, "LocalSubnet", true);
+            AssertEqual(1, serverApi.AddCount,
+                "An exact LM server rule must be idempotent.");
+            AssertThrows<InvalidDataException>(delegate {
+                serverManager.EnsureApiRule(layout, ownershipId, "LocalSubnet");
+            }, "A cashier plan must not adopt the LM server rule.");
+            serverManager.Remove(server);
+            AssertTrue(serverApi.Rule == null,
+                "The exact LM server rule must be removable.");
+
             LocalModuleMsiManifest manifest = LocalModuleMsiManifest.Create(
                 "1234567890",
                 1,

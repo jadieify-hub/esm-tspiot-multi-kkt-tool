@@ -17,7 +17,8 @@ namespace EsmTspiot.ServiceProvisioner
         internal LocalModuleFirewallRule EnsureApiRule(
             LocalModuleInstalledLayout layout,
             string ownershipId,
-            string remoteAddress)
+            string remoteAddress,
+            bool allProfiles = false)
         {
             if (layout == null) throw new ArgumentNullException("layout");
             if (!layout.ErtsDiscovered)
@@ -28,7 +29,8 @@ namespace EsmTspiot.ServiceProvisioner
                 ownershipId,
                 Path.Combine(layout.ErtsBinPath, "erl.exe"),
                 layout.ApiPort,
-                remoteAddress);
+                remoteAddress,
+                allProfiles);
             WindowsFirewallRuleRecord existing =
                 _firewall.FindByName(expected.RuleName);
             if (existing != null)
