@@ -394,7 +394,8 @@ namespace EsmTspiot.ServiceProvisioner
                 Path.Combine(request.InstallVolumeRoot,
                     "Program Files", "Regime", "erts", "bin", "erl.exe"),
                 request.ApiPort,
-                request.RemoteAddress);
+                request.RemoteAddress,
+                LocalModuleServerKey.IsServerKey(request.Inn));
         }
 
         private sealed class MutationLease : IDisposable

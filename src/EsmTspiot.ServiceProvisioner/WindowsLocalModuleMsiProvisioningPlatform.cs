@@ -470,7 +470,8 @@ namespace EsmTspiot.ServiceProvisioner
             return _firewall.EnsureApiRule(
                 Layout(request, manifest),
                 manifest.OwnershipNonce,
-                request.RemoteAddress);
+                request.RemoteAddress,
+                LocalModuleServerKey.IsServerKey(request.Inn));
         }
 
         public LocalModuleStartModeAdjustment EnsureAutomaticStart(

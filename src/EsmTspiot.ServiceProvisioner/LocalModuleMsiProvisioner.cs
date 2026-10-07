@@ -386,7 +386,8 @@ namespace EsmTspiot.ServiceProvisioner
                         manifest.OwnershipNonce,
                         manifest.FirewallProgramPath,
                         request.ApiPort,
-                        request.RemoteAddress);
+                        request.RemoteAddress,
+                        LocalModuleServerKey.IsServerKey(request.Inn));
                 if (!string.Equals(expected.ExpectedFieldHash,
                         manifest.FirewallRuleHash,
                         StringComparison.Ordinal))
