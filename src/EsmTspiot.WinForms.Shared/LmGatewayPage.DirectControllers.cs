@@ -79,7 +79,10 @@ namespace EsmTspiot.WinForms.Shared
             DirectControllerPlan plan =
                 new DirectControllerOperatorInventoryReader().BuildPlan(
                     registeredKkts,
-                    targetLmPortsByInn);
+                    targetLmPortsByInn,
+                    targetLmPortsByInn == null
+                        ? null
+                        : CreateControllerTargetAddresses());
             if (!plan.IsValid)
             {
                 outcome.FailedCount = plan.ValidationMessages.Count;
@@ -103,13 +106,20 @@ namespace EsmTspiot.WinForms.Shared
                     KktSerial = assignment.KktSerial,
                     Inn = assignment.KktInn,
                     Ordinal = assignment.Ordinal,
-                    TargetLocalModulePort = assignment.TargetLocalModulePort
+                    TargetLocalModulePort = assignment.TargetLocalModulePort,
+                    TargetLocalModuleAddress = string.IsNullOrEmpty(
+                            assignment.TargetLocalModuleAddress)
+                        ? null
+                        : assignment.TargetLocalModuleAddress
                 });
                 Log(
                     "ККТ " + assignment.KktSerial +
                     ": контроллер " + assignment.ServiceName +
                     ", gRPC " + assignment.GrpcPort.ToString() +
-                    ", REST " + assignment.RestPort.ToString() + ".\r\n");
+                    ", REST " + assignment.RestPort.ToString() +
+                    ", ЛМ " + LocalModuleTargetAddress.Key(
+                        assignment.TargetLocalModuleAddress,
+                        assignment.TargetLocalModulePort) + ".\r\n");
             }
 
             _statusLabel.Text =

@@ -210,6 +210,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Direct controller profile stages only official CA pair", DirectControllerProfileStagesOnlyOfficialCaPair);
             Run("Direct controller profile atomically replaces read only CA", DirectControllerProfileAtomicallyReplacesReadOnlyCa);
             Run("Direct controller profile writes isolated ports without credentials", DirectControllerProfileWritesIsolatedPortsWithoutCredentials);
+            Run("Direct controller profile points controllers at a remote LM and restores the official one", DirectControllerProfileTargetsRemoteLocalModule);
+            Run("Direct controller requests may share an LM port only across hosts", DirectControllerRequestsShareLmPortOnlyAcrossHosts);
             Run("Direct controller manifest safely upgrades legacy target port", DirectControllerManifestSafelyUpgradesLegacyTargetPort);
             Run("Windows direct controller platform creates and removes exact clone", WindowsDirectControllerPlatformCreatesAndRemovesExactClone);
             Run("Windows direct controller platform accepts official base of any vendor build", WindowsDirectControllerPlatformAcceptsOfficialBaseOfAnyVendorBuild);
@@ -7902,6 +7904,148 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             }
         }
 
+        private static void DirectControllerProfileTargetsRemoteLocalModule()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                string officialRoot = Path.Combine(root, "official");
+                Directory.CreateDirectory(officialRoot);
+                File.WriteAllText(Path.Combine(officialRoot, "ca.crt"),
+                    "-----BEGIN CERTIFICATE-----\nfield-ca\n-----END CERTIFICATE-----\n",
+                    Encoding.ASCII);
+                File.WriteAllText(Path.Combine(officialRoot, "ca.pem"),
+                    "-----BEGIN PRIVATE KEY-----\nfield-key\n-----END PRIVATE KEY-----\n",
+                    Encoding.ASCII);
+                string vendorConfig = Path.Combine(root, "vendor", "config.yml");
+                Directory.CreateDirectory(Path.GetDirectoryName(vendorConfig));
+                string original =
+                    "settings:\r\n" +
+                    "  common:\r\n" +
+                    "    gRPCPort: 50063 # vendor\r\n" +
+                    "  lmConfig:\r\n" +
+                    "    url: http://localhost\r\n" +
+                    "    port: 5995\r\n" +
+                    "    version: not defined\r\n";
+                File.WriteAllText(vendorConfig, original, new UTF8Encoding(true));
+                byte[] originalBytes = File.ReadAllBytes(vendorConfig);
+
+                FakePathSafety paths = new FakePathSafety(true);
+                DirectControllerManifestStore manifests = new DirectControllerManifestStore(
+                    Path.Combine(root, "DirectControllers"),
+                    paths,
+                    null);
+                DirectControllerProfileStore store = new DirectControllerProfileStore(
+                    ControllerCapabilityProfile.Supported(),
+                    manifests,
+                    new DirectControllerCaStager(
+                        ControllerCapabilityProfile.Supported(),
+                        new AtomicFileWriter(),
+                        paths,
+                        officialRoot),
+                    new AtomicFileWriter(),
+                    paths,
+                    vendorConfig);
+
+                DirectControllerManifest official = DirectControllerManifest.Create(
+                    "00105700000001",
+                    "7701234567",
+                    1,
+                    5995,
+                    null,
+                    "1.6.4.0",
+                    new string('a', 64),
+                    manifests.GetProfileEnvironmentRoot(1),
+                    Guid.NewGuid().ToString("N"),
+                    DirectControllerLifecycleState.Preparing);
+                AssertFalse(store.RetargetOfficial(official),
+                    "A local LM never touches the vendor config.");
+                AssertTrue(System.Linq.Enumerable.SequenceEqual(File.ReadAllBytes(vendorConfig), originalBytes),
+                    "The vendor config must stay byte-identical for a local LM.");
+
+                official.TargetLocalModuleAddress = "192.168.1.10";
+                official.TargetLocalModulePort = 6995;
+                AssertTrue(store.RetargetOfficial(official),
+                    "A remote LM must retarget the official controller.");
+                string patched = File.ReadAllText(vendorConfig, Encoding.UTF8);
+                AssertContains(patched, "    url: 'http://192.168.1.10'\r\n");
+                AssertContains(patched, "    port: 6995\r\n");
+                AssertContains(patched, "    gRPCPort: 50063 # vendor\r\n");
+                AssertContains(patched, "    version: not defined\r\n");
+                AssertEqual(0xEF, (int)File.ReadAllBytes(vendorConfig)[0],
+                    "The vendor BOM must be preserved.");
+                AssertEqual("http://localhost", official.OfficialLmUrlOriginal,
+                    "The vendor url must be remembered.");
+                AssertEqual("5995", official.OfficialLmPortOriginal,
+                    "The vendor port must be remembered.");
+                AssertFalse(store.RetargetOfficial(official),
+                    "An already retargeted config must not be rewritten.");
+
+                official.TargetLocalModulePort = 7995;
+                AssertTrue(store.RetargetOfficial(official),
+                    "Another remote LM port must be applied.");
+                AssertEqual("http://localhost", official.OfficialLmUrlOriginal,
+                    "The first vendor values must stay remembered.");
+
+                official.TargetLocalModuleAddress = null;
+                official.TargetLocalModulePort = 5995;
+                AssertTrue(store.RetargetOfficial(official),
+                    "Back to a local LM must restore the vendor values.");
+                AssertTrue(System.Linq.Enumerable.SequenceEqual(File.ReadAllBytes(vendorConfig), originalBytes),
+                    "The restored vendor config must be byte-identical.");
+                AssertTrue(official.OfficialLmUrlOriginal == null &&
+                    official.OfficialLmPortOriginal == null,
+                    "Restored values must be forgotten.");
+                AssertFalse(store.RestoreOfficial(official),
+                    "Nothing remembered means nothing to restore.");
+
+                DirectControllerManifest clone = DirectControllerManifest.Create(
+                    "00105700000002",
+                    "7707083893",
+                    2,
+                    5995,
+                    "lm-server",
+                    "1.6.4.0",
+                    new string('a', 64),
+                    manifests.GetProfileEnvironmentRoot(2),
+                    Guid.NewGuid().ToString("N"),
+                    DirectControllerLifecycleState.Preparing);
+                string cloneYaml = File.ReadAllText(store.PrepareClone(clone), Encoding.UTF8);
+                AssertContains(cloneYaml, "url: 'http://lm-server'");
+                AssertContains(cloneYaml, "port: 5995");
+                clone.TargetLocalModuleAddress = null;
+                cloneYaml = File.ReadAllText(store.PrepareClone(clone), Encoding.UTF8);
+                AssertContains(cloneYaml, "url: 'http://127.0.0.1'");
+            }
+            finally
+            {
+                DeleteTestTreeWithReadOnlyFiles(root);
+            }
+        }
+
+        private static void DirectControllerRequestsShareLmPortOnlyAcrossHosts()
+        {
+            LmServiceProvisioningBatchRequest request = CreateDirectControllerRequest(
+                2,
+                LmServiceOperation.EnsureDirectControllers);
+            request.DirectControllers[0].TargetLocalModulePort = 5995;
+            request.DirectControllers[0].TargetLocalModuleAddress = "192.168.1.10";
+            request.DirectControllers[1].TargetLocalModulePort = 5995;
+            request.PlanHash = CanonicalLmPlanHasher.Compute(request);
+            AssertTrue(ProvisioningRequestValidator.Validate(request).IsValid,
+                "A remote and a local LM may use the same port number.");
+
+            request.DirectControllers[1].TargetLocalModuleAddress = "192.168.1.10";
+            request.PlanHash = CanonicalLmPlanHasher.Compute(request);
+            AssertFalse(ProvisioningRequestValidator.Validate(request).IsValid,
+                "Two INN must not share one remote LM.");
+
+            request.DirectControllers[1].TargetLocalModuleAddress = "lm server";
+            request.PlanHash = CanonicalLmPlanHasher.Compute(request);
+            AssertFalse(ProvisioningRequestValidator.Validate(request).IsValid,
+                "An unsafe host must be rejected before YAML is written.");
+        }
+
         private static void DirectControllerManifestSafelyUpgradesLegacyTargetPort()
         {
             string root = CreateTemporaryDirectory();
@@ -8149,6 +8293,34 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     "The controller must be stopped before it looks for its local module again.");
                 AssertTrue(services.Events.Contains("start:esm-lm-controller-2"),
                     "The controller must be started again after the restart.");
+
+                // ЛМ этого ИНН перенесли на «Сервер ЛМ ЧЗ»: готовый клон
+                // обязан получить новую цель и перезапуститься, а проба
+                // «ЛМ стартовал позже» к чужому компьютеру не относится.
+                services.Events.Clear();
+                item.TargetLocalModuleAddress = "192.168.1.10";
+                LmServiceProvisioningItemResult retargeted = platform.Ensure(
+                    item,
+                    Guid.NewGuid().ToString("N"),
+                    "S-1-5-21-111-222-333-1001");
+                AssertEqual(LmServiceProvisioningStatus.Succeeded, retargeted.Status,
+                    "Retargeting a ready clone to a remote LM must succeed: " +
+                    retargeted.Message);
+                AssertFalse(retargeted.Message.Contains("стартовал позже"),
+                    "A remote LM must not trigger the local late-start probe.");
+                AssertTrue(services.Events.Contains("stop:esm-lm-controller-2") &&
+                    services.Events.Contains("start:esm-lm-controller-2"),
+                    "A retargeted clone must be restarted with its new config.");
+                manifest = manifests.Read(item.KktSerial);
+                AssertEqual("192.168.1.10", manifest.TargetLocalModuleAddress,
+                    "The manifest must record the remote LM.");
+                AssertContains(
+                    File.ReadAllText(Path.Combine(
+                        manifest.ProfileEnvironmentRoot,
+                        "ESP",
+                        "lmcontroller",
+                        "config.yml"), Encoding.UTF8),
+                    "url: 'http://192.168.1.10'");
                 readiness.LateLocalModulePorts.Clear();
                 manifest = manifests.Read(item.KktSerial);
                 item.ExpectedManifestSha256 = manifests.ComputeFingerprint(manifest);

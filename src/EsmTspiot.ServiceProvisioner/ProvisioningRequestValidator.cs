@@ -147,10 +147,10 @@ namespace EsmTspiot.ServiceProvisioner
 
             HashSet<string> serials = new HashSet<string>(StringComparer.Ordinal);
             HashSet<int> ordinals = new HashSet<int>();
-            Dictionary<string, int> targetPortsByInn =
-                new Dictionary<string, int>(StringComparer.Ordinal);
-            Dictionary<int, string> targetInnsByPort =
-                new Dictionary<int, string>();
+            Dictionary<string, string> targetsByInn =
+                new Dictionary<string, string>(StringComparer.Ordinal);
+            Dictionary<string, string> targetInnsByEndpoint =
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             int previousOrdinal = 0;
             for (int index = 0; index < count; index++)
             {
@@ -180,27 +180,37 @@ namespace EsmTspiot.ServiceProvisioner
                 {
                     result.Add("Целевой порт ЛМ прямого контроллера недействителен.");
                 }
+                else if (!string.IsNullOrEmpty(item.TargetLocalModuleAddress) &&
+                    !LocalModuleTargetAddress.IsValidRemoteHost(
+                        item.TargetLocalModuleAddress))
+                {
+                    result.Add("Адрес удалённого ЛМ прямого контроллера недопустим.");
+                }
                 else if (IsAsciiDigits(item.Inn, 10) ||
                     IsAsciiDigits(item.Inn, 12))
                 {
-                    int existingPort;
+                    string endpoint = LocalModuleTargetAddress.Key(
+                        item.TargetLocalModuleAddress,
+                        item.TargetLocalModulePort);
+                    string existingEndpoint;
                     string existingInn;
-                    if (targetPortsByInn.TryGetValue(item.Inn, out existingPort) &&
-                        existingPort != item.TargetLocalModulePort)
+                    if (targetsByInn.TryGetValue(item.Inn, out existingEndpoint) &&
+                        !string.Equals(existingEndpoint, endpoint,
+                            StringComparison.OrdinalIgnoreCase))
                     {
                         result.Add("Контроллеры одного ИНН направлены на разные ЛМ.");
                     }
-                    else if (targetInnsByPort.TryGetValue(
-                            item.TargetLocalModulePort,
+                    else if (targetInnsByEndpoint.TryGetValue(
+                            endpoint,
                             out existingInn) &&
                         !string.Equals(existingInn, item.Inn, StringComparison.Ordinal))
                     {
-                        result.Add("Разные ИНН не могут использовать один целевой порт ЛМ.");
+                        result.Add("Разные ИНН не могут использовать один целевой ЛМ.");
                     }
                     else
                     {
-                        targetPortsByInn[item.Inn] = item.TargetLocalModulePort;
-                        targetInnsByPort[item.TargetLocalModulePort] = item.Inn;
+                        targetsByInn[item.Inn] = endpoint;
+                        targetInnsByEndpoint[endpoint] = item.Inn;
                     }
                 }
                 ValidateOrdinal(item.Ordinal, "контроллера", ordinals, result);

@@ -28,7 +28,8 @@ namespace EsmTspiot.Shared.Services
             // свой модуль по умолчанию (в поле 5995 на обеих кассах), а
             // связку каждой ККТ ведёт через её контроллер.
             return new LmGatewayTarget(
-                ControllerAddress,
+                LocalModuleTargetAddress.Describe(
+                    assignment.TargetLocalModuleAddress),
                 assignment.TargetLocalModulePort);
         }
 

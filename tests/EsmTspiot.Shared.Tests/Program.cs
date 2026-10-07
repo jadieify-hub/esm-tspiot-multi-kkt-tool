@@ -112,6 +112,9 @@ namespace EsmTspiot.Shared.Tests
             Run("Direct controller planner never shares one LM port between INNs", DirectControllerPlannerNeverSharesLocalModulePort);
             Run("MSI local module planner groups KKT by INN", MsiLocalModulePlannerGroupsKktByInn);
             Run("LM server keys never collide with INN and plan in number order", LocalModuleServerKeysPlanInNumberOrder);
+            Run("Remote LM address accepts only a host and an LM port", RemoteLocalModuleAddressAcceptsOnlyHostAndPort);
+            Run("Remote LM store keeps INN endpoints", RemoteLocalModuleStoreKeepsInnEndpoints);
+            Run("Controller planner targets a remote LM and retargets saved controllers", DirectControllerPlannerTargetsRemoteLocalModule);
             Run("MSI local module planner uses actual base and clone ports", MsiLocalModulePlannerUsesActualBaseAndClonePorts);
             Run("MSI local module planner preserves saved ordinals", MsiLocalModulePlannerPreservesSavedOrdinals);
             Run("MSI local module root policy accepts only fixed Program Files volumes", MsiLocalModuleRootPolicyAcceptsOnlyFixedProgramFilesVolumes);
@@ -1985,6 +1988,150 @@ namespace EsmTspiot.Shared.Tests
             AssertEqual(1, plan.Assignments.Count,
                 "Only the KKT assigned before exhaustion may remain in the plan.");
             AssertContains(string.Join("; ", plan.ValidationMessages), "32");
+        }
+
+        private static void RemoteLocalModuleAddressAcceptsOnlyHostAndPort()
+        {
+            string host;
+            int port;
+            AssertTrue(LocalModuleTargetAddress.TryParseEndpoint(
+                " http://192.168.1.10:6995/ ", out host, out port) &&
+                host == "192.168.1.10" && port == 6995, "IPv4 endpoint");
+            AssertTrue(LocalModuleTargetAddress.TryParseEndpoint(
+                "lm-server.local:5995", out host, out port) &&
+                host == "lm-server.local", "host name endpoint");
+            string[] rejected =
+            {
+                "192.168.1.10", "127.0.0.1:5995", "localhost:5995",
+                "0.0.0.0:5995", "192.168.1.10:80", "192.168.1.10:50063",
+                "lm server:5995", "lm'srv:5995", "-lm:5995", "[::1]:5995"
+            };
+            for (int index = 0; index < rejected.Length; index++)
+                AssertTrue(!LocalModuleTargetAddress.TryParseEndpoint(
+                    rejected[index], out host, out port), rejected[index]);
+            AssertEqual("127.0.0.1:5995", LocalModuleTargetAddress.Key(null, 5995),
+                "local key");
+        }
+
+        private static void RemoteLocalModuleStoreKeepsInnEndpoints()
+        {
+            string directory = Path.Combine(Path.GetTempPath(),
+                "krs-remote-lm-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                RemoteLocalModuleStore store = new RemoteLocalModuleStore(
+                    Path.Combine(directory, "remote.txt"));
+                AssertEqual(0, store.Load().Count, "missing file is empty");
+                Dictionary<string, string> saved =
+                    new Dictionary<string, string>();
+                saved["7707083893"] = "http://192.168.1.10:6995";
+                saved["1234567894"] = "192.168.1.10:5995";
+                store.Save(saved);
+                SortedDictionary<string, string> loaded = store.Load();
+                AssertEqual(2, loaded.Count, "two endpoints");
+                AssertEqual("192.168.1.10:6995", loaded["7707083893"],
+                    "endpoint is normalized");
+                File.AppendAllText(Path.Combine(directory, "remote.txt"),
+                    "garbage line\r\n7707083894 127.0.0.1:5995\r\n");
+                AssertEqual(2, store.Load().Count, "invalid lines are ignored");
+                saved["7707083893"] = "localhost:6995";
+                bool refused = false;
+                try { store.Save(saved); }
+                catch (ArgumentException) { refused = true; }
+                AssertTrue(refused, "a local address is not a remote LM");
+            }
+            finally
+            {
+                if (Directory.Exists(directory)) Directory.Delete(directory, true);
+            }
+        }
+
+        private static void DirectControllerPlannerTargetsRemoteLocalModule()
+        {
+            List<DirectControllerServiceInventoryItem> services =
+                new List<DirectControllerServiceInventoryItem>
+                {
+                    new DirectControllerServiceInventoryItem
+                    {
+                        ServiceName = "esm-lm-controller",
+                        IsVerifiedOfficial = true
+                    }
+                };
+            List<LmGatewayKkt> kkts = new List<LmGatewayKkt>
+            {
+                CreateLmKkt("00105700000001", "1234567894"),
+                CreateLmKkt("00105700000002", "7707083893")
+            };
+            Dictionary<string, int> ports = new Dictionary<string, int>();
+            ports["1234567894"] = 5995;
+            ports["7707083893"] = 5995;
+            Dictionary<string, string> addresses = new Dictionary<string, string>();
+            addresses["1234567894"] = "192.168.1.10";
+
+            DirectControllerPlan plan = DirectControllerPlanner.Build(
+                kkts, new List<DirectControllerAssignment>(), services,
+                new List<TcpListenerSnapshotItem>(), ports, addresses);
+            AssertTrue(plan.IsValid, string.Join("; ", plan.ValidationMessages));
+            AssertEqual("192.168.1.10", plan.Assignments[0].TargetLocalModuleAddress,
+                "the official controller looks at the LM server");
+            AssertEqual(string.Empty, plan.Assignments[1].TargetLocalModuleAddress,
+                "the second INN keeps the local LM on the same port number");
+            LmGatewayBindingInput binding = DirectControllerBindingInputFactory.Create(
+                kkts[0], plan.Assignments[0]);
+            AssertEqual("192.168.1.10", binding.ExpectedLmAddress, "binding target");
+            AssertEqual("127.0.0.1", binding.ControllerAddress,
+                "ESM still binds the local controller");
+
+            addresses["7707083893"] = "192.168.1.10";
+            DirectControllerPlan duplicate = DirectControllerPlanner.Build(
+                kkts, new List<DirectControllerAssignment>(), services,
+                new List<TcpListenerSnapshotItem>(), ports, addresses);
+            AssertTrue(!duplicate.IsValid, "one remote LM cannot serve two INN");
+
+            DirectControllerAssignment saved = new DirectControllerAssignment
+            {
+                KktSerial = "00105700000001",
+                KktInn = "1234567894",
+                Ordinal = 1,
+                Role = DirectControllerRole.OfficialBase,
+                ServiceName = "esm-lm-controller",
+                GrpcPort = 50063,
+                RestPort = 5063,
+                TargetLocalModulePort = 5995
+            };
+            addresses.Remove("7707083893");
+            ports["1234567894"] = 6995;
+            DirectControllerPlan retargeted = DirectControllerPlanner.Build(
+                kkts, new List<DirectControllerAssignment> { saved }, services,
+                new List<TcpListenerSnapshotItem>(), ports, addresses);
+            AssertTrue(retargeted.IsValid,
+                string.Join("; ", retargeted.ValidationMessages));
+            DirectControllerAssignment moved = retargeted.FindBySerial("00105700000001");
+            AssertEqual(1, moved.Ordinal, "the controller keeps its number");
+            AssertEqual(6995, moved.TargetLocalModulePort, "new LM port");
+            AssertEqual("192.168.1.10", moved.TargetLocalModuleAddress, "new LM host");
+
+            LmServiceProvisioningBatchRequest request = new LmServiceProvisioningBatchRequest
+            {
+                SchemaVersion = 3,
+                Operation = LmServiceOperation.EnsureDirectControllers,
+                OperationId = new string('a', 32),
+                InitiatingSid = "S-1-5-21-1-2-3-1001"
+            };
+            request.DirectControllers.Add(new DirectControllerProvisioningItemRequest
+            {
+                KktSerial = "00105700000001",
+                Inn = "1234567894",
+                Ordinal = 1,
+                TargetLocalModulePort = 5995
+            });
+            string localHash = CanonicalLmPlanHasher.Compute(request);
+            request.DirectControllers[0].TargetLocalModuleAddress = string.Empty;
+            AssertEqual(localHash, CanonicalLmPlanHasher.Compute(request),
+                "an empty address keeps the local plan hash");
+            request.DirectControllers[0].TargetLocalModuleAddress = "192.168.1.10";
+            AssertTrue(localHash != CanonicalLmPlanHasher.Compute(request),
+                "a remote address is part of the plan hash");
         }
 
         private static void LocalModuleServerKeysPlanInNumberOrder()

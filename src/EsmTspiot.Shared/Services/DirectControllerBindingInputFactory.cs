@@ -30,7 +30,8 @@ namespace EsmTspiot.Shared.Services
                 ControllerAddress = "127.0.0.1",
                 ControllerGrpcPort = assignment.GrpcPort.ToString(
                     CultureInfo.InvariantCulture),
-                ExpectedLmAddress = "127.0.0.1",
+                ExpectedLmAddress = LocalModuleTargetAddress.Describe(
+                    assignment.TargetLocalModuleAddress),
                 ExpectedLmPort = assignment.TargetLocalModulePort.ToString(
                     CultureInfo.InvariantCulture)
             };

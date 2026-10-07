@@ -323,6 +323,8 @@ namespace EsmTspiot.WinForms.Shared
                         _managedLocalModuleInventory);
                 HashSet<string> registeredSerials = new HashSet<string>(
                     StringComparer.Ordinal);
+                SortedDictionary<string, string> remoteLms =
+                    ReadRemoteLocalModules();
                 int rowToSelect = -1;
                 for (int index = 0; index < _session.Rows.Count; index++)
                 {
@@ -335,6 +337,10 @@ namespace EsmTspiot.WinForms.Shared
                     LocalModuleMsiInventoryItem msiLm =
                         FindMsiInventoryByInn(item.Kkt.KktInn);
                     LmGatewayDraft draft = GetOrCreateServiceDraft(item.Kkt.KktSerial);
+                    string remoteLm;
+                    bool isRemoteLm = remoteLms.TryGetValue(
+                        (item.Kkt.KktInn ?? string.Empty).Trim(),
+                        out remoteLm);
                     int ordinal = GetCurrentKktOrdinal(
                         displayPlan,
                         item.Kkt,
@@ -344,11 +350,15 @@ namespace EsmTspiot.WinForms.Shared
                         item.Kkt.KktSerial,
                         item.Kkt.KktInn,
                         item.Kkt.SoftPort ?? string.Empty,
-                        FmuApiMode && msiLm == null && managedLm == null
+                        isRemoteLm
+                            ? remoteLm
+                            : FmuApiMode && msiLm == null && managedLm == null
                             ? "Не установлен"
                             : GetLmEndpointText(
                                 item, draft, inventory, managedLm, msiLm),
-                        GetLmStateText(inventory, managedLm, msiLm),
+                        isRemoteLm
+                            ? "На другом компьютере"
+                            : GetLmStateText(inventory, managedLm, msiLm),
                         GetMsiRoleText(msiLm),
                         msiLm == null ? string.Empty : msiLm.InstallRoot,
                         GetMsiOwnershipText(msiLm),

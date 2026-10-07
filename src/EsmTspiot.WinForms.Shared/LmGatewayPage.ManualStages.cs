@@ -136,7 +136,7 @@ namespace EsmTspiot.WinForms.Shared
                     LocalModuleMsiOperatorInventorySnapshot inventory =
                         CreateLocalModuleInventoryReader().Read();
                     LocalModuleMsiPlan plan = LocalModuleMsiPlanner.Build(
-                        kkts,
+                        SelectLocalLmKkts(kkts),
                         inventory.Assignments,
                         inventory.BaseInventory,
                         null,
@@ -180,7 +180,7 @@ namespace EsmTspiot.WinForms.Shared
             DirectControllerSetupOutcome controllers =
                 await EnsureDirectControllersFromHostAsync(
                     kkts,
-                    plan.CreateTargetApiPortMap(),
+                    CreateControllerTargetPorts(plan),
                     cancellation).ConfigureAwait(true);
             FinalizeDirectControllerOutcome(controllers);
             await RefreshAfterManualStageAsync(_statusLabel.Text, cancellation)
@@ -193,15 +193,22 @@ namespace EsmTspiot.WinForms.Shared
             LocalModuleMsiOperatorInventorySnapshot inventory,
             CancellationToken cancellation)
         {
+            RequireUsableLocalModulePlan(plan);
+            if (plan.Assignments.Count == 0)
+            {
+                await RefreshAfterManualStageAsync(
+                    "Все ЛМ ЧЗ на другом компьютере; ставить здесь нечего.",
+                    cancellation).ConfigureAwait(true);
+                return;
+            }
             if (_localModuleInstallerSelection == null)
                 throw new InvalidOperationException(
                     "Выберите официальный MSI ЛМ ЧЗ (кнопка «Выбрать MSI...»).");
-            RequireUsableLocalModulePlan(plan);
             string volume = ResolveInstallVolume(plan, inventory);
             if (!string.IsNullOrEmpty(volume))
             {
                 plan = LocalModuleMsiPlanner.Build(
-                    kkts,
+                    SelectLocalLmKkts(kkts),
                     inventory.Assignments,
                     inventory.BaseInventory,
                     volume,
@@ -256,7 +263,10 @@ namespace EsmTspiot.WinForms.Shared
             DirectControllerOperatorInventoryReader reader =
                 new DirectControllerOperatorInventoryReader();
             DirectControllerPlan controllerPlan = plan != null && plan.IsValid
-                ? reader.BuildPlan(kkts, plan.CreateTargetApiPortMap())
+                ? reader.BuildPlan(
+                    kkts,
+                    CreateControllerTargetPorts(plan),
+                    CreateControllerTargetAddresses())
                 : reader.BuildPlan(kkts);
             for (int index = 0;
                 index < controllerPlan.ValidationMessages.Count;
