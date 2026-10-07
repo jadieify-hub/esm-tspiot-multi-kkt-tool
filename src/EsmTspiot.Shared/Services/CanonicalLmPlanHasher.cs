@@ -66,6 +66,12 @@ namespace EsmTspiot.Shared.Services
                         ? null
                         : item.TargetLocalModulePort.ToString(
                             CultureInfo.InvariantCulture));
+                    // Адрес входит в хеш только для удалённого ЛМ: хеши
+                    // планов с локальным ЛМ остаются прежними.
+                    if (item != null && !string.IsNullOrEmpty(
+                            item.TargetLocalModuleAddress))
+                        Append(canonical, "direct-target-lm-address",
+                            item.TargetLocalModuleAddress);
                     Append(canonical, "direct-manifest", item == null
                         ? null
                         : item.ExpectedManifestSha256);

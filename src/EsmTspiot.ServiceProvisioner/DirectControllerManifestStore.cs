@@ -237,6 +237,10 @@ namespace EsmTspiot.ServiceProvisioner
                 manifest.EsmConfigOriginalSha256 ?? string.Empty,
                 manifest.EsmConfigAppliedSha256 ?? string.Empty
             });
+            // Адрес удалённого ЛМ входит в отпечаток только когда задан:
+            // отпечатки уже выданных назначений не меняются.
+            if (!string.IsNullOrEmpty(manifest.TargetLocalModuleAddress))
+                canonical += "\nlm-address=" + manifest.TargetLocalModuleAddress;
             using (SHA256 hash = SHA256.Create())
             {
                 return ToHex(hash.ComputeHash(Encoding.UTF8.GetBytes(canonical)));
@@ -255,6 +259,7 @@ namespace EsmTspiot.ServiceProvisioner
                 GrpcPort = manifest.GrpcPort,
                 RestPort = manifest.RestPort,
                 TargetLocalModulePort = manifest.TargetLocalModulePort,
+                TargetLocalModuleAddress = manifest.TargetLocalModuleAddress,
                 ControllerVersion = manifest.ControllerVersion,
                 State = manifest.State,
                 RemovalFingerprint = ComputeFingerprint(manifest)
@@ -286,6 +291,10 @@ namespace EsmTspiot.ServiceProvisioner
                 manifest.TargetLocalModulePort > 65535 ||
                 DirectControllerIdentity.IsControllerPort(
                     manifest.TargetLocalModulePort) ||
+                (!string.IsNullOrEmpty(manifest.TargetLocalModuleAddress) &&
+                 !LocalModuleTargetAddress.IsValidRemoteHost(
+                    manifest.TargetLocalModuleAddress)) ||
+                !ValidOfficialOriginal(manifest) ||
                 string.IsNullOrWhiteSpace(manifest.ControllerVersion) ||
                 !IsHex(manifest.ControllerBinarySha256, 64) ||
                 !ValidOptionalHashPair(
@@ -304,6 +313,18 @@ namespace EsmTspiot.ServiceProvisioner
             {
                 throw new InvalidDataException("Direct controller profile identity is invalid.");
             }
+        }
+
+        private static bool ValidOfficialOriginal(DirectControllerManifest manifest)
+        {
+            bool hasUrl = !string.IsNullOrEmpty(manifest.OfficialLmUrlOriginal);
+            bool hasPort = !string.IsNullOrEmpty(manifest.OfficialLmPortOriginal);
+            if (!hasUrl && !hasPort) return true;
+            return hasUrl && hasPort && manifest.Ordinal == 1 &&
+                manifest.OfficialLmUrlOriginal.IndexOfAny(
+                    new[] { '\r', '\n', '\0' }) < 0 &&
+                manifest.OfficialLmPortOriginal.IndexOfAny(
+                    new[] { '\r', '\n', '\0' }) < 0;
         }
 
         private static void NormalizeLegacyManifest(DirectControllerManifest manifest)

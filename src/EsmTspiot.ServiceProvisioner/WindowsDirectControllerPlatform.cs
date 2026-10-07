@@ -140,7 +140,19 @@ namespace EsmTspiot.ServiceProvisioner
                         existing.EsmConfigOriginalSha256;
                     manifest.EsmConfigAppliedSha256 =
                         existing.EsmConfigAppliedSha256;
+                    manifest.OfficialLmUrlOriginal =
+                        existing.OfficialLmUrlOriginal;
+                    manifest.OfficialLmPortOriginal =
+                        existing.OfficialLmPortOriginal;
                 }
+                // Цель ЛМ сменилась (ЛМ перенесли на сервер или обратно):
+                // готовый клон нельзя оставлять со старой конфигурацией.
+                bool targetChanged = existing != null &&
+                    (existing.TargetLocalModulePort != manifest.TargetLocalModulePort ||
+                     !string.Equals(
+                        existing.TargetLocalModuleAddress ?? string.Empty,
+                        manifest.TargetLocalModuleAddress ?? string.Empty,
+                        StringComparison.OrdinalIgnoreCase));
                 string serviceName = DirectControllerIdentity.ServiceNameForOrdinal(item.Ordinal);
                 ProvisionerStepTrace.Write("ККТ " + item.KktSerial + ": опрос службы " + serviceName);
                 WindowsServiceRecord service = _services.Query(serviceName);
@@ -158,6 +170,17 @@ namespace EsmTspiot.ServiceProvisioner
                         ProvisionerStepTrace.Write("ККТ " + item.KktSerial +
                             ": проверка штатной службы контроллера");
                         EnsureOfficialBase(service, manifest);
+                        if (_profiles.RetargetOfficial(manifest))
+                        {
+                            _manifests.Write(manifest);
+                            ProvisionerStepTrace.Write("ККТ " + item.KktSerial +
+                                ": штатный контроллер направлен на ЛМ " +
+                                LocalModuleTargetAddress.Key(
+                                    manifest.TargetLocalModuleAddress,
+                                    manifest.TargetLocalModulePort) +
+                                "; перезапуск");
+                            RestartControllerService(manifest);
+                        }
                     }
                     else
                     {
@@ -167,7 +190,8 @@ namespace EsmTspiot.ServiceProvisioner
                             service,
                             manifest,
                             initiatingSid,
-                            existing != null);
+                            existing != null,
+                            targetChanged);
                     }
                     ProvisionerStepTrace.Write("ККТ " + item.KktSerial +
                         ": ожидание готовности контроллера (до 45 с)");
@@ -182,9 +206,14 @@ namespace EsmTspiot.ServiceProvisioner
                     // Модуль, поднявшийся позже, для него не существует, и
                     // ЕСМ отвергает привязку. Перезапуск возвращает связку в
                     // рабочее состояние и ничего не переконфигурирует.
-                    bool restarted = _readiness.LocalModuleStartedAfterController(
-                        item.Ordinal,
-                        item.TargetLocalModulePort);
+                    // ЛМ на другом компьютере: его процесс отсюда не виден,
+                    // а одноимённый порт здесь может принадлежать другому ЛМ.
+                    bool restarted =
+                        !LocalModuleTargetAddress.IsRemote(
+                            item.TargetLocalModuleAddress) &&
+                        _readiness.LocalModuleStartedAfterController(
+                            item.Ordinal,
+                            item.TargetLocalModulePort);
                     if (restarted)
                     {
                         ProvisionerStepTrace.Write("ККТ " + item.KktSerial +
@@ -261,6 +290,11 @@ namespace EsmTspiot.ServiceProvisioner
                 _esmConfigs.RestoreAndRestart(manifest);
                 if (manifest.Ordinal == 1)
                 {
+                    if (_profiles.RestoreOfficial(manifest))
+                    {
+                        _manifests.Write(manifest);
+                        RestartControllerService(manifest);
+                    }
                     _manifests.Delete(
                         item.KktSerial,
                         _manifests.ComputeFingerprint(manifest));
@@ -365,7 +399,8 @@ namespace EsmTspiot.ServiceProvisioner
             WindowsServiceRecord service,
             DirectControllerManifest manifest,
             string initiatingSid,
-            bool hasOwnedManifest)
+            bool hasOwnedManifest,
+            bool targetChanged)
         {
             WindowsServiceDefinition definition = _definitions.Create(
                 manifest.Ordinal,
@@ -396,7 +431,8 @@ namespace EsmTspiot.ServiceProvisioner
             if (service != null &&
                 (service.State != WindowsServiceState.Stopped || service.ProcessId != 0))
             {
-                if (WindowsServiceDefinitionMatcher.Matches(definition, service))
+                if (!targetChanged &&
+                    WindowsServiceDefinitionMatcher.Matches(definition, service))
                 {
                     LmReadinessResult alreadyReady = _readiness.WaitUntilReady(
                         manifest.Ordinal,
@@ -532,6 +568,7 @@ namespace EsmTspiot.ServiceProvisioner
                 item.Inn,
                 item.Ordinal,
                 item.TargetLocalModulePort,
+                item.TargetLocalModuleAddress,
                 _binary.Version,
                 _binary.Sha256,
                 _manifests.GetProfileEnvironmentRoot(item.Ordinal),
@@ -544,7 +581,11 @@ namespace EsmTspiot.ServiceProvisioner
             DirectControllerProvisioningItemRequest item)
         {
             RequireSameControllerIdentity(manifest, item);
-            if (manifest.TargetLocalModulePort != item.TargetLocalModulePort)
+            if (manifest.TargetLocalModulePort != item.TargetLocalModulePort ||
+                !string.Equals(
+                    manifest.TargetLocalModuleAddress ?? string.Empty,
+                    item.TargetLocalModuleAddress ?? string.Empty,
+                    StringComparison.OrdinalIgnoreCase))
             {
                 throw new InvalidDataException(
                     "Сохранённое назначение прямого контроллера не совпадает с планом.");

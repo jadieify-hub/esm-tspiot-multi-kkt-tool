@@ -16,5 +16,7 @@ namespace EsmTspiot.Shared.Models
         public int GrpcPort { get; set; }
         public int RestPort { get; set; }
         public int TargetLocalModulePort { get; set; }
+        // Пусто — ЛМ на этом компьютере; иначе адрес «Сервера ЛМ ЧЗ».
+        public string TargetLocalModuleAddress { get; set; }
     }
 }

@@ -30,6 +30,27 @@ namespace EsmTspiot.Shared.Services
             IList<TcpListenerSnapshotItem> listeners,
             IDictionary<string, int> targetLmPortsByInn)
         {
+            return Build(
+                kkts,
+                savedAssignments,
+                services,
+                listeners,
+                targetLmPortsByInn,
+                null);
+        }
+
+        /// <param name="targetLmAddressesByInn">
+        /// ИНН, чей ЛМ стоит на другом компьютере, и адрес этого компьютера;
+        /// остальные ИНН смотрят на ЛМ этого компьютера.
+        /// </param>
+        public static DirectControllerPlan Build(
+            IList<LmGatewayKkt> kkts,
+            IList<DirectControllerAssignment> savedAssignments,
+            IList<DirectControllerServiceInventoryItem> services,
+            IList<TcpListenerSnapshotItem> listeners,
+            IDictionary<string, int> targetLmPortsByInn,
+            IDictionary<string, string> targetLmAddressesByInn)
+        {
             DirectControllerPlan plan = new DirectControllerPlan();
             List<LmGatewayKkt> current = NormalizeAndSortKkts(kkts, plan);
             IList<DirectControllerServiceInventoryItem> safeServices =
@@ -37,9 +58,13 @@ namespace EsmTspiot.Shared.Services
             IList<TcpListenerSnapshotItem> safeListeners =
                 listeners ?? new List<TcpListenerSnapshotItem>();
 
+            Dictionary<string, string> safeAddresses =
+                new Dictionary<string, string>(StringComparer.Ordinal);
             Dictionary<string, int> safeTargets = ValidateTargetMap(
                 current,
                 targetLmPortsByInn,
+                targetLmAddressesByInn,
+                safeAddresses,
                 plan);
             if (!plan.IsValid)
             {
@@ -63,6 +88,7 @@ namespace EsmTspiot.Shared.Services
                 savedBySerial,
                 reservedOrdinals,
                 safeTargets,
+                safeAddresses,
                 plan);
 
             for (int index = 0; index < current.Count; index++)
@@ -110,6 +136,8 @@ namespace EsmTspiot.Shared.Services
                     kkt,
                     ordinal,
                     safeTargets[kkt.KktInn]);
+                assignment.TargetLocalModuleAddress =
+                    AddressFor(safeAddresses, kkt.KktInn);
                 reservedOrdinals.Add(ordinal);
                 plan.Assignments.Add(assignment);
             }
@@ -126,11 +154,32 @@ namespace EsmTspiot.Shared.Services
         private static Dictionary<string, int> ValidateTargetMap(
             IList<LmGatewayKkt> current,
             IDictionary<string, int> source,
+            IDictionary<string, string> addresses,
+            Dictionary<string, string> safeAddresses,
             DirectControllerPlan plan)
         {
             Dictionary<string, int> result =
                 new Dictionary<string, int>(StringComparer.Ordinal);
-            HashSet<int> ports = new HashSet<int>();
+            if (addresses != null)
+            {
+                foreach (KeyValuePair<string, string> pair in addresses)
+                {
+                    string inn = Trim(pair.Key);
+                    string host = Trim(pair.Value);
+                    if (!IsInn(inn) || safeAddresses.ContainsKey(inn) ||
+                        !LocalModuleTargetAddress.IsValidRemoteHost(host))
+                    {
+                        plan.ValidationMessages.Add(
+                            "Адрес ЛМ на другом компьютере для ИНН " + inn +
+                            " недопустим.");
+                        continue;
+                    }
+                    safeAddresses.Add(inn, host);
+                }
+            }
+            // Один ЛМ обслуживает один ИНН: пара «адрес:порт» не повторяется.
+            HashSet<string> endpoints =
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             if (source != null)
             {
                 foreach (KeyValuePair<string, int> pair in source)
@@ -138,7 +187,9 @@ namespace EsmTspiot.Shared.Services
                     string inn = Trim(pair.Key);
                     if (!IsInn(inn) || pair.Value < 1024 || pair.Value > 65535 ||
                         DirectControllerIdentity.IsControllerPort(pair.Value) ||
-                        result.ContainsKey(inn) || !ports.Add(pair.Value))
+                        result.ContainsKey(inn) ||
+                        !endpoints.Add(LocalModuleTargetAddress.Key(
+                            AddressFor(safeAddresses, inn), pair.Value)))
                     {
                         plan.ValidationMessages.Add(
                             "Карта ИНН и портов ЛМ имеет недопустимый или повторный элемент.");
@@ -289,6 +340,7 @@ namespace EsmTspiot.Shared.Services
             IDictionary<string, DirectControllerAssignment> savedBySerial,
             HashSet<int> reservedOrdinals,
             IDictionary<string, int> targetLmPortsByInn,
+            IDictionary<string, string> targetLmAddressesByInn,
             DirectControllerPlan plan)
         {
             if (saved == null)
@@ -336,15 +388,22 @@ namespace EsmTspiot.Shared.Services
                 int expectedLocalModulePort;
                 if (!targetLmPortsByInn.TryGetValue(
                         Trim(item.KktInn),
-                        out expectedLocalModulePort) ||
-                    item.TargetLocalModulePort != expectedLocalModulePort)
+                        out expectedLocalModulePort))
                 {
                     plan.ValidationMessages.Add(
                         "Целевой порт ЛМ для ККТ " + item.KktSerial +
-                        " не совпадает с планом.");
+                        " не назначен.");
                     continue;
                 }
-                savedBySerial.Add(item.KktSerial, Copy(item));
+                // Номер контроллера сохраняется, а цель ЛМ берётся из плана:
+                // ЛМ перенесли на сервер или в другой порт — helper перепишет
+                // конфигурацию контроллера и перезапустит его.
+                DirectControllerAssignment retargeted = Copy(item);
+                retargeted.TargetLocalModulePort = expectedLocalModulePort;
+                retargeted.TargetLocalModuleAddress = AddressFor(
+                    targetLmAddressesByInn,
+                    Trim(item.KktInn));
+                savedBySerial.Add(item.KktSerial, retargeted);
             }
         }
 
@@ -568,7 +627,8 @@ namespace EsmTspiot.Shared.Services
                 ServiceName = Trim(source.ServiceName),
                 GrpcPort = source.GrpcPort,
                 RestPort = source.RestPort,
-                TargetLocalModulePort = source.TargetLocalModulePort
+                TargetLocalModulePort = source.TargetLocalModulePort,
+                TargetLocalModuleAddress = Trim(source.TargetLocalModuleAddress)
             };
         }
 
@@ -600,6 +660,16 @@ namespace EsmTspiot.Shared.Services
                 }
             }
             return false;
+        }
+
+        private static string AddressFor(
+            IDictionary<string, string> addresses,
+            string inn)
+        {
+            string host;
+            return addresses != null && addresses.TryGetValue(inn, out host)
+                ? Trim(host)
+                : string.Empty;
         }
 
         private static bool UsesPort(DirectControllerAssignment assignment, int port)

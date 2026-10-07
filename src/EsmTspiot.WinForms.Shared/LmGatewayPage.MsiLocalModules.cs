@@ -291,10 +291,12 @@ namespace EsmTspiot.WinForms.Shared
                 throw new InvalidOperationException(
                     "В ЕСМ нет зарегистрированных ККТ для настройки.");
 
+            IList<LmGatewayKkt> localLmKkts = SelectLocalLmKkts(registeredKkts);
             // Выбор пакета живёт на вкладке «ЛМ ЧЗ», а полный прогон
             // запускают с другой вкладки: без этого вопроса ЛМ ЧЗ
             // молча пропускается, и это выясняется только в журнале.
-            if (!RequireLocalModuleInstaller(this))
+            // Если все ЛМ на другом компьютере, пакет не нужен.
+            if (localLmKkts.Count > 0 && !RequireLocalModuleInstaller(this))
                 throw new InvalidOperationException(
                     "Не выбран официальный MSI ЛМ ЧЗ. Укажите файл кнопкой " +
                     "«Выбрать MSI...» и повторите настройку.");
@@ -307,7 +309,7 @@ namespace EsmTspiot.WinForms.Shared
             LocalModuleMsiOperatorInventorySnapshot inventory =
                 CreateLocalModuleInventoryReader().Read();
             LocalModuleMsiPlan plan = LocalModuleMsiPlanner.Build(
-                registeredKkts,
+                localLmKkts,
                 inventory.Assignments,
                 inventory.BaseInventory,
                 null,
@@ -321,7 +323,7 @@ namespace EsmTspiot.WinForms.Shared
             if (!string.IsNullOrEmpty(requestedVolume))
             {
                 plan = LocalModuleMsiPlanner.Build(
-                    registeredKkts,
+                    localLmKkts,
                     inventory.Assignments,
                     inventory.BaseInventory,
                     requestedVolume,
@@ -338,6 +340,12 @@ namespace EsmTspiot.WinForms.Shared
                     delegate { return Task.FromResult(true); },
                     async delegate(CancellationToken operationCancellation)
                     {
+                        if (plan.Assignments.Count == 0)
+                        {
+                            Log("ЛМ ЧЗ всех ИНН на другом компьютере; " +
+                                "здесь ставить нечего.\r\n");
+                            return true;
+                        }
                         if (_localModuleInstallerSelection == null)
                         {
                             outcome.LocalModulesDeferred = true;
@@ -360,7 +368,7 @@ namespace EsmTspiot.WinForms.Shared
                         controllers =
                             await EnsureDirectControllersFromHostAsync(
                                 registeredKkts,
-                                plan.CreateTargetApiPortMap(),
+                                CreateControllerTargetPorts(plan),
                                 operationCancellation).ConfigureAwait(true);
                         outcome.Controllers = controllers;
                         return DirectControllerSetupPolicy.IsComplete(

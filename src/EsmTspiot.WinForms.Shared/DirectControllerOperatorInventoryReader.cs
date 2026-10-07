@@ -49,6 +49,8 @@ namespace EsmTspiot.WinForms.Shared
                     Inn = assignment.KktInn,
                     Ordinal = assignment.Ordinal,
                     TargetLocalModulePort = assignment.TargetLocalModulePort,
+                    TargetLocalModuleAddress = NullIfEmpty(
+                        assignment.TargetLocalModuleAddress),
                     ExpectedManifestSha256 = fingerprint
                 });
             }
@@ -70,6 +72,14 @@ namespace EsmTspiot.WinForms.Shared
             IList<LmGatewayKkt> kkts,
             IDictionary<string, int> targetLmPortsByInn)
         {
+            return BuildPlan(kkts, targetLmPortsByInn, null);
+        }
+
+        internal DirectControllerPlan BuildPlan(
+            IList<LmGatewayKkt> kkts,
+            IDictionary<string, int> targetLmPortsByInn,
+            IDictionary<string, string> targetLmAddressesByInn)
+        {
             IList<DirectControllerAssignment> saved = ReadAssignments();
             IList<DirectControllerServiceInventoryItem> serviceInventory =
                 ReadServices(saved);
@@ -87,7 +97,8 @@ namespace EsmTspiot.WinForms.Shared
                     saved,
                     serviceInventory,
                     listeners,
-                    targetLmPortsByInn);
+                    targetLmPortsByInn,
+                    targetLmAddressesByInn);
             int rejected = plan.ValidationMessages.IndexOf(
                 DirectControllerPlanner.OfficialServiceNotVerifiedMessage);
             if (rejected >= 0)
@@ -261,7 +272,10 @@ namespace EsmTspiot.WinForms.Shared
                     StringComparison.Ordinal) ||
                 source.GrpcPort != DirectControllerIdentity.GrpcPortForOrdinal(source.Ordinal) ||
                 source.RestPort != DirectControllerIdentity.RestPortForOrdinal(source.Ordinal) ||
-                targetPort < 1024 || targetPort > 65535)
+                targetPort < 1024 || targetPort > 65535 ||
+                (!string.IsNullOrEmpty(source.TargetLocalModuleAddress) &&
+                 !LocalModuleTargetAddress.IsValidRemoteHost(
+                    source.TargetLocalModuleAddress)))
             {
                 throw new InvalidDataException(
                     "Запись инвентаря прямого контроллера недействительна.");
@@ -275,8 +289,15 @@ namespace EsmTspiot.WinForms.Shared
                 ServiceName = source.ServiceName,
                 GrpcPort = source.GrpcPort,
                 RestPort = source.RestPort,
-                TargetLocalModulePort = targetPort
+                TargetLocalModulePort = targetPort,
+                TargetLocalModuleAddress = source.TargetLocalModuleAddress ??
+                    string.Empty
             };
+        }
+
+        private static string NullIfEmpty(string value)
+        {
+            return string.IsNullOrEmpty(value) ? null : value;
         }
 
         private static DirectControllerAssignment FindByOrdinal(
@@ -403,6 +424,8 @@ namespace EsmTspiot.WinForms.Shared
             [DataMember(Order = 10)] public string RemovalFingerprint { get; set; }
             [DataMember(Name = "FutureLocalModulePort", Order = 11, EmitDefaultValue = false)]
             public int LegacyFutureLocalModulePort { get; set; }
+            [DataMember(Order = 12, EmitDefaultValue = false)]
+            public string TargetLocalModuleAddress { get; set; }
         }
     }
 }

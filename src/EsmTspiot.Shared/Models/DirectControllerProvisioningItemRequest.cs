@@ -19,5 +19,9 @@ namespace EsmTspiot.Shared.Models
 
         [DataMember(Order = 5)]
         public int TargetLocalModulePort { get; set; }
+
+        // Пусто — ЛМ на этом компьютере (127.0.0.1).
+        [DataMember(Order = 6, EmitDefaultValue = false)]
+        public string TargetLocalModuleAddress { get; set; }
     }
 }

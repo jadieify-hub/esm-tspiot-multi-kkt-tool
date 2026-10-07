@@ -45,6 +45,15 @@ namespace EsmTspiot.ServiceProvisioner
         [DataMember(Order = 17, EmitDefaultValue = false)]
         internal string EsmConfigAppliedSha256 { get; set; }
         [DataMember(Order = 18)] internal int TargetLocalModulePort { get; set; }
+        // Пусто — ЛМ на этом компьютере; иначе адрес «Сервера ЛМ ЧЗ».
+        [DataMember(Order = 19, EmitDefaultValue = false)]
+        internal string TargetLocalModuleAddress { get; set; }
+        // Прежние url/port из config.yml штатного контроллера до того, как
+        // программа направила его на удалённый ЛМ; возвращаются при удалении.
+        [DataMember(Order = 20, EmitDefaultValue = false)]
+        internal string OfficialLmUrlOriginal { get; set; }
+        [DataMember(Order = 21, EmitDefaultValue = false)]
+        internal string OfficialLmPortOriginal { get; set; }
 
         internal static DirectControllerManifest Create(
             string kktSerial,
@@ -57,8 +66,37 @@ namespace EsmTspiot.ServiceProvisioner
             string operationId,
             DirectControllerLifecycleState state)
         {
+            return Create(
+                kktSerial,
+                kktInn,
+                ordinal,
+                targetLocalModulePort,
+                null,
+                controllerVersion,
+                controllerBinarySha256,
+                profileEnvironmentRoot,
+                operationId,
+                state);
+        }
+
+        internal static DirectControllerManifest Create(
+            string kktSerial,
+            string kktInn,
+            int ordinal,
+            int targetLocalModulePort,
+            string targetLocalModuleAddress,
+            string controllerVersion,
+            string controllerBinarySha256,
+            string profileEnvironmentRoot,
+            string operationId,
+            DirectControllerLifecycleState state)
+        {
             return new DirectControllerManifest
             {
+                TargetLocalModuleAddress =
+                    string.IsNullOrEmpty(targetLocalModuleAddress)
+                        ? null
+                        : targetLocalModuleAddress,
                 SchemaVersion = CurrentSchemaVersion,
                 OwnershipMarker = ExpectedOwnershipMarker,
                 KktSerial = kktSerial,
@@ -113,5 +151,7 @@ namespace EsmTspiot.ServiceProvisioner
         [DataMember(Order = 8)] internal string ControllerVersion { get; set; }
         [DataMember(Order = 9)] internal DirectControllerLifecycleState State { get; set; }
         [DataMember(Order = 10)] internal string RemovalFingerprint { get; set; }
+        [DataMember(Order = 11, EmitDefaultValue = false)]
+        internal string TargetLocalModuleAddress { get; set; }
     }
 }

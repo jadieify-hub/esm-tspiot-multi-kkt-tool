@@ -178,6 +178,8 @@ namespace EsmTspiot.WinForms.Shared
             lmGateways.Click += delegate { _workspaceTabs.SelectedTab = _lmGatewayTab; };
             ToolStripMenuItem lmServer = new ToolStripMenuItem("Сервер ЛМ ЧЗ...");
             lmServer.Click += delegate { _lmGatewayPage.ShowLocalModuleServer(this); };
+            ToolStripMenuItem lmRemote = new ToolStripMenuItem("ЛМ ЧЗ на другом компьютере...");
+            lmRemote.Click += delegate { _lmGatewayPage.ShowRemoteLocalModules(this); };
             _deleteMenuItem.Enabled = false;
             _deleteMenuItem.Click += async delegate { await RunButtonActionAsync(DeleteSelectedKktAsync); };
             _operationsMenuItem.DropDownItems.Add(refresh);
@@ -185,6 +187,7 @@ namespace EsmTspiot.WinForms.Shared
             _operationsMenuItem.DropDownItems.Add(automatic);
             _operationsMenuItem.DropDownItems.Add(lmGateways);
             _operationsMenuItem.DropDownItems.Add(lmServer);
+            _operationsMenuItem.DropDownItems.Add(lmRemote);
             _operationsMenuItem.DropDownItems.Add(new ToolStripSeparator());
             _operationsMenuItem.DropDownItems.Add(_deleteMenuItem);
 
@@ -1184,7 +1187,10 @@ namespace EsmTspiot.WinForms.Shared
             // Спрашиваем MSI ЛМ ЧЗ на старте, а не после регистрации и
             // контроллеров: без него автомат доходил до конца и оставлял
             // кассу без локального модуля.
-            if (!_lmGatewayPage.RequireLocalModuleInstaller(this))
+            // ЛМ на другом компьютере: нужен ли пакет, станет ясно после
+            // регистрации, когда известны ИНН; спросит вкладка «ЛМ ЧЗ».
+            if (!_lmGatewayPage.HasRemoteLocalModules &&
+                !_lmGatewayPage.RequireLocalModuleInstaller(this))
             {
                 _automationStatusLabel.Text = "Статус: запуск отменен";
                 AppendLog(

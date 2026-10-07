@@ -29,6 +29,7 @@
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayPage.DirectControllers.cs" Link="LmGatewayPage.DirectControllers.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayPage.MsiLocalModules.cs" Link="LmGatewayPage.MsiLocalModules.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayPage.Server.cs" Link="LmGatewayPage.Server.cs" />
+    <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayPage.RemoteLm.cs" Link="LmGatewayPage.RemoteLm.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayPage.ManualStages.cs" Link="LmGatewayPage.ManualStages.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayCredentialDefaults.cs" Link="LmGatewayCredentialDefaults.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayBindingDialog.cs" Link="LmGatewayBindingDialog.cs" />
