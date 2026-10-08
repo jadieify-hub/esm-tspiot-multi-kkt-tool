@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Globalization;
 using System.Net;
+using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
@@ -474,27 +475,62 @@ namespace EsmTspiot.WinForms.Shared
             return text.ToString();
         }
 
-        // ponytail: первый IPv4 этого компьютера; при нескольких сетевых
-        // картах оператор сам выбирает адрес, видимый кассам.
+        // Адрес сети касс: адаптер в работе со шлюзом по умолчанию.
+        // У виртуальных адаптеров (VirtualBox, Hyper-V) шлюза нет.
+        // ponytail: при двух сетях со шлюзом берётся первая; оператор
+        // сам проверяет адрес, видимый кассам.
         private static string FirstLocalIPv4()
         {
+            try
+            {
+                NetworkInterface[] adapters = NetworkInterface.GetAllNetworkInterfaces();
+                for (int index = 0; index < adapters.Length; index++)
+                {
+                    NetworkInterface adapter = adapters[index];
+                    if (adapter.OperationalStatus != OperationalStatus.Up ||
+                        adapter.NetworkInterfaceType == NetworkInterfaceType.Loopback ||
+                        adapter.NetworkInterfaceType == NetworkInterfaceType.Tunnel)
+                        continue;
+                    IPInterfaceProperties properties = adapter.GetIPProperties();
+                    if (!HasIPv4Gateway(properties)) continue;
+                    foreach (UnicastIPAddressInformation unicast in properties.UnicastAddresses)
+                        if (IsUsableIPv4(unicast.Address))
+                            return unicast.Address.ToString();
+                }
+            }
+            catch (NetworkInformationException)
+            {
+            }
             try
             {
                 IPAddress[] addresses = Dns.GetHostAddresses(Dns.GetHostName());
                 for (int index = 0; index < addresses.Length; index++)
                 {
-                    IPAddress address = addresses[index];
-                    if (address.AddressFamily != AddressFamily.InterNetwork ||
-                        IPAddress.IsLoopback(address)) continue;
-                    byte[] bytes = address.GetAddressBytes();
-                    if (bytes[0] == 169 && bytes[1] == 254) continue;
-                    return address.ToString();
+                    if (IsUsableIPv4(addresses[index]))
+                        return addresses[index].ToString();
                 }
             }
             catch (SocketException)
             {
             }
             return "<IP сервера>";
+        }
+
+        private static bool HasIPv4Gateway(IPInterfaceProperties properties)
+        {
+            foreach (GatewayIPAddressInformation gateway in properties.GatewayAddresses)
+                if (gateway.Address.AddressFamily == AddressFamily.InterNetwork &&
+                    !gateway.Address.Equals(IPAddress.Any))
+                    return true;
+            return false;
+        }
+
+        private static bool IsUsableIPv4(IPAddress address)
+        {
+            if (address.AddressFamily != AddressFamily.InterNetwork ||
+                IPAddress.IsLoopback(address)) return false;
+            byte[] bytes = address.GetAddressBytes();
+            return !(bytes[0] == 169 && bytes[1] == 254);
         }
     }
 }
