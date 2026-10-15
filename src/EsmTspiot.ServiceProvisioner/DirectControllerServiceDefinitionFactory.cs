@@ -93,8 +93,7 @@ namespace EsmTspiot.ServiceProvisioner
                     profile.ControllerBinary.FileName,
                     StringComparison.OrdinalIgnoreCase) ||
                 string.IsNullOrWhiteSpace(binary.Version) ||
-                !IsHex(binary.Sha256, 64) ||
-                string.IsNullOrWhiteSpace(binary.SignerThumbprint))
+                !IsHex(binary.Sha256, 64))
             {
                 throw new InvalidOperationException(
                     "Проверенный бинарник контроллера не опознан.");

@@ -5515,9 +5515,22 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 "Разрядность бинарника не является границей доверия.");
             AssertEqual("lmcontroller.exe", profile.ControllerBinary.FileName,
                 "Имя исполняемого файла контроллера остаётся закреплённым.");
-            AssertTrue(profile.ControllerBinary.RequireCodeSigningEku,
-                "Подпись контроллера обязана иметь назначение Code Signing.");
-            AssertContains(profile.ControllerBinary.SignerSubject, "JSC ESP");
+            AssertTrue(profile.ControllerBinary.SignatureOptional &&
+                !profile.ControllerBinary.RequireCodeSigningEku &&
+                profile.ControllerBinary.SignerSubject.Length == 0,
+                "Подпись контроллера не требуется: вендор выпускает и неподписанные сборки.");
+
+            // Неподписанный PE (сборка самих тестов) принимается только
+            // там, где подпись объявлена необязательной.
+            string unsigned = typeof(Program).Assembly.Location;
+            TrustedFileExpectation expectation = profile.ControllerBinary.Clone();
+            expectation.FileName = string.Empty;
+            FileTrustResult accepted = new WinTrustVerifier().Verify(unsigned, expectation);
+            AssertTrue(accepted.IsTrusted, "An unsigned controller must be accepted: " +
+                accepted.ErrorMessage);
+            expectation.SignatureOptional = false;
+            AssertFalse(new WinTrustVerifier().Verify(unsigned, expectation).IsTrusted,
+                "Without the opt-out an unsigned file stays rejected.");
 
             PropertyInfo serviceSidType = typeof(ControllerCapabilityProfile).GetProperty(
                 "ServiceSidType",

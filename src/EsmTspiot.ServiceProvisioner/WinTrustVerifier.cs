@@ -32,7 +32,9 @@ namespace EsmTspiot.ServiceProvisioner
                 }
 
                 FileVersionInfo version = FileVersionInfo.GetVersionInfo(fullPath);
-                X509Certificate2 signer = ReadSigner(fullPath);
+                X509Certificate2 signer = expectation.SignatureOptional
+                    ? TryReadSigner(fullPath)
+                    : ReadSigner(fullPath);
                 TrustedFileExpectation observed = new TrustedFileExpectation
                 {
                     FileName = file.Name,
@@ -48,7 +50,7 @@ namespace EsmTspiot.ServiceProvisioner
                     RequireCodeSigningEku = signer != null && HasCodeSigningEku(signer)
                 };
 
-                if (!VerifyAuthenticode(fullPath))
+                if (!expectation.SignatureOptional && !VerifyAuthenticode(fullPath))
                 {
                     return FileTrustResult.Rejected("Authenticode chain validation failed.");
                 }
@@ -184,6 +186,18 @@ namespace EsmTspiot.ServiceProvisioner
         {
             X509Certificate certificate = X509Certificate.CreateFromSignedFile(path);
             return certificate == null ? null : new X509Certificate2(certificate);
+        }
+
+        private static X509Certificate2 TryReadSigner(string path)
+        {
+            try
+            {
+                return ReadSigner(path);
+            }
+            catch (CryptographicException)
+            {
+                return null;
+            }
         }
 
         private static bool HasCodeSigningEku(X509Certificate2 certificate)
