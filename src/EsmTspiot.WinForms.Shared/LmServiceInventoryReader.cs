@@ -679,7 +679,14 @@ namespace EsmTspiot.WinForms.Shared
                 }
                 if (certificate == null)
                 {
-                    return path + " не подписан";
+                    System.Diagnostics.FileVersionInfo version =
+                        System.Diagnostics.FileVersionInfo.GetVersionInfo(path);
+                    return path + " не подписан (размер " +
+                        file.Length.ToString(System.Globalization.CultureInfo.InvariantCulture) +
+                        " байт, версия " + (version.FileVersion ?? "не указана") +
+                        ", изменён " + file.LastWriteTime.ToString(
+                            "yyyy-MM-dd HH:mm",
+                            System.Globalization.CultureInfo.InvariantCulture) + ")";
                 }
                 using (certificate)
                 using (X509Certificate2 signer = new X509Certificate2(certificate))
