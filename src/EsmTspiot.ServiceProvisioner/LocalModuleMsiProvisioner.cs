@@ -227,7 +227,8 @@ namespace EsmTspiot.ServiceProvisioner
                             : LmServiceProvisioningStatus.CleanupPending,
                         cleaned
                             ? SafeMessage(exception)
-                            : "Ошибка установки; очистка будет повторена.",
+                            : "Ошибка установки (" + SafeMessage(exception) +
+                                "); очистка будет повторена.",
                         manifest == null ? string.Empty :
                             manifest.ManifestSha256);
                 }
