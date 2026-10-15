@@ -250,7 +250,10 @@ namespace EsmTspiot.ServiceProvisioner
             if (anyProduct && !exactProduct)
                 conflict = "MSI product or installation root is foreign.";
             else if (servicesPresent && !servicesMatch)
-                conflict = "Local-module service pair is foreign.";
+                conflict = "Local-module service pair is foreign: " +
+                    DescribeService(layout, LocalModuleProcessRole.Api, api) + "; " +
+                    DescribeService(layout, LocalModuleProcessRole.Database, database) +
+                    "; expected " + layout.ServiceImagePath + ".";
             else if (exactProduct && servicesMatch && !configMatches)
                 conflict = "Local-module configuration or ports are foreign.";
             else if (firewallPresent && !firewallMatches)
@@ -276,6 +279,18 @@ namespace EsmTspiot.ServiceProvisioner
                     : database.StartMode,
                 ConflictMessage = conflict
             };
+        }
+
+        // Для полевого журнала: чем чужая служба отличается от ожидаемой.
+        private static string DescribeService(
+            LocalModuleInstalledLayout layout,
+            LocalModuleProcessRole role,
+            WindowsServiceRecord service)
+        {
+            string name = layout.ServiceName(role);
+            if (service == null) return name + " missing";
+            return name + (layout.MatchesService(role, service) ? " ok" :
+                " -> " + (service.ImagePath ?? string.Empty).Trim());
         }
 
         public LocalModuleMsiManifest PrepareInstall(
