@@ -6,7 +6,6 @@ using System.Runtime.InteropServices;
 using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
 using System.Security.Cryptography;
-using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
 using EsmTspiot.Shared.Models;
@@ -634,8 +633,6 @@ namespace EsmTspiot.WinForms.Shared
 
     internal static class LmControllerFileIdentity
     {
-        private const string SignerName = "JSC ESP";
-
         internal static string GetOfficialControllerPath()
         {
             string programFiles = Environment.GetEnvironmentVariable("ProgramW6432");
@@ -646,9 +643,9 @@ namespace EsmTspiot.WinForms.Shared
             return Path.Combine(programFiles, "ESP", "LMController", "bin", "lmcontroller.exe");
         }
 
-        // Сборка контроллера не фиксируется, как и в helper: вендор обновляет
-        // его постоянно. Принимается файл на штатном пути с подписью ЕСП;
-        // полную проверку цепочки подписи выполняет helper перед операцией.
+        // Сборка и подпись контроллера не проверяются, как и в helper: вендор
+        // обновляет его постоянно и выпускает в том числе без подписи.
+        // Принимается обычный файл на штатном пути.
         internal static bool IsSupportedController(string path)
         {
             return DescribeControllerProblem(path) == null;
@@ -668,41 +665,12 @@ namespace EsmTspiot.WinForms.Shared
                 {
                     return path + " является ссылкой, а не файлом";
                 }
-                X509Certificate certificate;
-                try
-                {
-                    certificate = X509Certificate.CreateFromSignedFile(path);
-                }
-                catch (CryptographicException)
-                {
-                    certificate = null;
-                }
-                if (certificate == null)
-                {
-                    System.Diagnostics.FileVersionInfo version =
-                        System.Diagnostics.FileVersionInfo.GetVersionInfo(path);
-                    return path + " не подписан (размер " +
-                        file.Length.ToString(System.Globalization.CultureInfo.InvariantCulture) +
-                        " байт, версия " + (version.FileVersion ?? "не указана") +
-                        ", изменён " + file.LastWriteTime.ToString(
-                            "yyyy-MM-dd HH:mm",
-                            System.Globalization.CultureInfo.InvariantCulture) + ")";
-                }
-                using (certificate)
-                using (X509Certificate2 signer = new X509Certificate2(certificate))
-                {
-                    return string.Equals(
-                            signer.GetNameInfo(X509NameType.SimpleName, false),
-                            SignerName,
-                            StringComparison.Ordinal)
-                        ? null
-                        : path + " подписан не ЕСП: " + signer.Subject;
-                }
+                return null;
             }
             catch (Exception ex)
             {
                 if (ex is IOException || ex is UnauthorizedAccessException ||
-                    ex is CryptographicException || ex is ArgumentException)
+                    ex is ArgumentException)
                 {
                     return path + " недоступен: " + ex.Message;
                 }

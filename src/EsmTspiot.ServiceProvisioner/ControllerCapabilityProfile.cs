@@ -31,6 +31,8 @@ namespace EsmTspiot.ServiceProvisioner
         internal string SignerSubject { get; set; }
         internal string SignerThumbprint { get; set; }
         internal bool RequireCodeSigningEku { get; set; }
+        // Подпись не требуется: файл принимается без проверки цепочки.
+        internal bool SignatureOptional { get; set; }
 
         internal TrustedFileExpectation Clone()
         {
@@ -40,11 +42,6 @@ namespace EsmTspiot.ServiceProvisioner
 
     internal sealed class ControllerCapabilityProfile
     {
-        private const string SignerSubjectValue =
-            "E=it@ao-esp.ru, CN=JSC ESP, O=JSC ESP, L=Moscow, S=Moscow, C=RU";
-        private const string SignerThumbprintValue =
-            "1CD26372850FE30F1559821CF5D318591695271A";
-
         private ControllerCapabilityProfile()
         {
             Provenance = new Dictionary<string, CapabilityFactProvenance>(StringComparer.Ordinal);
@@ -70,9 +67,9 @@ namespace EsmTspiot.ServiceProvisioner
         internal bool ListenerUsesDualStackIpv6Wildcard { get; private set; }
         internal IDictionary<string, CapabilityFactProvenance> Provenance { get; private set; }
 
-        // Контроллер опознаётся по подписи ЕСП, имени продукта и структуре
-        // установки, а не по номеру версии: очередная сборка вендора должна
-        // приниматься без правки программы.
+        // Контроллер опознаётся по установленному продукту ЕСП и файлу в его
+        // защищённом каталоге, а не по версии или подписи: вендор выпускает
+        // и неподписанные сборки, они должны приниматься без правки программы.
         internal static ControllerCapabilityProfile Supported()
         {
             string programFiles64 = Environment.GetEnvironmentVariable("ProgramW6432");
@@ -118,9 +115,10 @@ namespace EsmTspiot.ServiceProvisioner
                     ProductName = string.Empty,
                     CompanyName = string.Empty,
                     Machine = PeMachine.Unknown,
-                    SignerSubject = SignerSubjectValue,
+                    SignerSubject = string.Empty,
                     SignerThumbprint = string.Empty,
-                    RequireCodeSigningEku = true
+                    RequireCodeSigningEku = false,
+                    SignatureOptional = true
                 }
             };
             profile.TagProductionFacts();
