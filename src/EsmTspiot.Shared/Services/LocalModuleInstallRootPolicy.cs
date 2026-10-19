@@ -160,6 +160,28 @@ namespace EsmTspiot.Shared.Services
             return normalized;
         }
 
+        // Пакет ЛМ 32-битный: поставленный вручную на 64-битной Windows,
+        // базовый ЛМ лежит в «Program Files (x86)\Regime». Свой базовый
+        // ЛМ программа ставит в «Program Files\Regime», а уже стоящий
+        // берёт там, где он есть.
+        public static string BuildBaseInstallDirectory(string volumeRoot)
+        {
+            return ChooseBaseInstallDirectory(volumeRoot, File.Exists);
+        }
+
+        public static string ChooseBaseInstallDirectory(
+            string volumeRoot,
+            Func<string, bool> fileExists)
+        {
+            string root = Path.GetPathRoot(Path.GetFullPath(volumeRoot));
+            string native = Path.Combine(root, "Program Files", "Regime");
+            string x86 = Path.Combine(root, "Program Files (x86)", "Regime");
+            return !fileExists(Path.Combine(native, "bin", "nssm.exe")) &&
+                fileExists(Path.Combine(x86, "bin", "nssm.exe"))
+                ? x86
+                : native;
+        }
+
         public static string BuildCloneInstallDirectory(
             string volumeRoot,
             int cloneOrdinal)

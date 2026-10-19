@@ -91,6 +91,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             }
 
             Run("DTF dependency closure is exact and vendor free", DtfDependencyClosureIsExactAndVendorFree);
+            Run("Manual base LM in Program Files (x86) is adopted", ManualBaseLmInProgramFilesX86IsAdopted);
             Run("Production helper rejects retired supervisor entry points", ProductionHelperRejectsRetiredSupervisorEntryPoints);
             Run("Provisioning pipe authenticates exact peer images from any folder", ProvisioningPipeAuthenticatesExactPeerImages);
             Run("Provisioning pipe accepts main images independently of filename", ProvisioningPipeAcceptsMainImageIndependentlyOfFilename);
@@ -2811,6 +2812,24 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             {
                 DeleteTestTreeWithReadOnlyFiles(directory);
             }
+        }
+
+        private static void ManualBaseLmInProgramFilesX86IsAdopted()
+        {
+            string x86 = @"C:\Program Files (x86)\Regime\bin\nssm.exe";
+            string native = @"C:\Program Files\Regime\bin\nssm.exe";
+            AssertEqual(@"C:\Program Files (x86)\Regime",
+                LocalModuleInstallRootPolicy.ChooseBaseInstallDirectory(
+                    @"C:\", delegate(string path) { return path == x86; }),
+                "A manual 32-bit install is taken where it is.");
+            AssertEqual(@"C:\Program Files\Regime",
+                LocalModuleInstallRootPolicy.ChooseBaseInstallDirectory(
+                    @"C:\", delegate(string path) { return false; }),
+                "A fresh install goes to Program Files.");
+            AssertEqual(@"C:\Program Files\Regime",
+                LocalModuleInstallRootPolicy.ChooseBaseInstallDirectory(
+                    @"C:\", delegate(string path) { return path == x86 || path == native; }),
+                "Program Files wins when both exist.");
         }
 
         private static void WindowsInstallerReceivesTerminatedAbsoluteLmDirectory()
