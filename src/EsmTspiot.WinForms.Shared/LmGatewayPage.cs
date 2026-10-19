@@ -623,9 +623,14 @@ namespace EsmTspiot.WinForms.Shared
                 // Помощник пишет каждый свой шаг в общий след, поэтому окно
                 // может назвать текущую операцию, а не только время ожидания.
                 string step = ProvisionerStepTrace.ReadLastStep();
+                // След начинается со времени начала шага: «сейчас: 17:06:35»
+                // читалось как застывшие часы, хотя шаг просто длинный.
                 string suffix = string.IsNullOrEmpty(step)
                     ? string.Empty
-                    : "; сейчас: " + step;
+                    : step.Length > 9 && step[2] == ':' && step[5] == ':' && step[8] == ' '
+                    ? "; текущий шаг начат в " + step.Substring(0, 8) + ": " +
+                        step.Substring(9)
+                    : "; текущий шаг: " + step;
                 if (!string.Equals(step, lastReported, StringComparison.Ordinal) ||
                     string.IsNullOrEmpty(step))
                 {

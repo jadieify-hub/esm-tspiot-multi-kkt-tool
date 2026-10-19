@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
+using EsmTspiot.Shared.Logging;
 using EsmTspiot.Shared.Services;
 
 namespace EsmTspiot.ServiceProvisioner
@@ -10,6 +12,8 @@ namespace EsmTspiot.ServiceProvisioner
     internal interface IWindowsInstallerNative
     {
         int SetInternalUi(int uiLevel);
+        // null выключает журнал.
+        void EnableLog(string logPath);
         uint InstallProduct(string packagePath, string commandLine);
         uint ConfigureProduct(
             string productCode,
@@ -57,10 +61,24 @@ namespace EsmTspiot.ServiceProvisioner
         private readonly IWindowsInstallerNative _native;
         private readonly Action<int> _wait;
         private readonly Func<DateTime> _clock;
+        private string _logDirectory;
 
         internal WindowsInstallerApi()
             : this(new WindowsInstallerNative(), null, null)
         {
+            _logDirectory = Path.Combine(
+                Environment.GetFolderPath(
+                    Environment.SpecialFolder.CommonApplicationData),
+                "KRS",
+                "MultiKKT",
+                "InstallerLogs");
+        }
+
+        // Каталог журнала установщика; null — журнал не ведётся.
+        internal string LogDirectory
+        {
+            get { return _logDirectory; }
+            set { _logDirectory = value; }
         }
 
         internal WindowsInstallerApi(IWindowsInstallerNative native)
@@ -103,14 +121,122 @@ namespace EsmTspiot.ServiceProvisioner
                 throw new FileNotFoundException(
                     "Local-module MSI package was not found.",
                     path);
-            return RunWithoutInstallerUi(
-                "install",
-                delegate
-                {
-                    return _native.InstallProduct(
-                        path,
-                        hiddenProperties ?? string.Empty);
-                });
+            // Код 1603 сам по себе ничего не объясняет, а доступа к кассе
+            // клиента нет. Журнал установщика без подробного режима и без
+            // дампа свойств: ADMINUSER/ADMINPASSWORD пакет и так скрывает
+            // через MsiHiddenProperties.
+            string logPath = CreateInstallLogPath();
+            if (logPath != null) _native.EnableLog(logPath);
+            try
+            {
+                return RunWithoutInstallerUi(
+                    "install",
+                    delegate
+                    {
+                        return _native.InstallProduct(
+                            path,
+                            hiddenProperties ?? string.Empty);
+                    });
+            }
+            catch (WindowsInstallerOperationException error)
+            {
+                if (logPath == null ||
+                    error.MsiErrorCode == ErrorInstallAlreadyRunning)
+                    throw;
+                string summary = SummarizeInstallLog(logPath);
+                throw new WindowsInstallerOperationException(
+                    "install",
+                    error.MsiErrorCode,
+                    (summary.Length == 0 ? string.Empty : summary + " ") +
+                    "Журнал установщика: " + logPath);
+            }
+            finally
+            {
+                if (logPath != null) _native.EnableLog(null);
+            }
+        }
+
+        private string CreateInstallLogPath()
+        {
+            if (_logDirectory == null) return null;
+            try
+            {
+                Directory.CreateDirectory(_logDirectory);
+            }
+            catch (IOException)
+            {
+                return null;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return null;
+            }
+            return Path.Combine(
+                _logDirectory,
+                "install-" + _clock().ToString(
+                    "yyyyMMdd-HHmmss-fff",
+                    System.Globalization.CultureInfo.InvariantCulture) + ".log");
+        }
+
+        // Из журнала берутся только строки с номером ошибки установщика и
+        // действием, вернувшим отказ: этого достаточно, чтобы понять
+        // причину по журналу программы.
+        internal static string SummarizeInstallLog(string logPath)
+        {
+            string[] lines;
+            try
+            {
+                byte[] bytes = File.ReadAllBytes(logPath);
+                Encoding encoding = bytes.Length >= 2 &&
+                    bytes[0] == 0xFF && bytes[1] == 0xFE
+                    ? Encoding.Unicode
+                    : Encoding.Default;
+                lines = encoding.GetString(bytes).Split(
+                    new[] { '\r', '\n' },
+                    StringSplitOptions.RemoveEmptyEntries);
+            }
+            catch (IOException)
+            {
+                return string.Empty;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return string.Empty;
+            }
+            List<string> found = new List<string>();
+            // Сообщение сеанса helper ограничено 4096 символами: выдержка
+            // не длиннее 4 строк по 250.
+            for (int index = 0; index < lines.Length && found.Count < 4; index++)
+            {
+                string line = lines[index].Trim().TrimStart('\uFEFF');
+                if (!IsInstallFailureLine(line)) continue;
+                if (line.Length > 250) line = line.Substring(0, 250) + "...";
+                if (!found.Contains(line)) found.Add(line);
+            }
+            return found.Count == 0
+                ? string.Empty
+                : SensitiveDataMasker.Mask(
+                    "Установщик сообщил: " +
+                    string.Join(" | ", found.ToArray()) + ".");
+        }
+
+        private static bool IsInstallFailureLine(string line)
+        {
+            if (line.IndexOf("Return value 3", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                line.IndexOf("значение 3", StringComparison.OrdinalIgnoreCase) >= 0)
+                return true;
+            string[] markers = { "Error ", "Ошибка " };
+            for (int index = 0; index < markers.Length; index++)
+            {
+                int at = line.IndexOf(markers[index], StringComparison.Ordinal);
+                if (at < 0) continue;
+                int digits = at + markers[index].Length;
+                if (digits + 4 <= line.Length &&
+                    char.IsDigit(line[digits]) && char.IsDigit(line[digits + 1]) &&
+                    char.IsDigit(line[digits + 2]) && char.IsDigit(line[digits + 3]))
+                    return true;
+            }
+            return false;
         }
 
         public uint Repair(string productCode)
@@ -254,6 +380,15 @@ namespace EsmTspiot.ServiceProvisioner
             return MsiSetInternalUI(uiLevel, IntPtr.Zero);
         }
 
+        // Ошибки, предупреждения, сведения, нехватка места и начало действий;
+        // без подробного режима (0x1000) и дампа свойств (0x400).
+        private const uint InstallLogMode = 0x1 | 0x2 | 0x4 | 0x10 | 0x80 | 0x100;
+
+        public void EnableLog(string logPath)
+        {
+            MsiEnableLogW(logPath == null ? 0u : InstallLogMode, logPath, 0u);
+        }
+
         public uint InstallProduct(string packagePath, string commandLine)
         {
             return MsiInstallProductW(packagePath, commandLine);
@@ -289,6 +424,15 @@ namespace EsmTspiot.ServiceProvisioner
             int installLevel,
             int installState,
             string commandLine);
+
+        [DllImport(
+            "msi.dll",
+            CharSet = CharSet.Unicode,
+            ExactSpelling = true)]
+        private static extern uint MsiEnableLogW(
+            uint logMode,
+            string logFile,
+            uint logAttributes);
 
         [DllImport(
             "msi.dll",
