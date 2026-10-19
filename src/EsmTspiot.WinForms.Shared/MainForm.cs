@@ -1190,6 +1190,15 @@ namespace EsmTspiot.WinForms.Shared
             // ЛМ на другом компьютере: нужен ли пакет, станет ясно после
             // регистрации, когда известны ИНН; спросит вкладка «ЛМ ЧЗ».
             if (!_lmGatewayPage.HasRemoteLocalModules &&
+                !_lmGatewayPage.RequireDotNetForLocalModule(this))
+            {
+                _automationStatusLabel.Text = "Статус: запуск отменен";
+                AppendLog(
+                    "Автоматическая настройка не запущена: не установлен " +
+                    ".NET Framework 4.8, нужный для ЛМ ЧЗ." + Environment.NewLine);
+                return;
+            }
+            if (!_lmGatewayPage.HasRemoteLocalModules &&
                 !_lmGatewayPage.RequireLocalModuleInstaller(this))
             {
                 _automationStatusLabel.Text = "Статус: запуск отменен";

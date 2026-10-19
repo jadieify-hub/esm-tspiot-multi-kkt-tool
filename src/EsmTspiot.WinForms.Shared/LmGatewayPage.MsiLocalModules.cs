@@ -281,6 +281,59 @@ namespace EsmTspiot.WinForms.Shared
             return request;
         }
 
+        // Пакет ЛМ ЧЗ без .NET Framework 4.8 не ставится (тихая установка
+        // кончается 1603), а после установки .NET нужна перезагрузка.
+        // Поэтому спрашиваем до начала настройки, а не на шаге ЛМ.
+        public bool RequireDotNetForLocalModule(IWin32Window owner)
+        {
+            if (IsDotNet48Installed()) return true;
+            if (MessageBox.Show(
+                    owner,
+                    "Для ЛМ ЧЗ нужен .NET Framework 4.8, а на этом компьютере " +
+                        "его нет.\r\n\r\nСкачайте и установите .NET Framework 4.8, " +
+                        "перезагрузите компьютер и запустите настройку снова." +
+                        "\r\n\r\nОткрыть страницу загрузки?",
+                    "Нужен .NET Framework 4.8",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning) == DialogResult.Yes)
+            {
+                try
+                {
+                    System.Diagnostics.Process.Start(
+                        new System.Diagnostics.ProcessStartInfo(
+                            "https://dotnet.microsoft.com/ru-ru/download/dotnet-framework/net48")
+                        {
+                            UseShellExecute = true
+                        });
+                }
+                catch (Exception)
+                {
+                    // Браузер не открылся — адрес уже назван в сообщении.
+                }
+            }
+            return false;
+        }
+
+        private static bool IsDotNet48Installed()
+        {
+            try
+            {
+                using (Microsoft.Win32.RegistryKey key =
+                    Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
+                        @"SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full"))
+                {
+                    object value = key == null ? null : key.GetValue("Release");
+                    return value is int && (int)value >= 528040;
+                }
+            }
+            catch (Exception)
+            {
+                // Реестр не прочитан — не мешаем настройке, при 1603
+                // помощник сам подскажет про .NET.
+                return true;
+            }
+        }
+
         internal async Task<FullAutomaticLocalSetupOutcome>
             RunFullAutomaticLocalSetupFromHostAsync(
                 IList<LmGatewayKkt> registeredKkts,
@@ -296,6 +349,10 @@ namespace EsmTspiot.WinForms.Shared
             // запускают с другой вкладки: без этого вопроса ЛМ ЧЗ
             // молча пропускается, и это выясняется только в журнале.
             // Если все ЛМ на другом компьютере, пакет не нужен.
+            if (localLmKkts.Count > 0 && !RequireDotNetForLocalModule(this))
+                throw new InvalidOperationException(
+                    "Не установлен .NET Framework 4.8 — он нужен для ЛМ ЧЗ. " +
+                    "Установите его, перезагрузите компьютер и повторите настройку.");
             if (localLmKkts.Count > 0 && !RequireLocalModuleInstaller(this))
                 throw new InvalidOperationException(
                     "Не выбран официальный MSI ЛМ ЧЗ. Укажите файл кнопкой " +
