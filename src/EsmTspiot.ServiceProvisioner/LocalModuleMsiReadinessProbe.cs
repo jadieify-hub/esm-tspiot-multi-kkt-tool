@@ -8,7 +8,9 @@ namespace EsmTspiot.ServiceProvisioner
     internal sealed class LocalModuleMsiReadinessProbe :
         ILocalModuleMsiReadinessProbe
     {
-        private const int DefaultAttempts = 180;
+        // На кассе ЛМ ЧЗ поднимается до нескольких минут; 45 с не хватало,
+        // и свежая установка откатывалась. 1200 x 250 мс = 5 минут.
+        private const int DefaultAttempts = 1200;
         private readonly IWindowsServiceApi _services;
         private readonly ITcpListenerOwnerReader _listeners;
         private readonly IProcessParentReader _parents;
@@ -59,6 +61,7 @@ namespace EsmTspiot.ServiceProvisioner
                 if (attempt + 1 < _attempts) _delay();
             }
             throw new InvalidOperationException(
+                "ЛМ ЧЗ не открыл свой порт за 5 минут. " +
                 "Local-module service did not confirm its owned listener: " +
                 (last == null ? "unknown" : last.JoinMessages()));
         }
