@@ -494,8 +494,8 @@ namespace EsmTspiot.ServiceProvisioner
             LocalModuleMsiProvisioningItemRequest request)
         {
             return request.CloneOrdinal == 0
-                ? Path.Combine(request.InstallVolumeRoot,
-                    "Program Files", "Regime")
+                ? LocalModuleInstallRootPolicy.BuildBaseInstallDirectory(
+                    request.InstallVolumeRoot)
                 : LocalModuleInstallRootPolicy.BuildCloneInstallDirectory(
                     request.InstallVolumeRoot,
                     request.CloneOrdinal);

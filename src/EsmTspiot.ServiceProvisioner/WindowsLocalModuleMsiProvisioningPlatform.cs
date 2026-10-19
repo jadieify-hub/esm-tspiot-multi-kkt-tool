@@ -762,7 +762,7 @@ namespace EsmTspiot.ServiceProvisioner
                 Path.Combine(request.InstallVolumeRoot,
                     "Program Files", "Regime"));
             return request.CloneOrdinal == 0
-                ? Path.Combine(volume, "Program Files", "Regime")
+                ? LocalModuleInstallRootPolicy.BuildBaseInstallDirectory(volume)
                 : LocalModuleInstallRootPolicy.BuildCloneInstallDirectory(
                     volume,
                     request.CloneOrdinal);
