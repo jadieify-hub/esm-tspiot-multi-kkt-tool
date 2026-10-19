@@ -706,7 +706,9 @@ namespace EsmTspiot.ServiceProvisioner
                 string installDir = key.GetValue("InstallDir") as string;
                 if (!PathsEqual(installDir, expectedRoot))
                     throw new InvalidDataException(
-                        "Clone registry installation root is foreign.");
+                        "Clone registry installation root is foreign: " +
+                        views[index] + " InstallDir='" + installDir +
+                        "', expected '" + expectedRoot + "'.");
                 key.Close();
                 baseKey.DeleteSubKeyTree(subKey, false);
             }

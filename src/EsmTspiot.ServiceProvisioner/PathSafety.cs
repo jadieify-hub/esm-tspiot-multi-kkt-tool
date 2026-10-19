@@ -148,7 +148,7 @@ namespace EsmTspiot.ServiceProvisioner
                             security,
                             allowedWriterSids))
                     {
-                        result.Add("Защищенный путь допускает изменение непривилегированной учетной записью.");
+                        result.Add("Защищенный путь допускает изменение непривилегированной учетной записью: " + current);
                         return result;
                     }
                 }

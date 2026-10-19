@@ -71,6 +71,38 @@ namespace EsmTspiot.WindowsSecurity
             return true;
         }
 
+        // Убирает явные разрешения на изменение, которые не прошли бы
+        // IsProtectedForWriters: так бывает после «Продолжить» в Проводнике.
+        // Службам (S-1-5-80-*) права выдаёт сама программа — их не трогаем.
+        // Только снимает права, ничего не добавляет. Возвращает число снятых.
+        internal static int RemoveUnsafeWriters(FileSystemSecurity security)
+        {
+            AuthorizationRuleCollection rules = security.GetAccessRules(
+                true,
+                false,
+                typeof(SecurityIdentifier));
+            int removed = 0;
+            for (int index = 0; index < rules.Count; index++)
+            {
+                FileSystemAccessRule rule = rules[index] as FileSystemAccessRule;
+                SecurityIdentifier sid = rule == null
+                    ? null
+                    : rule.IdentityReference as SecurityIdentifier;
+                if (sid == null ||
+                    rule.AccessControlType != AccessControlType.Allow ||
+                    (rule.PropagationFlags & PropagationFlags.InheritOnly) != 0 ||
+                    (rule.FileSystemRights & UnsafeRights) == 0 ||
+                    IsPrivilegedSid(sid.Value, null) ||
+                    sid.Value.StartsWith("S-1-5-80-", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+                security.RemoveAccessRuleSpecific(rule);
+                removed++;
+            }
+            return removed;
+        }
+
         private static bool IsPrivilegedSid(
             string sid,
             IList<string> allowedWriterSids)

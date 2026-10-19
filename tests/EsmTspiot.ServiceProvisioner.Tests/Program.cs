@@ -92,6 +92,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
             Run("DTF dependency closure is exact and vendor free", DtfDependencyClosureIsExactAndVendorFree);
             Run("Manual base LM in Program Files (x86) is adopted", ManualBaseLmInProgramFilesX86IsAdopted);
+            Run("Explorer-granted user write is removed, service writers kept", ExplorerGrantedUserWriteIsRemoved);
             Run("Production helper rejects retired supervisor entry points", ProductionHelperRejectsRetiredSupervisorEntryPoints);
             Run("Provisioning pipe authenticates exact peer images from any folder", ProvisioningPipeAuthenticatesExactPeerImages);
             Run("Provisioning pipe accepts main images independently of filename", ProvisioningPipeAcceptsMainImageIndependentlyOfFilename);
@@ -6555,6 +6556,53 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     security,
                     new[] { databaseSid }),
                 "Omitting either actual writer from the allow-list must fail closed.");
+        }
+
+        private static void ExplorerGrantedUserWriteIsRemoved()
+        {
+            DirectorySecurity security = new DirectorySecurity();
+            SecurityIdentifier administrators = new SecurityIdentifier(
+                WellKnownSidType.BuiltinAdministratorsSid,
+                null);
+            SecurityIdentifier user = new SecurityIdentifier(
+                "S-1-5-21-1-2-3-1001");
+            string serviceSid = "S-1-5-80-1-2-3-4-5";
+            security.SetOwner(administrators);
+            security.SetAccessRuleProtection(true, false);
+            security.AddAccessRule(new FileSystemAccessRule(
+                administrators,
+                FileSystemRights.FullControl,
+                AccessControlType.Allow));
+            security.AddAccessRule(new FileSystemAccessRule(
+                user,
+                FileSystemRights.Traverse | FileSystemRights.Synchronize,
+                AccessControlType.Allow));
+            security.AddAccessRule(new FileSystemAccessRule(
+                user,
+                FileSystemRights.FullControl,
+                InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit,
+                PropagationFlags.None,
+                AccessControlType.Allow));
+            security.AddAccessRule(new FileSystemAccessRule(
+                new SecurityIdentifier(serviceSid),
+                FileSystemRights.Modify,
+                AccessControlType.Allow));
+            AssertFalse(PathSafety.IsSecurityProtectedForServices(
+                    security,
+                    new[] { serviceSid }),
+                "User full control must fail the check before repair.");
+
+            AssertTrue(EsmTspiot.WindowsSecurity.ProtectedAclPolicy
+                    .RemoveUnsafeWriters(security) > 0,
+                "Repair must report removed rules.");
+
+            AssertTrue(PathSafety.IsSecurityProtectedForServices(
+                    security,
+                    new[] { serviceSid }),
+                "After repair only privileged and service writers remain.");
+            AssertTrue(EsmTspiot.WindowsSecurity.ProtectedAclPolicy
+                    .RemoveUnsafeWriters(security) == 0,
+                "Service writers and the user traverse rule must be kept.");
         }
 
         private static void LocalModuleInventoryResolvesOneInstancePerInn()

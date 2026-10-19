@@ -334,6 +334,84 @@ namespace EsmTspiot.WinForms.Shared
             }
         }
 
+        // Помощник не работает с папками программы, которые может менять
+        // обычная учётная запись (иначе подменённый манифест заставит его
+        // удалить чужое от имени администратора). Чаще всего такие права
+        // появляются после «Продолжить» в Проводнике — предлагаем снять их.
+        private void OfferProgramDataAclRepair()
+        {
+            string root = Path.Combine(
+                Environment.GetFolderPath(
+                    Environment.SpecialFolder.CommonApplicationData),
+                "KRS",
+                "MultiKKT");
+            List<string> unsafeDirectories = new List<string>();
+            CollectUnsafeDirectories(root, unsafeDirectories);
+            if (unsafeDirectories.Count == 0) return;
+
+            StringBuilder list = new StringBuilder();
+            for (int index = 0; index < unsafeDirectories.Count && index < 5; index++)
+                list.Append(unsafeDirectories[index]).Append("\r\n");
+            if (unsafeDirectories.Count > 5)
+                list.Append("и ещё ").Append(unsafeDirectories.Count - 5).Append("\r\n");
+            if (MessageBox.Show(
+                    this,
+                    "Эти папки программы может изменять обычная учётная запись " +
+                        "(так бывает после кнопки «Продолжить» в Проводнике):\r\n\r\n" +
+                        list +
+                        "\r\nС такими правами установка ЛМ ЧЗ остановится. " +
+                        "Оставить доступ на изменение только администраторам и SYSTEM?",
+                    "Лишние права на папки программы",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning) != DialogResult.Yes)
+            {
+                Log("Лишние права на папки программы оставлены оператором.\r\n");
+                return;
+            }
+            for (int index = 0; index < unsafeDirectories.Count; index++)
+            {
+                string directory = unsafeDirectories[index];
+                try
+                {
+                    DirectoryInfo info = new DirectoryInfo(directory);
+                    System.Security.AccessControl.DirectorySecurity security =
+                        info.GetAccessControl();
+                    EsmTspiot.WindowsSecurity.ProtectedAclPolicy
+                        .RemoveUnsafeWriters(security);
+                    info.SetAccessControl(security);
+                    Log("Сняты лишние права: " + directory + "\r\n");
+                }
+                catch (Exception ex)
+                {
+                    Log("Не удалось снять лишние права с " + directory + ": " +
+                        ex.GetType().Name + ": " + ex.Message + "\r\n");
+                }
+            }
+        }
+
+        private static void CollectUnsafeDirectories(string directory, List<string> result)
+        {
+            try
+            {
+                if (!Directory.Exists(directory)) return;
+                // Через reparse point не идём: чужой каталог не наш.
+                if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0)
+                    return;
+                if (EsmTspiot.WindowsSecurity.ProtectedAclPolicy.RemoveUnsafeWriters(
+                        new DirectoryInfo(directory).GetAccessControl()) > 0)
+                    result.Add(directory);
+                string[] children = Directory.GetDirectories(directory);
+                for (int index = 0; index < children.Length; index++)
+                    CollectUnsafeDirectories(children[index], result);
+            }
+            catch (Exception ex)
+            {
+                if (!(ex is IOException) && !(ex is UnauthorizedAccessException) &&
+                    !(ex is SystemException)) throw;
+                // Папку не прочитать — решит проверка помощника.
+            }
+        }
+
         internal async Task<FullAutomaticLocalSetupOutcome>
             RunFullAutomaticLocalSetupFromHostAsync(
                 IList<LmGatewayKkt> registeredKkts,
@@ -572,6 +650,7 @@ namespace EsmTspiot.WinForms.Shared
                 return false;
             }
 
+            OfferProgramDataAclRepair();
             LmServiceProvisioningBatchRequest request =
                 CreateMsiEnsureRequest(plan, inventory);
             _statusLabel.Text =
