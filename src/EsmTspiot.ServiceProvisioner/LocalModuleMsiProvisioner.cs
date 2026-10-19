@@ -78,10 +78,13 @@ namespace EsmTspiot.ServiceProvisioner
             if (pending != null &&
                 pending.RollbackOwnedChanges)
             {
-                if (!TryRollback(request, manifest, context, pending, null))
+                Exception cleanupError;
+                if (!TryRollback(request, manifest, context, pending, null,
+                        out cleanupError))
                     return Result(request,
                         LmServiceProvisioningStatus.CleanupPending,
-                        "Не завершена очистка предыдущей установки ЛМ.",
+                        "Не завершена очистка предыдущей установки ЛМ (" +
+                            SafeMessage(cleanupError) + ").",
                         manifest == null ? string.Empty :
                             manifest.ManifestSha256);
                 manifest = null;
@@ -215,12 +218,14 @@ namespace EsmTspiot.ServiceProvisioner
             {
                 if (createdThisOperation)
                 {
+                    Exception cleanupError;
                     bool cleaned = TryRollback(
                         request,
                         manifest,
                         context,
                         null,
-                        exception);
+                        exception,
+                        out cleanupError);
                     return Result(request,
                         cleaned
                             ? LmServiceProvisioningStatus.Failed
@@ -228,7 +233,8 @@ namespace EsmTspiot.ServiceProvisioner
                         cleaned
                             ? SafeMessage(exception)
                             : "Ошибка установки (" + SafeMessage(exception) +
-                                "); очистка будет повторена.",
+                                "); очистка будет повторена; очистка не " +
+                                "прошла: " + SafeMessage(cleanupError) + ".",
                         manifest == null ? string.Empty :
                             manifest.ManifestSha256);
                 }
@@ -259,8 +265,10 @@ namespace EsmTspiot.ServiceProvisioner
             LocalModuleMsiManifest manifest,
             LocalModuleMsiProvisioningContext context,
             LocalModuleMsiLifecycleJournal pending,
-            Exception original)
+            Exception original,
+            out Exception cleanupError)
         {
+            cleanupError = null;
             string nonce = manifest != null
                 ? manifest.OwnershipNonce
                 : pending == null ? context.NewOwnershipNonce() :
@@ -321,11 +329,14 @@ namespace EsmTspiot.ServiceProvisioner
                     nonce);
                 return true;
             }
-            catch (Exception cleanupError)
+            catch (Exception error)
             {
+                // Причина нужна оператору: без неё «очистка будет повторена»
+                // повторяется по кругу, а что мешает — не видно.
+                cleanupError = error;
                 context.WriteStage(request, nonce,
                     LocalModuleMsiLifecycleStage.CleanupPending,
-                    cleanupError,
+                    error,
                     true);
                 return false;
             }
