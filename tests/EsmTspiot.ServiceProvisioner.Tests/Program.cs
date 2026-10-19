@@ -2704,6 +2704,40 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 AssertEqual((uint)1641,
                     initiatedApi.Uninstall("{9449123B-61C4-40DE-AA6C-1BB9AA02EB67}"),
                     "Снятие с уже запущенной перезагрузкой — тоже успех.");
+
+                // 1603 с поля: причина берётся из журнала установщика.
+                FakeWindowsInstallerNative failing =
+                    new FakeWindowsInstallerNative();
+                failing.ReturnCode = 1603;
+                failing.LogText =
+                    "=== Logging started ===\r\n" +
+                    "Action start 17:06:20: InstallFiles.\r\n" +
+                    "Product: ЛМ ЧЗ -- Ошибка 1920. Не удалось запустить службу regime.\r\n" +
+                    "Action ended 17:06:30: InstallFinalize. Return value 3.\r\n" +
+                    "Property(S): ADMINPASSWORD = **********\r\n";
+                WindowsInstallerApi failingApi = new WindowsInstallerApi(
+                    failing,
+                    delegate(int milliseconds) { },
+                    delegate { return frozen; });
+                failingApi.LogDirectory = Path.Combine(directory, "logs");
+                string failure = null;
+                try
+                {
+                    failingApi.Install(package, "AUTOSERVICE=1");
+                }
+                catch (WindowsInstallerOperationException error)
+                {
+                    AssertEqual((uint)1603, error.MsiErrorCode, "MSI code kept");
+                    failure = error.Message;
+                }
+                AssertTrue(failure != null, "1603 must stay a failure.");
+                AssertContains(failure, "Ошибка 1920");
+                AssertContains(failure, "InstallFinalize. Return value 3");
+                AssertContains(failure, Path.Combine(directory, "logs"));
+                AssertFalse(failure.Contains("ADMINPASSWORD"),
+                    "Property lines never reach the message.");
+                AssertTrue(failing.LogPaths.Count == 2 && failing.LogPaths[1] == null,
+                    "The installer log must be switched off after the call.");
             }
             finally
             {
@@ -9627,6 +9661,14 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 return ReturnCodes.Count > 0 ? ReturnCodes.Dequeue() : ReturnCode;
             }
 
+            internal List<string> LogPaths = new List<string>();
+            internal string LogText { get; set; }
+
+            public void EnableLog(string logPath)
+            {
+                LogPaths.Add(logPath);
+            }
+
             public int SetInternalUi(int uiLevel)
             {
                 int previous = _currentUiLevel;
@@ -9640,6 +9682,9 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 PackagePath = packagePath;
                 CommandLine = commandLine;
                 InstallAttempts++;
+                string logPath = LogPaths.Count == 0 ? null : LogPaths[LogPaths.Count - 1];
+                if (LogText != null && logPath != null)
+                    File.WriteAllText(logPath, LogText, Encoding.Unicode);
                 return NextCode();
             }
 

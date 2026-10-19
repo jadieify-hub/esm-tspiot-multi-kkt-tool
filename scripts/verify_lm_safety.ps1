@@ -176,6 +176,10 @@ function Test-AllowedSecretHit {
     if ($relative -eq "src/EsmTspiot.Shared/Services/LmGatewayReadbackWorkflow.cs") {
         return $text -match 'timeout\.Token'
     }
+    if ($relative -eq "src/EsmTspiot.Shared/Services/TspiotApiClient.cs") {
+        # Reviewed: the per-request deadline is a cancellation token, not a secret.
+        return $text -match 'deadline\.Token'
+    }
     if ($relative -eq "src/EsmTspiot.WinForms.Shared/LmGatewayBindingDialog.cs") {
         return $text -match 'Password\s*=\s*_passwordTextBox\.Text|_passwordTextBox\.Text\s*=\s*credentials\.Password|credentials\.Password\s*=\s*string\.Empty'
     }

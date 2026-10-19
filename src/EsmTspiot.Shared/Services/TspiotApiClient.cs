@@ -15,10 +15,17 @@ namespace EsmTspiot.Shared.Services
     {
         private readonly HttpClient _httpClient;
 
+        // Чтение отвечает быстро. Создание экземпляра и регистрация ККТ ЕСМ
+        // выполняет с обращением к внешним сервисам: на кассе клиента это
+        // заняло больше 30 с, запрос объявлялся неудачным, а ЕСМ доделывал
+        // его уже после повтора.
+        private static readonly TimeSpan ReadTimeout = TimeSpan.FromSeconds(30);
+        private static readonly TimeSpan WriteTimeout = TimeSpan.FromSeconds(120);
+
         public TspiotApiClient()
         {
             _httpClient = new HttpClient();
-            _httpClient.Timeout = TimeSpan.FromSeconds(30);
+            _httpClient.Timeout = System.Threading.Timeout.InfiniteTimeSpan;
         }
 
         public TspiotApiClient(HttpClient httpClient)
@@ -201,6 +208,8 @@ namespace EsmTspiot.Shared.Services
 
             try
             {
+                using (CancellationTokenSource deadline =
+                    CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
                 using (HttpRequestMessage request = new HttpRequestMessage(new HttpMethod(method), url))
                 {
                     if (acceptJson)
@@ -212,7 +221,10 @@ namespace EsmTspiot.Shared.Services
                         request.Content = new StringContent(requestBody, Encoding.UTF8, "application/json");
                     }
 
-                    using (HttpResponseMessage response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false))
+                    deadline.CancelAfter(string.Equals(method, "GET", StringComparison.Ordinal)
+                        ? ReadTimeout
+                        : WriteTimeout);
+                    using (HttpResponseMessage response = await _httpClient.SendAsync(request, deadline.Token).ConfigureAwait(false))
                     {
                         result.StatusCode = (int)response.StatusCode;
                         result.ReasonPhrase = response.ReasonPhrase;
