@@ -832,7 +832,37 @@ namespace EsmTspiot.ServiceProvisioner
                     productVersion,
                     installRoot) == null)
                 throw new InvalidOperationException(
-                    "Windows Installer did not confirm the exact LM product.");
+                    "Windows Installer did not confirm the exact LM product. " +
+                    DescribeRegisteredProduct(
+                        productCode, productName, productVersion, installRoot));
+        }
+
+        // Для полевого журнала: чем запись установщика отличается от
+        // ожидаемой — без этого ошибку не разобрать без доступа к кассе.
+        private string DescribeRegisteredProduct(
+            string productCode,
+            string productName,
+            string productVersion,
+            string installRoot)
+        {
+            List<string> found = new List<string>();
+            IList<InstalledLocalModuleProduct> installed = _products.ReadAll();
+            for (int index = 0; index < installed.Count; index++)
+            {
+                InstalledLocalModuleProduct current = installed[index];
+                if (!string.Equals(current.ProductCode, productCode,
+                        StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(current.DisplayName, productName,
+                        StringComparison.Ordinal))
+                    continue;
+                found.Add(current.ProductCode + " \"" + current.DisplayName +
+                    "\" " + current.DisplayVersion + " in \"" +
+                    current.InstallLocation + "\" (" + current.RegistryView + ")");
+            }
+            return "Expected " + productCode + " \"" + productName + "\" " +
+                productVersion + " in \"" + installRoot + "\"; registered: " +
+                (found.Count == 0 ? "none" : string.Join("; ", found.ToArray())) +
+                ".";
         }
 
         private static string InstallProperties(string installRoot)
