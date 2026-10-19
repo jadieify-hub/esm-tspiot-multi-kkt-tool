@@ -6,9 +6,9 @@ Windows-приложение для регистрации одной или н�
 
 ![Автоматическая настройка, FMU-API и Frontol](docs/images/automatic-setup.png)
 
-Текущая версия — **11.3.22.0**.
+Текущая версия — **11.3.23.0**.
 
-[Скачать полный ZIP](https://github.com/jadieify-hub/esm-tspiot-multi-kkt-tool/releases/tag/v11.3.22.0) · [Инструкция оператора](INSTRUCTION_FOR_DUMMIES.md) · [Изменения](docs/releases/11.3.22.0.md) · [Документация](docs/README.md)
+[Скачать полный ZIP](https://github.com/jadieify-hub/esm-tspiot-multi-kkt-tool/releases/tag/v11.3.23.0) · [Инструкция оператора](INSTRUCTION_FOR_DUMMIES.md) · [Изменения](docs/releases/11.3.23.0.md) · [Документация](docs/README.md)
 
 ## Возможности
 
@@ -31,7 +31,7 @@ Windows-приложение для регистрации одной или н�
 
 ## Установка и обновление
 
-1. Скачайте `MultiKKT-ESM-TSPioT-11.3.22.0.zip` и `SHA256SUMS-MultiKKT-11.3.22.0.txt` из выпуска и проверьте SHA-256.
+1. Скачайте `MultiKKT-ESM-TSPioT-11.3.23.0.zip` и `SHA256SUMS-MultiKKT-11.3.23.0.txt` из выпуска и проверьте SHA-256.
 2. Распакуйте ZIP целиком в отдельную локальную папку.
 3. Запустите `MultiKKT-ESM-TSPioT.exe` и подтвердите запрос UAC.
 4. Откройте `INSTRUCTION_FOR_DUMMIES.txt` из поставки или меню `Справка` → `Инструкция`.
