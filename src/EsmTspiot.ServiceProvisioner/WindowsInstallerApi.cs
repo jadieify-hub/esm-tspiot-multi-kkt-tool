@@ -6,6 +6,7 @@ using System.Text;
 using System.Threading;
 using EsmTspiot.Shared.Logging;
 using EsmTspiot.Shared.Services;
+using Microsoft.Win32;
 
 namespace EsmTspiot.ServiceProvisioner
 {
@@ -144,15 +145,46 @@ namespace EsmTspiot.ServiceProvisioner
                     error.MsiErrorCode == ErrorInstallAlreadyRunning)
                     throw;
                 string summary = SummarizeInstallLog(logPath);
+                string hint = error.MsiErrorCode == 1603
+                    ? DotNetHint(ReadDotNetRelease())
+                    : string.Empty;
                 throw new WindowsInstallerOperationException(
                     "install",
                     error.MsiErrorCode,
+                    hint +
                     (summary.Length == 0 ? string.Empty : summary + " ") +
                     "Журнал установщика: " + logPath);
             }
             finally
             {
                 if (logPath != null) _native.EnableLog(null);
+            }
+        }
+
+        // Пакет ЛМ проверяет .NET Framework 4.8 (NDP\v4\Full, Release) и
+        // при тихой установке без него отдаёт 1603.
+        internal static string DotNetHint(int release)
+        {
+            return release >= 528040
+                ? string.Empty
+                : "Не установлен .NET Framework 4.8 — он нужен для ЛМ ЧЗ. " +
+                    "Установите его, перезагрузите компьютер и повторите. ";
+        }
+
+        private static int ReadDotNetRelease()
+        {
+            try
+            {
+                using (RegistryKey key = Registry.LocalMachine.OpenSubKey(
+                    @"SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full"))
+                {
+                    object value = key == null ? null : key.GetValue("Release");
+                    return value is int ? (int)value : 0;
+                }
+            }
+            catch (Exception)
+            {
+                return 0;
             }
         }
 

@@ -2732,6 +2732,10 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 }
                 AssertTrue(failure != null, "1603 must stay a failure.");
                 AssertContains(failure, "Ошибка 1920");
+                AssertContains(WindowsInstallerApi.DotNetHint(0), ".NET Framework 4.8");
+                AssertContains(WindowsInstallerApi.DotNetHint(461808), ".NET Framework 4.8");
+                AssertEqual(string.Empty, WindowsInstallerApi.DotNetHint(528040),
+                    "Installed .NET 4.8 adds no hint.");
                 AssertContains(failure, "InstallFinalize. Return value 3");
                 AssertContains(failure, Path.Combine(directory, "logs"));
                 AssertFalse(failure.Contains("ADMINPASSWORD"),
