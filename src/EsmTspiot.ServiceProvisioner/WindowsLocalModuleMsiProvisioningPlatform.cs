@@ -704,7 +704,7 @@ namespace EsmTspiot.ServiceProvisioner
             {
                 if (key == null) continue;
                 string installDir = key.GetValue("InstallDir") as string;
-                if (!PathsEqual(installDir, expectedRoot))
+                if (!IsOwnCloneInstallDir(installDir, expectedRoot))
                     throw new InvalidDataException(
                         "Clone registry installation root is foreign: " +
                         views[index] + " InstallDir='" + installDir +
@@ -712,6 +712,28 @@ namespace EsmTspiot.ServiceProvisioner
                 key.Close();
                 baseKey.DeleteSubKeyTree(subKey, false);
             }
+        }
+
+        // Ключ «…экземпляр N» вендорский MSI не удаляет, а его AppSearch
+        // при следующей установке подставляет записанный каталог вместо
+        // нашего APPLICATIONFOLDER. На кассе так клон ушёл в
+        // Program Files (x86)\RegimeN, не прошёл проверку и откатился,
+        // а оставшийся ключ навсегда блокировал очистку. Тот же каталог
+        // клона в Program Files (x86) того же диска — тоже наш.
+        internal static bool IsOwnCloneInstallDir(
+            string installDir,
+            string expectedRoot)
+        {
+            if (PathsEqual(installDir, expectedRoot)) return true;
+            if (string.IsNullOrWhiteSpace(expectedRoot)) return false;
+            string root = Path.GetFullPath(expectedRoot)
+                .TrimEnd(Path.DirectorySeparatorChar);
+            return PathsEqual(
+                installDir,
+                Path.Combine(
+                    Path.GetPathRoot(root),
+                    "Program Files (x86)",
+                    Path.GetFileName(root)));
         }
 
         private static void RemoveCrptRegistryKey(string subKey)

@@ -93,6 +93,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("DTF dependency closure is exact and vendor free", DtfDependencyClosureIsExactAndVendorFree);
             Run("Manual base LM in Program Files (x86) is adopted", ManualBaseLmInProgramFilesX86IsAdopted);
             Run("Explorer-granted user write is removed, service writers kept", ExplorerGrantedUserWriteIsRemoved);
+            Run("Clone registry key redirected to Program Files (x86) is own", CloneRegistryKeyInProgramFilesX86IsOwn);
             Run("Production helper rejects retired supervisor entry points", ProductionHelperRejectsRetiredSupervisorEntryPoints);
             Run("Provisioning pipe authenticates exact peer images from any folder", ProvisioningPipeAuthenticatesExactPeerImages);
             Run("Provisioning pipe accepts main images independently of filename", ProvisioningPipeAcceptsMainImageIndependentlyOfFilename);
@@ -6556,6 +6557,29 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     security,
                     new[] { databaseSid }),
                 "Omitting either actual writer from the allow-list must fail closed.");
+        }
+
+        private static void CloneRegistryKeyInProgramFilesX86IsOwn()
+        {
+            string expected = @"C:\Program Files\Regime1";
+            AssertTrue(WindowsLocalModuleMsiProvisioningPlatform
+                    .IsOwnCloneInstallDir(@"C:\Program Files\Regime1\", expected),
+                "Exact clone root is own.");
+            AssertTrue(WindowsLocalModuleMsiProvisioningPlatform
+                    .IsOwnCloneInstallDir(@"C:\Program Files (x86)\Regime1\", expected),
+                "Field case: AppSearch redirected the clone to Program Files (x86).");
+            AssertFalse(WindowsLocalModuleMsiProvisioningPlatform
+                    .IsOwnCloneInstallDir(@"C:\Program Files (x86)\Regime2\", expected),
+                "Another clone's directory is foreign.");
+            AssertFalse(WindowsLocalModuleMsiProvisioningPlatform
+                    .IsOwnCloneInstallDir(@"D:\Program Files (x86)\Regime1", expected),
+                "Another volume is foreign.");
+            AssertFalse(WindowsLocalModuleMsiProvisioningPlatform
+                    .IsOwnCloneInstallDir(@"C:\Windows", expected),
+                "Unrelated directory is foreign.");
+            AssertFalse(WindowsLocalModuleMsiProvisioningPlatform
+                    .IsOwnCloneInstallDir(null, expected),
+                "Missing InstallDir is foreign.");
         }
 
         private static void ExplorerGrantedUserWriteIsRemoved()
