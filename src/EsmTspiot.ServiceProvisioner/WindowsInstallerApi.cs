@@ -57,7 +57,9 @@ namespace EsmTspiot.ServiceProvisioner
         // программы. Поэтому каждый вызов ограничен по времени: помощник
         // одноразовый, он завершится и отпустит оператора, а незавершённая
         // операция подхватится штатным повтором.
-        private const int InstallerCallTimeoutMilliseconds = 900000;
+        // Час, а не 15 минут: на кассе с загруженным процессором базовый
+        // ЛМ ставился дольше 15 минут и обрывался посреди установки.
+        private const int InstallerCallTimeoutMilliseconds = 3600000;
 
         private readonly IWindowsInstallerNative _native;
         private readonly Action<int> _wait;
