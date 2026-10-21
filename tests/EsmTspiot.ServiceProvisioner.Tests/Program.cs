@@ -2141,6 +2141,19 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 AssertThrows<InvalidDataException>(delegate {
                     inspector.Inspect(clone);
                 }, "Empty [api] credentials must be rejected like missing ones.");
+
+                File.WriteAllText(
+                    clone.ApiLocalIniPath,
+                    "[api]\r\nip_address = 0.0.0.0\r\nport = 7000\r\n" +
+                    "login = u\r\npassword = p\r\n" +
+                    "[local]\r\ndb_url = http://u:secretdb@127.0.0.1:7984\r\n");
+                string message = string.Empty;
+                try { inspector.Inspect(clone); }
+                catch (InvalidDataException exception) { message = exception.Message; }
+                AssertContains(message, "api.port=7000, expected 6995");
+                AssertContains(message, "local.db_url does not equal");
+                AssertFalse(message.Contains("secretdb"),
+                    "The db_url value may carry credentials and must not be logged.");
             }
             finally
             {

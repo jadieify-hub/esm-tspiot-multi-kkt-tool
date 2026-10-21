@@ -48,36 +48,40 @@ namespace EsmTspiot.ServiceProvisioner
             int apiPort = RequiredPort(api, "api.port");
             string databaseAddress = Required(database, "chttpd.bind_address");
             int databasePort = RequiredPort(database, "chttpd.port");
-            if (!string.Equals(apiAddress, "0.0.0.0", StringComparison.Ordinal) ||
-                apiPort != layout.ApiPort ||
-                !string.Equals(
-                    Required(api, "local.db_url"),
-                    "http://127.0.0.1:" + layout.DatabasePort.ToString(
-                        CultureInfo.InvariantCulture),
-                    StringComparison.Ordinal) ||
-                !IsExpectedDatabaseBind(layout, databaseAddress) ||
-                databasePort != layout.DatabasePort ||
-                !string.Equals(
-                    apiVm.NodeName,
-                    layout.ApiNodeName,
-                    StringComparison.Ordinal) ||
-                !string.Equals(
-                    databaseVm.NodeName,
-                    layout.DatabaseNodeName,
-                    StringComparison.Ordinal) ||
-                !string.Equals(
-                    apiVm.Cookie,
-                    databaseVm.Cookie,
-                    StringComparison.Ordinal) ||
-                !IsCookie(apiVm.Cookie) ||
-                !ErlPathsEqual(
-                    Required(erl, "erlang.Bindir"),
-                    layout.ErtsBinPath) ||
-                !ErlPathsEqual(
-                    Required(erl, "erlang.Rootdir"),
-                    layout.InstallRoot))
+            // В журнал — какое именно поле разошлось с планом: на кассе
+            // голое «does not match» не давало понять, что поменялось.
+            // Cookie не печатается.
+            string expectedDbUrl = "http://127.0.0.1:" +
+                layout.DatabasePort.ToString(CultureInfo.InvariantCulture);
+            string dbUrl = Required(api, "local.db_url");
+            string bindir = Required(erl, "erlang.Bindir");
+            string rootdir = Required(erl, "erlang.Rootdir");
+            List<string> mismatches = new List<string>();
+            if (!string.Equals(apiAddress, "0.0.0.0", StringComparison.Ordinal))
+                mismatches.Add("api.ip_address='" + apiAddress + "', expected '0.0.0.0'");
+            if (apiPort != layout.ApiPort)
+                mismatches.Add("api.port=" + apiPort + ", expected " + layout.ApiPort);
+            if (!string.Equals(dbUrl, expectedDbUrl, StringComparison.Ordinal))
+                mismatches.Add("local.db_url does not equal '" + expectedDbUrl + "'");
+            if (!IsExpectedDatabaseBind(layout, databaseAddress))
+                mismatches.Add("chttpd.bind_address='" + databaseAddress + "'");
+            if (databasePort != layout.DatabasePort)
+                mismatches.Add("chttpd.port=" + databasePort + ", expected " + layout.DatabasePort);
+            if (!string.Equals(apiVm.NodeName, layout.ApiNodeName, StringComparison.Ordinal))
+                mismatches.Add("API -name '" + apiVm.NodeName + "', expected '" + layout.ApiNodeName + "'");
+            if (!string.Equals(databaseVm.NodeName, layout.DatabaseNodeName, StringComparison.Ordinal))
+                mismatches.Add("database -name '" + databaseVm.NodeName + "', expected '" + layout.DatabaseNodeName + "'");
+            if (!string.Equals(apiVm.Cookie, databaseVm.Cookie, StringComparison.Ordinal) ||
+                !IsCookie(apiVm.Cookie))
+                mismatches.Add("vm.args cookie differs between API and database or is malformed");
+            if (!ErlPathsEqual(bindir, layout.ErtsBinPath))
+                mismatches.Add("erl.ini Bindir='" + bindir + "', expected '" + layout.ErtsBinPath + "'");
+            if (!ErlPathsEqual(rootdir, layout.InstallRoot))
+                mismatches.Add("erl.ini Rootdir='" + rootdir + "', expected '" + layout.InstallRoot + "'");
+            if (mismatches.Count != 0)
                 throw new InvalidDataException(
-                    "Installed local-module configuration does not match its plan.");
+                    "Installed local-module configuration does not match its plan: " +
+                    string.Join("; ", mismatches.ToArray()) + ".");
 
             return new LocalModuleConfigurationObservation
             {
