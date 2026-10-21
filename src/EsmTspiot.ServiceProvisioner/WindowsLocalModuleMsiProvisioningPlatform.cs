@@ -205,6 +205,7 @@ namespace EsmTspiot.ServiceProvisioner
                 layout.MatchesService(LocalModuleProcessRole.Api, api) &&
                 layout.MatchesService(LocalModuleProcessRole.Database, database);
             bool configMatches = false;
+            string configProblem = string.Empty;
             if (exactProduct && servicesMatch)
             {
                 try
@@ -212,9 +213,9 @@ namespace EsmTspiot.ServiceProvisioner
                     _configurations.Inspect(layout);
                     configMatches = true;
                 }
-                catch (InvalidDataException)
+                catch (InvalidDataException exception)
                 {
-                    configMatches = false;
+                    configProblem = exception.Message;
                 }
             }
 
@@ -255,7 +256,8 @@ namespace EsmTspiot.ServiceProvisioner
                     DescribeService(layout, LocalModuleProcessRole.Database, database) +
                     "; expected " + layout.ServiceImagePath + ".";
             else if (exactProduct && servicesMatch && !configMatches)
-                conflict = "Local-module configuration or ports are foreign.";
+                conflict = "Local-module configuration or ports are foreign in " +
+                    installRoot + ": " + configProblem;
             else if (firewallPresent && !firewallMatches)
                 conflict = "Local-module firewall rule is foreign.";
 
