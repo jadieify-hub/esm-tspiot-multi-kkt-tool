@@ -22,7 +22,8 @@ namespace EsmTspiot.WinForms.Shared
             Dock = DockStyle.Top;
             AutoSize = true;
             AutoSizeMode = AutoSizeMode.GrowAndShrink;
-            Font = new Font("Segoe UI", 9.5F);
+            Font = new Font("Segoe UI", 10F);
+            ForeColor = OperatorTheme.Ink;
             var groups = new TableLayoutPanel {
                 Dock = DockStyle.Top, AutoSize = true, ColumnCount = 1, RowCount = 0
             };
@@ -88,7 +89,11 @@ namespace EsmTspiot.WinForms.Shared
                     if (kkt != null && kkt.KktInn == fields.Inn && !serials.Contains(kkt.KktSerial))
                         serials.Add(kkt.KktSerial);
                 Control[] labels = Controls.Find("lm-kkts-" + fields.Inn, true);
-                if (labels.Length > 0) labels[0].Text = "ККТ: " + string.Join(", ", serials.ToArray());
+                if (labels.Length > 0)
+                {
+                    labels[0].Text = "ККТ: " + string.Join(", ", serials.ToArray());
+                    labels[0].Visible = serials.Count > 1;
+                }
             }
         }
 
@@ -118,12 +123,14 @@ namespace EsmTspiot.WinForms.Shared
             base.Dispose(disposing);
         }
 
-        private GroupBox BuildGroup(InnFields fields, IList<string> serials, string endpoint)
+        private Control BuildGroup(InnFields fields, IList<string> serials, string endpoint)
         {
-            GroupBox group = new GroupBox {
+            var group = new OperatorCard {
                 Name = "lm-group-" + fields.Inn,
                 Text = "ИНН " + (fields.Inn.Length == 0 ? "не указан" : fields.Inn),
-                Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(10),
+                Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(8), Radius = 10,
+                BorderWidth = 1, BorderColor = Color.FromArgb(100, 145, 215),
+                Back = Color.FromArgb(234, 242, 255), BackColor = Color.FromArgb(234, 242, 255),
                 Margin = new Padding(0, 0, 18, 8)
             };
             TableLayoutPanel table = new TableLayoutPanel {
@@ -138,24 +145,17 @@ namespace EsmTspiot.WinForms.Shared
             Label kkts = new Label {
                 Name = "lm-kkts-" + fields.Inn, AutoSize = true,
                 Text = serials.Count == 0 ? "ККТ: —" : "ККТ: " + string.Join(", ", new List<string>(serials).ToArray()),
-                Margin = new Padding(0, 0, 0, 6), MaximumSize = new Size(620, 0)
+                Margin = new Padding(0, 0, 0, 4), MaximumSize = new Size(620, 0), Visible = serials.Count > 1
             };
             table.Controls.Add(kkts, 0, 0);
             table.SetColumnSpan(kkts, 4);
-            FlowLayoutPanel placement = new FlowLayoutPanel {
-                AutoSize = true, Dock = DockStyle.Fill, WrapContents = false,
-                Margin = new Padding(0, 0, 0, 4)
-            };
-            fields.Local.Name = "lm-local-" + fields.Inn;
-            fields.Local.Text = "На этом компьютере";
-            fields.Local.AutoSize = true;
-            fields.Remote.Name = "lm-remote-" + fields.Inn;
-            fields.Remote.Text = "На другом компьютере";
-            fields.Remote.AutoSize = true;
-            placement.Controls.Add(fields.Local);
-            placement.Controls.Add(fields.Remote);
-            table.Controls.Add(placement, 0, 1);
-            table.SetColumnSpan(placement, 4);
+            OperatorTheme.Segments(fields.Placement, "На этом компьютере", "На другом компьютере");
+            fields.Placement.Name = "lm-placement-" + fields.Inn;
+            fields.Placement.Height = 38;
+            fields.Placement.Dock = DockStyle.Fill;
+            fields.Placement.Margin = new Padding(0, 0, 0, 4);
+            table.Controls.Add(fields.Placement, 0, 1);
+            table.SetColumnSpan(fields.Placement, 4);
             AddField(table, 0, 2, "Адрес", fields.Host, "lm-host-" + fields.Inn);
             AddField(table, 2, 2, "Порт", fields.Port, "lm-port-" + fields.Inn);
             AddField(table, 0, 3, "Логин", fields.Login, "lm-login-" + fields.Inn);
@@ -175,16 +175,21 @@ namespace EsmTspiot.WinForms.Shared
                 fields.Host.Text = host;
                 fields.Port.Text = port.ToString(CultureInfo.InvariantCulture);
             }
-            fields.Local.Checked = !isRemote;
-            fields.Remote.Checked = isRemote;
-            fields.Remote.CheckedChanged += delegate { UpdateEndpoint(fields); OnInputsChanged(); };
+            fields.Placement.SelectIndex = isRemote ? 1 : 0;
+            fields.Placement.SelectIndexChanged += delegate { UpdateEndpoint(fields); OnInputsChanged(); };
             fields.Host.TextChanged += delegate { UpdateEndpoint(fields); OnInputsChanged(); };
             fields.Port.TextChanged += delegate { UpdateEndpoint(fields); OnInputsChanged(); };
             fields.Login.TextChanged += delegate { OnInputsChanged(); };
             fields.Password.TextChanged += delegate { OnInputsChanged(); };
             fields.Table = table;
             UpdateEndpoint(fields);
-            group.Controls.Add(table);
+            var content = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 1 };
+            content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            content.Controls.Add(new Label { Text = group.Text, AutoSize = true,
+                Font = new Font("Segoe UI", 10F, FontStyle.Bold), ForeColor = OperatorTheme.Ink,
+                Margin = new Padding(0, 0, 0, 6) }, 0, 0);
+            content.Controls.Add(table, 0, 1);
+            group.Controls.Add(content);
             return group;
         }
 
@@ -198,18 +203,18 @@ namespace EsmTspiot.WinForms.Shared
             input.Name = name;
             input.Dock = DockStyle.Top;
             input.Margin = new Padding(0, 2, 12, 4);
-            table.Controls.Add(input, column + 1, row);
+            table.Controls.Add(OperatorTheme.Input(input), column + 1, row);
         }
 
         private void UpdateEndpoint(InnFields fields)
         {
-            fields.Host.Enabled = fields.Remote.Checked;
-            fields.Port.Enabled = fields.Remote.Checked;
-            fields.LocalHint.Visible = fields.Local.Checked;
+            fields.Host.Enabled = fields.Placement.SelectIndex == 1;
+            fields.Port.Enabled = fields.Placement.SelectIndex == 1;
+            fields.LocalHint.Visible = fields.Placement.SelectIndex == 0;
             for (int column = 0; column < 4; column++)
             {
                 Control control = fields.Table.GetControlFromPosition(column, 2);
-                if (control != null) control.Visible = fields.Remote.Checked;
+                if (control != null) control.Visible = fields.Placement.SelectIndex == 1;
             }
             string endpoint;
             bool valid = TryGetEndpoint(fields, out endpoint);
@@ -234,7 +239,7 @@ namespace EsmTspiot.WinForms.Shared
         private static bool TryGetEndpoint(InnFields fields, out string endpoint)
         {
             endpoint = string.Empty;
-            if (fields.Local.Checked) return true;
+            if (fields.Placement.SelectIndex == 0) return true;
             string host = fields.Host.Text.Trim();
             string parsedHost;
             int port;
@@ -285,8 +290,7 @@ namespace EsmTspiot.WinForms.Shared
             internal TableLayoutPanel Table;
             internal string Inn;
             internal string CredentialEndpoint;
-            internal readonly RadioButton Local = new RadioButton();
-            internal readonly RadioButton Remote = new RadioButton();
+            internal readonly AntdUI.Segmented Placement = new OperatorSegments();
             internal readonly TextBox Host = new TextBox();
             internal readonly TextBox Port = new TextBox();
             internal readonly TextBox Login = new TextBox();

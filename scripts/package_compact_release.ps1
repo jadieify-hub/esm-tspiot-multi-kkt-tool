@@ -95,6 +95,8 @@ $outerSumsPath = Join-Path $releaseRoot ("SHA256SUMS-MultiKKT-" + $packageVersio
 Assert-ChildPath $releaseRoot $zipPath
 Assert-ChildPath $releaseRoot $outerSumsPath
 Copy-RequiredFile $sourceShared (Join-Path $stageRoot "EsmTspiot.Shared.dll")
+Copy-RequiredFile (Join-Path $legacyOutput "AntdUI.dll") (Join-Path $stageRoot "AntdUI.dll")
+Copy-RequiredFile (Join-Path $repositoryRoot "third-party\AntdUI-LICENSE.txt") (Join-Path $stageRoot "AntdUI-LICENSE.txt")
 Copy-RequiredFile $fieldGuide (Join-Path $stageRoot "FIELD_TEST.md")
 Copy-RequiredFile (Join-Path $repositoryRoot "INSTRUCTION_FOR_DUMMIES.md") (Join-Path $stageRoot "INSTRUCTION_FOR_DUMMIES.txt")
 Copy-RequiredFile (Join-Path $repositoryRoot "LICENSE") (Join-Path $stageRoot "LICENSE.txt")
@@ -134,10 +136,10 @@ $readme = @"
 Издатель и владелец: KRS
 
 Начало работы
-1. Нужны Windows, .NET Framework 4.8 и права администратора.
+1. Нужны Windows 10/11, .NET Framework 4.8 и права администратора.
 2. Проверьте SHA-256 ZIP по опубликованному рядом файлу контрольных сумм.
 3. Распакуйте архив целиком в локальную папку и запустите MultiKKT-ESM-TSPioT.exe.
-   EsmTspiot.Shared.dll и папка Provisioner должны лежать рядом с EXE.
+   AntdUI.dll, EsmTspiot.Shared.dll и папка Provisioner должны лежать рядом с EXE.
    Подтвердите единственный запрос UAC при запуске.
 4. Откройте INSTRUCTION_FOR_DUMMIES.txt: это пошаговое руководство оператора.
    В программе оно доступно через Справка -> Инструкция.
@@ -165,7 +167,8 @@ $readme = @"
 - Новые сценарии перед использованием у клиента проверяйте на физическом стенде.
 
 LICENSE.txt — условия использования программы.
-THIRD-PARTY-NOTICES.txt — сведения о включённых библиотеках WiX DTF 4.0.6.
+THIRD-PARTY-NOTICES.txt — сведения о WiX DTF 4.0.6 и AntdUI 2.4.18.
+AntdUI-LICENSE.txt — лицензия библиотеки интерфейса Apache-2.0.
 SHA256SUMS — контрольные суммы файлов внутри архива.
 Официальные сборки: https://github.com/jadieify-hub/esm-tspiot-multi-kkt-tool/releases
 "@
@@ -176,6 +179,13 @@ if ($isTestBuild) {
 
 $thirdPartyNotices = @"
 Third-party notices
+
+AntdUI 2.4.18
+File: AntdUI.dll (operator application only)
+Copyright (C) Tom <17379620> and contributors.
+License: Apache-2.0; full text: AntdUI-LICENSE.txt
+Source: https://github.com/AntdUI/AntdUI
+Package: https://www.nuget.org/packages/AntdUI/2.4.18
 
 WiX Toolset Deployment Tools Foundation (DTF) 4.0.6
 Files:
@@ -206,6 +216,8 @@ if ($forbiddenStage.Count -gt 0) {
 }
 
 $expectedExact = @(
+    "AntdUI.dll",
+    "AntdUI-LICENSE.txt",
     "EsmTspiot.Shared.dll",
     "FIELD_TEST.md",
     "INSTRUCTION_FOR_DUMMIES.txt",

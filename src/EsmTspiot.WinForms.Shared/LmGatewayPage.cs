@@ -6,6 +6,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using Button = AntdUI.Button;
 using EsmTspiot.Shared.Logging;
 using EsmTspiot.Shared.Models;
 using EsmTspiot.Shared.Services;
@@ -56,6 +57,9 @@ namespace EsmTspiot.WinForms.Shared
             InitializeServiceFeatures();
 
             Dock = DockStyle.Fill;
+            Font = new Font("Segoe UI", 10F);
+            ForeColor = OperatorTheme.Ink;
+            BackColor = OperatorTheme.Background;
             AutoScroll = false;
             BuildLayout();
             RestoreInstallerSelection();

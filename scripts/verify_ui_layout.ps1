@@ -30,17 +30,20 @@ $refreshCheckPath = Join-Path ([IO.Path]::GetTempPath()) (
     "LmRefreshCheck-" + [Guid]::NewGuid().ToString("N") + ".dll")
 try {
     $sharedPath = Join-Path (Split-Path -Parent $appPath) "EsmTspiot.Shared.dll"
+    $antdPath = Join-Path (Split-Path -Parent $appPath) "AntdUI.dll"
+    [System.Reflection.Assembly]::LoadFrom($antdPath) | Out-Null
     [System.Reflection.Assembly]::LoadFrom($sharedPath) | Out-Null
     $compiler = Join-Path $env:WINDIR "Microsoft.NET\Framework\v4.0.30319\csc.exe"
     & $compiler /nologo /target:library /platform:x86 "/out:$refreshCheckPath" `
         /r:System.Windows.Forms.dll /r:System.Drawing.dll `
         /r:System.Net.Http.dll `
-        "/r:$appPath" "/r:$sharedPath" `
+        "/r:$appPath" "/r:$sharedPath" "/r:$antdPath" `
         (Join-Path $repoRoot "tests\WinFormsChecks\LmRefreshCheck.cs") `
         (Join-Path $repoRoot "tests\WinFormsChecks\SetupFlowCheck.cs") `
         (Join-Path $repoRoot "tests\WinFormsChecks\LmSetupDialogCheck.cs") `
         (Join-Path $repoRoot "tests\WinFormsChecks\LmEditorCheck.cs") `
         (Join-Path $repoRoot "tests\WinFormsChecks\WizardFlowCheck.cs") `
+        (Join-Path $repoRoot "tests\WinFormsChecks\AntdWorkingCheck.cs") `
         (Join-Path $repoRoot "tests\WinFormsChecks\UiCheckRunner.cs")
     if ($LASTEXITCODE -ne 0) { throw "LM refresh check compilation failed." }
     [System.Reflection.Assembly]::Load([IO.File]::ReadAllBytes($refreshCheckPath)) | Out-Null
@@ -96,7 +99,7 @@ function Get-Utf8Text {
 
 function Get-DescendantControls {
     param([System.Windows.Forms.Control]$Root)
-    foreach ($child in $Root.Controls) {
+    foreach ($child in [System.Windows.Forms.Control].GetProperty('Controls').GetValue($Root, $null)) {
         $child
         Get-DescendantControls -Root $child
     }
@@ -138,7 +141,7 @@ try {
     $page = Get-PrivateFieldValue -Instance $form -Name "_lmGatewayPage"
     $fmuOption = Get-PrivateFieldValue -Instance $form -Name "_fmuApiCheckBox"
     $frontolButton = Get-PrivateFieldValue -Instance $form -Name "_configureFrontolButton"
-    if ($fmuOption.Checked -or $frontolButton -isnot [System.Windows.Forms.Button] -or
+    if ($fmuOption.Checked -or $frontolButton -isnot [AntdUI.Button] -or
         $frontolButton.Tag -ne "ConfigureFrontol" -or -not $frontolButton.Enabled) {
         throw "FMU must be opt-in; Frontol must be an independent, available button."
     }
@@ -386,7 +389,7 @@ try {
     $page.CreateControl()
     $page.PerformLayout()
     foreach ($control in $page.Controls) {
-        $control.PerformLayout()
+        [System.Windows.Forms.Control].GetMethod('PerformLayout', [type[]]@()).Invoke($control, $null) | Out-Null
     }
     [System.Windows.Forms.Application]::DoEvents()
 
@@ -445,14 +448,18 @@ try {
     }
     $manualKktTab.Size = [System.Drawing.Size]::new(980, 700)
     $manualRoot = $manualKktTab.Controls[0]
-    $manualRoot.Size = $manualKktTab.ClientSize
-    $manualRoot.PerformLayout()
-    foreach ($manualControl in $manualRoot.Controls) {
-        $manualControl.PerformLayout()
+    # AntdUI exposes legacy padding/Padding aliases; bypass PowerShell's case-insensitive binder.
+    $controlType = [System.Windows.Forms.Control]
+    $controlType.GetProperty('Size').SetValue($manualRoot, $manualKktTab.ClientSize, $null)
+    $controlType.GetMethod('PerformLayout', [type[]]@()).Invoke($manualRoot, $null) | Out-Null
+    foreach ($manualControl in $controlType.GetProperty('Controls').GetValue($manualRoot, $null)) {
+        $controlType.GetMethod('PerformLayout', [type[]]@()).Invoke($manualControl, $null) | Out-Null
     }
     [System.Windows.Forms.Application]::DoEvents()
-    if ($manualRoot.DisplayRectangle.Width -gt $manualRoot.ClientSize.Width -or
-        $registerButton.Right -gt $manualRoot.ClientSize.Width) {
+    $manualClient = $controlType.GetProperty('ClientSize').GetValue($manualRoot, $null)
+    $manualDisplay = $controlType.GetProperty('DisplayRectangle').GetValue($manualRoot, $null)
+    if ($manualDisplay.Width -gt $manualClient.Width -or
+        $registerButton.Right -gt $manualClient.Width) {
         throw "The manual workflow requires horizontal scrolling at the normal window width."
     }
     if (-not $logTextBox.ReadOnly) {
@@ -1011,7 +1018,7 @@ try {
     $page.Size = [System.Drawing.Size]::new(980, 700)
     $page.PerformLayout()
     foreach ($control in $page.Controls) {
-        $control.PerformLayout()
+        [System.Windows.Forms.Control].GetMethod('PerformLayout', [type[]]@()).Invoke($control, $null) | Out-Null
     }
     [System.Windows.Forms.Application]::DoEvents()
     if ($installButton.Right -gt $page.ClientSize.Width) {

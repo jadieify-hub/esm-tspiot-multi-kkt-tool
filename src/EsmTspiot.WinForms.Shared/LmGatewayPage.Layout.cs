@@ -1,5 +1,6 @@
 using System.Drawing;
 using System.Windows.Forms;
+using Button = AntdUI.Button;
 
 namespace EsmTspiot.WinForms.Shared
 {
@@ -14,8 +15,9 @@ namespace EsmTspiot.WinForms.Shared
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
             for (int index = 2; index < 7; index++) root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             var toolbar = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true };
-            toolbar.Controls.Add(new Label { Text = "Кассы и ЛМ ЧЗ", AutoSize = true,
-                Font = new Font(Font.FontFamily, 14F, FontStyle.Bold), Margin = new Padding(0, 4, 18, 6) });
+            toolbar.Controls.Add(new Label { Text = "Обзор касс", AutoSize = true,
+                Font = new Font("Segoe UI", 17F, FontStyle.Bold), ForeColor = OperatorTheme.Ink,
+                Margin = new Padding(0, 4, 18, 6) });
             ConfigureButton(_refreshButton, "Обновить данные");
             ConfigureButton(_cancelButton, "Остановить");
             _refreshButton.Click += async delegate { await RefreshAsync(); };
@@ -71,9 +73,8 @@ namespace EsmTspiot.WinForms.Shared
             var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true };
             actions.Controls.Add(_installControllerButton);
             actions.Controls.Add(_readbackEsmButton);
-            _installControllerButton.BackColor = Color.FromArgb(0, 102, 204);
-            _installControllerButton.ForeColor = Color.White;
-            _installControllerButton.FlatStyle = FlatStyle.Flat;
+            _installControllerButton.Text = "Изменить настройки ЛМ ЧЗ выбранной ККТ";
+            OperatorTheme.Button(_installControllerButton, true);
             root.Controls.Add(actions, 0, 3);
             _diagnosticsTextBox.Multiline = _diagnosticsTextBox.ReadOnly = true;
             _diagnosticsTextBox.BackColor = SystemColors.Window;
@@ -95,7 +96,7 @@ namespace EsmTspiot.WinForms.Shared
                 MaximumSize = new Size(0, 220) };
             scroll.Controls.Add(_serviceOperations);
             root.Controls.Add(scroll, 0, 6);
-            Controls.Add(root);
+            Controls.Add(OperatorTheme.Card(root, false));
         }
 
         private void ConfigureGrid()
@@ -177,15 +178,32 @@ namespace EsmTspiot.WinForms.Shared
             }
             _grid.Columns["EsmLinkState"].HeaderText = "Параметры ЛМ";
             _grid.Columns["LmState"].DefaultCellStyle.WrapMode = DataGridViewTriState.True;
+            _grid.Columns["KktSerial"].MinimumWidth = 160;
+            _grid.Columns["KktInn"].MinimumWidth = 100;
+            _grid.Columns["LmEndpoint"].MinimumWidth = 140;
+            _grid.Columns["LmState"].MinimumWidth = 110;
+            _grid.Columns["KktSerial"].FillWeight = 180;
+            _grid.Columns["KktInn"].FillWeight = 110;
+            _grid.Columns["LmEndpoint"].FillWeight = 160;
+            _grid.Columns["LmState"].FillWeight = 150;
+            _grid.Columns["EsmLinkState"].FillWeight = 160;
+            _grid.Columns["LmEndpoint"].DefaultCellStyle.WrapMode = DataGridViewTriState.True;
+            OperatorTheme.Grid(_grid);
+            _grid.ColumnHeadersHeight = 44;
+            foreach (string name in new[] { "KktSoftwarePort", "KktServicePort" })
+            {
+                _grid.Columns[name].AutoSizeMode = DataGridViewAutoSizeColumnMode.None;
+                _grid.Columns[name].Width = 70;
+            }
         }
 
         private static void ConfigureButton(Button button, string text)
         {
+            OperatorTheme.Button(button, false);
             button.Text = text;
             button.AutoSize = true;
             button.Margin = new Padding(0, 0, 6, 4);
-            button.Padding = new Padding(6, 2, 6, 2);
-            button.MinimumSize = new Size(110, 27);
+            button.Padding = Padding.Empty;
         }
 
         private static DataGridViewTextBoxColumn CreateTextColumn(string header, int width)

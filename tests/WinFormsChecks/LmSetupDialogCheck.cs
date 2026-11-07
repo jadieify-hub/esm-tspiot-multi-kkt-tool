@@ -38,9 +38,9 @@ public static class LmSetupDialogCheck
                 using (var bitmap = new System.Drawing.Bitmap(dialog.Width, dialog.Height))
                 { dialog.DrawToBitmap(bitmap, new System.Drawing.Rectangle(System.Drawing.Point.Empty, dialog.Size)); bitmap.Save(System.IO.Path.Combine(captureDirectory, "lm-setup.png")); }
             }
-            var local = Find<RadioButton>(dialog, "lm-local-1234567894");
-            var remote = Find<RadioButton>(dialog, "lm-remote-7701234560");
-            if (!local.Checked || !remote.Checked)
+            var local = Find<AntdUI.Segmented>(dialog, "lm-placement-1234567894");
+            var remote = Find<AntdUI.Segmented>(dialog, "lm-placement-7701234560");
+            if (local.SelectIndex != 0 || remote.SelectIndex != 1)
                 throw new Exception("New INNs must default to local; saved remote must be restored.");
             if (Find<Label>(dialog, "lm-kkts-1234567894").Text.IndexOf("KKT-A") < 0 ||
                 Find<Label>(dialog, "lm-kkts-1234567894").Text.IndexOf("KKT-B") < 0 ||

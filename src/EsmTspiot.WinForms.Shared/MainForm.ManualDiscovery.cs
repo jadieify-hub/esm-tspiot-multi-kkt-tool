@@ -4,6 +4,7 @@ using System.Drawing;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using Button = AntdUI.Button;
 using EsmTspiot.Shared.Models;
 using EsmTspiot.Shared.Services;
 using EsmTspiot.Shared.Validation;
@@ -17,6 +18,7 @@ namespace EsmTspiot.WinForms.Shared
         private readonly Button _setupSelectedButton = new Button();
         private readonly Button _manualStopButton = new Button();
         private readonly Label _manualDiscoveryHint = new Label();
+        private readonly AntdUI.Panel _wizardEmptyState = new AntdUI.Panel();
         private readonly FlowLayoutPanel _manualDiscoveryToolbar = new FlowLayoutPanel();
         private readonly CheckBox _manualFallbackToggle = new CheckBox();
         private readonly Dictionary<string, TspiotFormInput> _manualInputs =
@@ -36,7 +38,7 @@ namespace EsmTspiot.WinForms.Shared
         private Control BuildDiscoveredKktsPanel()
         {
             var panel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1,
-                RowCount = 3, MinimumSize = new Size(0, 110) };
+                RowCount = 3, MinimumSize = new Size(0, 70) };
             panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -77,8 +79,33 @@ namespace EsmTspiot.WinForms.Shared
             _discoveredKktsGrid.Columns["ЛМ ЧЗ"].DefaultCellStyle.WrapMode = DataGridViewTriState.True;
             _discoveredKktsGrid.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCells;
             _discoveredKktsGrid.RowTemplate.Height = 28;
+            OperatorTheme.Grid(_discoveredKktsGrid);
+            foreach (string hidden in new[] { "ФН", "Порт ЕСМ", "Порт ПО" }) _discoveredKktsGrid.Columns[hidden].Visible = false;
+            _discoveredKktsGrid.Columns["ККТ"].HeaderText = "Серийный номер ККТ";
+            _discoveredKktsGrid.Columns["ККТ"].MinimumWidth = 180;
+            _discoveredKktsGrid.Columns["ККТ"].FillWeight = 230;
+            _discoveredKktsGrid.Columns["ИНН"].AutoSizeMode = DataGridViewAutoSizeColumnMode.None;
+            _discoveredKktsGrid.Columns["ИНН"].Width = 125;
+            _discoveredKktsGrid.Columns["COM"].AutoSizeMode = DataGridViewAutoSizeColumnMode.None;
+            _discoveredKktsGrid.Columns["COM"].Width = 72;
+            _discoveredKktsGrid.Columns["COM"].DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
             _discoveredKktsGrid.CurrentCellChanged += delegate { SelectManualDiscoveredKkt(); };
-            panel.Controls.Add(_discoveredKktsGrid, 0, 1);
+            var gridHost = new Panel { Dock = DockStyle.Fill };
+            gridHost.Controls.Add(_discoveredKktsGrid);
+            _wizardEmptyState.Dock = DockStyle.Fill;
+            _wizardEmptyState.Back = _wizardEmptyState.BackColor = Color.FromArgb(234, 242, 255);
+            _wizardEmptyState.BorderColor = OperatorTheme.Line;
+            _wizardEmptyState.BorderWidth = 1;
+            _wizardEmptyState.Radius = 10;
+            _wizardEmptyState.Padding = new Padding(22, 16, 20, 12);
+            var emptyTitle = new Label { Text = "Подключите кассы — остальное по шагам", Dock = DockStyle.Top,
+                Height = 36, Font = new Font("Segoe UI", 14F, FontStyle.Bold), ForeColor = OperatorTheme.Ink };
+            var emptyHint = new Label { Text = "Подключите ККТ по USB/VCOM.\r\nЗакройте Frontol и тест драйвера АТОЛ.\r\nЛокальный или удалённый ЛМ выберем после регистрации.",
+                Dock = DockStyle.Fill, Font = new Font("Segoe UI", 10F), ForeColor = OperatorTheme.Muted };
+            _wizardEmptyState.Controls.Add(emptyHint);
+            _wizardEmptyState.Controls.Add(emptyTitle);
+            gridHost.Controls.Add(_wizardEmptyState);
+            panel.Controls.Add(gridHost, 0, 1);
             _manualDiscoveryHint.AutoSize = true;
             _manualDiscoveryHint.Text = "Список пуст. Нажмите «Найти ККТ» или раскройте ручные операции ниже.";
             panel.Controls.Add(_manualDiscoveryHint, 0, 2);

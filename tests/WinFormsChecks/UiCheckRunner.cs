@@ -13,6 +13,7 @@ public static class UiCheckRunner
                 try
                 {
                     Control.CheckForIllegalCrossThreadCalls = true;
+                    AntdWorkingCheck.Run();
                     LmEditorCheck.Run();
                     WizardFlowCheck.Run();
                     LmRefreshCheck.Run();

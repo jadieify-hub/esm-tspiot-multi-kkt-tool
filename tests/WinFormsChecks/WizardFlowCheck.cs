@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using Button = AntdUI.Button;
 using EsmTspiot.Shared.Models;
 using EsmTspiot.WinForms.Shared;
 
@@ -28,7 +29,7 @@ public static class WizardFlowCheck
                 throw new Exception("The setup, working inventory and log must use three clear tabs.");
             var grid = (DataGridView)Field(form, "_discoveredKktsGrid");
             if (grid.Rows.Count != 0) throw new Exception("Before search there must be no invented KKT rows.");
-            Find<RadioButton>(form, "wizard-manual").Checked = true;
+            Find<AntdUI.Segmented>(form, "wizard-mode").SelectIndex = 1;
             Capture(form, "wizard-02-manual-empty.png");
             Await((Task)Invoke(form, "ScanKktsCoreAsync", CancellationToken.None));
             grid.CurrentCell = grid.Rows[1].Cells[0];
@@ -47,13 +48,13 @@ public static class WizardFlowCheck
                     Field(form, "_manualSelectedSerial") + " tag=" + grid.Rows[1].Tag +
                     " current=" + (grid.CurrentRow == null ? "null" : grid.CurrentRow.Index.ToString()) +
                     " filling=" + Field(form, "_fillingManualGrid") + " busy=" + Field(form, "_busy") +
-                    " mode=" + Find<RadioButton>(form, "wizard-manual").Checked);
+                    " mode=" + Find<AntdUI.Segmented>(form, "wizard-mode").SelectIndex);
             Await((Task)Invoke(form, "SetupManualSelectionAsync"));
             if (transport.Writes.Count != 1 || transport.Writes[0] != "00105700000002")
                 throw new Exception("The manual wizard must register only the selected KKT before opening its LM step.");
             var host = Find<TextBox>(form, "lm-host-1234567894");
             Capture(form, "wizard-04-lm-local.png");
-            Find<RadioButton>(form, "lm-remote-1234567894").Checked = true;
+            Find<AntdUI.Segmented>(form, "lm-placement-1234567894").SelectIndex = 1;
             host.Text = "lm-server";
             Find<TextBox>(form, "lm-port-1234567894").Text = "x";
             Capture(form, "wizard-05-lm-invalid.png");
@@ -133,6 +134,22 @@ public static class WizardFlowCheck
             if (form.Controls.Find("lm-group-1234567894", true).Length != 1 || ports.Active != -1)
                 throw new Exception("The automatic LM step must group the INN and release the physical connection first.");
             Capture(form, "wizard-08-auto-lm.png");
+            string pendingMessage = ((Label)Field(form, "_wizardMessage")).Text;
+            var tabs = (TabControl)Field(form, "_workspaceTabs");
+            var inventory = (LmGatewayPage)Field(form, "_lmGatewayPage");
+            Await(inventory.RefreshAsync());
+            tabs.SelectedTab = (TabPage)Field(form, "_instancesTab");
+            if (((DataGridView)Field(inventory, "_grid")).Rows.Count != 2)
+                throw new Exception("The distinct inventory must display both actual registrations.");
+            Capture(form, "wizard-09-inventory.png");
+            tabs.SelectedTab = (TabPage)Field(form, "_logTab");
+            Capture(form, "wizard-10-log.png");
+            tabs.SelectedTab = (TabPage)Field(form, "_automationTab");
+            if (((Label)Field(form, "_wizardMessage")).Text != pendingMessage)
+                throw new Exception("Inventory refresh must not replace the pending LM setup instruction.");
+            form.Size = new System.Drawing.Size(920, 680);
+            CheckAccessible(form, Find<Button>(form, "wizard-apply"));
+            Capture(form, "wizard-11-small-window.png");
         }
     }
 
@@ -157,10 +174,10 @@ public static class WizardFlowCheck
         raw.Rows[1].Selected = true;
         if (Invoke(form, "GetSelectedDeletionCandidate") == null)
             throw new Exception("A raw ESM instance without regData must remain selectable for guarded service deletion.");
-        Find<RadioButton>(form, "wizard-auto").Checked = true;
+        Find<AntdUI.Segmented>(form, "wizard-mode").SelectIndex = 0;
         if (Invoke(form, "GetSelectedDeletionCandidate") != null)
             throw new Exception("A hidden manual service selection must not drive automatic-mode deletion.");
-        Find<RadioButton>(form, "wizard-manual").Checked = true;
+        Find<AntdUI.Segmented>(form, "wizard-mode").SelectIndex = 1;
         ((TextBox)Field(form, "_baseUrlTextBox")).Text = "http://127.0.0.1:51079";
         if (raw.Rows.Count != 0 || Invoke(form, "GetSelectedDeletionCandidate") != null)
             throw new Exception("A destination change must clear stale deletion candidates.");
@@ -222,6 +239,13 @@ public static class WizardFlowCheck
         var rectangle = form.RectangleToClient(button.Parent.RectangleToScreen(button.Bounds));
         if (!button.Visible || !form.ClientRectangle.Contains(rectangle))
             throw new Exception("The primary wizard action must remain accessible on a small screen: " + button.Text);
+        var screen = button.RectangleToScreen(button.ClientRectangle);
+        for (Control parent = button.Parent; parent != null; parent = parent.Parent)
+            if (!parent.RectangleToScreen(parent.ClientRectangle).Contains(screen))
+                throw new Exception("A visible wizard control must not be clipped by its container: " + button.Name);
+        foreach (Control sibling in button.Parent.Controls)
+            if (sibling != button && sibling.Visible && sibling.Bounds.IntersectsWith(button.Bounds))
+                throw new Exception("Wizard actions must not overlap adjacent controls: " + button.Name);
     }
     private static void Capture(Form form, string name)
     {

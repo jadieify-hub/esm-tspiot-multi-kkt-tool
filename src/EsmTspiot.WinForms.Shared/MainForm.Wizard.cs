@@ -4,6 +4,7 @@ using System.Drawing;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using Button = AntdUI.Button;
 using EsmTspiot.Shared.Logging;
 using EsmTspiot.Shared.Models;
 using EsmTspiot.Shared.Services;
@@ -12,9 +13,10 @@ namespace EsmTspiot.WinForms.Shared
 {
     public sealed partial class MainForm
     {
-        private readonly RadioButton _wizardAutomatic = new RadioButton();
-        private readonly RadioButton _wizardManual = new RadioButton();
-        private readonly Label[] _wizardStages = { new Label(), new Label(), new Label() };
+        private readonly AntdUI.Segmented _wizardMode = new OperatorSegments();
+        private readonly SetupStepStrip _wizardSteps = new SetupStepStrip();
+        private bool WizardAutomatic { get { return _wizardMode.SelectIndex == 0; } }
+        private bool WizardManual { get { return _wizardMode.SelectIndex == 1; } }
         private readonly Label _wizardHeading = new Label();
         private readonly Label _wizardMessage = new Label();
         private readonly Label _wizardContext = new Label();
@@ -58,36 +60,22 @@ namespace EsmTspiot.WinForms.Shared
         private Control BuildWizardPage()
         {
             var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5,
-                Padding = new Padding(10), Margin = Padding.Empty };
+                Padding = new Padding(6), Margin = Padding.Empty };
             root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 44F));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            var stages = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 3 };
-            string[] captions = { "1  Найти кассы", "2  Зарегистрировать", "3  Настроить ЛМ ЧЗ" };
-            for (int index = 0; index < 3; index++)
-            {
-                stages.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33F));
-                Label label = _wizardStages[index];
-                label.Text = captions[index];
-                label.Dock = DockStyle.Fill;
-                label.AutoSize = true;
-                label.Padding = new Padding(8);
-                label.Margin = new Padding(0, 0, 6, 8);
-                stages.Controls.Add(label, index, 0);
-            }
-            root.Controls.Add(stages, 0, 0);
+            root.Controls.Add(_wizardSteps, 0, 0);
             var mode = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true };
-            _wizardAutomatic.Name = "wizard-auto";
-            _wizardAutomatic.Text = "Автоматически";
-            _wizardManual.Name = "wizard-manual";
-            _wizardManual.Text = "По одной кассе";
-            _wizardAutomatic.AutoSize = _wizardManual.AutoSize = true;
-            _wizardAutomatic.Margin = _wizardManual.Margin = new Padding(0, 4, 18, 4);
-            mode.Controls.Add(_wizardAutomatic);
-            mode.Controls.Add(_wizardManual);
+            OperatorTheme.Segments(_wizardMode, "Автоматически", "По одной кассе");
+            _wizardMode.Name = "wizard-mode";
+            _wizardMode.Size = new Size(340, 38);
+            _wizardMode.Items[0].IconSvg = "ThunderboltOutlined";
+            _wizardMode.Items[1].IconSvg = "SelectOutlined";
+            _wizardMode.Margin = new Padding(0, 0, 14, 4);
+            mode.Controls.Add(_wizardMode);
             _fmuApiCheckBox.Text = "Пропустить контроллеры ЛМ ЧЗ (для FMU-API)";
             _fmuApiCheckBox.Tag = "FmuApiMode";
             _fmuApiCheckBox.AutoSize = true;
@@ -109,10 +97,12 @@ namespace EsmTspiot.WinForms.Shared
             root.Controls.Add(mode, 0, 1);
             var headings = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 1 };
             _wizardHeading.AutoSize = true;
-            _wizardHeading.Font = new Font(Font.FontFamily, 14F, FontStyle.Bold);
-            _wizardHeading.Margin = new Padding(0, 6, 0, 4);
+            _wizardHeading.Font = new Font("Segoe UI", 16F, FontStyle.Bold);
+            _wizardHeading.ForeColor = OperatorTheme.Ink;
+            _wizardHeading.Margin = new Padding(0, 3, 0, 3);
             _wizardMessage.AutoSize = true;
-            _wizardMessage.Margin = new Padding(0, 0, 0, 8);
+            _wizardMessage.ForeColor = OperatorTheme.Muted;
+            _wizardMessage.Margin = new Padding(0, 0, 0, 4);
             headings.Controls.Add(_wizardHeading, 0, 0);
             headings.Controls.Add(_wizardMessage, 0, 1);
             _wizardProgress.Dock = DockStyle.Top;
@@ -171,6 +161,7 @@ namespace EsmTspiot.WinForms.Shared
             root.Controls.Add(scroll, 0, 3);
 
             var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true,
+                FlowDirection = FlowDirection.RightToLeft,
                 Padding = new Padding(0, 8, 0, 0) };
             ConfigureButton(_bulkRegisterButton, "Начать автоматическую настройку", ConfigureAllKktsAutomaticallyAsync);
             _bulkRegisterButton.Tag = "EndToEndAutomaticSetup";
@@ -195,7 +186,7 @@ namespace EsmTspiot.WinForms.Shared
             _wizardEditLm.Click += delegate
             {
                 if (_busy) return;
-                if (_wizardAutomatic.Checked && _wizardAutomaticPending.Count > 0)
+                if (WizardAutomatic && _wizardAutomaticPending.Count > 0)
                     ShowWizardLmStep(_wizardAutomaticPending, true);
                 else
                 {
@@ -221,27 +212,25 @@ namespace EsmTspiot.WinForms.Shared
             _automaticStopButton.AutoSize = true;
             _automaticStopButton.Click += delegate { RequestWizardStop(); };
             foreach (Button button in new[] { _bulkRegisterButton, _setupSelectedButton, _wizardApply,
-                _wizardDefer, _wizardPlacement, _wizardEditLm, _wizardContinueSelected, _wizardDiagnose,
+                _findKktsButton, _wizardDefer, _wizardPlacement, _wizardEditLm, _wizardContinueSelected, _wizardDiagnose,
                 _configureFrontolButton, _wizardLog, _automaticStopButton })
             {
-                button.Padding = new Padding(8, 4, 8, 4);
+                OperatorTheme.Button(button, false);
+                button.Padding = Padding.Empty;
                 button.Margin = new Padding(0, 0, 8, 4);
                 actions.Controls.Add(button);
             }
             foreach (Button primary in new[] { _bulkRegisterButton, _setupSelectedButton, _wizardApply })
             {
-                primary.BackColor = Color.FromArgb(0, 102, 204);
-                primary.ForeColor = Color.White;
-                primary.FlatStyle = FlatStyle.Flat;
+                OperatorTheme.Button(primary, true);
             }
             root.Controls.Add(actions, 0, 4);
-            _wizardAutomatic.CheckedChanged += delegate { if (_wizardAutomatic.Checked) WizardModeChanged(); };
-            _wizardManual.CheckedChanged += delegate { if (_wizardManual.Checked) WizardModeChanged(); };
+            _wizardMode.SelectIndexChanged += delegate { WizardModeChanged(); };
             _automationStatusLabel.TextChanged += delegate
             {
                 if (_busy) _wizardMessage.Text = _automationStatusLabel.Text;
             };
-            _wizardAutomatic.Checked = true;
+            _wizardMode.SelectIndex = 0;
             _wizardDestination = WizardDestination();
             _baseUrlTextBox.TextChanged += delegate { InvalidateWizardDestination(); };
             _dkktPortTextBox.TextChanged += delegate { InvalidateWizardDestination(); };
@@ -254,7 +243,7 @@ namespace EsmTspiot.WinForms.Shared
             ShowWizardStage(1, "Настройка всех подключённых касс",
                 "Закройте Frontol и тест драйвера АТОЛ. Найдём и зарегистрируем кассы, затем настроим привязку ЛМ ЧЗ.");
             UpdateWizardActions();
-            return root;
+            return OperatorTheme.Card(root, false);
         }
 
         private string WizardDestination()
@@ -267,10 +256,10 @@ namespace EsmTspiot.WinForms.Shared
             if (!_wizardBuilt || _busy) return;
             SaveSelectedManualInput();
             _wizardResult.Visible = false;
-            if (_wizardAutomatic.Checked && _wizardAutomaticPending.Count > 0 &&
+            if (WizardAutomatic && _wizardAutomaticPending.Count > 0 &&
                 _wizardAutomaticDestination == WizardDestination())
                 ShowWizardLmStep(_wizardAutomaticPending, true);
-            else if (_wizardManual.Checked) SelectManualDiscoveredKkt();
+            else if (WizardManual) SelectManualDiscoveredKkt();
             else
             {
                 ClearWizardPending();
@@ -285,12 +274,7 @@ namespace EsmTspiot.WinForms.Shared
             _wizardHeading.Text = heading;
             _wizardMessage.Text = message;
             _wizardMessage.ForeColor = attention ? Color.DarkRed : SystemColors.ControlText;
-            for (int index = 0; index < _wizardStages.Length; index++)
-            {
-                _wizardStages[index].BackColor = index + 1 < stage ? Color.Honeydew
-                    : index + 1 == stage ? attention ? Color.LemonChiffon : Color.AliceBlue : SystemColors.Control;
-                _wizardStages[index].ForeColor = index + 1 <= stage ? SystemColors.ControlText : SystemColors.GrayText;
-            }
+            _wizardSteps.SetStage(stage, attention);
         }
 
         private void ClearWizardPending()
@@ -329,7 +313,7 @@ namespace EsmTspiot.WinForms.Shared
 
         private void UpdateWizardSelection()
         {
-            if (!_wizardBuilt || _updatingWizard || !_wizardManual.Checked) return;
+            if (!_wizardBuilt || _updatingWizard || !WizardManual) return;
             _wizardResult.Visible = false;
             LmGatewayKkt registered;
             if (_manualSelectedSerial != null && _wizardKnownKkts.TryGetValue(_manualSelectedSerial, out registered) &&
@@ -505,7 +489,7 @@ namespace EsmTspiot.WinForms.Shared
 
         private async Task ApplyWizardLmAsync()
         {
-            bool automaticScope = _wizardAutomatic.Checked;
+            bool automaticScope = WizardAutomatic;
             IDictionary<string, string> endpoints;
             IDictionary<string, LmGatewayCredentials> credentials;
             string problem;
@@ -577,30 +561,40 @@ namespace EsmTspiot.WinForms.Shared
         private void UpdateWizardActions()
         {
             if (!_wizardBuilt || _updatingWizard || IsDisposed || Disposing) return;
-            bool manual = _wizardManual.Checked;
+            bool manual = WizardManual;
             LmGatewayKkt selectedKkt = GetWizardSelectedKkt();
             bool confirmed = selectedKkt != null && selectedKkt.RegistrationConfirmed;
             bool hasPending = _wizardPending.Count > 0;
             bool editing = hasPending && _wizardLmEditing;
+            bool empty = _discoveredKktsGrid.Rows.Count == 0;
+            _wizardEmptyState.Visible = empty;
+            _discoveredKktsGrid.Visible = !empty;
+            if (empty) _wizardEmptyState.BringToFront();
             _wizardEditorsPanel.Visible = editing && !_wizardNeedsInstaller;
             _wizardInstallerPanel.Visible = editing && _wizardNeedsInstaller;
-            _wizardGridPanel.Height = editing ? 100 : 190;
-            _manualDiscoveryToolbar.Visible = manual && !editing;
-            _manualDiscoveryHint.Visible = !editing;
+            int gridHeight = _discoveredKktsGrid.ColumnHeadersHeight + 6;
+            for (int row = 0; row < Math.Min(4, _discoveredKktsGrid.Rows.Count); row++)
+                gridHeight += _discoveredKktsGrid.Rows[row].Height;
+            _wizardGridPanel.Height = empty ? 190 : gridHeight;
+            _manualDiscoveryToolbar.Visible = false;
+            _manualDiscoveryHint.Visible = false;
+            _wizardContext.Visible = !editing && confirmed;
             if (_discoveredKktsGrid.Rows.Count == 0)
                 _manualDiscoveryHint.Text = manual
                     ? "Список пуст. Нажмите «Найти ККТ» или раскройте ручные операции ниже."
                     : "Подключите ККТ по USB/VCOM и нажмите «Начать автоматическую настройку».";
-            _wizardAutomatic.Enabled = _wizardManual.Enabled = ! _busy;
+            _wizardMode.Enabled = !_busy;
             _wizardEditorsPanel.Enabled = _wizardInstallerPanel.Enabled = !_busy;
             _wizardProgress.Visible = _busy;
             _wizardManualDetails.Visible = manual && !editing &&
                 ((_manualSelectedSerial != null && !confirmed) || _manualFallbackToggle.Checked);
             _wizardFallback.Visible = manual && !editing && !_busy;
             _findKktsButton.Visible = manual && !_busy;
+            OperatorTheme.Button(_findKktsButton, empty);
+            _findKktsButton.Text = empty ? "Найти ККТ" : "Повторить поиск";
             _manualStopButton.Visible = false;
             _bulkRegisterButton.Visible = !manual && !editing && !_busy;
-            _setupSelectedButton.Visible = manual && !editing && !_busy && !confirmed;
+            _setupSelectedButton.Visible = manual && !editing && !_busy && !confirmed && _manualSelectedSerial != null;
             _setupSelectedButton.Enabled = !_busy && _manualSelectedSerial != null;
             _setupSelectedButton.Text = _manualSelectedSerial != null && ManualPortsAreFixed(_manualSelectedSerial) &&
                 !_manualRegistered.Contains(_manualSelectedSerial)
@@ -608,7 +602,7 @@ namespace EsmTspiot.WinForms.Shared
             _wizardApply.Visible = editing && !_busy;
             _wizardDefer.Visible = editing && !_busy;
             _wizardPlacement.Visible = editing && _wizardNeedsInstaller && !_busy;
-            _wizardApply.Text = _wizardNeedsInstaller ? "Продолжить" : manual ? "Применить к выбранной ККТ"
+            _wizardApply.Text = _wizardNeedsInstaller ? "Продолжить" : manual ? "Применить настройки ЛМ"
                 : "Настроить ЛМ для " + _wizardPending.Count + " ККТ";
             _wizardEditLm.Visible = !_busy && !editing && (manual ? confirmed : _wizardAutomaticPending.Count > 0);
             _wizardEditLm.Text = manual ? "Изменить настройки ЛМ" : "Настроить ЛМ для зарегистрированных ККТ";
@@ -663,7 +657,7 @@ namespace EsmTspiot.WinForms.Shared
         private void ShowWizardForRegisteredKkt(LmGatewayKkt kkt)
         {
             if (_busy || kkt == null || !kkt.RegistrationConfirmed) return;
-            _wizardManual.Checked = true;
+            _wizardMode.SelectIndex = 1;
             _workspaceTabs.SelectedTab = _automationTab;
             RememberWizardKkt(kkt);
             _manualRegistered.Add(kkt.KktSerial);
@@ -732,19 +726,19 @@ namespace EsmTspiot.WinForms.Shared
         {
             var group = new GroupBox { Text = "Параметры выбранной ККТ", Dock = DockStyle.Top,
                 AutoSize = true, Padding = new Padding(8), Margin = new Padding(0, 4, 0, 8) };
-            var table = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 6, RowCount = 2 };
-            for (int index = 0; index < 3; index++)
+            var table = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 4, RowCount = 3 };
+            for (int index = 0; index < 2; index++)
             {
                 table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-                table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33F));
+                table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
             }
             AddWizardField(table, 0, 0, "Серийный №", _kktSerialTextBox);
             AddWizardField(table, 2, 0, "ФН", _fnSerialTextBox);
-            AddWizardField(table, 4, 0, "ИНН", _kktInnTextBox);
-            AddWizardField(table, 0, 1, "Порт ЕСМ", _portTextBox);
-            AddWizardField(table, 2, 1, "Порт кассового ПО", _softPortTextBox);
+            AddWizardField(table, 0, 1, "ИНН", _kktInnTextBox);
+            AddWizardField(table, 2, 1, "Порт ЕСМ", _portTextBox);
+            AddWizardField(table, 0, 2, "Порт ПО", _softPortTextBox);
             group.Controls.Add(table);
-            return group;
+            return OperatorTheme.Card(group, true);
         }
 
         private static void AddWizardField(TableLayoutPanel table, int column, int row, string caption, TextBox input)
@@ -754,7 +748,7 @@ namespace EsmTspiot.WinForms.Shared
             input.Dock = DockStyle.Top;
             input.Margin = new Padding(0, 2, 10, 2);
             input.AccessibleName = caption;
-            table.Controls.Add(input, column + 1, row);
+            table.Controls.Add(OperatorTheme.Input(input), column + 1, row);
         }
 
         protected override void Dispose(bool disposing)

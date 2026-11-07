@@ -11,6 +11,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using Button = AntdUI.Button;
 using EsmTspiot.Shared.Logging;
 using EsmTspiot.Shared.Models;
 using EsmTspiot.Shared.Services;
@@ -955,8 +956,8 @@ namespace EsmTspiot.WinForms.Shared
                     "Для каждой ККТ создаётся отдельная служба; ЛМ ЧЗ можно " +
                     "установить и инициализировать позже.";
             _installControllerButton.Text = FmuApiMode
-                ? "Подготовить ЛМ для FMU-API"
-                : "Настроить подключение ЛМ ЧЗ…";
+                ? "Подготовить ЛМ ЧЗ выбранной ККТ"
+                : "Изменить настройки ЛМ ЧЗ выбранной ККТ";
             LmServiceInventoryItem selected = GetSelectedInventoryItem();
             bool managed = selected != null && selected.Role == LmServiceRole.Managed;
             LmGatewayBindingSessionRow selectedSession = GetSelectedSessionRow();

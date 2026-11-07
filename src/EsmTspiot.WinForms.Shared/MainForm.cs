@@ -6,6 +6,7 @@ using System.IO;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using Button = AntdUI.Button;
 using EsmTspiot.Shared.Logging;
 using EsmTspiot.Shared.Models;
 using EsmTspiot.Shared.Services;
@@ -13,7 +14,7 @@ using EsmTspiot.Shared.Validation;
 
 namespace EsmTspiot.WinForms.Shared
 {
-    public sealed partial class MainForm : Form
+    public sealed partial class MainForm : AntdUI.BaseForm
     {
         private const int MaximumVisibleLogLength = 1500000;
         private readonly TspiotApiClient _client;
@@ -54,7 +55,7 @@ namespace EsmTspiot.WinForms.Shared
         private readonly Label _nextPortPairLabel = new Label();
         private readonly Label _manualNextStepLabel = new Label();
         private readonly Label _automationStatusLabel = new Label();
-        private readonly TabControl _workspaceTabs = new TabControl();
+        private readonly TabControl _workspaceTabs = new OperatorTabControl();
         private readonly TabPage _manualKktTab;
         private readonly TabPage _instancesTab = new TabPage();
         private readonly TabPage _automationTab = new TabPage();
@@ -100,7 +101,7 @@ namespace EsmTspiot.WinForms.Shared
             _lmGatewayPage.KktSelectionChanged += delegate { UpdateDeleteButtonState(); };
             _lmGatewayPage.SetupProgressChanged += delegate(string status)
             {
-                if (_busy) _wizardMessage.Text = status;
+                if (_mainOperationRunning) _wizardMessage.Text = status;
             };
             var version = (System.Reflection.AssemblyInformationalVersionAttribute)Attribute.GetCustomAttribute(
                 typeof(MainForm).Assembly, typeof(System.Reflection.AssemblyInformationalVersionAttribute));
@@ -108,10 +109,15 @@ namespace EsmTspiot.WinForms.Shared
             // Таблица ЛМ ЧЗ шире прежнего окна: её колонки требуют около
             // 925 пикселей, и на 780 оператору приходилось растягивать окно
             // руками при каждом запуске.
-            ClientSize = new Size(980, 700);
-            MinimumSize = new Size(900, 600);
+            FormBorderStyle = FormBorderStyle.None;
+            ClientSize = new Size(1000, 760);
+            MinimumSize = new Size(920, 680);
             StartPosition = FormStartPosition.CenterScreen;
-            Font = new Font("Segoe UI", 9.5F);
+            Font = new Font("Segoe UI", 10F);
+            ForeColor = OperatorTheme.Ink;
+            BackColor = OperatorTheme.Background;
+            AntdUI.Config.IsLight = true;
+            AntdUI.Config.Animation = false;
             try
             {
                 Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
@@ -149,19 +155,24 @@ namespace EsmTspiot.WinForms.Shared
             TableLayoutPanel root = new TableLayoutPanel();
             root.Dock = DockStyle.Fill;
             root.ColumnCount = 1;
-            root.RowCount = 4;
+            root.RowCount = 6;
             root.Margin = Padding.Empty;
             root.Padding = Padding.Empty;
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 38F));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 40F));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
             MenuStrip menu = BuildMenu();
-            root.Controls.Add(menu, 0, 0);
-            root.Controls.Add(BuildConnectionBar(), 0, 1);
-            root.Controls.Add(BuildWorkspaceTabs(), 0, 2);
-            root.Controls.Add(BuildStatusBar(), 0, 3);
+            root.Controls.Add(BuildBrandHeader(), 0, 0);
+            root.Controls.Add(menu, 0, 1);
+            root.Controls.Add(BuildConnectionBar(), 0, 2);
+            Control workspace = BuildWorkspaceTabs();
+            root.Controls.Add(BuildWorkspaceNavigation(), 0, 3);
+            root.Controls.Add(workspace, 0, 4);
+            root.Controls.Add(BuildStatusBar(), 0, 5);
 
             MainMenuStrip = menu;
             Controls.Add(root);
@@ -171,6 +182,9 @@ namespace EsmTspiot.WinForms.Shared
         {
             MenuStrip menu = new MenuStrip();
             menu.Dock = DockStyle.Fill;
+            menu.BackColor = Color.FromArgb(213, 226, 245);
+            menu.ForeColor = OperatorTheme.Ink;
+            menu.Font = new Font("Segoe UI", 9F);
 
             ToolStripMenuItem fileMenu = new ToolStripMenuItem("Файл");
             ToolStripMenuItem openLog = new ToolStripMenuItem("Открыть папку журнала");
@@ -227,7 +241,7 @@ namespace EsmTspiot.WinForms.Shared
         private Control BuildConnectionBar()
         {
             var root = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 4,
-                RowCount = 2, Padding = new Padding(12, 6, 12, 6), BackColor = SystemColors.Window };
+                RowCount = 2, Padding = new Padding(12, 3, 12, 3), BackColor = SystemColors.Window };
             root.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
             root.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -238,7 +252,7 @@ namespace EsmTspiot.WinForms.Shared
                 Margin = new Padding(0, 0, 8, 0) }, 0, 0);
             _baseUrlTextBox.Dock = DockStyle.Top;
             _baseUrlTextBox.Margin = new Padding(0, 2, 12, 0);
-            root.Controls.Add(_baseUrlTextBox, 1, 0);
+            root.Controls.Add(OperatorTheme.Input(_baseUrlTextBox), 1, 0);
             _wizardConnectionState.AutoSize = true;
             _wizardConnectionState.Text = "Не проверено";
             _wizardConnectionState.Anchor = AnchorStyles.Left;
@@ -252,11 +266,16 @@ namespace EsmTspiot.WinForms.Shared
             var actions = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, WrapContents = false };
             ConfigureButton(_checkButton, "Проверить", CheckCurrentInstancesAsync);
             actions.Controls.Add(_checkButton);
-            var options = new Button { Text = "Параметры…", AutoSize = true };
+            var options = new Button { Text = "Параметры…" };
+            OperatorTheme.Button(options, false);
+            options.IconSvg = "SettingOutlined";
             var details = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, Visible = false };
             details.Controls.Add(new Label { Text = "Порт ДККТ", AutoSize = true, Margin = new Padding(0, 8, 8, 0) });
             _dkktPortTextBox.Width = 70;
-            details.Controls.Add(_dkktPortTextBox);
+            Control dkktInput = OperatorTheme.Input(_dkktPortTextBox);
+            dkktInput.Dock = DockStyle.None;
+            dkktInput.Width = 80;
+            details.Controls.Add(dkktInput);
             details.Controls.Add(new Label { AutoSize = true, Margin = new Padding(8, 8, 0, 0),
                 Text = "Обычно 4042. Это не порт сервера АТОЛ 4041." });
             options.Click += delegate { details.Visible = !details.Visible; };
@@ -270,9 +289,9 @@ namespace EsmTspiot.WinForms.Shared
         private Control BuildWorkspaceTabs()
         {
             _workspaceTabs.Dock = DockStyle.Fill;
-            _workspaceTabs.Margin = new Padding(6, 4, 6, 4);
+            _workspaceTabs.Margin = new Padding(12, 2, 12, 4);
 
-            ConfigureTabPage(_instancesTab, "Кассы и ЛМ ЧЗ");
+            ConfigureTabPage(_instancesTab, "Обзор касс");
             ConfigureTabPage(_automationTab, "Настройка ККТ");
             ConfigureTabPage(_logTab, "Журнал");
 
@@ -301,8 +320,9 @@ namespace EsmTspiot.WinForms.Shared
         private static void ConfigureTabPage(TabPage page, string text)
         {
             page.Text = text;
-            page.Padding = new Padding(6);
-            page.UseVisualStyleBackColor = true;
+            page.Padding = new Padding(6, 2, 6, 4);
+            page.UseVisualStyleBackColor = false;
+            page.BackColor = OperatorTheme.Background;
             page.AutoScroll = true;
         }
 
@@ -340,7 +360,7 @@ namespace EsmTspiot.WinForms.Shared
             _manualNextStepLabel.Margin = new Padding(0, 6, 0, 2);
             _manualNextStepLabel.Text =
                 "Отдельные операции для ручного ввода и восстановления. " +
-                "После регистрации настройка подключения доступна на вкладке «Кассы и ЛМ ЧЗ».";
+                "После регистрации настройка ЛМ ЧЗ доступна на вкладке «Обзор касс».";
             panel.Controls.Add(_manualNextStepLabel, 0, 1);
             panel.SetColumnSpan(_manualNextStepLabel, 3);
 
@@ -568,10 +588,11 @@ namespace EsmTspiot.WinForms.Shared
 
         private void ConfigureButton(Button button, string text, Func<Task> action)
         {
+            OperatorTheme.Button(button, false);
             button.Text = text;
             button.AutoSize = true;
             button.Margin = new Padding(0, 0, 6, 4);
-            button.Padding = new Padding(6, 2, 6, 2);
+            button.Padding = Padding.Empty;
             button.Click += async delegate { await RunButtonActionAsync(action); };
             _actionButtons.Add(button);
         }
@@ -581,7 +602,7 @@ namespace EsmTspiot.WinForms.Shared
             button.AutoSize = false;
             button.Dock = DockStyle.Fill;
             button.Margin = new Padding(0, 0, 6, 4);
-            button.Padding = new Padding(4, 1, 4, 1);
+            button.Padding = Padding.Empty;
         }
 
         private void FillDefaults()
@@ -1937,7 +1958,7 @@ namespace EsmTspiot.WinForms.Shared
             message.Append(stackSummary);
             message.Append(
                 "\r\n\r\nРезультаты настройки и порты кассового ПО показаны " +
-                "на вкладке «Кассы и ЛМ ЧЗ».");
+                "на вкладке «Обзор касс».");
             return message.ToString();
         }
 
@@ -1946,10 +1967,10 @@ namespace EsmTspiot.WinForms.Shared
         {
             MessageBox.Show(
                 this,
-                "Управление ККТ в ЕСМ/ТС ПИоТ\r\n\r\n" +
+                Text + "\r\nУправление ККТ в ЕСМ/ТС ПИоТ\r\n\r\n" +
                     "Ручное последовательное подключение ККТ, автоматическая обработка нескольких ККТ и безопасное удаление дополнительных экземпляров.\r\n\r\n" +
                     "Издатель и владелец: KRS\r\n" +
-                    "Автор: Руслан Керусов\r\n" +
+                    "Разработчик: Руслан Керусов\r\n" +
                     "Copyright © 2026 KRS. Все права защищены.\r\n" +
                     "github.com/jadieify-hub/esm-tspiot-multi-kkt-tool",
                 "О программе",
@@ -2143,7 +2164,7 @@ namespace EsmTspiot.WinForms.Shared
 
         private KktDeletionCandidate GetSelectedDeletionCandidate()
         {
-            if (_workspaceTabs.SelectedTab != _automationTab || !_wizardManual.Checked || _wizardLmEditing || !_manualFallbackToggle.Checked ||
+            if (_workspaceTabs.SelectedTab != _automationTab || !WizardManual || _wizardLmEditing || !_manualFallbackToggle.Checked ||
                 _manualInstancesGrid.SelectedRows.Count != 1)
             {
                 return null;

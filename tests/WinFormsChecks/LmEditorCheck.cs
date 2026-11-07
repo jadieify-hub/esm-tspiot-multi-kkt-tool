@@ -19,7 +19,10 @@ public static class LmEditorCheck
             BindingFlags.Instance | BindingFlags.NonPublic, null,
             new object[] { kkts, new Dictionary<string, string>(), defaults, false }, null))
         {
-            Find<RadioButton>(editor, "lm-remote-1234567894").Checked = true;
+            var placement = Find<AntdUI.Segmented>(editor, "lm-placement-1234567894");
+            AntdWorkingCheck.PressKey(placement, Keys.Right);
+            if (placement.SelectIndex != 1)
+                throw new Exception("Remote LM placement must be selectable with keyboard arrows.");
             Find<TextBox>(editor, "lm-host-1234567894").Text = "lm-server";
             Find<TextBox>(editor, "lm-port-1234567894").Text = "x";
             object[] values = { null, null, null };
