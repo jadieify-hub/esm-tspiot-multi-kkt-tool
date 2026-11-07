@@ -29,6 +29,7 @@ namespace EsmTspiot.WinForms.Shared
         private readonly TextBox _localModuleInstallerPathTextBox = new TextBox();
         private readonly Label _localModuleInstallerStatusLabel = new Label();
         private readonly Label _setupActionHintLabel = new Label();
+        private readonly Label _serviceCapabilityStatusLabel = new Label();
         private readonly ToolTip _serviceToolTip = new ToolTip();
         private GroupBox _installerGroup;
         private Label _installerDescriptionLabel;
@@ -390,17 +391,15 @@ namespace EsmTspiot.WinForms.Shared
             _helperAvailable = _serviceProvisioner.IsAvailable(out _helperUnavailableReason);
         }
 
-        private void AppendServiceCapabilityStatus()
+        private void UpdateServiceCapabilityStatus()
         {
             string notice = !string.IsNullOrEmpty(_serviceInventoryWarning)
                 ? _serviceInventoryWarning
                 : !_helperAvailable
                     ? "Управление службами недоступно: " + _helperUnavailableReason
                     : string.Empty;
-            if (!string.IsNullOrEmpty(notice))
-            {
-                _statusLabel.Text = (_statusLabel.Text ?? string.Empty).TrimEnd() + " " + notice;
-            }
+            _serviceCapabilityStatusLabel.Text = notice;
+            _serviceCapabilityStatusLabel.Visible = !string.IsNullOrEmpty(notice);
         }
 
         private void UpdateOfficialControllerStatus()

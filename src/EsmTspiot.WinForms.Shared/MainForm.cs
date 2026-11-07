@@ -62,7 +62,7 @@ namespace EsmTspiot.WinForms.Shared
         private readonly TabPage _lmGatewayTab;
         private readonly TabPage _logTab = new TabPage();
         private readonly ToolStripStatusLabel _operationStatusLabel = new ToolStripStatusLabel();
-        private readonly ToolStripStatusLabel _connectionStatusLabel = new ToolStripStatusLabel();
+        private readonly Button _connectionStatusLabel = new Button();
         private readonly ToolStripMenuItem _operationsMenuItem = new ToolStripMenuItem("Сервис");
         private readonly ToolStripMenuItem _deleteMenuItem = new ToolStripMenuItem("Удалить выбранную ККТ");
         private readonly GroupBox _recoveryGroup = new GroupBox();
@@ -109,9 +109,9 @@ namespace EsmTspiot.WinForms.Shared
             // Таблица ЛМ ЧЗ шире прежнего окна: её колонки требуют около
             // 925 пикселей, и на 780 оператору приходилось растягивать окно
             // руками при каждом запуске.
-            FormBorderStyle = FormBorderStyle.None;
-            ClientSize = new Size(1000, 760);
-            MinimumSize = new Size(920, 680);
+            FormBorderStyle = FormBorderStyle.Sizable;
+            ClientSize = new Size(1120, 720);
+            MinimumSize = new Size(920, 640);
             StartPosition = FormStartPosition.CenterScreen;
             Font = new Font("Segoe UI", 10F);
             ForeColor = OperatorTheme.Ink;
@@ -155,24 +155,20 @@ namespace EsmTspiot.WinForms.Shared
             TableLayoutPanel root = new TableLayoutPanel();
             root.Dock = DockStyle.Fill;
             root.ColumnCount = 1;
-            root.RowCount = 6;
+            root.RowCount = 4;
             root.Margin = Padding.Empty;
             root.Padding = Padding.Empty;
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 38F));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 40F));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48F));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
             MenuStrip menu = BuildMenu();
-            root.Controls.Add(BuildBrandHeader(), 0, 0);
-            root.Controls.Add(menu, 0, 1);
-            root.Controls.Add(BuildConnectionBar(), 0, 2);
+            root.Controls.Add(menu, 0, 0);
             Control workspace = BuildWorkspaceTabs();
-            root.Controls.Add(BuildWorkspaceNavigation(), 0, 3);
-            root.Controls.Add(workspace, 0, 4);
-            root.Controls.Add(BuildStatusBar(), 0, 5);
+            root.Controls.Add(BuildWorkspaceNavigation(), 0, 1);
+            root.Controls.Add(workspace, 0, 2);
+            root.Controls.Add(BuildStatusBar(), 0, 3);
 
             MainMenuStrip = menu;
             Controls.Add(root);
@@ -236,54 +232,6 @@ namespace EsmTspiot.WinForms.Shared
             menu.Items.Add(_operationsMenuItem);
             menu.Items.Add(helpMenu);
             return menu;
-        }
-
-        private Control BuildConnectionBar()
-        {
-            var root = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 4,
-                RowCount = 2, Padding = new Padding(12, 3, 12, 3), BackColor = SystemColors.Window };
-            root.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-            root.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            root.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            root.Controls.Add(new Label { Text = "ЕСМ", AutoSize = true, Anchor = AnchorStyles.Left,
-                Margin = new Padding(0, 0, 8, 0) }, 0, 0);
-            _baseUrlTextBox.Dock = DockStyle.Top;
-            _baseUrlTextBox.Margin = new Padding(0, 2, 12, 0);
-            root.Controls.Add(OperatorTheme.Input(_baseUrlTextBox), 1, 0);
-            _wizardConnectionState.AutoSize = true;
-            _wizardConnectionState.Text = "Не проверено";
-            _wizardConnectionState.Anchor = AnchorStyles.Left;
-            root.Controls.Add(_wizardConnectionState, 2, 0);
-            _connectionStatusLabel.TextChanged += delegate
-            {
-                _wizardConnectionState.Text = _connectionStatusLabel.Text;
-                _wizardConnectionState.ForeColor = _connectionStatusLabel.ForeColor;
-            };
-            _connectionStatusLabel.ForeColorChanged += delegate { _wizardConnectionState.ForeColor = _connectionStatusLabel.ForeColor; };
-            var actions = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, WrapContents = false };
-            ConfigureButton(_checkButton, "Проверить", CheckCurrentInstancesAsync);
-            actions.Controls.Add(_checkButton);
-            var options = new Button { Text = "Параметры…" };
-            OperatorTheme.Button(options, false);
-            options.IconSvg = "SettingOutlined";
-            var details = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, Visible = false };
-            details.Controls.Add(new Label { Text = "Порт ДККТ", AutoSize = true, Margin = new Padding(0, 8, 8, 0) });
-            _dkktPortTextBox.Width = 70;
-            Control dkktInput = OperatorTheme.Input(_dkktPortTextBox);
-            dkktInput.Dock = DockStyle.None;
-            dkktInput.Width = 80;
-            details.Controls.Add(dkktInput);
-            details.Controls.Add(new Label { AutoSize = true, Margin = new Padding(8, 8, 0, 0),
-                Text = "Обычно 4042. Это не порт сервера АТОЛ 4041." });
-            options.Click += delegate { details.Visible = !details.Visible; };
-            actions.Controls.Add(options);
-            root.Controls.Add(actions, 3, 0);
-            root.Controls.Add(details, 0, 1);
-            root.SetColumnSpan(details, 4);
-            return root;
         }
 
         private Control BuildWorkspaceTabs()
@@ -480,12 +428,7 @@ namespace EsmTspiot.WinForms.Shared
             _operationStatusLabel.Spring = true;
             _operationStatusLabel.TextAlign = ContentAlignment.MiddleLeft;
 
-            _connectionStatusLabel.Text = "ЕСМ: не проверено";
-            _connectionStatusLabel.BorderSides = ToolStripStatusLabelBorderSides.Left;
-            _connectionStatusLabel.Margin = new Padding(6, 3, 0, 2);
-
             status.Items.Add(_operationStatusLabel);
-            status.Items.Add(_connectionStatusLabel);
             return status;
         }
 

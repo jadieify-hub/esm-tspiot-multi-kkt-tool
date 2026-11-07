@@ -8,32 +8,42 @@ namespace EsmTspiot.WinForms.Shared
     {
         private void BuildLayout()
         {
-            var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 7,
+            var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5,
                 Padding = new Padding(10) };
             root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48F));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-            for (int index = 2; index < 7; index++) root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            var toolbar = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true };
-            toolbar.Controls.Add(new Label { Text = "Обзор касс", AutoSize = true,
-                Font = new Font("Segoe UI", 17F, FontStyle.Bold), ForeColor = OperatorTheme.Ink,
-                Margin = new Padding(0, 4, 18, 6) });
+            for (int index = 2; index < 5; index++) root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            var toolbar = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1 };
+            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            toolbar.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            var refresh = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = false };
             ConfigureButton(_refreshButton, "Обновить данные");
             ConfigureButton(_cancelButton, "Остановить");
             _refreshButton.Click += async delegate { await RefreshAsync(); };
             _cancelButton.Click += delegate { CancelCurrentOperation(); };
             _cancelButton.Visible = false;
-            toolbar.Controls.Add(_refreshButton);
-            toolbar.Controls.Add(_cancelButton);
-            _statusLabel.AutoSize = true;
-            _statusLabel.MaximumSize = new Size(640, 0);
+            refresh.Controls.Add(_refreshButton);
+            refresh.Controls.Add(_cancelButton);
+            _statusLabel.Dock = DockStyle.Fill;
+            _statusLabel.AutoEllipsis = true;
+            _statusLabel.TextAlign = ContentAlignment.MiddleLeft;
             _statusLabel.Text = "Нажмите «Обновить данные», чтобы получить фактические состояния.";
             _statusLabel.Margin = new Padding(8, 6, 0, 4);
             _statusLabel.TextChanged += delegate
             {
+                _serviceToolTip.SetToolTip(_statusLabel, _statusLabel.Text);
                 if (SetupProgressChanged != null) SetupProgressChanged(_statusLabel.Text);
             };
-            toolbar.Controls.Add(_statusLabel);
+            toolbar.Controls.Add(refresh, 0, 0);
+            toolbar.Controls.Add(_statusLabel, 1, 0);
+            ConfigureButton(_showServiceOperationsButton, "Служебные операции…");
+            _showServiceOperationsButton.Name = "service-operations";
+            _showServiceOperationsButton.Click += delegate { ShowServiceOperations(); };
+            toolbar.Controls.Add(_showServiceOperationsButton, 2, 0);
             root.Controls.Add(toolbar, 0, 0);
             ConfigureGrid();
             _grid.CurrentCellChanged += delegate
@@ -47,32 +57,17 @@ namespace EsmTspiot.WinForms.Shared
             _selectionActionHintLabel.Margin = new Padding(0, 6, 0, 4);
             root.Controls.Add(_selectionActionHintLabel, 0, 2);
 
-            var advanced = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 1 };
-            advanced.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-            advanced.Controls.Add(BuildInstallerPanel(), 0, 0);
-            advanced.Controls.Add(BuildOfficialControllerPanel(), 0, 1);
-            var removal = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true };
-            ConfigureButton(_bindButton, "Привязать к ЕСМ");
-            _bindButton.Tag = "BindSelectedEsm";
-            ConfigureButton(_removeServiceButton, "Удалить выбранный комплект");
-            ConfigureButton(_removeAllServicesButton, "Удалить всё созданное");
-            _removeAllServicesButton.Tag = "RemoveAllCreatedComponents";
-            ConfigureButton(_cleanupButton, "Завершить очистку");
-            _bindButton.Click += async delegate { await BindSelectedAsync(); };
-            _removeServiceButton.Click += async delegate { await ConfirmAndRemoveServiceAsync(); };
-            _removeAllServicesButton.Click += async delegate { await ConfirmAndRemoveEverythingAsync(); };
-            _cleanupButton.Click += async delegate { await ConfirmAndCleanupServiceAsync(); };
-            foreach (Button button in new[] { _bindButton, _removeServiceButton, _removeAllServicesButton, _cleanupButton })
-                removal.Controls.Add(button);
-            advanced.Controls.Add(removal, 0, 2);
-            _serviceOperations.Dock = DockStyle.Top;
-            _serviceOperations.AutoSize = true;
-            _serviceOperations.Visible = false;
-            _serviceOperations.Controls.Add(advanced);
+            _serviceOperationsWindow = BuildServiceOperationsWindow();
 
             var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true };
             actions.Controls.Add(_installControllerButton);
             actions.Controls.Add(_readbackEsmButton);
+            ConfigureButton(_showDetailsButton, "Сведения о кассе…");
+            _showDetailsButton.Click += delegate {
+                using (Form dialog = BuildKktDetailsDialog())
+                    if (dialog != null) dialog.ShowDialog(FindForm());
+            };
+            actions.Controls.Add(_showDetailsButton);
             _installControllerButton.Text = "Изменить настройки ЛМ ЧЗ выбранной ККТ";
             OperatorTheme.Button(_installControllerButton, true);
             root.Controls.Add(actions, 0, 3);
@@ -83,19 +78,6 @@ namespace EsmTspiot.WinForms.Shared
             _diagnosticsTextBox.ScrollBars = ScrollBars.Vertical;
             _diagnosticsTextBox.Visible = false;
             root.Controls.Add(_diagnosticsTextBox, 0, 4);
-            _showServiceOperations.Text = "Служебные операции и подробности";
-            _showServiceOperations.AutoSize = true;
-            _showServiceOperations.CheckedChanged += delegate
-            {
-                _serviceOperations.Visible = _showServiceOperations.Checked;
-                foreach (string name in new[] { "LmRole", "LmInstallRoot", "LmOwnership" })
-                    _grid.Columns[name].Visible = _showServiceOperations.Checked;
-            };
-            root.Controls.Add(_showServiceOperations, 0, 5);
-            var scroll = new Panel { Dock = DockStyle.Top, AutoSize = true, AutoScroll = true,
-                MaximumSize = new Size(0, 220) };
-            scroll.Controls.Add(_serviceOperations);
-            root.Controls.Add(scroll, 0, 6);
             Controls.Add(OperatorTheme.Card(root, false));
         }
 

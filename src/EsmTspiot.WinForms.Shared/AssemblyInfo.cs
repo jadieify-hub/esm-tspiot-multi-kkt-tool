@@ -7,9 +7,9 @@ using System.Runtime.Versioning;
 [assembly: AssemblyProduct("Управление ККТ в ЕСМ/ТС ПИоТ")]
 [assembly: AssemblyDescription("Ручное и автоматическое управление экземплярами ККТ в ЕСМ/ТС ПИоТ")]
 [assembly: AssemblyCopyright("Copyright © 2026 KRS. All rights reserved.")]
-[assembly: AssemblyVersion("11.3.29.0")]
-[assembly: AssemblyFileVersion("11.3.29.0")]
-[assembly: AssemblyInformationalVersion("11.3.29.0-test")]
+[assembly: AssemblyVersion("11.3.30.0")]
+[assembly: AssemblyFileVersion("11.3.30.0")]
+[assembly: AssemblyInformationalVersion("11.3.30.0-test")]
 [assembly: AssemblyMetadata("Author", "Руслан Керусов")]
 [assembly: AssemblyMetadata("RepositoryUrl", "https://github.com/jadieify-hub/esm-tspiot-multi-kkt-tool")]
 #if NET8_0_OR_GREATER

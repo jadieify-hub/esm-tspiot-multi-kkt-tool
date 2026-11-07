@@ -142,6 +142,14 @@ public static class WizardFlowCheck
             if (((DataGridView)Field(inventory, "_grid")).Rows.Count != 2)
                 throw new Exception("The distinct inventory must display both actual registrations.");
             Capture(form, "wizard-09-inventory.png");
+            using (var details = (Form)Invoke(inventory, "BuildKktDetailsDialog"))
+            {
+                details.Show(form);
+                var text = Find<TextBox>(details, "kkt-details");
+                if (!text.ReadOnly || !text.Text.Contains("00105700000001"))
+                    throw new Exception("KKT details must show the selected registration as read-only text.");
+                Capture(details, "compact-05-kkt-details.png");
+            }
             tabs.SelectedTab = (TabPage)Field(form, "_logTab");
             Capture(form, "wizard-10-log.png");
             tabs.SelectedTab = (TabPage)Field(form, "_automationTab");

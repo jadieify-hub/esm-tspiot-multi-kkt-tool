@@ -11,7 +11,10 @@ namespace EsmTspiot.WinForms.Shared
 {
     public sealed partial class LmGatewayPage
     {
-        private readonly CheckBox _showServiceOperations = new CheckBox();
+        private readonly AntdUI.Button _showServiceOperationsButton = new AntdUI.Button();
+        private readonly AntdUI.Button _showDetailsButton = new AntdUI.Button();
+        private readonly AntdUI.Button _serviceCancelButton = new AntdUI.Button();
+        private Form _serviceOperationsWindow;
         private readonly Panel _serviceOperations = new Panel();
         private readonly TextBox _diagnosticsTextBox = new TextBox();
         internal event Action KktSelectionChanged;
@@ -27,7 +30,8 @@ namespace EsmTspiot.WinForms.Shared
 
         internal void ShowServiceOperations()
         {
-            _showServiceOperations.Checked = true;
+            if (_serviceOperationsWindow.Visible) _serviceOperationsWindow.Activate();
+            else _serviceOperationsWindow.Show(FindForm());
         }
 
         internal void InvalidateDestination()

@@ -160,6 +160,7 @@ namespace EsmTspiot.WinForms.Shared
                     _cancellation = null;
                 }
                 ClearLocalModuleInstallerSelection();
+                if (_serviceOperationsWindow != null) _serviceOperationsWindow.Dispose();
             }
 
             base.Dispose(disposing);
@@ -276,7 +277,7 @@ namespace EsmTspiot.WinForms.Shared
                 : "Загружено ККТ: " + discovery.Items.Count.ToString() + ". " +
                     (FmuApiMode ? FmuControllerNotApplicable
                         : "Готовность ЛМ по ЕСМ проверяется отдельно.");
-            AppendServiceCapabilityStatus();
+            UpdateServiceCapabilityStatus();
 
             StringBuilder log = new StringBuilder();
             log.AppendLine(FmuApiMode
@@ -571,10 +572,13 @@ namespace EsmTspiot.WinForms.Shared
             _refreshButton.Enabled = idle;
             UpdateServiceActionState(idle, hasKkts);
             _grid.Enabled = idle;
-            _showServiceOperations.Enabled = idle;
+            _showServiceOperationsButton.Enabled = idle;
+            _showDetailsButton.Enabled = idle && _grid.CurrentRow != null;
             UpdateWorkingGrid();
             _cancelButton.Visible = _running;
             _cancelButton.Enabled = _running && _cancellation != null && !_cancellation.IsCancellationRequested;
+            _serviceCancelButton.Visible = _running;
+            _serviceCancelButton.Enabled = _cancelButton.Enabled;
         }
 
         private void RaiseOperationStateChanged(bool busy)

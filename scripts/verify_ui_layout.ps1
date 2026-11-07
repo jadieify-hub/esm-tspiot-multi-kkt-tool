@@ -44,6 +44,7 @@ try {
         (Join-Path $repoRoot "tests\WinFormsChecks\LmEditorCheck.cs") `
         (Join-Path $repoRoot "tests\WinFormsChecks\WizardFlowCheck.cs") `
         (Join-Path $repoRoot "tests\WinFormsChecks\AntdWorkingCheck.cs") `
+        (Join-Path $repoRoot "tests\WinFormsChecks\CompactLayoutCheck.cs") `
         (Join-Path $repoRoot "tests\WinFormsChecks\UiCheckRunner.cs")
     if ($LASTEXITCODE -ne 0) { throw "LM refresh check compilation failed." }
     [System.Reflection.Assembly]::Load([IO.File]::ReadAllBytes($refreshCheckPath)) | Out-Null
@@ -475,7 +476,8 @@ try {
 
     $expectedPackageLabels = @((Get-Utf8Text(
         "0JjRgdC/0L7Qu9GM0LfRg9C10YLRgdGPINGD0YHRgtCw0L3QvtCy0LvQtdC90L3Ri9C5INC+0YTQuNGG0LjQsNC70YzQvdGL0Lkg0LrQvtC90YLRgNC+0LvQu9C10YAg0JvQnCDQp9CXINC+0YIg0JXQodCfLiDQlNC70Y8g0LrQsNC20LTQvtC5INCa0JrQoiDRgdC+0LfQtNCw0ZHRgtGB0Y8g0L7RgtC00LXQu9GM0L3QsNGPINGB0LvRg9C20LHQsDsg0JvQnCDQp9CXINC80L7QttC90L4g0YPRgdGC0LDQvdC+0LLQuNGC0Ywg0Lgg0LjQvdC40YbQuNCw0LvQuNC30LjRgNC+0LLQsNGC0Ywg0L/QvtC30LbQtS4=")))
-    $lmPageLabelTexts = @(Get-DescendantControls -Root $page |
+    $serviceWindow = Get-PrivateFieldValue -Instance $page -Name '_serviceOperationsWindow'
+    $lmPageLabelTexts = @(Get-DescendantControls -Root $serviceWindow |
         Where-Object { $_ -is [System.Windows.Forms.Label] } |
         ForEach-Object { $_.Text })
     foreach ($expectedPackageLabel in $expectedPackageLabels) {

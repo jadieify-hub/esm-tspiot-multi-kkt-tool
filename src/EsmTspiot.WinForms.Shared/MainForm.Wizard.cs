@@ -20,7 +20,6 @@ namespace EsmTspiot.WinForms.Shared
         private readonly Label _wizardHeading = new Label();
         private readonly Label _wizardMessage = new Label();
         private readonly Label _wizardContext = new Label();
-        private readonly Label _wizardConnectionState = new Label();
         private readonly ProgressBar _wizardProgress = new ProgressBar();
         private readonly TableLayoutPanel _wizardEditorsPanel = new TableLayoutPanel();
         private readonly Panel _wizardInstallerPanel = new Panel();
@@ -759,6 +758,7 @@ namespace EsmTspiot.WinForms.Shared
                 foreach (LmSetupEditor editor in _wizardEditors.Values)
                     if (!editor.IsDisposed) editor.Dispose();
                 _wizardEditors.Clear();
+                if (_connectionDialog != null) _connectionDialog.Dispose();
             }
             base.Dispose(disposing);
         }
