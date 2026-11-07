@@ -17,6 +17,8 @@ namespace EsmTspiot.WinForms.Shared
         private readonly Button _setupSelectedButton = new Button();
         private readonly Button _manualStopButton = new Button();
         private readonly Label _manualDiscoveryHint = new Label();
+        private readonly FlowLayoutPanel _manualDiscoveryToolbar = new FlowLayoutPanel();
+        private readonly CheckBox _manualFallbackToggle = new CheckBox();
         private readonly Dictionary<string, TspiotFormInput> _manualInputs =
             new Dictionary<string, TspiotFormInput>(StringComparer.Ordinal);
         private readonly HashSet<string> _manualRegistered = new HashSet<string>(StringComparer.Ordinal);
@@ -34,11 +36,13 @@ namespace EsmTspiot.WinForms.Shared
         private Control BuildDiscoveredKktsPanel()
         {
             var panel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1,
-                RowCount = 3, MinimumSize = new Size(0, 175) };
+                RowCount = 3, MinimumSize = new Size(0, 110) };
             panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            var toolbar = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill };
+            var toolbar = _manualDiscoveryToolbar;
+            toolbar.AutoSize = true;
+            toolbar.Dock = DockStyle.Fill;
             ConfigureButton(_findKktsButton, "Найти ККТ", ScanKktsAsync);
             _findKktsButton.Tag = "ScanPhysicalKkts";
             toolbar.Controls.Add(_findKktsButton);
@@ -59,8 +63,20 @@ namespace EsmTspiot.WinForms.Shared
             _discoveredKktsGrid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
             _discoveredKktsGrid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
             _discoveredKktsGrid.BackgroundColor = SystemColors.Window;
-            foreach (string heading in new[] { "ККТ", "ФН", "ИНН", "COM", "Порт ЕСМ", "Порт ПО", "Состояние" })
+            foreach (string heading in new[] { "ККТ", "ФН", "ИНН", "COM", "Порт ЕСМ", "Порт ПО", "Состояние", "ЛМ ЧЗ" })
                 _discoveredKktsGrid.Columns.Add(heading, heading);
+            _discoveredKktsGrid.Columns["Состояние"].HeaderText = "Регистрация";
+            int[] columnWeights = { 145, 150, 115, 60, 80, 80, 160, 180 };
+            for (int index = 0; index < columnWeights.Length; index++)
+            {
+                _discoveredKktsGrid.Columns[index].FillWeight = columnWeights[index];
+                _discoveredKktsGrid.Columns[index].MinimumWidth = index == 3 ? 45 : 60;
+                _discoveredKktsGrid.Columns[index].SortMode = DataGridViewColumnSortMode.NotSortable;
+            }
+            _discoveredKktsGrid.Columns["Состояние"].DefaultCellStyle.WrapMode = DataGridViewTriState.True;
+            _discoveredKktsGrid.Columns["ЛМ ЧЗ"].DefaultCellStyle.WrapMode = DataGridViewTriState.True;
+            _discoveredKktsGrid.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCells;
+            _discoveredKktsGrid.RowTemplate.Height = 28;
             _discoveredKktsGrid.CurrentCellChanged += delegate { SelectManualDiscoveredKkt(); };
             panel.Controls.Add(_discoveredKktsGrid, 0, 1);
             _manualDiscoveryHint.AutoSize = true;
@@ -86,16 +102,23 @@ namespace EsmTspiot.WinForms.Shared
         {
             var panel = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill,
                 FlowDirection = FlowDirection.TopDown, WrapContents = false };
-            var toggle = new CheckBox { Text = "Отдельные операции и ручной ввод", AutoSize = true };
+            var toggle = _manualFallbackToggle;
+            toggle.Text = "Отдельные операции и ручной ввод";
+            toggle.AutoSize = true;
             var details = new TableLayoutPanel { AutoSize = true, Dock = DockStyle.Top,
                 ColumnCount = 1, Visible = false, MinimumSize = new Size(700, 0) };
-            details.Controls.Add(BuildManualKktActionsGroup(), 0, 0);
-            details.Controls.Add(BuildManualInstancesGroup(), 0, 1);
+            _atolConfirmedCheckBox.Text = "Я проверил связь в драйвере АТОЛ именно с подключаемой физической ККТ";
+            _atolConfirmedCheckBox.AutoSize = true;
+            details.Controls.Add(_atolConfirmedCheckBox, 0, 0);
+            details.Controls.Add(BuildManualKktActionsGroup(), 0, 1);
+            details.Controls.Add(BuildManualInstancesGroup(), 0, 2);
+            details.Controls.Add(_restoreFrontolButton, 0, 3);
             toggle.CheckedChanged += delegate
             {
                 details.Visible = toggle.Checked;
                 _atolConfirmedCheckBox.Visible = true;
                 _kktSerialTextBox.ReadOnly = _fnSerialTextBox.ReadOnly = _kktInnTextBox.ReadOnly = !toggle.Checked && _manualSelectedSerial != null;
+                UpdateWizardActions();
             };
             panel.Controls.Add(toggle);
             panel.Controls.Add(details);
@@ -130,6 +153,7 @@ namespace EsmTspiot.WinForms.Shared
 
         private async Task ScanKktsCoreAsync(CancellationToken cancellation)
         {
+            ShowWizardStage(1, "Ищем подключённые ККТ", "Поиск не выполняет регистрацию. Дождитесь завершения опроса.");
             ValidationResult validation = TspiotInputValidator.ValidateBulkSettings(
                 _baseUrlTextBox.Text, _dkktPortTextBox.Text);
             if (!validation.IsValid) throw new InvalidOperationException(validation.JoinMessages());
@@ -141,9 +165,10 @@ namespace EsmTspiot.WinForms.Shared
                 _baseUrlTextBox.Text.Trim(), cancellation);
             _manualScan = scan;
             FillDiscoveredKkts(scan, registered);
+            UpdateWizardSelection();
         }
 
-        private void FillDiscoveredKkts(KktCandidateScan scan, IList<LmGatewayKkt> registered)
+        private void FillDiscoveredKkts(KktCandidateScan scan, IList<LmGatewayKkt> registered, bool preserveInputs = true)
         {
             foreach (LmGatewayKkt kkt in registered)
                 if (kkt.RegistrationConfirmed)
@@ -157,7 +182,7 @@ namespace EsmTspiot.WinForms.Shared
             {
                 TspiotFormInput input = work.Item.Input;
                 TspiotFormInput previous;
-                if (work.RequiresAdd && _manualInputs.TryGetValue(input.KktSerial, out previous) &&
+                if (preserveInputs && work.RequiresAdd && _manualInputs.TryGetValue(input.KktSerial, out previous) &&
                     previous.KktInn == input.KktInn && previous.FnSerial == input.FnSerial)
                 { input.Port = previous.Port; input.SoftPort = previous.SoftPort; }
                 found[input.KktSerial] = input;
@@ -173,7 +198,11 @@ namespace EsmTspiot.WinForms.Shared
                     DkktPort = _dkktPortTextBox.Text.Trim(), KktSerial = kkt.KktSerial,
                     FnSerial = kkt.FnSerial, KktInn = kkt.KktInn, Port = kkt.Port, SoftPort = kkt.SoftPort };
                 _manualRegistered.Add(kkt.KktSerial);
+                RememberWizardKkt(kkt);
             }
+            foreach (string serial in new List<string>(_wizardKnownKkts.Keys))
+                if (!_manualRegistered.Contains(serial))
+                { _wizardKnownKkts.Remove(serial); _wizardKktResults.Remove(serial); }
             _fillingManualGrid = true;
             try
             {
@@ -184,7 +213,8 @@ namespace EsmTspiot.WinForms.Shared
                     SequentialKktRegistrationTarget target = scan.Sequential == null ? null : scan.Sequential.FindBySerial(pair.Key);
                     int row = _discoveredKktsGrid.Rows.Add(pair.Key, pair.Value.FnSerial, pair.Value.KktInn,
                         target == null ? "—" : target.Port.PortName, pair.Value.Port, pair.Value.SoftPort,
-                        _manualRegistered.Contains(pair.Key) ? "Зарегистрирована" : "Не зарегистрирована");
+                        _manualRegistered.Contains(pair.Key) ? "Зарегистрирована" : ManualPortsAreFixed(pair.Key) ? "Экземпляр создан" : "Не зарегистрирована",
+                        _wizardKktResults.ContainsKey(pair.Key) ? _wizardKktResults[pair.Key] : "Не настраивался");
                     _discoveredKktsGrid.Rows[row].Tag = pair.Key;
                 }
                 _manualSelectedSerial = null;
@@ -224,7 +254,8 @@ namespace EsmTspiot.WinForms.Shared
             DataGridViewRow row = _discoveredKktsGrid.CurrentRow;
             _manualSelectedSerial = row == null ? null : row.Tag as string;
             TspiotFormInput input;
-            if (_manualSelectedSerial == null || !_manualInputs.TryGetValue(_manualSelectedSerial, out input)) return;
+            if (_manualSelectedSerial == null || !_manualInputs.TryGetValue(_manualSelectedSerial, out input))
+            { if (!_busy) UpdateWizardSelection(); return; }
             _kktSerialTextBox.Text = input.KktSerial;
             _fnSerialTextBox.Text = input.FnSerial;
             _kktInnTextBox.Text = input.KktInn;
@@ -235,6 +266,7 @@ namespace EsmTspiot.WinForms.Shared
                 _manualScan.Sequential.FindBySerial(input.KktSerial) == null;
             _kktSerialTextBox.ReadOnly = _fnSerialTextBox.ReadOnly = _kktInnTextBox.ReadOnly = true;
             _portTextBox.ReadOnly = _softPortTextBox.ReadOnly = ManualPortsAreFixed(input.KktSerial);
+            if (!_busy) UpdateWizardSelection();
         }
 
         private async Task<LmGatewayKkt> RegisterManualSelectionCoreAsync(CancellationToken cancellation)
@@ -304,8 +336,9 @@ namespace EsmTspiot.WinForms.Shared
                 if (kkt.RegistrationConfirmed && kkt.KktSerial == input.KktSerial && kkt.KktInn == input.KktInn && kkt.FnSerial == input.FnSerial)
                 {
                     _manualRegistered.Add(kkt.KktSerial);
+                    RememberWizardKkt(kkt);
                     _portTextBox.ReadOnly = _softPortTextBox.ReadOnly = true;
-                    SetManualRowStatus(kkt.KktSerial, "Зарегистрирована; ЛМ не настроен");
+                    SetManualRowStatus(kkt.KktSerial, "Зарегистрирована");
                     return kkt;
                 }
             throw new InvalidOperationException("ЕСМ не подтвердил регистрацию выбранной ККТ с ожидаемыми ИНН и ФН.");
@@ -315,16 +348,12 @@ namespace EsmTspiot.WinForms.Shared
         {
             _automaticCancellation = new CancellationTokenSource();
             _manualStopButton.Enabled = true;
+            _automaticStopButton.Enabled = true;
             try
             {
+                ShowWizardStage(2, "Регистрируем выбранную ККТ", "Другие кассы не изменяются.");
                 LmGatewayKkt kkt = await RegisterManualSelectionCoreAsync(_automaticCancellation.Token);
-                var selected = new[] { kkt };
-                if (!_lmGatewayPage.PromptLmSetup(this, selected))
-                { SetManualRowStatus(kkt.KktSerial, "Зарегистрирована; настройка ЛМ отложена"); return; }
-                var outcome = await _lmGatewayPage.RunFullAutomaticLocalSetupFromHostAsync(selected, _automaticCancellation.Token);
-                SetManualRowStatus(kkt.KktSerial, outcome.Complete ? "Настройки применены" : "Требуется внимание");
-                MessageBox.Show(this, outcome.FormatSummary(), "Настройка выбранной ККТ", MessageBoxButtons.OK,
-                    outcome.Complete ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+                ShowWizardLmStep(new[] { kkt }, false);
             }
             finally { _manualStopButton.Enabled = false; _automaticCancellation.Dispose(); _automaticCancellation = null; }
         }

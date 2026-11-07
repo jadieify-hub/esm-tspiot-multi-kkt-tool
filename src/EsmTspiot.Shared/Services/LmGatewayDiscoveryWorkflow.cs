@@ -23,7 +23,8 @@ namespace EsmTspiot.Shared.Services
         public async Task<LmGatewayDiscovery> DiscoverAsync(
             string baseUrl,
             Action<LmGatewayProgress> progress,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            string instanceIdFilter = null)
         {
             LmGatewayDiscovery discovery = new LmGatewayDiscovery();
             cancellationToken.ThrowIfCancellationRequested();
@@ -49,6 +50,7 @@ namespace EsmTspiot.Shared.Services
                 cancellationToken.ThrowIfCancellationRequested();
                 KktInstanceInfo instance = instances[index];
                 string instanceId = (instance.Id ?? string.Empty).Trim();
+                if (instanceIdFilter != null && instanceId != instanceIdFilter) continue;
                 ReportProgress(progress, index + 1, instances.Count, instanceId, "Чтение данных ККТ");
 
                 ApiResponse detailResponse = await _apiClient.GetInstanceAsync(

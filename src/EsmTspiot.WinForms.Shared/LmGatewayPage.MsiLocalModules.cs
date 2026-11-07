@@ -20,6 +20,9 @@ namespace EsmTspiot.WinForms.Shared
             LocalModuleLines = new List<string>();
             EsmLines = new List<string>();
             IncompleteReason = string.Empty;
+            KktStates = new Dictionary<string, string>(StringComparer.Ordinal);
+            FailedSerials = new List<string>();
+            RemoteModuleInns = new HashSet<string>(StringComparer.Ordinal);
         }
 
         internal DirectControllerSetupOutcome Controllers { get; set; }
@@ -31,15 +34,65 @@ namespace EsmTspiot.WinForms.Shared
         internal int EsmLocalModulePendingCount { get; set; }
         internal int EsmAttentionCount { get; set; }
         internal bool Complete { get; set; }
+        internal bool Cancelled { get; set; }
         internal string IncompleteReason { get; set; }
         internal IList<string> LocalModuleLines { get; private set; }
         internal IList<string> EsmLines { get; private set; }
+        internal IDictionary<string, string> KktStates { get; private set; }
+        internal IList<string> FailedSerials { get; private set; }
+        internal ISet<string> RemoteModuleInns { get; private set; }
+
+        internal void RecordKktStates(IList<LmGatewayKkt> kkts,
+            IDictionary<string, LocalModuleMsiProvisioningItemResult> modules,
+            IDictionary<string, LmGatewayBindingStatus> bindings)
+        {
+            KktStates.Clear();
+            FailedSerials.Clear();
+            foreach (LmGatewayKkt kkt in kkts)
+            {
+                string state;
+                bool failed = false;
+                LocalModuleMsiProvisioningItemResult module;
+                LmGatewayBindingStatus binding;
+                if (modules.TryGetValue(kkt.KktInn, out module) && module.Status != LmServiceProvisioningStatus.Succeeded)
+                {
+                    state = module.Status == LmServiceProvisioningStatus.Cancelled ? "Установка ЛМ отложена" : "ЛМ не установлен";
+                    failed = module.Status != LmServiceProvisioningStatus.Cancelled;
+                }
+                else if (FmuApiMode)
+                    state = RemoteModuleInns.Contains(kkt.KktInn) ? "Адрес удалённого ЛМ учтён; контроллеры пропущены"
+                        : module != null && module.Status == LmServiceProvisioningStatus.Succeeded
+                            ? "ЛМ подготовлен; контроллеры пропущены" : Cancelled ? "Состояние ЛМ не подтверждено" : "Подготовка ЛМ не запускалась";
+                else if (bindings.TryGetValue(kkt.KktSerial, out binding))
+                {
+                    bool accepted = binding == LmGatewayBindingStatus.BindingAccepted ||
+                        binding == LmGatewayBindingStatus.BindingObserved || binding == LmGatewayBindingStatus.BindingVerified;
+                    state = accepted ? "Параметры применены" : binding == LmGatewayBindingStatus.RequiresAttention
+                        ? "Применение привязки не подтверждено" : binding == LmGatewayBindingStatus.Cancelled
+                            ? "Привязка не запускалась" : "Привязка не применена";
+                    failed = !accepted && binding != LmGatewayBindingStatus.Cancelled;
+                }
+                else if (Controllers == null) state = module != null && module.Status == LmServiceProvisioningStatus.Succeeded
+                    ? "ЛМ установлен; контроллеры не настраивались"
+                    : Cancelled ? "Остановлено; состояние компонентов не подтверждено" : "Контроллеры не настраивались";
+                else if (Controllers.ReadyAssignments.ContainsKey(kkt.KktSerial))
+                    state = "Контроллер настроен; привязка не выполнена";
+                else
+                {
+                    state = "Контроллер не настроен";
+                    failed = Controllers.FailedSerials.Contains(kkt.KktSerial);
+                }
+                KktStates[kkt.KktSerial] = state;
+                if (failed) FailedSerials.Add(kkt.KktSerial);
+            }
+        }
 
         internal string FormatSummary()
         {
             StringBuilder text = new StringBuilder();
+            if (Cancelled) text.Append("Операция остановлена. Подтверждённые результаты сохранены. ");
             if (FmuApiMode) text.Append("Подготовка FMU-API. ");
-            text.Append("ЛМ готовы: " +
+            text.Append("ЛМ установлены/учтены: " +
                 LocalModulesReady.ToString(CultureInfo.InvariantCulture) +
                 "; ЛМ отложены/с ошибкой: " +
                 LocalModulesFailed.ToString(CultureInfo.InvariantCulture) +
@@ -72,6 +125,8 @@ namespace EsmTspiot.WinForms.Shared
 
     public sealed partial class LmGatewayPage
     {
+        private readonly Dictionary<string, LocalModuleMsiProvisioningItemResult> _lastMsiItemResults =
+            new Dictionary<string, LocalModuleMsiProvisioningItemResult>(StringComparer.Ordinal);
         private bool HasOwnedComponentsForRemoval()
         {
             return (_localModuleMsiInventory != null &&
@@ -438,9 +493,14 @@ namespace EsmTspiot.WinForms.Shared
 
             FullAutomaticLocalSetupOutcome outcome =
                 new FullAutomaticLocalSetupOutcome { FmuApiMode = fmuApiMode };
+            var localInns = new HashSet<string>(StringComparer.Ordinal);
+            foreach (LmGatewayKkt kkt in localLmKkts) localInns.Add(kkt.KktInn);
+            foreach (LmGatewayKkt kkt in registeredKkts)
+                if (!localInns.Contains(kkt.KktInn)) outcome.RemoteModuleInns.Add(kkt.KktInn);
             _lastAutomaticLocalModulesReady = 0;
             _lastAutomaticLocalModulesFailed = 0;
             _lastAutomaticLocalModuleLines.Clear();
+            _lastMsiItemResults.Clear();
             LocalModuleMsiOperatorInventorySnapshot inventory = localLmKkts.Count == 0
                 ? new LocalModuleMsiOperatorInventorySnapshot()
                 : CreateLocalModuleInventoryReader().Read();
@@ -469,8 +529,10 @@ namespace EsmTspiot.WinForms.Shared
             }
 
             DirectControllerSetupOutcome controllers = null;
-            LmAutomaticSetupResult coordinated =
-                await new LmAutomaticSetupCoordinator().ExecuteFullAsync(
+            LmAutomaticSetupResult coordinated = null;
+            try
+            {
+                coordinated = await new LmAutomaticSetupCoordinator().ExecuteFullAsync(
                     delegate { return Task.FromResult(true); },
                     async delegate(CancellationToken operationCancellation)
                     {
@@ -524,6 +586,11 @@ namespace EsmTspiot.WinForms.Shared
                     ReportFullAutomaticStage,
                     cancellation,
                     fmuApiMode).ConfigureAwait(true);
+            }
+            catch (OperationCanceledException)
+            {
+                outcome.Cancelled = true;
+            }
 
             // Отложил оператор — это одно, а ЛМ не встал — совсем другое.
             // Раньше любая ошибка ЛМ печаталась как «отложена оператором»,
@@ -532,8 +599,13 @@ namespace EsmTspiot.WinForms.Shared
             outcome.LocalModulesFailed = Math.Max(
                 outcome.LocalModulesFailed,
                 _lastAutomaticLocalModulesFailed);
-            outcome.Complete = coordinated.Complete;
-            outcome.IncompleteReason = coordinated.IncompleteReason;
+            outcome.Complete = coordinated != null && coordinated.Complete;
+            outcome.IncompleteReason = outcome.Cancelled ? "операция остановлена; незавершённые этапы можно повторить"
+                : coordinated.IncompleteReason;
+            foreach (LocalModuleMsiProvisioningItemResult item in _lastMsiItemResults.Values)
+                if (item.Status == LmServiceProvisioningStatus.Cancelled) outcome.LocalModulesDeferred = true;
+            outcome.RecordKktStates(registeredKkts, _lastMsiItemResults,
+                controllers == null ? new Dictionary<string, LmGatewayBindingStatus>() : controllers.BindingStates);
             for (int index = 0;
                 index < _lastAutomaticLocalModuleLines.Count;
                 index++)
@@ -549,8 +621,8 @@ namespace EsmTspiot.WinForms.Shared
                     "ЛМ ЧЗ: часть модулей не готова; причина указана выше " +
                     "в строке по этому ИНН.");
             Log("Готовность и инициализация ЛМ ЧЗ не проверяются при настройке. " +
-                "Проверка по ЕСМ доступна отдельно на вкладке «ЛМ ЧЗ».\r\n");
-            string completionStatus = outcome.Complete
+                "Проверка по ЕСМ доступна отдельно на вкладке «Кассы и ЛМ ЧЗ».\r\n");
+            string completionStatus = outcome.Cancelled ? "Настройка остановлена. Подтверждённые действия сохранены." : outcome.Complete
                 ? fmuApiMode
                     ? "Подготовка FMU-API завершена: ККТ зарегистрированы, ЛМ ЧЗ готовы. " +
                         "FMU-API и инициализация ЛМ настраиваются отдельно."
@@ -568,11 +640,12 @@ namespace EsmTspiot.WinForms.Shared
             // строки, пока не перезапускал утилиту.
             try
             {
-                await RefreshCoreAsync(cancellation);
+                if (!cancellation.IsCancellationRequested) await RefreshCoreAsync(cancellation);
             }
             catch (OperationCanceledException)
             {
-                throw;
+                outcome.Cancelled = true;
+                completionStatus = "Настройки применены; обновление списка остановлено. Результаты сохранены.";
             }
             catch (Exception ex)
             {
@@ -646,6 +719,9 @@ namespace EsmTspiot.WinForms.Shared
             {
                 Log("Установка ЛМ ЧЗ отложена оператором.\r\n");
                 _lastAutomaticLocalModulesFailed = plan.Assignments.Count;
+                foreach (LocalModuleMsiAssignment assignment in plan.Assignments)
+                    _lastMsiItemResults[assignment.Inn] = new LocalModuleMsiProvisioningItemResult {
+                        Inn = assignment.Inn, Status = LmServiceProvisioningStatus.Cancelled };
                 return false;
             }
 
@@ -669,6 +745,7 @@ namespace EsmTspiot.WinForms.Shared
             {
                 LocalModuleMsiProvisioningItemResult item =
                     result.LocalModuleMsiItems[index];
+                _lastMsiItemResults[item.Inn] = item;
                 bool ready = item.Status ==
                     LmServiceProvisioningStatus.Succeeded;
                 if (ready) succeeded++; else failed++;

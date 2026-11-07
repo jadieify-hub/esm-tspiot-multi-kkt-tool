@@ -20,6 +20,7 @@ public static class LmRefreshCheck
             {
                 page.FmuApiMode = fmuMode;
                 int writesBeforeRefresh = api.BindingCalls;
+                int infoBeforeRefresh = api.InfoCalls;
                 Task refresh = page.RefreshAsync();
                 DateTime deadline = DateTime.UtcNow.AddSeconds(15);
                 while (!refresh.IsCompleted && DateTime.UtcNow < deadline)
@@ -30,7 +31,7 @@ public static class LmRefreshCheck
                 if (!refresh.IsCompleted)
                     throw new Exception("LM table refresh did not finish.");
                 refresh.GetAwaiter().GetResult();
-                if (api.InfoCalls != 0)
+                if (api.InfoCalls != infoBeforeRefresh)
                     throw new Exception("Table refresh must not poll LM readiness.");
                 if (api.BindingCalls != writesBeforeRefresh)
                     throw new Exception("Table refresh must not write LM settings.");
@@ -41,6 +42,7 @@ public static class LmRefreshCheck
                     session.Rows[0].Kkt.KktSerial != "00105700000001" ||
                     session.Rows[1].Kkt.KktSerial != "00105700000002")
                     throw new Exception("Both registered KKTs must remain in the table.");
+                CheckUninstalledModuleRows(page, session);
                 if (!fmuMode)
                 {
                     var grid = (DataGridView)typeof(LmGatewayPage)
@@ -53,8 +55,63 @@ public static class LmRefreshCheck
                             throw new Exception("An unchecked binding must not be displayed as absent.");
                     }
                     CheckBindingResult(page, api, session);
+                    CheckSelectedDiagnosis(page, api);
+                    CheckPartialSetupOutcome();
                 }
             }
+        }
+    }
+
+    private static void CheckUninstalledModuleRows(
+        LmGatewayPage page, LmGatewayBindingSession session)
+    {
+        BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        FieldInfo inventoryField = typeof(LmGatewayPage)
+            .GetField("_localModuleMsiInventory", flags);
+        object savedInventory = inventoryField.GetValue(page);
+        string savedInn = session.Rows[1].Kkt.KktInn;
+        object snapshot = Activator.CreateInstance(inventoryField.FieldType, true);
+        var items = (IList<LocalModuleMsiInventoryItem>)inventoryField.FieldType
+            .GetProperty("Items", flags).GetValue(snapshot, null);
+        var installed = (IList<string>)inventoryField.FieldType
+            .GetProperty("InstalledModuleInns", flags).GetValue(snapshot, null);
+        var grid = (DataGridView)typeof(LmGatewayPage)
+            .GetField("_grid", flags).GetValue(page);
+        string[] inns = { savedInn, "123456789012" };
+        try
+        {
+            session.Rows[1].Kkt.KktInn = inns[1];
+            for (int index = 0; index < 2; index++)
+            {
+                items.Add(new LocalModuleMsiInventoryItem {
+                    Inn = inns[index], CloneOrdinal = index,
+                    ApiPort = index == 0 ? 5995 : 6995 });
+                installed.Add(inns[index]);
+            }
+            inventoryField.SetValue(page, snapshot);
+            for (int removedCount = 0; removedCount <= 2; removedCount++)
+            {
+                if (removedCount > 0) installed.Remove(inns[removedCount - 1]);
+                typeof(LmGatewayPage).GetMethod("FillRows", flags)
+                    .Invoke(page, new object[] { string.Empty });
+                if (grid.Rows.Count != 2 || items.Count != 2)
+                    throw new Exception("Uninstall must preserve KKTs and saved LM assignments.");
+                for (int index = 0; index < 2; index++)
+                {
+                    string expectedState = index < removedCount
+                        ? "Не установлен" : "Установлен; сверка при операции";
+                    if ((string)grid.Rows[index].Cells["LmState"].Value != expectedState)
+                        throw new Exception("LM status must reflect service presence for each INN.");
+                    if ((string)grid.Rows[index].Cells["LmEndpoint"].Value !=
+                        (index == 0 ? "127.0.0.1:5995" : "127.0.0.1:6995"))
+                        throw new Exception("Uninstall must preserve the assigned LM port.");
+                }
+            }
+        }
+        finally
+        {
+            inventoryField.SetValue(page, savedInventory);
+            session.Rows[1].Kkt.KktInn = savedInn;
         }
     }
 
@@ -101,10 +158,90 @@ public static class LmRefreshCheck
         }
     }
 
+    private static void CheckSelectedDiagnosis(LmGatewayPage page, DiscoveryOnlyApi api)
+    {
+        BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var method = typeof(LmGatewayPage).GetMethod("DiagnoseKktAsync", flags);
+        if (method == null) throw new Exception("Selected-cash diagnostics need an explicit serial scope.");
+        api.InfoPorts.Clear();
+        api.DetailIds.Clear();
+        Task diagnosis = (Task)method.Invoke(page, new object[] { "00105700000002" });
+        DateTime deadline = DateTime.UtcNow.AddSeconds(15);
+        while (!diagnosis.IsCompleted && DateTime.UtcNow < deadline)
+        { Application.DoEvents(); Thread.Sleep(5); }
+        if (!diagnosis.IsCompleted) throw new Exception("Selected-cash diagnosis timed out.");
+        diagnosis.GetAwaiter().GetResult();
+        if (api.InfoPorts.Count != 1 || api.InfoPorts[0] != "51402")
+            throw new Exception("Diagnostics of KKT 2 must not poll KKT 1.");
+        if (api.DetailIds.Count != 1 || api.DetailIds[0] != "00105700000002")
+            throw new Exception("Selected diagnostics must not read another KKT's details.");
+    }
+
+    private static void CheckPartialSetupOutcome()
+    {
+        BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var assembly = typeof(LmGatewayPage).Assembly;
+        Type controllerType = assembly.GetType("EsmTspiot.WinForms.Shared.DirectControllerSetupOutcome", true);
+        Type outcomeType = assembly.GetType("EsmTspiot.WinForms.Shared.FullAutomaticLocalSetupOutcome", true);
+        object controllers = Activator.CreateInstance(controllerType, true);
+        var ready = (IDictionary<string, DirectControllerAssignment>)controllerType
+            .GetProperty("ReadyAssignments", flags).GetValue(controllers, null);
+        ready.Add("A", new DirectControllerAssignment { KktSerial = "A" });
+        ready.Add("B", new DirectControllerAssignment { KktSerial = "B" });
+        object outcome = Activator.CreateInstance(outcomeType, true);
+        outcomeType.GetProperty("Controllers", flags).SetValue(outcome, controllers, null);
+        var record = outcomeType.GetMethod("RecordKktStates", flags);
+        if (record == null) throw new Exception("Partial setup needs per-KKT states from structured stage results.");
+        record.Invoke(outcome, new object[] {
+            new[] { new LmGatewayKkt { KktSerial = "A", KktInn = "1234567894" },
+                new LmGatewayKkt { KktSerial = "B", KktInn = "1234567894" } },
+            new Dictionary<string, LocalModuleMsiProvisioningItemResult>(),
+            new Dictionary<string, LmGatewayBindingStatus> {
+                { "A", LmGatewayBindingStatus.BindingAccepted }, { "B", LmGatewayBindingStatus.BindingFailed } } });
+        var states = (IDictionary<string, string>)outcomeType.GetProperty("KktStates", flags).GetValue(outcome, null);
+        var failed = (IList<string>)outcomeType.GetProperty("FailedSerials", flags).GetValue(outcome, null);
+        if (states["A"] != "Параметры применены" || states["B"] != "Привязка не применена" ||
+            failed.Count != 1 || failed[0] != "B")
+            throw new Exception("A failed binding for B must not mark A as failed or select A for recovery.");
+        outcomeType.GetProperty("FmuApiMode", flags).SetValue(outcome, true, null);
+        var remoteInns = (ISet<string>)outcomeType.GetProperty("RemoteModuleInns", flags).GetValue(outcome, null);
+        remoteInns.Add("7701234560");
+        record.Invoke(outcome, new object[] {
+            new[] { new LmGatewayKkt { KktSerial = "A", KktInn = "1234567894" },
+                new LmGatewayKkt { KktSerial = "B", KktInn = "123456789012" },
+                new LmGatewayKkt { KktSerial = "C", KktInn = "7701234560" },
+                new LmGatewayKkt { KktSerial = "D", KktInn = "7701234567" } },
+            new Dictionary<string, LocalModuleMsiProvisioningItemResult> {
+                { "1234567894", new LocalModuleMsiProvisioningItemResult { Status = LmServiceProvisioningStatus.Succeeded } },
+                { "123456789012", new LocalModuleMsiProvisioningItemResult { Status = LmServiceProvisioningStatus.Failed } },
+                { "7701234567", new LocalModuleMsiProvisioningItemResult { Status = LmServiceProvisioningStatus.Cancelled } } },
+            new Dictionary<string, LmGatewayBindingStatus>() });
+        if (states["A"] != "ЛМ подготовлен; контроллеры пропущены" || states["B"] != "ЛМ не установлен" ||
+            states["C"] != "Адрес удалённого ЛМ учтён; контроллеры пропущены" || states["D"] != "Установка ЛМ отложена" ||
+            failed.Count != 1 || failed[0] != "B")
+            throw new Exception("FMU-mode results must retain per-INN success, remote choices and operator deferrals despite another INN failure.");
+        outcomeType.GetProperty("FmuApiMode", flags).SetValue(outcome, false, null);
+        outcomeType.GetProperty("Cancelled", flags).SetValue(outcome, true, null);
+        outcomeType.GetProperty("Controllers", flags).SetValue(outcome, null, null);
+        record.Invoke(outcome, new object[] {
+            new[] { new LmGatewayKkt { KktSerial = "A", KktInn = "1234567894" },
+                new LmGatewayKkt { KktSerial = "B", KktInn = "123456789012" },
+                new LmGatewayKkt { KktSerial = "C", KktInn = "7701234560" } },
+            new Dictionary<string, LocalModuleMsiProvisioningItemResult> {
+                { "1234567894", new LocalModuleMsiProvisioningItemResult { Status = LmServiceProvisioningStatus.Succeeded } },
+                { "123456789012", new LocalModuleMsiProvisioningItemResult { Status = LmServiceProvisioningStatus.Cancelled } } },
+            new Dictionary<string, LmGatewayBindingStatus>() });
+        if (states["A"] != "ЛМ установлен; контроллеры не настраивались" || states["B"] != "Установка ЛМ отложена" ||
+            states["C"] != "Остановлено; состояние компонентов не подтверждено")
+            throw new Exception("Stopping after a partial MSI batch must retain confirmed success and distinguish unknown results.");
+    }
+
     private sealed class DiscoveryOnlyApi : ITspiotApiClient
     {
         public int InfoCalls;
         public int BindingCalls;
+        public readonly List<string> InfoPorts = new List<string>();
+        public readonly List<string> DetailIds = new List<string>();
         public bool AcceptBinding;
 
         private static Task<ApiResponse> Success(string json)
@@ -121,7 +258,8 @@ public static class LmRefreshCheck
 
         public Task<ApiResponse> GetInstanceAsync(string url, string id, CancellationToken cancellation)
         {
-            return Success("{\"regData\":{\"kktSerial\":\"" + id +
+            DetailIds.Add(id);
+            return Success("{\"state\":\"Registered\",\"regData\":{\"kktSerial\":\"" + id +
                 "\",\"fnSerial\":\"7300000000000001\",\"kktInn\":\"1234567894\"}}");
         }
 
@@ -129,6 +267,7 @@ public static class LmRefreshCheck
             string url, string port, string softPort, CancellationToken cancellation)
         {
             InfoCalls++;
+            InfoPorts.Add(softPort);
             return Task.FromResult(new ApiResponse { IsConnectionFailure = true });
         }
 

@@ -18,6 +18,8 @@ namespace EsmTspiot.WinForms.Shared
             Messages = new List<string>();
             ReadyAssignments = new Dictionary<string, DirectControllerAssignment>(
                 StringComparer.Ordinal);
+            FailedSerials = new List<string>();
+            BindingStates = new Dictionary<string, LmGatewayBindingStatus>(StringComparer.Ordinal);
         }
 
         internal bool Complete { get; set; }
@@ -29,6 +31,8 @@ namespace EsmTspiot.WinForms.Shared
         internal IDictionary<string, DirectControllerAssignment>
             ReadyAssignments { get; private set; }
         internal int ExpectedKktCount { get; set; }
+        internal IList<string> FailedSerials { get; private set; }
+        internal IDictionary<string, LmGatewayBindingStatus> BindingStates { get; private set; }
 
         internal string FormatSummary()
         {
@@ -152,6 +156,7 @@ namespace EsmTspiot.WinForms.Shared
                 else
                 {
                     outcome.FailedCount++;
+                    outcome.FailedSerials.Add(item.KktSerial);
                     outcome.Messages.Add(item.FormatLogLine());
                 }
             }
@@ -220,6 +225,7 @@ namespace EsmTspiot.WinForms.Shared
                 for (int index = 0; index < binding.Results.Count; index++)
                 {
                     LmGatewayBindingResult result = binding.Results[index];
+                    outcome.BindingStates[result.KktSerial] = result.Status;
                     bool accepted = result.Status ==
                             LmGatewayBindingStatus.BindingAccepted ||
                         result.Status == LmGatewayBindingStatus.BindingVerified ||
@@ -232,6 +238,7 @@ namespace EsmTspiot.WinForms.Shared
                         continue;
                     }
                     outcome.FailedCount++;
+                    if (!outcome.FailedSerials.Contains(result.KktSerial)) outcome.FailedSerials.Add(result.KktSerial);
                     if (lmNotReady)
                     {
                         outcome.Messages.Add(

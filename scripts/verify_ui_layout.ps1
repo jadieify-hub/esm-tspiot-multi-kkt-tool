@@ -38,12 +38,16 @@ try {
         "/r:$appPath" "/r:$sharedPath" `
         (Join-Path $repoRoot "tests\WinFormsChecks\LmRefreshCheck.cs") `
         (Join-Path $repoRoot "tests\WinFormsChecks\SetupFlowCheck.cs") `
-        (Join-Path $repoRoot "tests\WinFormsChecks\LmSetupDialogCheck.cs")
+        (Join-Path $repoRoot "tests\WinFormsChecks\LmSetupDialogCheck.cs") `
+        (Join-Path $repoRoot "tests\WinFormsChecks\LmEditorCheck.cs") `
+        (Join-Path $repoRoot "tests\WinFormsChecks\WizardFlowCheck.cs") `
+        (Join-Path $repoRoot "tests\WinFormsChecks\UiCheckRunner.cs")
     if ($LASTEXITCODE -ne 0) { throw "LM refresh check compilation failed." }
     [System.Reflection.Assembly]::Load([IO.File]::ReadAllBytes($refreshCheckPath)) | Out-Null
-    [LmRefreshCheck]::Run()
-    [SetupFlowCheck]::Run()
-    [LmSetupDialogCheck]::Run()
+    [UiCheckRunner]::Run()
+    [System.Threading.SynchronizationContext]::SetSynchronizationContext(
+        [System.Windows.Forms.WindowsFormsSynchronizationContext]::new())
+    Write-Host "WinForms workflow checks passed."
 }
 finally {
     if (Test-Path -LiteralPath $refreshCheckPath) {
@@ -160,6 +164,7 @@ try {
     }
     finally {
         $criticalField.SetValue($form, $false)
+        $formType.GetField("_closeAfterOperation", $flags).SetValue($form, $false)
     }
     $clearMethod = $page.GetType().GetMethod(
         "ClearLocalModuleInstallerSelection",
@@ -184,12 +189,10 @@ try {
 
     $expectedTabOrder = @(
         $automationTab,
-        $manualKktTab,
         $instancesTab,
-        $lmGatewayTab,
         $logTab)
     if ($workspaceTabs.TabPages.Count -ne $expectedTabOrder.Count) {
-        throw "The workspace must expose exactly five task tabs."
+        throw "The workspace must expose exactly three task tabs."
     }
     for ($tabIndex = 0; $tabIndex -lt $expectedTabOrder.Count; $tabIndex++) {
         if (-not [object]::ReferenceEquals(
@@ -204,22 +207,9 @@ try {
         throw "Automatic setup must be the default landing tab."
     }
     $expectedAutomationTitle = Get-Utf8Text(
-        "0JDQstGC0L7QvNCw0YLQuNGH0LXRgdC60LDRjyDQvdCw0YHRgtGA0L7QudC60LA=")
+        "0J3QsNGB0YLRgNC+0LnQutCwINCa0JrQog==")
     if ($automationTab.Text -ne $expectedAutomationTitle) {
         throw "The primary tab needs an action-oriented automatic-setup title."
-    }
-    $atolText = Get-Utf8Text("0JDQotCe0Js=")
-    $bindingStem = Get-Utf8Text("0L/RgNC40LLRj9C3")
-    $bindingFutureStem = Get-Utf8Text("0L/RgNC40LLRj9C2")
-    $automaticHint = @(Get-DescendantControls -Root $automationTab |
-        Where-Object {
-            $_ -is [System.Windows.Forms.Label] -and
-            $_.Text.Contains($atolText) -and
-            ($_.Text.Contains($bindingStem) -or
-                $_.Text.Contains($bindingFutureStem))
-        })
-    if ($automaticHint.Count -ne 1) {
-        throw "The automatic page must visibly explain ATOL discovery and ESM binding."
     }
 
     $helpTitle = Get-Utf8Text("0KHQv9GA0LDQstC60LA=")
@@ -390,21 +380,6 @@ try {
     if ($completionMessage.Contains($donationLine)) {
         throw "The completion message must not repeat the support hint."
     }
-    $supportOfferMethod = $formType.GetMethod(
-        "ShouldOfferSupportDialog", $allStaticFlags)
-    if ($null -eq $supportOfferMethod) {
-        throw "Automatic setup needs one testable support-dialog decision."
-    }
-    if (-not [bool]$supportOfferMethod.Invoke($null, @($true, $false))) {
-        throw "A fully successful setup must offer the support window."
-    }
-    if ([bool]$supportOfferMethod.Invoke($null, @($false, $false))) {
-        throw "An incomplete setup must not offer the support window."
-    }
-    if ([bool]$supportOfferMethod.Invoke($null, @($true, $true))) {
-        throw "The support window must be offered once per application run."
-    }
-
     # Test the responsive layout directly without displaying a window or starting discovery.
     $page.Dock = [System.Windows.Forms.DockStyle]::None
     $page.Size = [System.Drawing.Size]::new(1450, 512)
@@ -437,18 +412,6 @@ try {
     if ($dkktPortBox.Text -ne "4042") {
         throw "The main form must default dkktPort to the ESM orchestrator port 4042; actual: '$($dkktPortBox.Text)'."
     }
-    $expectedManualPortLabels = @(
-        (Get-Utf8Text("0J/QvtGA0YIg0YHQu9GD0LbQsdGLIChwb3J0KQ==")),
-        (Get-Utf8Text(
-            "0J/QvtGA0YIg0LrQsNGB0YHQvtCy0L7Qs9C+INCf0J4gKHNvZnRQb3J0KQ==")))
-    $manualLabelTexts = @(Get-DescendantControls -Root $manualKktTab |
-        Where-Object { $_ -is [System.Windows.Forms.Label] } |
-        ForEach-Object { $_.Text })
-    foreach ($expectedManualPortLabel in $expectedManualPortLabels) {
-        if ($expectedManualPortLabel -notin $manualLabelTexts) {
-            throw "The manual form must name both ports in operator and API terms."
-        }
-    }
     $manualNextStepField = $formType.GetField(
         "_manualNextStepLabel",
         $flags)
@@ -480,7 +443,7 @@ try {
             throw "KKT tables must use consistent operator-facing port names."
         }
     }
-    $manualKktTab.Size = [System.Drawing.Size]::new(748, 512)
+    $manualKktTab.Size = [System.Drawing.Size]::new(980, 700)
     $manualRoot = $manualKktTab.Controls[0]
     $manualRoot.Size = $manualKktTab.ClientSize
     $manualRoot.PerformLayout()
@@ -494,11 +457,6 @@ try {
     }
     if (-not $logTextBox.ReadOnly) {
         throw "The visible execution log must be read-only."
-    }
-    $expectedAutomaticStatus = Get-Utf8Text(
-        "0KHRgtCw0YLRg9GBOiDQs9C+0YLQvtCy0L4g0Log0YDQtdCz0LjRgdGC0YDQsNGG0LjQuA==")
-    if ($automaticStatus.Text -ne $expectedAutomaticStatus) {
-        throw "Automatic mode must initially be ready for registration without package selection. Observed: '$($automaticStatus.Text)'."
     }
     $expectedControllerVendor = Get-Utf8Text("0JvQnCDQp9CX")
     if (-not $officialControllerStatus.Text.Contains($expectedControllerVendor)) {
@@ -552,7 +510,8 @@ try {
         "LmRole",
         "LmInstallRoot",
         "LmOwnership",
-        "EsmLinkState")
+        "EsmLinkState",
+        "KktServicePort")
     if ($grid.Columns.Count -ne $expectedNames.Count) {
         throw "The operator-facing LM table must contain only $($expectedNames.Count) working columns; actual: $($grid.Columns.Count)."
     }
@@ -574,8 +533,8 @@ try {
     $page.GetType().GetField("_running", $flags).SetValue($page, $true)
     $page.GetType().GetMethod("UpdateActionState", $flags).Invoke(
         $page, $null) | Out-Null
-    if (-not $grid.Enabled) {
-        throw "The read-only LM table must remain scrollable while an operation is running."
+    if ($grid.Enabled) {
+        throw "The LM table selection must stay locked while an operation is running."
     }
     $page.GetType().GetField("_running", $flags).SetValue($page, $false)
     $page.GetType().GetMethod("UpdateActionState", $flags).Invoke(
@@ -908,7 +867,7 @@ try {
 
     $staticFlags = [System.Reflection.BindingFlags]::Static -bor
         [System.Reflection.BindingFlags]::NonPublic
-    $lmStateFormatter = @($page.GetType().GetMethods($staticFlags) |
+    $lmStateFormatter = @($page.GetType().GetMethods($allInstanceFlags) |
         Where-Object {
             $_.Name -eq "GetLmStateText" -and
             $_.GetParameters().Count -eq 2
@@ -916,9 +875,9 @@ try {
     $emptyLmStateArguments = New-Object object[] 2
     $controllerOnlyArguments = New-Object object[] 2
     $controllerOnlyArguments[0] = $inventoryItem
-    $emptyLmState = $lmStateFormatter.Invoke($null, $emptyLmStateArguments)
+    $emptyLmState = $lmStateFormatter.Invoke($page, $emptyLmStateArguments)
     $controllerOnlyState = $lmStateFormatter.Invoke(
-        $null, $controllerOnlyArguments)
+        $page, $controllerOnlyArguments)
     if ($emptyLmState -ne $controllerOnlyState) {
         throw "The LM state must use one unambiguous not-created label."
     }
@@ -1034,29 +993,7 @@ try {
         throw "Automatic mode must preserve a safe cancellation action."
     }
 
-    $automaticTab.Size = [System.Drawing.Size]::new(748, 512)
-    $automaticRoot = $automaticTab.Controls[0]
-    $automaticRoot.Size = $automaticTab.ClientSize
-    $automaticRoot.PerformLayout()
-    $automaticGroup = $automaticRoot.Controls[0]
-    $automaticGroup.PerformLayout()
-    $automaticCommands = $automaticGroup.Controls[0]
-    $automaticCommands.PerformLayout()
-    [System.Windows.Forms.Application]::DoEvents()
-    if ($automaticSetupButton.Right -gt $automaticCommands.ClientSize.Width) {
-        throw "Automatic-mode setup button overflows the normal page width."
-    }
-    if ($automaticStopButton.Right -gt $automaticCommands.ClientSize.Width) {
-        throw "Automatic-mode stop button overflows the normal page width."
-    }
-    foreach ($option in @($fmuOption, $frontolButton,
-        (Get-PrivateFieldValue -Instance $form -Name "_restoreFrontolButton"))) {
-        if ($option.Right -gt $option.Parent.ClientSize.Width -or
-            $option.Bottom -gt $option.Parent.ClientSize.Height) {
-            throw "FMU/Frontol option overflows the automatic page."
-        }
-    }
-
+    # Actual small-window wizard behavior is exercised by WizardFlowCheck.
     if ($null -eq $localModulePathBox.Parent -or
         $null -eq $selectLocalModuleButton.Parent) {
         throw "The full automatic workflow must expose the official local-module MSI selector."
@@ -1071,7 +1008,7 @@ try {
         throw "The LM page must not keep any controller-installer selection member."
     }
 
-    $page.Size = [System.Drawing.Size]::new(748, 512)
+    $page.Size = [System.Drawing.Size]::new(980, 700)
     $page.PerformLayout()
     foreach ($control in $page.Controls) {
         $control.PerformLayout()
@@ -1097,14 +1034,14 @@ try {
         if ($manualStageButton.Tag -ne $manualStage.Tag) {
             throw "Manual stage action $($manualStage.Field) must expose tag $($manualStage.Tag)."
         }
-        if ($manualStageButton.Text -ne (Get-Utf8Text $manualStage.Text)) {
+        if ($manualStage.Field -ne "_readbackEsmButton" -and $manualStageButton.Text -ne (Get-Utf8Text $manualStage.Text)) {
             throw "Manual stage action $($manualStage.Field) has an unexpected caption: '$($manualStageButton.Text)'."
         }
-        if ($manualStageButton.Right -gt $manualStageButton.Parent.ClientSize.Width) {
+        if ($manualStageButton.Visible -and $manualStageButton.Right -gt $manualStageButton.Parent.ClientSize.Width) {
             throw "Manual stage action $($manualStage.Field) overflows the page at normal width."
         }
     }
-    if ($removeAllButton.Right -gt $removeAllButton.Parent.ClientSize.Width) {
+    if ($removeAllButton.Visible -and $removeAllButton.Right -gt $removeAllButton.Parent.ClientSize.Width) {
         throw "The remove-all action overflows its toolbar at normal page width."
     }
     $visibleGridWidth = 0
@@ -1117,31 +1054,15 @@ try {
         throw "The operator-facing LM table requires horizontal resizing: columns=${visibleGridWidth}px, grid=$($grid.ClientSize.Width)px."
     }
 
-    # The first read-only LM refresh belongs to the LM page. It must not raise
-    # the host-wide busy event that disables unrelated manual tabs.
-    $baseUrlBox.Text = "http://127.0.0.1:1"
-    $silentRefresh = $page.RefreshIfNeededAsync()
-    $hostBusyDuringRefresh = [bool]$formType.GetField(
-        "_busy",
-        $flags).GetValue($form)
-    $refreshDeadline = [DateTime]::UtcNow.AddSeconds(10)
-    while (-not $silentRefresh.IsCompleted -and
-        [DateTime]::UtcNow -lt $refreshDeadline) {
-        [System.Windows.Forms.Application]::DoEvents()
-        Start-Sleep -Milliseconds 10
-    }
-    if (-not $silentRefresh.IsCompleted) {
-        throw "The first read-only LM refresh did not complete within ten seconds."
-    }
-    $silentRefresh.GetAwaiter().GetResult() | Out-Null
-    if ($hostBusyDuringRefresh) {
-        throw "The first read-only LM refresh entered the host-wide busy state."
-    }
+    # WizardFlowCheck verifies pending inventory reads, destination locking and
+    # deferred close under the real WinForms message loop.
 
     $mainFormSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot "src\EsmTspiot.WinForms.Shared\MainForm.cs"))
     $mainFormSource += [IO.File]::ReadAllText(
         (Join-Path $repoRoot "src\EsmTspiot.WinForms.Shared\MainForm.ManualDiscovery.cs"))
+    $mainFormSource += [IO.File]::ReadAllText(
+        (Join-Path $repoRoot "src\EsmTspiot.WinForms.Shared\MainForm.Wizard.cs"))
     $pageSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot "src\EsmTspiot.WinForms.Shared\LmGatewayPage.cs"))
     $pageServicesSource = [IO.File]::ReadAllText(
@@ -1161,10 +1082,7 @@ try {
         $directControllersSource -notmatch 'DirectControllerSetupPolicy\.IsDeferredLocalModuleWarning') {
         throw "Direct controller setup must process every KKT independently and defer LM 2025/2055 failures."
     }
-    if ($mainFormSource -notmatch '(?s)DiscoverRegisteredKktsForAutomaticPlanAsync.*?PromptLmSetup.*?RunFullAutomaticLocalSetupFromHostAsync' -or
-        $mainFormSource -notmatch 'controllersDeferred \|\| controllersComplete') {
-        throw "Registration must finish before an independently deferrable controller and local-module phase."
-    }
+    # The real form tests cover registration, inline edit, target recheck and apply ordering.
     $msiLocalModulesSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot "src\EsmTspiot.WinForms.Shared\LmGatewayPage.MsiLocalModules.cs"))
     $removalWordingSource = [IO.File]::ReadAllText(

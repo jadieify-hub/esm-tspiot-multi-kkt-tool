@@ -68,11 +68,11 @@ namespace EsmTspiot.WinForms.Shared
             {
                 await RunManualStageAsync(ManualContourStage.Binding);
             };
-            ConfigureButton(_readbackEsmButton, "Диагностика по ЕСМ");
+            ConfigureButton(_readbackEsmButton, "Диагностика выбранной ККТ");
             _readbackEsmButton.Tag = "ReadbackEsm";
             _readbackEsmButton.Click += async delegate
             {
-                await RunManualStageAsync(ManualContourStage.Readback);
+                await DiagnoseSelectedKktAsync();
             };
             panel.Controls.Add(caption);
             panel.Controls.Add(_ensureLocalModulesButton);

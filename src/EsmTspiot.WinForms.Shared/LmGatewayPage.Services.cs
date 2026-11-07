@@ -212,6 +212,12 @@ namespace EsmTspiot.WinForms.Shared
 
         private async Task StartAutomaticSetupAsync()
         {
+            if (SetupRequested != null)
+            {
+                LmGatewayKkt selected = SelectedKkt;
+                if (selected != null && selected.RegistrationConfirmed) SetupRequested(selected);
+                return;
+            }
             await RunOperationAsync(
                 async delegate(CancellationToken token)
                 {
@@ -955,8 +961,10 @@ namespace EsmTspiot.WinForms.Shared
             bool managed = selected != null && selected.Role == LmServiceRole.Managed;
             LmGatewayBindingSessionRow selectedSession = GetSelectedSessionRow();
             _selectLocalModuleInstallerButton.Enabled = idle;
-            _installControllerButton.Enabled = idle && _helperAvailable && hasKkts;
+            _installControllerButton.Enabled = idle && selectedSession != null && selectedSession.Kkt.RegistrationConfirmed;
             UpdateManualStageActionState(idle, hasKkts);
+            _readbackEsmButton.Enabled = idle && selectedSession != null && !FmuApiMode;
+            _serviceToolTip.SetToolTip(_readbackEsmButton, "Проверить через ЕСМ только выбранную ККТ; без изменения настроек.");
             _bindButton.Enabled = idle && !FmuApiMode && selectedSession != null && managed &&
                 selected.IsRunning && selected.IsReady;
             _removeServiceButton.Enabled = idle && managed && _helperAvailable &&
@@ -1339,20 +1347,21 @@ namespace EsmTspiot.WinForms.Shared
             return address + ":" + port;
         }
 
-        private static string GetLmStateText(
+        private string GetLmStateText(
             LmServiceInventoryItem controller,
             ManagedLocalModuleInventoryItem managedLm)
         {
             return GetLmStateText(controller, managedLm, null);
         }
 
-        private static string GetLmStateText(
+        private string GetLmStateText(
             LmServiceInventoryItem controller,
             ManagedLocalModuleInventoryItem managedLm,
             LocalModuleMsiInventoryItem msiLm)
         {
             if (msiLm != null)
-                return "Установлен; сверка при операции";
+                return _localModuleMsiInventory.InstalledModuleInns.Contains(msiLm.Inn)
+                    ? "Установлен; сверка при операции" : "Не установлен";
             if (managedLm != null &&
                 !string.IsNullOrWhiteSpace(managedLm.State))
             {

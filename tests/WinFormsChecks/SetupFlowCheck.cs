@@ -136,39 +136,52 @@ public static class SetupFlowCheck
         task.GetAwaiter().GetResult();
     }
 
-    private sealed class Connections : IKktConnectionProvider
+    internal sealed class Connections : IKktConnectionProvider
     {
         public int Active = -1;
         public bool RegistrationWasIsolated;
         public bool OnlySecond;
+        public bool AllowSimultaneous;
+        public readonly HashSet<int> OpenIndexes = new HashSet<int>();
         public IList<KktConnectionPort> EnumeratePorts()
         { if (OnlySecond) return new[] { new KktConnectionPort { PortName = "COM8" } };
             return new[] { new KktConnectionPort { PortName = "COM7" },
             new KktConnectionPort { PortName = "COM8" } }; }
         public Task<IKktConnectionLease> OpenAsync(KktConnectionPort port, CancellationToken token)
         {
-            if (Active != -1) throw new Exception("A previous lease remained open.");
+            if (Active != -1 && !AllowSimultaneous) throw new Exception("A previous lease remained open.");
             Active = port.PortName == "COM7" ? 0 : 1;
+            OpenIndexes.Add(Active);
             return Task.FromResult<IKktConnectionLease>(new Lease(this, port.PortName, Active));
         }
         private sealed class Lease : IKktConnectionLease
         {
             private readonly Connections _owner;
+            private readonly int _index;
             public Lease(Connections owner, string port, int index)
-            { _owner = owner; Identity = new KktConnectionIdentity { PortName = port,
+            { _owner = owner; _index = index; Identity = new KktConnectionIdentity { PortName = port,
                 KktSerial = "0010570000000" + (index + 1).ToString() }; }
             public KktConnectionIdentity Identity { get; private set; }
-            public void Dispose() { _owner.Active = -1; }
+            public void Dispose()
+            {
+                _owner.OpenIndexes.Remove(_index);
+                _owner.Active = -1;
+                foreach (int index in _owner.OpenIndexes) _owner.Active = index;
+            }
         }
     }
 
-    private sealed class Transport : HttpMessageHandler
+    internal sealed class Transport : HttpMessageHandler
     {
         private readonly Connections _ports;
         public readonly List<string> Writes = new List<string>();
         public int MutationAttempts;
         public bool Confirmed = true;
         public bool MismatchedIdentity;
+        public bool ChangedDkktPort;
+        public TaskCompletionSource<HttpResponseMessage> PendingInstances;
+        public int InfoCalls;
+        public bool AllowAll;
         private readonly Dictionary<string, AddTspiotRequest> _instances =
             new Dictionary<string, AddTspiotRequest>();
         public Transport(Connections ports) { _ports = ports; }
@@ -183,7 +196,8 @@ public static class SetupFlowCheck
                 var add = System.Text.RegularExpressions.Regex.Match(
                     await request.Content.ReadAsStringAsync(), "\\\"id\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"");
                 string serial = add.Groups[1].Value;
-                if (serial != "00105700000002" || _ports.Active != 1)
+                if (AllowAll ? serial != "0010570000000" + (_ports.Active + 1).ToString()
+                    : serial != "00105700000002" || _ports.Active != 1)
                     throw new Exception("Registration was not isolated to the selected target.");
                 _ports.RegistrationWasIsolated = true;
                 string body = await request.Content.ReadAsStringAsync();
@@ -196,14 +210,17 @@ public static class SetupFlowCheck
             else if (path.EndsWith("/dkktList"))
             {
                 if (_ports.Active < 0) return new HttpResponseMessage(HttpStatusCode.NoContent);
-                string serial = "0010570000000" + (_ports.Active + 1).ToString();
-                json = "{\"kkt\":[{" + Identity(serial) + "}]}";
+                var devices = new List<string>();
+                foreach (int index in _ports.OpenIndexes)
+                    devices.Add("{" + Identity("0010570000000" + (index + 1).ToString()) + "}");
+                json = "{\"kkt\":[" + string.Join(",", devices.ToArray()) + "]}";
             }
             else if (path.EndsWith("/instances/info"))
             {
+                if (PendingInstances != null) return await PendingInstances.Task;
                 var rows = new List<string>();
                 foreach (var pair in _instances)
-                    rows.Add("{\"id\":\"" + pair.Key + "\",\"port\":" + pair.Value.Port + ",\"softPort\":" + pair.Value.SoftPort + "}");
+                    rows.Add("{\"id\":\"" + pair.Key + "\",\"port\":" + pair.Value.Port + ",\"softPort\":" + pair.Value.SoftPort + ",\"dkktPort\":" + (ChangedDkktPort ? "4043" : "4042") + "}");
                 json = "{\"instances\":[" + string.Join(",", rows.ToArray()) + "]}";
             }
             else if (path.Contains("/instances/info/"))
@@ -214,6 +231,7 @@ public static class SetupFlowCheck
                 json = "{\"state\":\"" + (Confirmed ? "Registered" : "Created") + "\",\"regData\":{" + identity + "}}";
             }
             else if (path.Contains("/settings/")) json = "{}";
+            else if (path == "/api/v2/info") { InfoCalls++; await Task.Delay(20); json = "{}"; }
             else throw new Exception("Unexpected request " + path);
             return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json) };
         }

@@ -7,69 +7,94 @@ namespace EsmTspiot.WinForms.Shared
     {
         private void BuildLayout()
         {
-            TableLayoutPanel root = new TableLayoutPanel();
-            root.Dock = DockStyle.Fill;
-            root.ColumnCount = 1;
-            root.RowCount = 5;
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 7,
+                Padding = new Padding(10) };
+            root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            for (int index = 2; index < 7; index++) root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            var toolbar = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true };
+            toolbar.Controls.Add(new Label { Text = "Кассы и ЛМ ЧЗ", AutoSize = true,
+                Font = new Font(Font.FontFamily, 14F, FontStyle.Bold), Margin = new Padding(0, 4, 18, 6) });
+            ConfigureButton(_refreshButton, "Обновить данные");
+            ConfigureButton(_cancelButton, "Остановить");
+            _refreshButton.Click += async delegate { await RefreshAsync(); };
+            _cancelButton.Click += delegate { CancelCurrentOperation(); };
+            _cancelButton.Visible = false;
+            toolbar.Controls.Add(_refreshButton);
+            toolbar.Controls.Add(_cancelButton);
+            _statusLabel.AutoSize = true;
+            _statusLabel.MaximumSize = new Size(640, 0);
+            _statusLabel.Text = "Нажмите «Обновить данные», чтобы получить фактические состояния.";
+            _statusLabel.Margin = new Padding(8, 6, 0, 4);
+            _statusLabel.TextChanged += delegate
+            {
+                if (SetupProgressChanged != null) SetupProgressChanged(_statusLabel.Text);
+            };
+            toolbar.Controls.Add(_statusLabel);
+            root.Controls.Add(toolbar, 0, 0);
+            ConfigureGrid();
+            _grid.CurrentCellChanged += delegate
+            {
+                if (_loadingGrid) return;
+                UpdateActionState();
+                if (KktSelectionChanged != null) KktSelectionChanged();
+            };
+            root.Controls.Add(_grid, 0, 1);
+            _selectionActionHintLabel.AutoSize = true;
+            _selectionActionHintLabel.Margin = new Padding(0, 6, 0, 4);
+            root.Controls.Add(_selectionActionHintLabel, 0, 2);
 
-            root.Controls.Add(BuildInstallerPanel(), 0, 0);
-            root.Controls.Add(BuildOfficialControllerPanel(), 0, 1);
-
-            FlowLayoutPanel toolbar = new FlowLayoutPanel();
-            toolbar.Dock = DockStyle.Fill;
-            toolbar.AutoSize = true;
-            toolbar.WrapContents = true;
-            toolbar.Margin = new Padding(0, 0, 0, 6);
-
-            ConfigureButton(_refreshButton, "Обновить");
+            var advanced = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 1 };
+            advanced.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            advanced.Controls.Add(BuildInstallerPanel(), 0, 0);
+            advanced.Controls.Add(BuildOfficialControllerPanel(), 0, 1);
+            var removal = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true };
             ConfigureButton(_bindButton, "Привязать к ЕСМ");
             _bindButton.Tag = "BindSelectedEsm";
             ConfigureButton(_removeServiceButton, "Удалить выбранный комплект");
             ConfigureButton(_removeAllServicesButton, "Удалить всё созданное");
             _removeAllServicesButton.Tag = "RemoveAllCreatedComponents";
             ConfigureButton(_cleanupButton, "Завершить очистку");
-            ConfigureButton(_cancelButton, "Остановить");
-            _refreshButton.Click += async delegate { await RefreshAsync(); };
             _bindButton.Click += async delegate { await BindSelectedAsync(); };
             _removeServiceButton.Click += async delegate { await ConfirmAndRemoveServiceAsync(); };
-            _removeAllServicesButton.Click += async delegate
-            {
-                await ConfirmAndRemoveEverythingAsync();
-            };
+            _removeAllServicesButton.Click += async delegate { await ConfirmAndRemoveEverythingAsync(); };
             _cleanupButton.Click += async delegate { await ConfirmAndCleanupServiceAsync(); };
-            _cancelButton.Click += delegate { CancelCurrentOperation(); };
-            _cancelButton.Visible = false;
-            toolbar.Controls.Add(_refreshButton);
-            toolbar.Controls.Add(_removeAllServicesButton);
-            toolbar.Controls.Add(_cancelButton);
+            foreach (Button button in new[] { _bindButton, _removeServiceButton, _removeAllServicesButton, _cleanupButton })
+                removal.Controls.Add(button);
+            advanced.Controls.Add(removal, 0, 2);
+            _serviceOperations.Dock = DockStyle.Top;
+            _serviceOperations.AutoSize = true;
+            _serviceOperations.Visible = false;
+            _serviceOperations.Controls.Add(advanced);
 
-            _statusLabel.AutoSize = false;
-            _statusLabel.Size = new Size(720, 36);
-            _statusLabel.TextAlign = ContentAlignment.MiddleLeft;
-            _statusLabel.AutoEllipsis = true;
-            _statusLabel.Text = "Нажмите «Обновить», чтобы загрузить ККТ и их настройки.";
-            _statusLabel.Margin = new Padding(8, 0, 0, 4);
-            toolbar.Controls.Add(_statusLabel);
-
-            _selectionActionHintLabel.AutoSize = false;
-            _selectionActionHintLabel.Dock = DockStyle.Fill;
-            _selectionActionHintLabel.MinimumSize = new Size(0, 24);
-            _selectionActionHintLabel.TextAlign = ContentAlignment.MiddleLeft;
-            _selectionActionHintLabel.AutoEllipsis = true;
-            _selectionActionHintLabel.Margin = new Padding(8, 0, 0, 4);
-            _selectionActionHintLabel.Text =
-                "Выберите строку ККТ — здесь появятся доступные действия.";
-
-            ConfigureGrid();
-
-            root.Controls.Add(toolbar, 0, 2);
-            root.Controls.Add(_selectionActionHintLabel, 0, 3);
-            root.Controls.Add(_grid, 0, 4);
+            var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true };
+            actions.Controls.Add(_installControllerButton);
+            actions.Controls.Add(_readbackEsmButton);
+            _installControllerButton.BackColor = Color.FromArgb(0, 102, 204);
+            _installControllerButton.ForeColor = Color.White;
+            _installControllerButton.FlatStyle = FlatStyle.Flat;
+            root.Controls.Add(actions, 0, 3);
+            _diagnosticsTextBox.Multiline = _diagnosticsTextBox.ReadOnly = true;
+            _diagnosticsTextBox.BackColor = SystemColors.Window;
+            _diagnosticsTextBox.Dock = DockStyle.Top;
+            _diagnosticsTextBox.Height = 132;
+            _diagnosticsTextBox.ScrollBars = ScrollBars.Vertical;
+            _diagnosticsTextBox.Visible = false;
+            root.Controls.Add(_diagnosticsTextBox, 0, 4);
+            _showServiceOperations.Text = "Служебные операции и подробности";
+            _showServiceOperations.AutoSize = true;
+            _showServiceOperations.CheckedChanged += delegate
+            {
+                _serviceOperations.Visible = _showServiceOperations.Checked;
+                foreach (string name in new[] { "LmRole", "LmInstallRoot", "LmOwnership" })
+                    _grid.Columns[name].Visible = _showServiceOperations.Checked;
+            };
+            root.Controls.Add(_showServiceOperations, 0, 5);
+            var scroll = new Panel { Dock = DockStyle.Top, AutoSize = true, AutoScroll = true,
+                MaximumSize = new Size(0, 220) };
+            scroll.Controls.Add(_serviceOperations);
+            root.Controls.Add(scroll, 0, 6);
             Controls.Add(root);
         }
 
@@ -136,6 +161,22 @@ namespace EsmTspiot.WinForms.Shared
             esmState.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
             esmState.MinimumWidth = 120;
             _grid.Columns.Add(esmState);
+            DataGridViewTextBoxColumn servicePort = CreateTextColumn("Порт ЕСМ", 75);
+            servicePort.Name = "KktServicePort";
+            _grid.Columns.Add(servicePort);
+            servicePort.DisplayIndex = 3;
+            foreach (string name in new[] { "KktOrdinal", "LmRole", "LmInstallRoot", "LmOwnership" })
+                _grid.Columns[name].Visible = false;
+            _grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+            _grid.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCells;
+            _grid.RowTemplate.Height = 28;
+            foreach (DataGridViewColumn column in _grid.Columns)
+            {
+                column.FillWeight = column.Width;
+                column.MinimumWidth = column.Name == "KktSerial" ? 120 : 65;
+            }
+            _grid.Columns["EsmLinkState"].HeaderText = "Параметры ЛМ";
+            _grid.Columns["LmState"].DefaultCellStyle.WrapMode = DataGridViewTriState.True;
         }
 
         private static void ConfigureButton(Button button, string text)

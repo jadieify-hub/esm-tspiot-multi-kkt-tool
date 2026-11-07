@@ -185,12 +185,13 @@ function Test-AllowedSecretHit {
         # Reviewed: copies live only in the session dictionary, never in the endpoint file.
         return $text -match '^\s*(return )?new LmGatewayCredentials \{ Login = value\.Login, Password = value\.Password \};\s*$'
     }
-    if ($relative -eq "src/EsmTspiot.WinForms.Shared/LmSetupDialog.cs") {
+    if ($relative -eq "src/EsmTspiot.WinForms.Shared/LmSetupEditor.cs") {
         # Reviewed input, masking and disposal of session-only credentials.
         return $text -match '^\s*fields\.Password\.(Clear\(\);|UseSystemPasswordChar = true;|Text = value\.Password;)\s*$' -or
             $text -match '^\s*value\.Password = string\.Empty;\s*$' -or
-            $text -match '^\s*Login = fields\.Login\.Text\.Trim\(\), Password = fields\.Password\.Text\s*$' -or
-            $text -match '^\s*string\.IsNullOrWhiteSpace\(fields\.Password\.Text\)\)\s*$' -or
+            $text -match '^\s*Password = FmuApiMode \? "admin" : fields\.Password\.Text\s*$' -or
+            $text -match '^\s*fields\.Password\.TextChanged \+= delegate \{ OnInputsChanged\(\); \};\s*$' -or
+            $text -match '^\s*string\.IsNullOrWhiteSpace\(fields\.Password\.Text\)\)\)\s*$' -or
             $text -match '^\s*internal readonly TextBox Password = new TextBox\(\);\s*$' -or
             $text -match '^\s*AddField\(table, 2, 3, .*fields\.Password, "lm-password-" \+ fields\.Inn\);\s*$'
     }

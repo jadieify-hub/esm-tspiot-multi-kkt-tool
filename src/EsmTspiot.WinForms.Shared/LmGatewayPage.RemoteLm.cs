@@ -35,7 +35,13 @@ namespace EsmTspiot.WinForms.Shared
             PromptLmSetup(owner, kkts);
         }
 
-        private void SaveLmSetup(IDictionary<string, string> choices,
+        internal LmSetupEditor CreateLmSetupEditor(IList<LmGatewayKkt> kkts)
+        {
+            return new LmSetupEditor(kkts, ReadRemoteLocalModulesStrict(),
+                GetLmCredentialsForEndpoint, FmuApiMode);
+        }
+
+        internal void SaveLmSetup(IDictionary<string, string> choices,
             IDictionary<string, LmGatewayCredentials> credentials)
         {
             // Re-read before saving: other INNs may have changed while the dialog was open.

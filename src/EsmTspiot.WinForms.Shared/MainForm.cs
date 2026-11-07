@@ -55,14 +55,14 @@ namespace EsmTspiot.WinForms.Shared
         private readonly Label _manualNextStepLabel = new Label();
         private readonly Label _automationStatusLabel = new Label();
         private readonly TabControl _workspaceTabs = new TabControl();
-        private readonly TabPage _manualKktTab = new TabPage();
+        private readonly TabPage _manualKktTab;
         private readonly TabPage _instancesTab = new TabPage();
         private readonly TabPage _automationTab = new TabPage();
-        private readonly TabPage _lmGatewayTab = new TabPage();
+        private readonly TabPage _lmGatewayTab;
         private readonly TabPage _logTab = new TabPage();
         private readonly ToolStripStatusLabel _operationStatusLabel = new ToolStripStatusLabel();
         private readonly ToolStripStatusLabel _connectionStatusLabel = new ToolStripStatusLabel();
-        private readonly ToolStripMenuItem _operationsMenuItem = new ToolStripMenuItem("ККТ");
+        private readonly ToolStripMenuItem _operationsMenuItem = new ToolStripMenuItem("Сервис");
         private readonly ToolStripMenuItem _deleteMenuItem = new ToolStripMenuItem("Удалить выбранную ККТ");
         private readonly GroupBox _recoveryGroup = new GroupBox();
         private readonly Label _recoveryLabel = new Label();
@@ -73,7 +73,6 @@ namespace EsmTspiot.WinForms.Shared
         private bool _fileLogErrorShown;
         private bool _busy;
         private bool _frontolWriteInProgress;
-        private bool _supportDialogOffered;
         private System.Threading.CancellationTokenSource _automaticCancellation;
 
         public MainForm() : this(new TspiotApiClient(), new AtolFptrConnectionProvider())
@@ -82,6 +81,8 @@ namespace EsmTspiot.WinForms.Shared
 
         public MainForm(TspiotApiClient client, IKktConnectionProvider connections)
         {
+            _manualKktTab = _automationTab;
+            _lmGatewayTab = _instancesTab;
             if (client == null) throw new ArgumentNullException("client");
             if (connections == null) throw new ArgumentNullException("connections");
             _client = client;
@@ -95,15 +96,22 @@ namespace EsmTspiot.WinForms.Shared
             _lmGatewayPage.DetailLogger = AppendDetailToFile;
             _lmGatewayPage.OperationStateChanged += OnLmGatewayOperationStateChanged;
             _lmGatewayPage.InstallerSelectionChanged += UpdateAutomaticInstallerSelection;
-            _lmGatewayPage.ContourConfirmed += delegate { OfferSupportDevelopment(true); };
-            Text = "MultiKKT — тестовая версия 11.3.27.0";
+            _lmGatewayPage.SetupRequested += ShowWizardForRegisteredKkt;
+            _lmGatewayPage.KktSelectionChanged += delegate { UpdateDeleteButtonState(); };
+            _lmGatewayPage.SetupProgressChanged += delegate(string status)
+            {
+                if (_busy) _wizardMessage.Text = status;
+            };
+            var version = (System.Reflection.AssemblyInformationalVersionAttribute)Attribute.GetCustomAttribute(
+                typeof(MainForm).Assembly, typeof(System.Reflection.AssemblyInformationalVersionAttribute));
+            Text = "MultiKKT — тестовая версия " + version.InformationalVersion;
             // Таблица ЛМ ЧЗ шире прежнего окна: её колонки требуют около
             // 925 пикселей, и на 780 оператору приходилось растягивать окно
             // руками при каждом запуске.
             ClientSize = new Size(980, 700);
-            MinimumSize = new Size(980, 540);
+            MinimumSize = new Size(900, 600);
             StartPosition = FormStartPosition.CenterScreen;
-            Font = new Font("Segoe UI", 8.25F);
+            Font = new Font("Segoe UI", 9.5F);
             try
             {
                 Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
@@ -114,14 +122,18 @@ namespace EsmTspiot.WinForms.Shared
 
             BuildLayout();
             FillDefaults();
+            _wizardDestination = WizardDestination();
+            _wizardBuilt = true;
+            UpdateWizardActions();
             UpdateAutomaticInstallerSelection();
             Shown += delegate { ConstrainToWorkingArea(); };
             FormClosing += delegate(object sender, FormClosingEventArgs e)
             {
-                if (_frontolWriteInProgress)
+                if (_busy || _frontolWriteInProgress)
                 {
                     e.Cancel = true;
-                    _operationStatusLabel.Text = "Дождитесь завершения записи и проверки настроек Frontol.";
+                    _closeAfterOperation = true;
+                    RequestWizardStop();
                     return;
                 }
                 if (_automaticCancellation != null)
@@ -173,7 +185,7 @@ namespace EsmTspiot.WinForms.Shared
             refresh.Click += async delegate
             {
                 _workspaceTabs.SelectedTab = _instancesTab;
-                await RunButtonActionAsync(CheckCurrentInstancesAsync);
+                await _lmGatewayPage.RefreshAsync();
             };
             ToolStripMenuItem lmServer = new ToolStripMenuItem("Сервер ЛМ ЧЗ...");
             lmServer.Click += delegate { _lmGatewayPage.ShowLocalModuleServer(this); };
@@ -181,6 +193,16 @@ namespace EsmTspiot.WinForms.Shared
             _deleteMenuItem.Click += async delegate { await RunButtonActionAsync(DeleteSelectedKktAsync); };
             _operationsMenuItem.DropDownItems.Add(refresh);
             _operationsMenuItem.DropDownItems.Add(lmServer);
+            var serviceOperations = new ToolStripMenuItem("Служебные операции ЛМ ЧЗ…");
+            serviceOperations.Click += delegate
+            {
+                _workspaceTabs.SelectedTab = _instancesTab;
+                _lmGatewayPage.ShowServiceOperations();
+            };
+            _operationsMenuItem.DropDownItems.Add(serviceOperations);
+            var restoreFrontol = new ToolStripMenuItem("Восстановить Frontol из снимка…");
+            restoreFrontol.Click += async delegate { await RunButtonActionAsync(RestoreFrontolAsync); };
+            _operationsMenuItem.DropDownItems.Add(restoreFrontol);
             _operationsMenuItem.DropDownItems.Add(new ToolStripSeparator());
             _operationsMenuItem.DropDownItems.Add(_deleteMenuItem);
 
@@ -204,63 +226,45 @@ namespace EsmTspiot.WinForms.Shared
 
         private Control BuildConnectionBar()
         {
-            Panel bar = new Panel();
-            bar.Dock = DockStyle.Fill;
-            bar.Height = 38;
-            bar.MinimumSize = new Size(0, 38);
-            bar.MaximumSize = new Size(int.MaxValue, 38);
-            bar.BackColor = SystemColors.ControlLightLight;
-
-            TableLayoutPanel table = new TableLayoutPanel();
-            table.Dock = DockStyle.Fill;
-            table.AutoSize = false;
-            table.Padding = new Padding(8, 5, 8, 5);
-            table.BackColor = SystemColors.ControlLightLight;
-            table.ColumnCount = 6;
-            table.RowCount = 1;
-            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 28F));
-            table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-            table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 70F));
-            table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 8F));
-            table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-
-            Label addressLabel = new Label();
-            addressLabel.Text = "Адрес ЕСМ";
-            addressLabel.AutoSize = true;
-            addressLabel.Anchor = AnchorStyles.Left;
-            addressLabel.Margin = new Padding(0, 3, 6, 3);
-
-            _baseUrlTextBox.Dock = DockStyle.Fill;
-            _baseUrlTextBox.Margin = new Padding(0, 2, 12, 2);
-            ToolTip connectionTip = new ToolTip();
-            connectionTip.SetToolTip(_baseUrlTextBox, "Адрес сервиса ЕСМ/ТС ПИоТ, обычно http://127.0.0.1:51077");
-
-            Label dkktLabel = new Label();
-            dkktLabel.Text = "dkktPort";
-            dkktLabel.AutoSize = true;
-            dkktLabel.Anchor = AnchorStyles.Left;
-            dkktLabel.Margin = new Padding(0, 3, 6, 3);
-
-            _dkktPortTextBox.Dock = DockStyle.Fill;
-            _dkktPortTextBox.Margin = new Padding(0, 2, 0, 2);
-            connectionTip.SetToolTip(
-                _dkktPortTextBox,
-                "Порт оркестра ДККТ для ЕСМ, обычно 4042. 4041 — порт службы АТОЛ для ККМ.");
-
+            var root = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 4,
+                RowCount = 2, Padding = new Padding(12, 6, 12, 6), BackColor = SystemColors.Window };
+            root.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            root.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            root.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            root.Controls.Add(new Label { Text = "ЕСМ", AutoSize = true, Anchor = AnchorStyles.Left,
+                Margin = new Padding(0, 0, 8, 0) }, 0, 0);
+            _baseUrlTextBox.Dock = DockStyle.Top;
+            _baseUrlTextBox.Margin = new Padding(0, 2, 12, 0);
+            root.Controls.Add(_baseUrlTextBox, 1, 0);
+            _wizardConnectionState.AutoSize = true;
+            _wizardConnectionState.Text = "Не проверено";
+            _wizardConnectionState.Anchor = AnchorStyles.Left;
+            root.Controls.Add(_wizardConnectionState, 2, 0);
+            _connectionStatusLabel.TextChanged += delegate
+            {
+                _wizardConnectionState.Text = _connectionStatusLabel.Text;
+                _wizardConnectionState.ForeColor = _connectionStatusLabel.ForeColor;
+            };
+            _connectionStatusLabel.ForeColorChanged += delegate { _wizardConnectionState.ForeColor = _connectionStatusLabel.ForeColor; };
+            var actions = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, WrapContents = false };
             ConfigureButton(_checkButton, "Проверить", CheckCurrentInstancesAsync);
-            _checkButton.Margin = new Padding(0);
-            _checkButton.MinimumSize = new Size(92, 24);
-
-            table.Controls.Add(addressLabel, 0, 0);
-            table.Controls.Add(_baseUrlTextBox, 1, 0);
-            table.Controls.Add(dkktLabel, 2, 0);
-            table.Controls.Add(_dkktPortTextBox, 3, 0);
-            table.Controls.Add(new Panel(), 4, 0);
-            table.Controls.Add(_checkButton, 5, 0);
-            bar.Controls.Add(table);
-            return bar;
+            actions.Controls.Add(_checkButton);
+            var options = new Button { Text = "Параметры…", AutoSize = true };
+            var details = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, Visible = false };
+            details.Controls.Add(new Label { Text = "Порт ДККТ", AutoSize = true, Margin = new Padding(0, 8, 8, 0) });
+            _dkktPortTextBox.Width = 70;
+            details.Controls.Add(_dkktPortTextBox);
+            details.Controls.Add(new Label { AutoSize = true, Margin = new Padding(8, 8, 0, 0),
+                Text = "Обычно 4042. Это не порт сервера АТОЛ 4041." });
+            options.Click += delegate { details.Visible = !details.Visible; };
+            actions.Controls.Add(options);
+            root.Controls.Add(actions, 3, 0);
+            root.Controls.Add(details, 0, 1);
+            root.SetColumnSpan(details, 4);
+            return root;
         }
 
         private Control BuildWorkspaceTabs()
@@ -268,22 +272,18 @@ namespace EsmTspiot.WinForms.Shared
             _workspaceTabs.Dock = DockStyle.Fill;
             _workspaceTabs.Margin = new Padding(6, 4, 6, 4);
 
-            ConfigureTabPage(_manualKktTab, "Ручное подключение");
-            ConfigureTabPage(_instancesTab, "ККТ в ЕСМ");
-            ConfigureTabPage(_automationTab, "Автоматическая настройка");
-            ConfigureTabPage(_lmGatewayTab, "ЛМ ЧЗ");
+            ConfigureTabPage(_instancesTab, "Кассы и ЛМ ЧЗ");
+            ConfigureTabPage(_automationTab, "Настройка ККТ");
             ConfigureTabPage(_logTab, "Журнал");
 
-            _manualKktTab.Controls.Add(BuildManualKktPage());
-            _instancesTab.Controls.Add(BuildInstancesPage());
-            _automationTab.Controls.Add(BuildAutomationPage());
-            _lmGatewayTab.Controls.Add(_lmGatewayPage);
+            ConfigureInstancesGrid();
+            ConfigureButton(_deleteKktButton, "Удалить выбранную ККТ", DeleteSelectedKktAsync);
+            _automationTab.Controls.Add(BuildWizardPage());
+            _instancesTab.Controls.Add(_lmGatewayPage);
             _logTab.Controls.Add(BuildLogGroup());
 
             _workspaceTabs.TabPages.Add(_automationTab);
-            _workspaceTabs.TabPages.Add(_manualKktTab);
             _workspaceTabs.TabPages.Add(_instancesTab);
-            _workspaceTabs.TabPages.Add(_lmGatewayTab);
             _workspaceTabs.TabPages.Add(_logTab);
             _workspaceTabs.SelectedTab = _automationTab;
             _workspaceTabs.Selected += async delegate
@@ -292,6 +292,8 @@ namespace EsmTspiot.WinForms.Shared
                 {
                     await _lmGatewayPage.RefreshIfNeededAsync();
                 }
+                UpdateWizardActions();
+                UpdateDeleteButtonState();
             };
             return _workspaceTabs;
         }
@@ -304,62 +306,6 @@ namespace EsmTspiot.WinForms.Shared
             page.AutoScroll = true;
         }
 
-        private Control BuildManualKktPage()
-        {
-            TableLayoutPanel root = new TableLayoutPanel();
-            root.Dock = DockStyle.Fill;
-            root.AutoScroll = true;
-            root.ColumnCount = 1;
-            root.RowCount = 6;
-            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            root.Controls.Add(BuildDiscoveredKktsPanel(), 0, 0);
-            root.Controls.Add(BuildKktGroup(), 0, 1);
-            root.Controls.Add(BuildPortsGroup(), 0, 2);
-            root.Controls.Add(BuildManualSelectionActions(), 0, 3);
-            root.Controls.Add(BuildManualFallbackPanel(), 0, 4);
-            root.Controls.Add(BuildRecoveryGroup(), 0, 5);
-            return root;
-        }
-
-        private GroupBox BuildKktGroup()
-        {
-            GroupBox group = CreateGroup("Данные подключаемой ККТ");
-            TableLayoutPanel table = CreateTwoColumnTable(4);
-            AddLabeledTextBox(table, 0, "Серийный номер подключаемой ККТ", _kktSerialTextBox, "Используется как id и kktSerial");
-            AddLabeledTextBox(table, 1, "Номер ФН подключаемой ККТ", _fnSerialTextBox, "fnSerial");
-            AddLabeledTextBox(table, 2, "ИНН владельца ККТ", _kktInnTextBox, "10 или 12 цифр");
-
-            _atolConfirmedCheckBox.Text = "Я проверил связь в драйвере АТОЛ именно с подключаемой физической ККТ";
-            _atolConfirmedCheckBox.AutoSize = true;
-            table.Controls.Add(new Label(), 0, 3);
-            table.Controls.Add(_atolConfirmedCheckBox, 1, 3);
-
-            group.Controls.Add(table);
-            return group;
-        }
-
-        private GroupBox BuildPortsGroup()
-        {
-            GroupBox group = CreateGroup("Порты экземпляра");
-            TableLayoutPanel table = new TableLayoutPanel();
-            table.Dock = DockStyle.Fill;
-            table.AutoSize = true;
-            table.ColumnCount = 4;
-            table.RowCount = 1;
-            table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
-            table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
-            AddCompactPortTextBox(table, 0, "Порт службы (port)", _portTextBox, "Порт экземпляра сервиса подключаемой ККТ");
-            AddCompactPortTextBox(table, 2, "Порт кассового ПО (softPort)", _softPortTextBox, "Порт для Frontol или другой кассовой программы");
-            group.Controls.Add(table);
-            return group;
-        }
 
         private GroupBox BuildManualKktActionsGroup()
         {
@@ -394,7 +340,7 @@ namespace EsmTspiot.WinForms.Shared
             _manualNextStepLabel.Margin = new Padding(0, 6, 0, 2);
             _manualNextStepLabel.Text =
                 "Отдельные операции для ручного ввода и восстановления. " +
-                "После регистрации настройка подключения доступна на вкладке «ЛМ ЧЗ».";
+                "После регистрации настройка подключения доступна на вкладке «Кассы и ЛМ ЧЗ».";
             panel.Controls.Add(_manualNextStepLabel, 0, 1);
             panel.SetColumnSpan(_manualNextStepLabel, 3);
 
@@ -430,6 +376,7 @@ namespace EsmTspiot.WinForms.Shared
             _nextPortPairLabel.Text =
                 "Порты в форме — по умолчанию; обновите список для проверки занятости.";
             toolbar.Controls.Add(_refreshManualInstancesButton);
+            toolbar.Controls.Add(_deleteKktButton);
             toolbar.Controls.Add(_nextPortPairLabel);
 
             ConfigureManualInstancesGrid();
@@ -458,6 +405,7 @@ namespace EsmTspiot.WinForms.Shared
             _manualInstancesGrid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
             _manualInstancesGrid.BackgroundColor = SystemColors.Window;
             _manualInstancesGrid.BorderStyle = BorderStyle.Fixed3D;
+            _manualInstancesGrid.SelectionChanged += delegate { UpdateDeleteButtonState(); };
 
             _manualInstancesGrid.Columns.Add(CreateInstancesColumn("Роль", 130, 24F));
             _manualInstancesGrid.Columns.Add(CreateInstancesColumn("Серийный номер", 135, 30F));
@@ -466,41 +414,6 @@ namespace EsmTspiot.WinForms.Shared
             _manualInstancesGrid.Columns.Add(CreateInstancesColumn("Состояние", 90, 18F));
         }
 
-        private Control BuildInstancesPage()
-        {
-            TableLayoutPanel root = new TableLayoutPanel();
-            root.Dock = DockStyle.Fill;
-            root.ColumnCount = 1;
-            root.RowCount = 3;
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-
-            FlowLayoutPanel toolbar = new FlowLayoutPanel();
-            toolbar.Dock = DockStyle.Fill;
-            toolbar.AutoSize = true;
-            toolbar.WrapContents = false;
-            toolbar.Margin = new Padding(0, 0, 0, 6);
-
-            ConfigureButton(_refreshInstancesButton, "Обновить список", CheckCurrentInstancesAsync);
-            ConfigureButton(_deleteKktButton, "Удалить выбранную ККТ", DeleteSelectedKktAsync);
-            _refreshInstancesButton.MinimumSize = new Size(120, 27);
-            _deleteKktButton.MinimumSize = new Size(190, 27);
-            _deleteKktButton.Enabled = false;
-            toolbar.Controls.Add(_refreshInstancesButton);
-            toolbar.Controls.Add(_deleteKktButton);
-
-            ConfigureInstancesGrid();
-
-            _instancesSummaryLabel.AutoSize = true;
-            _instancesSummaryLabel.Text = "Список еще не загружен.";
-            _instancesSummaryLabel.Margin = new Padding(0, 6, 0, 0);
-
-            root.Controls.Add(toolbar, 0, 0);
-            root.Controls.Add(_instancesGrid, 0, 1);
-            root.Controls.Add(_instancesSummaryLabel, 0, 2);
-            return root;
-        }
 
         private void ConfigureInstancesGrid()
         {
@@ -536,106 +449,6 @@ namespace EsmTspiot.WinForms.Shared
             };
         }
 
-        private Control BuildAutomationPage()
-        {
-            TableLayoutPanel root = new TableLayoutPanel();
-            root.Dock = DockStyle.Fill;
-            root.ColumnCount = 1;
-            root.RowCount = 2;
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-
-            GroupBox group = CreateGroup(
-                "Регистрация ККТ и настройка ЛМ ЧЗ");
-            TableLayoutPanel commands = new TableLayoutPanel();
-            commands.Dock = DockStyle.Fill;
-            commands.AutoSize = true;
-            commands.ColumnCount = 3;
-            commands.RowCount = 3;
-            commands.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            commands.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-            commands.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            commands.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            commands.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            commands.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-
-            ConfigureButton(
-                _bulkRegisterButton,
-                "Зарегистрировать и настроить",
-                ConfigureAllKktsAutomaticallyAsync);
-            _bulkRegisterButton.Tag = "EndToEndAutomaticSetup";
-            _bulkRegisterButton.MinimumSize = new Size(235, 36);
-
-            _automaticStopButton.Text = "Остановить";
-            _automaticStopButton.AutoSize = true;
-            _automaticStopButton.Enabled = false;
-            _automaticStopButton.Margin = new Padding(0, 2, 0, 4);
-            _automaticStopButton.Tag = "CancelEndToEndAutomaticSetup";
-            _automaticStopButton.Click += delegate
-            {
-                if (_automaticCancellation != null)
-                {
-                    _automaticCancellation.Cancel();
-                    _automaticStopButton.Enabled = false;
-                    _automationStatusLabel.Text = "Статус: остановка после текущей безопасной операции...";
-                }
-            };
-
-            _automationStatusLabel.AutoSize = true;
-            _automationStatusLabel.Anchor = AnchorStyles.Left;
-            _automationStatusLabel.Text = "Статус: готово к регистрации";
-            _automationStatusLabel.Margin = new Padding(8, 6, 0, 3);
-
-            Label hint = new Label();
-            hint.AutoSize = false;
-            hint.Dock = DockStyle.Fill;
-            hint.MinimumSize = new Size(0, 64);
-            hint.Text =
-                "Программа найдёт USB/VCOM ККТ через установленный драйвер АТОЛ, " +
-                "поочерёдно зарегистрирует ККТ в ЕСМ, закроет связь после каждой регистрации, " +
-                "затем установит по одному ЛМ ЧЗ на ИНН. В обычном режиме также настраиваются " +
-                "контроллеры и их привязка к ЕСМ; в режиме FMU-API эти этапы пропускаются. " +
-                "FMU-API и инициализация ЛМ настраиваются отдельно. " +
-                "Frontol можно настроить отдельной кнопкой после автоматической или ручной регистрации ККТ.";
-            hint.Margin = new Padding(0, 5, 0, 0);
-
-            var options = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill,
-                FlowDirection = FlowDirection.TopDown, WrapContents = false };
-            _fmuApiCheckBox.Text = "Использовать FMU-API (без контроллеров ЛМ ЧЗ)";
-            _fmuApiCheckBox.AutoSize = true;
-            _fmuApiCheckBox.Tag = "FmuApiMode";
-            _fmuApiCheckBox.CheckedChanged += delegate
-            {
-                try { _lmGatewayPage.FmuApiMode = _fmuApiCheckBox.Checked; }
-                catch (InvalidOperationException ex)
-                {
-                    _fmuApiCheckBox.Checked = _lmGatewayPage.FmuApiMode;
-                    MessageBox.Show(this, ex.Message, "Режим настройки", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                }
-            };
-            _automaticToolTip.SetToolTip(_fmuApiCheckBox,
-                "Действует и на вкладке «ЛМ ЧЗ». Регистрация ККТ и ЛМ сохраняются. Существующие контроллеры не изменяются.");
-            ConfigureButton(_configureFrontolButton, "Настроить Frontol...", ConfigureFrontolAsync);
-            _configureFrontolButton.Tag = "ConfigureFrontol";
-            _automaticToolTip.SetToolTip(_configureFrontolButton,
-                "Frontol 6.28: заново прочитать базу текущего РМ, проверить ККТ по COM и записать фактические порты ЕСМ.");
-            ConfigureButton(_restoreFrontolButton, "Восстановить настройки Frontol из снимка...", RestoreFrontolAsync);
-            _restoreFrontolButton.Tag = "RestoreFrontol";
-            options.Controls.Add(_fmuApiCheckBox);
-            options.Controls.Add(_configureFrontolButton);
-            options.Controls.Add(_restoreFrontolButton);
-
-            commands.Controls.Add(_bulkRegisterButton, 0, 0);
-            commands.Controls.Add(_automationStatusLabel, 1, 0);
-            commands.Controls.Add(_automaticStopButton, 2, 0);
-            commands.Controls.Add(options, 0, 1);
-            commands.SetColumnSpan(options, 3);
-            commands.Controls.Add(hint, 0, 2);
-            commands.SetColumnSpan(hint, 3);
-            group.Controls.Add(commands);
-            root.Controls.Add(group, 0, 0);
-            return root;
-        }
 
         private StatusStrip BuildStatusBar()
         {
@@ -752,62 +565,6 @@ namespace EsmTspiot.WinForms.Shared
             return group;
         }
 
-        private TableLayoutPanel CreateTwoColumnTable(int rows)
-        {
-            TableLayoutPanel table = new TableLayoutPanel();
-            table.Dock = DockStyle.Fill;
-            table.AutoSize = true;
-            table.ColumnCount = 2;
-            table.RowCount = rows;
-            table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 190F));
-            table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-            for (int i = 0; i < rows; i++)
-            {
-                table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            }
-
-            return table;
-        }
-
-        private void AddLabeledTextBox(TableLayoutPanel table, int row, string labelText, TextBox textBox, string hint)
-        {
-            Label label = new Label();
-            label.Text = labelText;
-            label.AutoSize = true;
-            label.Anchor = AnchorStyles.Left;
-            label.Margin = new Padding(0, 3, 6, 3);
-
-            textBox.Dock = DockStyle.Fill;
-            textBox.Margin = new Padding(0, 2, 0, 2);
-            textBox.Tag = hint;
-
-            ToolTip toolTip = new ToolTip();
-            toolTip.SetToolTip(textBox, hint);
-            toolTip.SetToolTip(label, hint);
-
-            table.Controls.Add(label, 0, row);
-            table.Controls.Add(textBox, 1, row);
-        }
-
-        private void AddCompactPortTextBox(TableLayoutPanel table, int column, string labelText, TextBox textBox, string hint)
-        {
-            Label label = new Label();
-            label.Text = labelText;
-            label.AutoSize = true;
-            label.Anchor = AnchorStyles.Left;
-            label.Margin = new Padding(0, 3, 4, 3);
-
-            textBox.Dock = DockStyle.Fill;
-            textBox.Margin = new Padding(0, 2, 12, 2);
-            textBox.Tag = hint;
-
-            ToolTip toolTip = new ToolTip();
-            toolTip.SetToolTip(textBox, hint);
-            toolTip.SetToolTip(label, hint);
-
-            table.Controls.Add(label, column, 0);
-            table.Controls.Add(textBox, column + 1, 0);
-        }
 
         private void ConfigureButton(Button button, string text, Func<Task> action)
         {
@@ -842,6 +599,7 @@ namespace EsmTspiot.WinForms.Shared
                 return;
             }
 
+            _mainOperationRunning = true;
             SetBusy(true);
             _operationStatusLabel.Text = "Выполняется операция...";
             try
@@ -855,20 +613,22 @@ namespace EsmTspiot.WinForms.Shared
                     return;
                 }
 
-                AppendLog("Ошибка приложения: " + ex.Message + "\r\n\r\n");
+                AppendLog("Ошибка операции: " + SensitiveDataMasker.Mask(ex.Message) + "\r\n\r\n");
                 AppendDetailToFile("Подробности ошибки приложения:\r\n" + ex + "\r\n\r\n");
-                MessageBox.Show(this, ex.Message, "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                ShowWizardFailure(ex);
             }
             finally
             {
+                _mainOperationRunning = false;
                 if (IsDisposed || Disposing)
                 {
                     _busy = false;
                 }
                 else
                 {
-                    SetBusy(false);
-                    _operationStatusLabel.Text = "Готово";
+                    SetBusy(_lmOperationRunning);
+                    _operationStatusLabel.Text = _busy ? "Выполняется операция..." : "Готово";
+                    if (_closeAfterOperation && !_busy) BeginInvoke(new Action(Close));
                 }
             }
         }
@@ -894,7 +654,33 @@ namespace EsmTspiot.WinForms.Shared
 
         private async Task DeleteSelectedKktAsync()
         {
-            KktDeletionCandidate candidate = GetSelectedDeletionCandidate();
+            LmGatewayKkt requested = _workspaceTabs.SelectedTab == _instancesTab ? _lmGatewayPage.SelectedKkt : null;
+            KktDeletionCandidate serviceSelection = GetSelectedDeletionCandidate();
+            string requestedId = requested == null ? serviceSelection == null || serviceSelection.Instance == null
+                ? null : serviceSelection.Instance.Id : requested.InstanceId;
+            if (string.IsNullOrEmpty(requestedId))
+                throw new InvalidOperationException("Выберите ККТ в рабочем списке или в служебной таблице экземпляров ЕСМ.");
+            KktDeletionCandidate refreshedCandidate = null;
+            if (requestedId != null)
+            {
+                TspiotFormInput deleteEndpoint = ReadEndpointInput();
+                ValidationResult endpointValidation = TspiotInputValidator.ValidateForCheck(deleteEndpoint);
+                if (!endpointValidation.IsValid) throw new InvalidOperationException(endpointValidation.JoinMessages());
+                if (!ConfirmWarnings(endpointValidation)) return;
+                ApiResponse latest = await _client.GetInstancesAsync(deleteEndpoint.BaseUrl);
+                IList<KktInstanceInfo> latestInstances;
+                if (!latest.IsSuccess || !InstanceInfoParser.TryParse(latest, out latestInstances))
+                    throw new InvalidOperationException("Не удалось получить актуальные экземпляры ЕСМ. Удаление не выполнялось.");
+                AppendResponse(latest);
+                UpdateInstancesGrid(latest);
+                foreach (DataGridViewRow row in _instancesGrid.Rows)
+                {
+                    var fresh = row.Tag as KktDeletionCandidate;
+                    if (fresh != null && fresh.Instance != null && fresh.Instance.Id == requestedId)
+                    { _instancesGrid.CurrentCell = row.Cells[0]; refreshedCandidate = fresh; break; }
+                }
+            }
+            KktDeletionCandidate candidate = refreshedCandidate;
             if (candidate == null || !candidate.CanDelete || candidate.Instance == null)
             {
                 MessageBox.Show(
@@ -932,6 +718,9 @@ namespace EsmTspiot.WinForms.Shared
                 AppendLog(outcome.Message + "\r\n\r\n");
                 if (outcome.IsSuccess)
                 {
+                    ForgetWizardKkt(candidate.Instance.Id);
+                    _lmGatewayPage.InvalidateDestination();
+                    await _lmGatewayPage.RefreshFromHostAsync();
                     MessageBox.Show(this, outcome.Message, "Удаление ККТ", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     return;
                 }
@@ -1179,6 +968,11 @@ namespace EsmTspiot.WinForms.Shared
                 return;
             }
 
+            ClearWizardPending();
+            _wizardAutomaticPending.Clear();
+            _wizardPartialSetup = false;
+            _wizardRegistrationWarning = string.Empty;
+            _wizardResult.Visible = false;
             _automaticCancellation = new System.Threading.CancellationTokenSource();
             _automaticStopButton.Enabled = true;
             try
@@ -1186,6 +980,7 @@ namespace EsmTspiot.WinForms.Shared
                 AppendLog(
                     fmuApiMode ? "=== Подготовка ККТ и ЛМ ЧЗ для FMU-API ===\r\n"
                     : "=== Полная автоматическая настройка ККТ, контроллеров и ЛМ ЧЗ ===\r\n");
+                _wizardRegistrationWarning = string.Empty;
                 System.Threading.CancellationToken token =
                     _automaticCancellation.Token;
                 _automationStatusLabel.Text =
@@ -1201,6 +996,9 @@ namespace EsmTspiot.WinForms.Shared
                         .DiscoverRegisteredKktsForAutomaticPlanAsync(
                             baseUrl,
                             token);
+                _manualScan = scan;
+                FillDiscoveredKkts(scan, registered, false);
+                ShowWizardStage(2, "Регистрируем кассы в ЕСМ", "Каждая касса настраивается по очереди.");
                 Dictionary<string, BulkRegistrationWorkItem> workBySerial =
                     new Dictionary<string, BulkRegistrationWorkItem>(
                         StringComparer.Ordinal);
@@ -1237,6 +1035,9 @@ namespace EsmTspiot.WinForms.Shared
                     attempted.Add(serial);
                     _automationStatusLabel.Text =
                         "Статус: регистрация ККТ " + serial + "...";
+                    ShowWizardStage(2, "Регистрируем ККТ " + serial, "Другие кассы ожидают своей очереди.");
+                    SelectWizardRow(serial);
+                    SetManualRowStatus(serial, "Регистрируется");
                     BulkKktRegistrationResult itemResult;
                     try
                     {
@@ -1297,6 +1098,10 @@ namespace EsmTspiot.WinForms.Shared
                     }
                     registrationOutcome.Results.Add(itemResult);
                     AppendBulkResult(itemResult);
+                    SetManualRowStatus(serial,
+                        itemResult.Status == BulkKktRegistrationStatus.Registered ||
+                        itemResult.Status == BulkKktRegistrationStatus.RecoveredRegistration ||
+                        itemResult.Status == BulkKktRegistrationStatus.AlreadyExists ? "Зарегистрирована" : "Ошибка регистрации");
                 }
                 AddUnattemptedBulkResults(
                     discovery,
@@ -1345,56 +1150,21 @@ namespace EsmTspiot.WinForms.Shared
                         .DiscoverRegisteredKktsForAutomaticPlanAsync(
                             baseUrl,
                             token);
-                FullAutomaticLocalSetupOutcome localSetupOutcome = null;
-                bool controllersDeferred = true;
-                if (registeredAfter.Count > 0)
-                {
-                    controllersDeferred = !_lmGatewayPage.PromptLmSetup(this, registeredAfter);
-                    if (!controllersDeferred)
-                    {
-                        _workspaceTabs.SelectedTab = _lmGatewayTab;
-                        localSetupOutcome = await _lmGatewayPage
-                            .RunFullAutomaticLocalSetupFromHostAsync(
-                                registeredAfter,
-                                token);
-                    }
-                }
-                if (controllersDeferred)
-                {
-                    AppendLog(
-                        "Настройка ЛМ ЧЗ" + (fmuApiMode ? "" : " и контроллеров") +
-                        " не выполнялась; регистрация ККТ сохранена.\r\n");
-                }
-
+                string unconfirmedWarning;
+                IList<LmGatewayKkt> bounded = BoundWizardRegistrationTargets(candidates, registeredAfter, out unconfirmedWarning);
                 bool registrationHasFailures = registrationOutcome.Cancelled ||
-                    HasBulkFailures(registrationOutcome.Results) ||
-                    !string.IsNullOrWhiteSpace(finalVcomError);
-                bool controllersComplete = localSetupOutcome != null &&
-                    localSetupOutcome.Complete;
-                _automationStatusLabel.Text = !registrationHasFailures &&
-                    (controllersDeferred || controllersComplete)
-                    ? (fmuApiMode && controllersComplete ? "Статус: подготовлено для FMU-API" : "Статус: регистрация завершена")
-                    : "Статус: завершено, требуется внимание";
-                string stackSummary = controllersDeferred
-                    ? "Регистрация завершена; настройка ЛМ ЧЗ" + (fmuApiMode ? "" : " и контроллеров") + " не выполнялась."
-                    : localSetupOutcome.FormatSummary();
-                if (!string.IsNullOrWhiteSpace(finalVcomError))
-                {
-                    stackSummary += " " + finalVcomError;
-                }
-                bool fullySuccessful = !registrationHasFailures &&
-                    (controllersDeferred || controllersComplete);
-                MessageBox.Show(
-                    this,
-                    BuildAutomaticSetupCompletionMessage(
-                        registrationOutcome,
-                        stackSummary),
-                    "Автоматическая настройка",
-                    MessageBoxButtons.OK,
-                    fullySuccessful
-                        ? MessageBoxIcon.Information
-                        : MessageBoxIcon.Warning);
-                OfferSupportDevelopment(fullySuccessful);
+                    HasBulkFailures(registrationOutcome.Results) || !string.IsNullOrWhiteSpace(finalVcomError) ||
+                    !string.IsNullOrEmpty(unconfirmedWarning);
+                _wizardRegistrationWarning = registrationHasFailures
+                    ? BuildAutomaticSetupCompletionMessage(registrationOutcome,
+                        "Регистрация завершена не полностью. " + finalVcomError + " " + unconfirmedWarning) : string.Empty;
+                _wizardResult.Text = _wizardRegistrationWarning;
+                _wizardResult.Visible = registrationHasFailures;
+                if (bounded.Count > 0) ShowWizardLmStep(bounded, true);
+                else ShowWizardStage(2, "Регистрация не завершена", "Смотрите результат и журнал; выполненные действия сохранены.", true);
+                if (registrationHasFailures)
+                    _wizardMessage.Text = "Есть ошибки регистрации. ЛМ можно настроить для подтверждённых касс; подробности ниже.";
+                _automationStatusLabel.Text = registrationHasFailures ? "Требуется внимание" : "Регистрация завершена";
             }
             catch (OperationCanceledException)
             {
@@ -1404,13 +1174,7 @@ namespace EsmTspiot.WinForms.Shared
                 }
                 _automationStatusLabel.Text = "Статус: автоматическая настройка остановлена";
                 AppendLog("Автоматическая настройка остановлена. Уже выполненные действия сохранены.\r\n\r\n");
-                MessageBox.Show(
-                    this,
-                    "Автоматическая настройка остановлена после безопасной границы. " +
-                        "Уже выполненные действия не отменены; фактическое состояние показано в таблицах и журнале.",
-                    "Автоматическая настройка",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Warning);
+                ShowWizardFailure(new OperationCanceledException());
             }
             finally
             {
@@ -2173,33 +1937,10 @@ namespace EsmTspiot.WinForms.Shared
             message.Append(stackSummary);
             message.Append(
                 "\r\n\r\nРезультаты настройки и порты кассового ПО показаны " +
-                "на вкладке «ЛМ ЧЗ».");
+                "на вкладке «Кассы и ЛМ ЧЗ».");
             return message.ToString();
         }
 
-        /// <summary>
-        /// Окно поддержки открывается после удачной настройки — вместо строки
-        /// в итоговом тексте, которую оператор не замечал. Один раз за запуск
-        /// программы: за смену настройку прогоняют по нескольку раз, и окно на
-        /// каждый прогон превратилось бы в помеху.
-        /// </summary>
-        internal static bool ShouldOfferSupportDialog(
-            bool fullySuccessful,
-            bool alreadyOffered)
-        {
-            return fullySuccessful && !alreadyOffered;
-        }
-
-        private void OfferSupportDevelopment(bool fullySuccessful)
-        {
-            if (!ShouldOfferSupportDialog(fullySuccessful, _supportDialogOffered))
-            {
-                return;
-            }
-
-            _supportDialogOffered = true;
-            ShowSupportDevelopment();
-        }
 
         private void ShowAbout()
         {
@@ -2337,7 +2078,7 @@ namespace EsmTspiot.WinForms.Shared
                 }
 
                 AddInstanceGridRow(_instancesGrid, candidate, role, true);
-                AddInstanceGridRow(_manualInstancesGrid, candidate, role, false);
+                AddInstanceGridRow(_manualInstancesGrid, candidate, role, true);
             }
 
             _instancesGrid.ClearSelection();
@@ -2402,12 +2143,13 @@ namespace EsmTspiot.WinForms.Shared
 
         private KktDeletionCandidate GetSelectedDeletionCandidate()
         {
-            if (_instancesGrid.SelectedRows.Count != 1)
+            if (_workspaceTabs.SelectedTab != _automationTab || !_wizardManual.Checked || _wizardLmEditing || !_manualFallbackToggle.Checked ||
+                _manualInstancesGrid.SelectedRows.Count != 1)
             {
                 return null;
             }
 
-            return _instancesGrid.SelectedRows[0].Tag as KktDeletionCandidate;
+            return _manualInstancesGrid.SelectedRows[0].Tag as KktDeletionCandidate;
         }
 
         private void UpdateDeleteButtonState()
@@ -2415,7 +2157,7 @@ namespace EsmTspiot.WinForms.Shared
             KktDeletionCandidate candidate = GetSelectedDeletionCandidate();
             bool enabled = !_busy && candidate != null && candidate.CanDelete;
             _deleteKktButton.Enabled = enabled;
-            _deleteMenuItem.Enabled = enabled;
+            _deleteMenuItem.Enabled = enabled || (!_busy && _workspaceTabs.SelectedTab == _instancesTab && _lmGatewayPage.SelectedKkt != null);
         }
 
         private void UpdateConnectionStatus(ApiResponse response)
@@ -2659,7 +2401,9 @@ namespace EsmTspiot.WinForms.Shared
             _operationsMenuItem.Enabled = !busy;
             _fmuApiCheckBox.Enabled = !busy;
             _lmGatewayPage.SetHostBusy(busy);
+            if (!busy) InvalidateWizardDestination();
             UpdateDeleteButtonState();
+            UpdateWizardActions();
         }
 
         private void OnLmGatewayOperationStateChanged(bool busy)
@@ -2669,10 +2413,12 @@ namespace EsmTspiot.WinForms.Shared
                 return;
             }
 
-            SetBusy(busy);
-            _operationStatusLabel.Text = busy
+            _lmOperationRunning = busy;
+            SetBusy(busy || _mainOperationRunning);
+            _operationStatusLabel.Text = _busy
                 ? "Выполняется операция с ЛМ ЧЗ..."
                 : "Готово";
+            if (_closeAfterOperation && !_busy) BeginInvoke(new Action(Close));
         }
     }
 }

@@ -169,6 +169,9 @@ THIRD-PARTY-NOTICES.txt — сведения о включённых библи�
 SHA256SUMS — контрольные суммы файлов внутри архива.
 Официальные сборки: https://github.com/jadieify-hub/esm-tspiot-multi-kkt-tool/releases
 "@
+if ($isTestBuild) {
+    $readme = "ТЕСТОВАЯ НЕПУБЛИЧНАЯ ВЕРСИЯ. Новый интерфейс: сначала прочитайте TESTING.md.`r`n`r`n" + $readme
+}
 [IO.File]::WriteAllText((Join-Path $stageRoot "README.txt"), $readme, [Text.UTF8Encoding]::new($true))
 
 $thirdPartyNotices = @"

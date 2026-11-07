@@ -65,6 +65,13 @@ namespace EsmTspiot.WinForms.Shared
 
         public event Action<bool> OperationStateChanged;
         public event Action InstallerSelectionChanged;
+        internal event Action<LmGatewayKkt> SetupRequested;
+        internal event Action<string> SetupProgressChanged;
+
+        internal void RequestCancellation()
+        {
+            CancelCurrentOperation();
+        }
 
         public bool HasLocalModuleInstallerSelection
         {
@@ -121,13 +128,19 @@ namespace EsmTspiot.WinForms.Shared
             return RunOperationAsync(RefreshCoreAsync, "Получение зарегистрированных ККТ из ЕСМ...");
         }
 
+        internal Task RefreshFromHostAsync()
+        {
+            return RunOperationAsync(RefreshCoreAsync, "Обновление списка после удаления...",
+                true, false, false, CancellationToken.None);
+        }
+
         private Task RefreshSilentlyAsync()
         {
             return RunOperationAsync(
                 RefreshCoreAsync,
                 "Получение зарегистрированных ККТ из ЕСМ...",
                 false,
-                false,
+                true,
                 false,
                 CancellationToken.None);
         }
@@ -489,12 +502,12 @@ namespace EsmTspiot.WinForms.Shared
 
         private LmGatewayBindingSessionRow GetSelectedSessionRow()
         {
-            if (_grid.SelectedRows.Count != 1)
+            if (_grid.CurrentRow == null)
             {
                 return null;
             }
 
-            LmGatewayGridRow context = _grid.SelectedRows[0].Tag as LmGatewayGridRow;
+            LmGatewayGridRow context = _grid.CurrentRow.Tag as LmGatewayGridRow;
             return context == null ? null : context.SessionRow;
         }
 
@@ -553,7 +566,9 @@ namespace EsmTspiot.WinForms.Shared
 
             _refreshButton.Enabled = idle;
             UpdateServiceActionState(idle, hasKkts);
-            _grid.Enabled = true;
+            _grid.Enabled = idle;
+            _showServiceOperations.Enabled = idle;
+            UpdateWorkingGrid();
             _cancelButton.Visible = _running;
             _cancelButton.Enabled = _running && _cancellation != null && !_cancellation.IsCancellationRequested;
         }
