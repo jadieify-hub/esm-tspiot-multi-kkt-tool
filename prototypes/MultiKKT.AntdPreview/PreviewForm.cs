@@ -11,20 +11,23 @@ namespace MultiKKT.AntdPreview
     internal sealed class PreviewForm : Ui.BaseForm
     {
         private enum DemoStage { Empty, Found, Lm, Done }
-        private static readonly Color Ink = Color.FromArgb(27, 38, 59);
-        private static readonly Color Muted = Color.FromArgb(112, 124, 145);
-        private static readonly Color Blue = Color.FromArgb(22, 105, 232);
-        private static readonly Color Line = Color.FromArgb(229, 234, 242);
+        private static readonly Color Ink = Color.FromArgb(22, 39, 66);
+        private static readonly Color Muted = Color.FromArgb(69, 85, 108);
+        private static readonly Color Blue = Color.FromArgb(23, 83, 183);
+        private static readonly Color Green = Color.FromArgb(25, 116, 64);
+        private static readonly Color Line = Color.FromArgb(187, 201, 220);
         private readonly Ui.Segmented _navigation = new Ui.Segmented();
         private readonly Ui.Segmented _mode = new Ui.Segmented();
-        private readonly Ui.Steps _steps = new Ui.Steps();
+        private readonly Ui.Panel[] _stepCards = new Ui.Panel[3];
+        private readonly Ui.Button[] _stepIcons = new Ui.Button[3];
+        private readonly Label[] _stepTitles = new Label[3];
         private readonly Ui.Table _table = new Ui.Table();
         private readonly Ui.Panel _card = new Ui.Panel();
         private readonly System.Windows.Forms.Panel _body = new System.Windows.Forms.Panel();
         private readonly TableLayoutPanel _stack = Column();
         private readonly Ui.Panel _details = new Ui.Panel();
         private readonly Ui.Panel _empty = new Ui.Panel();
-        private readonly Label _heading = TextLabel("", 17, true);
+        private readonly Label _heading = TextLabel("", 18, true);
         private readonly Label _description = TextLabel("", 10, false, Muted);
         private readonly Label _selectedLabel = TextLabel("", 10.5F, true);
         private readonly Label _status = TextLabel("Демонстрационные данные · без подключения к оборудованию", 9, false, Muted);
@@ -51,11 +54,11 @@ namespace MultiKKT.AntdPreview
         internal PreviewForm(string[] args)
         {
             _args = args;
-            Text = "MultiKKT — проба интерфейса AntdUI";
+            Text = "MultiKKT — предпросмотр 02";
             FormBorderStyle = FormBorderStyle.None;
             Font = new Font("Segoe UI", 10.5F);
             ForeColor = Ink;
-            BackColor = Color.FromArgb(244, 246, 250);
+            BackColor = Color.FromArgb(229, 236, 246);
             ClientSize = new Size(1000, 740);
             Size = new Size(1000, 760);
             MinimumSize = new Size(920, 680);
@@ -87,10 +90,11 @@ namespace MultiKKT.AntdPreview
             foreach (float height in new[] { 42F, 54F, 42F }) shell.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
             shell.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             shell.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
-            var header = new Ui.PageHeader { Text = "MultiKKT", SubText = "ККТ и ЛМ ЧЗ",
-                ShowButton = true, IconSvg = "ShopOutlined", Dock = DockStyle.Fill,
-                Font = new Font("Segoe UI Semibold", 13), SubFont = new Font("Segoe UI", 10),
-                Padding = new Padding(20, 0, 8, 0), BackColor = Color.White };
+            var header = new Ui.PageHeader { Text = "MultiKKT", SubText = "Предпросмотр 02 · ККТ и ЛМ ЧЗ",
+                ShowButton = true, ShowIcon = true, IconSvg = "ShopOutlined", Dock = DockStyle.Fill,
+                Font = new Font("Segoe UI", 14, FontStyle.Bold), SubFont = new Font("Segoe UI", 10),
+                Padding = new Padding(20, 0, 8, 0), BackColor = Color.FromArgb(213, 226, 245),
+                ForeColor = Ink, UseSystemStyleColor = true, UseForeColorDrawIcons = true };
             shell.Controls.Add(header, 0, 0);
             shell.Controls.Add(BuildConnection(), 0, 1);
 
@@ -98,10 +102,13 @@ namespace MultiKKT.AntdPreview
             _navigation.Items[0].IconSvg = "SettingOutlined";
             _navigation.Items[1].IconSvg = "DesktopOutlined";
             _navigation.Items[2].IconSvg = "FileTextOutlined";
-            _navigation.BackColor = Color.FromArgb(244, 246, 250);
+            _navigation.BackColor = BackColor;
+            _navigation.BackActive = Blue;
+            _navigation.ForeActive = Color.White;
+            _navigation.Font = new Font("Segoe UI", 10.5F, FontStyle.Bold);
             _navigation.Margin = new Padding(20, 2, 20, 0);
             _navigation.Dock = DockStyle.Left;
-            _navigation.Width = 480;
+            _navigation.Width = 520;
             _navigation.SelectIndexChanged += delegate { Render(); };
             shell.Controls.Add(_navigation, 0, 2);
 
@@ -110,6 +117,8 @@ namespace MultiKKT.AntdPreview
             _card.Radius = 12;
             _card.BorderWidth = 1;
             _card.BorderColor = Line;
+            _card.Shadow = 3;
+            _card.ShadowOpacity = 0.10F;
             _card.Dock = DockStyle.Fill;
             _card.Margin = new Padding(20, 10, 20, 0);
             _card.Padding = new Padding(20, 14, 20, 12);
@@ -118,16 +127,11 @@ namespace MultiKKT.AntdPreview
             content.AutoSize = false;
             content.BackColor = Color.White;
             content.RowCount = 6;
-            foreach (float height in new[] { 40F, 40F, 50F }) content.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
+            foreach (float height in new[] { 52F, 40F, 50F }) content.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
             content.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             content.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
             content.RowStyles.Add(new RowStyle(SizeType.Absolute, 50));
-            _steps.Items.Add(new Ui.StepsItem { Title = "Найти кассы" });
-            _steps.Items.Add(new Ui.StepsItem { Title = "Зарегистрировать" });
-            _steps.Items.Add(new Ui.StepsItem { Title = "Настроить ЛМ ЧЗ" });
-            _steps.Dock = DockStyle.Fill;
-            _steps.Font = new Font("Segoe UI Semibold", 10.5F);
-            content.Controls.Add(_steps, 0, 0);
+            content.Controls.Add(BuildSteps(), 0, 0);
 
             var modes = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Margin = Padding.Empty };
             modes.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 350));
@@ -163,11 +167,11 @@ namespace MultiKKT.AntdPreview
             content.Controls.Add(_body, 0, 3);
             BuildTable();
             BuildEmpty();
-            _details.Back = Color.FromArgb(248, 250, 253);
-            _details.BackColor = Color.FromArgb(248, 250, 253);
+            _details.Back = Color.FromArgb(234, 242, 255);
+            _details.BackColor = Color.FromArgb(234, 242, 255);
             _details.Radius = 10;
-            _details.BorderWidth = 1;
-            _details.BorderColor = Line;
+            _details.BorderWidth = 1.5F;
+            _details.BorderColor = Color.FromArgb(100, 145, 215);
             _details.Dock = DockStyle.Top;
             _details.Padding = new Padding(12, 8, 12, 6);
             _details.Margin = new Padding(0, 6, 0, 4);
@@ -195,7 +199,7 @@ namespace MultiKKT.AntdPreview
             actions.Controls.Add(_operations, 0, 0);
             var right = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = false, Margin = Padding.Empty };
             _secondary.Width = 162;
-            _primary.Width = 252;
+            _primary.Width = 288;
             _secondary.Click += delegate
             {
                 if (_stage == DemoStage.Lm) { Selected.Deferred = true; _stage = DemoStage.Found; Render(); }
@@ -211,6 +215,53 @@ namespace MultiKKT.AntdPreview
             shell.Controls.Add(_card, 0, 3);
             shell.Controls.Add(BuildPreviewFooter(), 0, 4);
             Controls.Add(shell);
+        }
+
+        private Control BuildSteps()
+        {
+            var steps = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, Margin = Padding.Empty };
+            string[] titles = { "Найти кассы", "Зарегистрировать", "Настроить ЛМ ЧЗ" };
+            for (int index = 0; index < 3; index++)
+            {
+                steps.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33F));
+                var card = new Ui.Panel { Dock = DockStyle.Fill, Radius = 8, BorderWidth = 1,
+                    Padding = new Padding(9, 4, 8, 4), Margin = new Padding(0, 0, index == 2 ? 0 : 8, 6) };
+                var row = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Margin = Padding.Empty };
+                row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 38));
+                row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+                var icon = new Ui.Button { Width = 30, Height = 30, Radius = 15, BorderWidth = 0,
+                    Type = Ui.TTypeMini.Primary,
+                    Font = new Font("Segoe UI", 12, FontStyle.Bold), WaveSize = 0, TabStop = false,
+                    Cursor = Cursors.Default, Margin = new Padding(0, 2, 0, 0) };
+                var title = TextLabel(titles[index], 11, true);
+                row.Controls.Add(icon, 0, 0);
+                row.Controls.Add(title, 1, 0);
+                card.Controls.Add(row);
+                steps.Controls.Add(card, index, 0);
+                _stepCards[index] = card;
+                _stepIcons[index] = icon;
+                _stepTitles[index] = title;
+            }
+            return steps;
+        }
+
+        private void UpdateSteps()
+        {
+            int current = _stage == DemoStage.Empty ? 0 : _stage == DemoStage.Found ? 1 : 2;
+            for (int index = 0; index < 3; index++)
+            {
+                bool complete = index < current || _stage == DemoStage.Done;
+                bool active = index == current && !complete;
+                Color back = complete ? Color.FromArgb(230, 244, 235) : active
+                    ? Color.FromArgb(215, 232, 255) : Color.FromArgb(236, 240, 246);
+                _stepCards[index].Back = _stepCards[index].BackColor = back;
+                _stepCards[index].BorderColor = complete ? Color.FromArgb(143, 190, 158) : active ? Blue : Line;
+                _stepTitles[index].ForeColor = complete ? Green : active ? Ink : Muted;
+                _stepIcons[index].BackColor = complete ? Green : active ? Blue : Color.FromArgb(202, 212, 227);
+                _stepIcons[index].ForeColor = complete || active ? Color.White : Muted;
+                _stepIcons[index].Text = complete ? string.Empty : (index + 1).ToString();
+                _stepIcons[index].IconSvg = complete ? "CheckOutlined" : null;
+            }
         }
 
         private Control BuildConnection()
@@ -263,7 +314,7 @@ namespace MultiKKT.AntdPreview
             help.Click += delegate
             {
                 var menu = new ContextMenuStrip();
-                menu.Items.Add("О прототипе", null, delegate { Info("MultiKKT — визуальный прототип", "AntdUI 2.4.18 · Windows 10/11\r\nРазработчик: Руслан Керусов\r\nИздатель и владелец: KRS"); });
+                menu.Items.Add("О прототипе", null, delegate { Info("MultiKKT — предпросмотр 02", "AntdUI 2.4.18 · Windows 10/11\r\nРазработчик: Руслан Керусов\r\nИздатель и владелец: KRS"); });
                 menu.Items.Add("Поддержать разработку", null, delegate { using (var dialog = new EsmTspiot.WinForms.Shared.SupportDevelopmentDialog()) dialog.ShowDialog(this); });
                 menu.Closed += delegate { menu.Dispose(); };
                 menu.Show(help, new Point(0, -60));
@@ -282,16 +333,21 @@ namespace MultiKKT.AntdPreview
             _table.AutoSizeColumnsMode = Ui.ColumnsMode.Fill;
             _table.RowHeight = 40;
             _table.RowHeightHeader = 36;
-            _table.RowSelectedBg = Color.FromArgb(230, 240, 255);
+            _table.Font = new Font("Segoe UI", 10.5F);
+            _table.ColumnFont = new Font("Segoe UI", 10.5F, FontStyle.Bold);
+            _table.ForeColor = Ink;
+            _table.RowSelectedBg = Color.FromArgb(201, 222, 254);
             _table.RowSelectedFore = Ink;
             _table.Gap = 12;
             _table.LostFocusClearSelection = false;
             _table.Columns = new Ui.ColumnCollection {
-                new Ui.Column("Kkt", "ККТ"),
-                new Ui.Column("Inn", "ИНН"),
-                new Ui.Column("Com", "Подключение"),
-                new Ui.Column("Registration", "Регистрация"),
-                new Ui.Column("Lm", "ЛМ ЧЗ") };
+                new Ui.Column("Kkt", "ККТ · серийный номер").SetWidthFill().SetStyle(new Ui.Table.CellStyleInfo { FontBold = true }),
+                new Ui.Column("Inn", "ИНН").SetWidth(136),
+                new Ui.Column("Com", "COM", Ui.ColumnAlign.Center).SetWidth(72),
+                new Ui.Column("Registration", "Регистрация").SetWidth(208),
+                new Ui.Column("Lm", "ЛМ ЧЗ").SetWidth(150) };
+            foreach (Ui.Column column in _table.Columns)
+                column.SetColStyle(Color.FromArgb(219, 229, 243), Ink);
             _table.CellClick += delegate(object sender, Ui.TableClickEventArgs e)
             {
                 var row = e.Record as Row;
@@ -335,8 +391,7 @@ namespace MultiKKT.AntdPreview
             try
             {
                 _stack.Controls.Clear();
-                _steps.Current = _stage == DemoStage.Empty ? 0 : _stage == DemoStage.Found ? 1 : 2;
-                _steps.Status = _stage == DemoStage.Done ? Ui.TStepState.Finish : Ui.TStepState.Process;
+                UpdateSteps();
                 _mode.Enabled = !_busy;
                 _primary.Enabled = !_busy;
                 _secondary.Enabled = !_busy;
@@ -552,20 +607,22 @@ namespace MultiKKT.AntdPreview
         private static Label TextLabel(string text, float size, bool bold = false, Color? color = null)
         {
             return new Label { Text = text, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft,
-                AutoEllipsis = true, Font = new Font(bold ? "Segoe UI Semibold" : "Segoe UI", size),
+                AutoEllipsis = true, Font = new Font("Segoe UI", size, bold ? FontStyle.Bold : FontStyle.Regular),
                 ForeColor = color ?? Ink, BackColor = Color.Transparent, Margin = Padding.Empty };
         }
         private static Ui.Button Button(string text, bool primary = false)
         {
             return new Ui.Button { Text = text, Height = 42, Radius = 7,
-                Font = new Font(primary ? "Segoe UI Semibold" : "Segoe UI", primary ? 11 : 10.5F),
+                Font = new Font("Segoe UI", primary ? 11 : 10.5F, primary ? FontStyle.Bold : FontStyle.Regular),
+                BackColor = primary ? Blue : (Color?)null,
                 Type = primary ? Ui.TTypeMini.Primary : Ui.TTypeMini.Default, WaveSize = 1,
                 Margin = new Padding(4, 4, 0, 0), BorderWidth = primary ? 0 : 1 };
         }
         private static Ui.Input Input(string value)
         {
             return new Ui.Input { Text = value, Dock = DockStyle.Fill, Radius = 6, BorderWidth = 1,
-                Font = new Font("Segoe UI", 10), Margin = new Padding(0, 2, 8, 2) };
+                BorderColor = Line, ForeColor = Ink,
+                Font = new Font("Segoe UI", 10.5F), Margin = new Padding(0, 2, 8, 2) };
         }
         private static void ConfigureSegments(Ui.Segmented control, params string[] values)
         {
@@ -574,11 +631,12 @@ namespace MultiKKT.AntdPreview
             control.Full = true;
             control.Radius = 7;
             control.Gap = 3;
-            control.Font = new Font("Segoe UI", 10);
+            control.Font = new Font("Segoe UI", 10.5F, FontStyle.Bold);
             control.IconAlign = Ui.TAlignMini.Left;
-            control.BackColor = Color.FromArgb(241, 244, 249);
+            control.BackColor = Color.FromArgb(226, 233, 244);
+            control.BackActive = Blue;
             control.ForeColor = Muted;
-            control.ForeActive = Blue;
+            control.ForeActive = Color.White;
         }
         private static Control FieldRow(string left, Ui.Input leftInput, string right, Ui.Input rightInput)
         {
@@ -587,9 +645,9 @@ namespace MultiKKT.AntdPreview
             row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 52));
             row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 82));
             row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 48));
-            row.Controls.Add(TextLabel(left, 9.5F, false, Muted), 0, 0);
+            row.Controls.Add(TextLabel(left, 10, false, Muted), 0, 0);
             row.Controls.Add(leftInput, 1, 0);
-            row.Controls.Add(TextLabel(right, 9.5F, false, Muted), 2, 0);
+            row.Controls.Add(TextLabel(right, 10, false, Muted), 2, 0);
             row.Controls.Add(rightInput, 3, 0);
             return row;
         }
@@ -599,12 +657,16 @@ namespace MultiKKT.AntdPreview
             internal Row(int number, string com) { Number = number; Com = com; }
             public int Number { get; private set; }
             public string Serial { get { return "0010570000000" + Number; } }
-            public string Kkt { get { return "ККТ " + Number + " · …000" + Number; } }
+            public string Kkt { get { return "ККТ " + Number + " · " + Serial; } }
             public string Inn { get { return "1234567894"; } }
             public string Com { get; private set; }
             internal bool Registered, Applied, Deferred;
-            public Ui.CellTag Registration { get { return new Ui.CellTag(Registered ? "Зарегистрирована" : "Не зарегистрирована", Registered ? Ui.TTypeMini.Success : Ui.TTypeMini.Default); } }
-            public Ui.CellTag Lm { get { return new Ui.CellTag(Applied ? "Применено" : Deferred ? "Отложено" : "Не настроен", Applied ? Ui.TTypeMini.Success : Deferred ? Ui.TTypeMini.Warn : Ui.TTypeMini.Default); } }
+            public Ui.CellTag Registration { get { return new Ui.CellTag(Registered ? "Зарегистрирована" : "Не зарегистрирована", Registered ? Ui.TTypeMini.Success : Ui.TTypeMini.Warn) {
+                Back = Registered ? Color.FromArgb(219, 243, 228) : Color.FromArgb(255, 237, 191),
+                Fore = Registered ? Green : Color.FromArgb(117, 70, 0), BorderWidth = 0 }; } }
+            public Ui.CellTag Lm { get { return new Ui.CellTag(Applied ? "Применено" : Deferred ? "Отложено" : "Не настроен", Applied ? Ui.TTypeMini.Success : Deferred ? Ui.TTypeMini.Warn : Ui.TTypeMini.Default) {
+                Back = Applied ? Color.FromArgb(219, 243, 228) : Deferred ? Color.FromArgb(255, 237, 191) : Color.FromArgb(224, 231, 241),
+                Fore = Applied ? Green : Deferred ? Color.FromArgb(117, 70, 0) : Muted, BorderWidth = 0 }; } }
         }
     }
 }

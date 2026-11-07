@@ -6,7 +6,7 @@
     <LangVersion>latest</LangVersion>
     <PlatformTarget>x86</PlatformTarget>
     <AssemblyName>MultiKKT.UI-Preview</AssemblyName>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <Product>MultiKKT — прототип интерфейса</Product>
     <Description>Визуальная проба AntdUI без подключения к оборудованию</Description>
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
