@@ -230,12 +230,6 @@ namespace EsmTspiot.ServiceProvisioner
                     result.Add("Для изменения прямого контроллера нужен отпечаток показанного манифеста.");
                 }
             }
-            if (request.Operation == LmServiceOperation.EnsureDirectControllers &&
-                count > 0 && request.DirectControllers[0] != null &&
-                request.DirectControllers[0].Ordinal != 1)
-            {
-                result.Add("Полный план прямых контроллеров должен начинаться со штатной службы.");
-            }
         }
 
         private static void ValidateMsiLocalModules(

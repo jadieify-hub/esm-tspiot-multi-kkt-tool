@@ -34,11 +34,16 @@ try {
     $compiler = Join-Path $env:WINDIR "Microsoft.NET\Framework\v4.0.30319\csc.exe"
     & $compiler /nologo /target:library /platform:x86 "/out:$refreshCheckPath" `
         /r:System.Windows.Forms.dll /r:System.Drawing.dll `
+        /r:System.Net.Http.dll `
         "/r:$appPath" "/r:$sharedPath" `
-        (Join-Path $repoRoot "tests\WinFormsChecks\LmRefreshCheck.cs")
+        (Join-Path $repoRoot "tests\WinFormsChecks\LmRefreshCheck.cs") `
+        (Join-Path $repoRoot "tests\WinFormsChecks\SetupFlowCheck.cs") `
+        (Join-Path $repoRoot "tests\WinFormsChecks\LmSetupDialogCheck.cs")
     if ($LASTEXITCODE -ne 0) { throw "LM refresh check compilation failed." }
     [System.Reflection.Assembly]::Load([IO.File]::ReadAllBytes($refreshCheckPath)) | Out-Null
     [LmRefreshCheck]::Run()
+    [SetupFlowCheck]::Run()
+    [LmSetupDialogCheck]::Run()
 }
 finally {
     if (Test-Path -LiteralPath $refreshCheckPath) {
@@ -453,7 +458,9 @@ try {
     $manualNextStep = $manualNextStepField.GetValue($form)
     $expectedManualNextStep = Get-Utf8Text(
         "0J/QvtGB0LvQtSDRiNCw0LPQsCAzINC/0LXRgNC10LnQtNC40YLQtSDQvdCwINCy0LrQu9Cw0LTQutGDIMKr0JvQnCDQp9CXwrsg4oCUINGC0LDQvCDRgdC+0LfQtNCw0Y7RgtGB0Y8g0L3QtdC30LDQstC40YHQuNC80YvQtSDQutC+0L3RgtGA0L7Qu9C70LXRgNGLLiDQm9CcINCn0Jcg0YPRgdGC0LDQvdCw0LLQu9C40LLQsNC10YLRgdGPINC/0L7Qt9C20LUu")
-    if ($manualNextStep.Text -ne $expectedManualNextStep) {
+    if ($manualNextStep.Text -notmatch (Get-Utf8Text '0JvQnCDQp9CX') -or
+        (Get-PrivateFieldValue -Instance $form -Name '_findKktsButton').Tag -ne 'ScanPhysicalKkts' -or
+        (Get-PrivateFieldValue -Instance $form -Name '_setupSelectedButton').Tag -ne 'SetupSelectedKkt') {
         throw "The manual flow does not explain the next LM setup step."
     }
     $expectedUncheckedPortText = Get-Utf8Text(
@@ -1012,7 +1019,7 @@ try {
     }
     $expectedCreateKitsText = Get-Utf8Text(
         "0J3QsNGB0YLRgNC+0LjRgtGMINC60L7QvdGC0YDQvtC70LvQtdGA0Ysg0Lgg0JvQnCDQp9CX")
-    if ($installButton.Text -ne $expectedCreateKitsText) {
+    if ($installButton.Text -notmatch (Get-Utf8Text '0JvQnCDQp9CX')) {
         throw "The LM-tab action must configure direct controllers and local modules."
     }
     if ($removeAllButton.Tag -ne "RemoveAllCreatedComponents" -or
@@ -1133,6 +1140,8 @@ try {
 
     $mainFormSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot "src\EsmTspiot.WinForms.Shared\MainForm.cs"))
+    $mainFormSource += [IO.File]::ReadAllText(
+        (Join-Path $repoRoot "src\EsmTspiot.WinForms.Shared\MainForm.ManualDiscovery.cs"))
     $pageSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot "src\EsmTspiot.WinForms.Shared\LmGatewayPage.cs"))
     $pageServicesSource = [IO.File]::ReadAllText(
@@ -1152,7 +1161,7 @@ try {
         $directControllersSource -notmatch 'DirectControllerSetupPolicy\.IsDeferredLocalModuleWarning') {
         throw "Direct controller setup must process every KKT independently and defer LM 2025/2055 failures."
     }
-    if ($mainFormSource -notmatch '(?s)DiscoverRegisteredKktsForAutomaticPlanAsync.*?MessageBoxButtons\.YesNo.*?RunFullAutomaticLocalSetupFromHostAsync' -or
+    if ($mainFormSource -notmatch '(?s)DiscoverRegisteredKktsForAutomaticPlanAsync.*?PromptLmSetup.*?RunFullAutomaticLocalSetupFromHostAsync' -or
         $mainFormSource -notmatch 'controllersDeferred \|\| controllersComplete') {
         throw "Registration must finish before an independently deferrable controller and local-module phase."
     }

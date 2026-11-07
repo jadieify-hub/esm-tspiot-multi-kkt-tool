@@ -33,6 +33,16 @@ namespace EsmTspiot.Shared.Services
 
         public SortedDictionary<string, string> Load()
         {
+            return LoadCore(false);
+        }
+
+        public SortedDictionary<string, string> LoadStrict()
+        {
+            return LoadCore(true);
+        }
+
+        private SortedDictionary<string, string> LoadCore(bool strict)
+        {
             SortedDictionary<string, string> result =
                 new SortedDictionary<string, string>(StringComparer.Ordinal);
             if (!File.Exists(_path)) return result;
@@ -42,6 +52,7 @@ namespace EsmTspiot.Shared.Services
             string[] lines = File.ReadAllLines(_path, Encoding.UTF8);
             for (int index = 0; index < lines.Length; index++)
             {
+                if (string.IsNullOrWhiteSpace(lines[index])) continue;
                 string[] parts = lines[index].Split(
                     new[] { ' ', '\t' },
                     StringSplitOptions.RemoveEmptyEntries);
@@ -51,7 +62,13 @@ namespace EsmTspiot.Shared.Services
                     LocalModuleMsiIdentity.IsInn(parts[0]) &&
                     LocalModuleTargetAddress.TryParseEndpoint(
                         parts[1], out host, out port))
+                {
+                    if (strict && result.ContainsKey(parts[0]))
+                        throw new InvalidDataException("Файл адресов ЛМ содержит повторный ИНН в строке " + (index + 1) + ".");
                     result[parts[0]] = LocalModuleTargetAddress.Key(host, port);
+                }
+                else if (strict)
+                    throw new InvalidDataException("Файл адресов ЛМ содержит некорректную строку " + (index + 1) + ".");
             }
             return result;
         }
@@ -78,7 +95,14 @@ namespace EsmTspiot.Shared.Services
                     .Append("\r\n");
             }
             Directory.CreateDirectory(Path.GetDirectoryName(_path));
-            File.WriteAllText(_path, text.ToString(), new UTF8Encoding(false));
+            string temporary = _path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
+            {
+                File.WriteAllText(temporary, text.ToString(), new UTF8Encoding(false));
+                if (File.Exists(_path)) File.Replace(temporary, _path, null);
+                else File.Move(temporary, _path);
+            }
+            finally { if (File.Exists(temporary)) File.Delete(temporary); }
         }
     }
 }

@@ -118,7 +118,7 @@ namespace EsmTspiot.WinForms.Shared
             _localModuleInstallerStatusLabel.Text = "MSI ЛМ ЧЗ не выбран.";
             ConfigureButton(
                 _installControllerButton,
-                "Настроить контроллеры и ЛМ ЧЗ");
+                "Настроить подключение ЛМ ЧЗ…");
             _installControllerButton.Tag = "AutomaticSetup";
             _installControllerButton.Click += async delegate { await StartAutomaticSetupAsync(); };
             _setupActionHintLabel.AutoSize = false;
@@ -223,7 +223,10 @@ namespace EsmTspiot.WinForms.Shared
                         throw new InvalidOperationException(
                             "В ЕСМ нет зарегистрированных ККТ для полной настройки.");
                     }
-                    await RunFullAutomaticLocalSetupFromHostAsync(kkts, token);
+                    if (PromptLmSetup(this, kkts))
+                        await RunFullAutomaticLocalSetupFromHostAsync(kkts, token);
+                    else
+                        _statusLabel.Text = "Настройка ЛМ ЧЗ отложена; регистрация ККТ сохранена.";
                 },
                 FmuApiMode
                     ? "Подготовка ЛМ ЧЗ для FMU-API..."
@@ -326,6 +329,7 @@ namespace EsmTspiot.WinForms.Shared
 
         private void RefreshServiceInventory()
         {
+            RefreshAppliedLmTargets();
             _serviceInventory.Clear();
             _managedLocalModuleInventory =
                 new ManagedLocalModuleInventorySnapshot();
@@ -946,7 +950,7 @@ namespace EsmTspiot.WinForms.Shared
                     "установить и инициализировать позже.";
             _installControllerButton.Text = FmuApiMode
                 ? "Подготовить ЛМ для FMU-API"
-                : "Настроить контроллеры и ЛМ ЧЗ";
+                : "Настроить подключение ЛМ ЧЗ…";
             LmServiceInventoryItem selected = GetSelectedInventoryItem();
             bool managed = selected != null && selected.Role == LmServiceRole.Managed;
             LmGatewayBindingSessionRow selectedSession = GetSelectedSessionRow();

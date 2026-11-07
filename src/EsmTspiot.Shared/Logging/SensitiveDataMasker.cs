@@ -1,6 +1,7 @@
 using System;
 using System.Text;
 using System.Text.RegularExpressions;
+using EsmTspiot.Shared.Services;
 
 namespace EsmTspiot.Shared.Logging
 {
@@ -8,6 +9,7 @@ namespace EsmTspiot.Shared.Logging
     {
         private static readonly string[] SensitiveKeys =
         {
+            "login",
             "password",
             "newPassword",
             "pass",
@@ -36,6 +38,30 @@ namespace EsmTspiot.Shared.Logging
             {
                 return match.Groups["prefix"].Value + "***";
             });
+        }
+
+        public static string Mask(string text, params string[] sensitiveValues)
+        {
+            string masked = Mask(text);
+            if (sensitiveValues != null)
+            {
+                string[] values = (string[])sensitiveValues.Clone();
+                // Пароль может содержать логин: сначала скрываем самое длинное значение.
+                Array.Sort(values, delegate(string left, string right)
+                {
+                    return (right ?? string.Empty).Length.CompareTo(
+                        (left ?? string.Empty).Length);
+                });
+                for (int index = 0; index < values.Length; index++)
+                {
+                    string value = values[index];
+                    if (string.IsNullOrEmpty(value)) continue;
+                    string json = JsonHelper.Serialize(value);
+                    masked = masked.Replace(json.Substring(1, json.Length - 2), "***");
+                    masked = masked.Replace(value, "***");
+                }
+            }
+            return masked;
         }
 
         private static string MaskYamlValues(string text)

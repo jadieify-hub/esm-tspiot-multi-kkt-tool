@@ -143,7 +143,8 @@ namespace EsmTspiot.Shared.Services
             }
 
             SortAssignments(plan.Assignments);
-            if (current.Count > 0 && !ContainsCurrentBase(plan.Assignments))
+            if (current.Count > 0 && !ContainsCurrentBase(plan.Assignments) &&
+                !HasVerifiedSavedBase(savedAssignments, safeServices, safeListeners))
             {
                 plan.ValidationMessages.Add(
                     "Ни одна текущая ККТ не закреплена за штатным контроллером.");
@@ -647,6 +648,24 @@ namespace EsmTspiot.Shared.Services
             {
                 source.Add(result[index]);
             }
+        }
+
+        private static bool HasVerifiedSavedBase(
+            IList<DirectControllerAssignment> saved,
+            IList<DirectControllerServiceInventoryItem> services,
+            IList<TcpListenerSnapshotItem> listeners)
+        {
+            if (saved == null) return false;
+            for (int index = 0; index < saved.Count; index++)
+            {
+                DirectControllerAssignment assignment = saved[index];
+                if (IsCanonical(assignment) && assignment.Ordinal == 1 &&
+                    CanUseSavedAssignment(assignment, services, listeners))
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         private static bool ContainsCurrentBase(

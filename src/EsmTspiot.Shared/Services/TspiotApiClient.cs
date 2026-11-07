@@ -122,7 +122,9 @@ namespace EsmTspiot.Shared.Services
                 BuildUrl(baseUrl, path),
                 requestBody,
                 SensitiveDataMasker.Mask(requestBody),
-                cancellationToken);
+                cancellationToken,
+                false,
+                request == null ? null : new[] { request.Login, request.Password });
         }
 
         public async Task<ApiResponse> GetLmInfoAsync(
@@ -197,7 +199,8 @@ namespace EsmTspiot.Shared.Services
             string requestBody,
             string requestBodyForLog,
             CancellationToken cancellationToken,
-            bool acceptJson = false)
+            bool acceptJson = false,
+            string[] sensitiveValues = null)
         {
             ApiResponse result = new ApiResponse
             {
@@ -259,6 +262,14 @@ namespace EsmTspiot.Shared.Services
                 result.DecodedMessage = TspiotErrorDecoder.DecodeConnectionFailure();
             }
 
+            if (sensitiveValues != null)
+            {
+                result.RequestBody = SensitiveDataMasker.Mask(result.RequestBody, sensitiveValues);
+                result.ReasonPhrase = SensitiveDataMasker.Mask(result.ReasonPhrase, sensitiveValues);
+                result.ResponseBody = SensitiveDataMasker.Mask(result.ResponseBody, sensitiveValues);
+                // Маскируем до ограничения длины декодером, чтобы не оставить обрезанный секрет.
+                result.DecodedMessage = TspiotErrorDecoder.Decode(result.StatusCode, result.ResponseBody);
+            }
             return result;
         }
 

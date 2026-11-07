@@ -1,12 +1,16 @@
 # Мульти-ККТ в ЕСМ/ТС ПИоТ
 
+Эта ветка содержит **11.3.27.0-test**, локальную тестовую сборку нового поиска ККТ
+и общего окна настройки ЛМ ЧЗ. Она не опубликована. Порядок проверки описан в
+[инструкции тестовой версии](docs/testing/11.3.27.0-test.md).
+
 [![CI](https://github.com/jadieify-hub/esm-tspiot-multi-kkt-tool/actions/workflows/ci.yml/badge.svg)](https://github.com/jadieify-hub/esm-tspiot-multi-kkt-tool/actions/workflows/ci.yml)
 
 Windows-приложение для регистрации одной или нескольких ККТ в ЕСМ/ТС ПИоТ, настройки независимых контроллеров и ЛМ ЧЗ, а также безопасного удаления созданных экземпляров.
 
 ![Автоматическая настройка, FMU-API и Frontol](docs/images/automatic-setup.png)
 
-Текущая версия — **11.3.26.0**.
+Опубликованная стабильная версия — **11.3.26.0**.
 
 [Скачать полный ZIP](https://github.com/jadieify-hub/esm-tspiot-multi-kkt-tool/releases/tag/v11.3.26.0) · [Инструкция оператора](INSTRUCTION_FOR_DUMMIES.md) · [Изменения](docs/releases/11.3.26.0.md) · [Документация](docs/README.md)
 

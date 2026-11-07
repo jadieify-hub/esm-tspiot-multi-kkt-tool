@@ -82,18 +82,25 @@ $stagedMain = Join-Path $stageRoot "MultiKKT-ESM-TSPioT.exe"
 $stagedHelper = Join-Path $stageRoot "Provisioner\EsmTspiot.ServiceProvisioner.exe"
 
 Copy-RequiredFile $sourceMain $stagedMain
-$productVersion = (Get-Item -LiteralPath $stagedMain).VersionInfo.FileVersion
+$productInfo = (Get-Item -LiteralPath $stagedMain).VersionInfo
+$productVersion = $productInfo.FileVersion
 if (-not ($productVersion -match "^[0-9]+(\.[0-9]+){3}$")) {
     throw "Unexpected main application version: $productVersion"
 }
-$zipPath = Join-Path $releaseRoot ("MultiKKT-ESM-TSPioT-" + $productVersion + ".zip")
-$outerSumsPath = Join-Path $releaseRoot ("SHA256SUMS-MultiKKT-" + $productVersion + ".txt")
+$isTestBuild = $productInfo.ProductVersion -like '*-test*'
+$packageVersion = $productVersion
+if ($isTestBuild) { $packageVersion += '-test' }
+$zipPath = Join-Path $releaseRoot ("MultiKKT-ESM-TSPioT-" + $packageVersion + ".zip")
+$outerSumsPath = Join-Path $releaseRoot ("SHA256SUMS-MultiKKT-" + $packageVersion + ".txt")
 Assert-ChildPath $releaseRoot $zipPath
 Assert-ChildPath $releaseRoot $outerSumsPath
 Copy-RequiredFile $sourceShared (Join-Path $stageRoot "EsmTspiot.Shared.dll")
 Copy-RequiredFile $fieldGuide (Join-Path $stageRoot "FIELD_TEST.md")
 Copy-RequiredFile (Join-Path $repositoryRoot "INSTRUCTION_FOR_DUMMIES.md") (Join-Path $stageRoot "INSTRUCTION_FOR_DUMMIES.txt")
 Copy-RequiredFile (Join-Path $repositoryRoot "LICENSE") (Join-Path $stageRoot "LICENSE.txt")
+if ($isTestBuild) {
+    Copy-RequiredFile (Join-Path $repositoryRoot ("docs\testing\" + $packageVersion + ".md")) (Join-Path $stageRoot "TESTING.md")
+}
 
 $helperClosure = @(
     Get-Item -LiteralPath $sourceHelper
@@ -121,7 +128,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $readme = @"
-Мульти-ККТ в ЕСМ/ТС ПИоТ — компактная поставка, версия $productVersion
+Мульти-ККТ в ЕСМ/ТС ПИоТ — компактная поставка, версия $packageVersion
 
 Разработчик: Руслан Керусов
 Издатель и владелец: KRS
@@ -142,7 +149,8 @@ $readme = @"
 не переустанавливает ЕСМ/ЛМ и не удаляет созданные службы.
 
 Важно
-- Для обоих режимов нужны ЕСМ/ТС ПИоТ и официальный MSI ЛМ ЧЗ от ЦРПТ.
+- Для обоих режимов нужен ЕСМ/ТС ПИоТ. Официальный MSI ЛМ ЧЗ от ЦРПТ нужен
+  только при установке локальных ЛМ; для существующих удалённых ЛМ не требуется.
   Для обычного режима также нужен штатно установленный ЕСП Контроллер ЛМ ЧЗ.
 - Режим FMU-API пропускает контроллеры, но не ЕСМ или ЛМ ЧЗ.
   Сам FMU-API и бизнес-инициализация ЛМ настраиваются отдельно.
@@ -204,6 +212,7 @@ $expectedExact = @(
     "THIRD-PARTY-NOTICES.txt"
 )
 $expectedExact += @($helperClosure | ForEach-Object { "Provisioner/" + $_.Name })
+if ($isTestBuild) { $expectedExact += 'TESTING.md' }
 $actualBeforeSums = @(Get-ChildItem -LiteralPath $stageRoot -Recurse -File | ForEach-Object { Get-StageRelativePath $_.FullName } | Sort-Object)
 $unexpected = @($actualBeforeSums | Where-Object { $_ -notin $expectedExact })
 $missing = @($expectedExact | Where-Object { $_ -notin $actualBeforeSums })
@@ -224,7 +233,7 @@ foreach ($file in @(Get-ChildItem -LiteralPath $stageRoot -Recurse -File | Sort-
 $previousCompatLayer = $env:__COMPAT_LAYER
 $env:__COMPAT_LAYER = 'RunAsInvoker'
 try {
-    $smoke = Start-Process -FilePath $stagedMain -WorkingDirectory $stageRoot -PassThru
+    $smoke = Start-Process -FilePath $stagedMain -WorkingDirectory $stageRoot -WindowStyle Hidden -PassThru
 }
 finally {
     $env:__COMPAT_LAYER = $previousCompatLayer
@@ -233,9 +242,8 @@ try {
     if (-not $smoke.WaitForInputIdle(10000)) {
         throw "Compact Legacy smoke did not become interactive."
     }
-    # The main window is created shortly after the message loop becomes idle;
-    # on a busy build machine that takes over a second, so poll instead of
-    # sampling once.
+    # Скрытый дымовой запуск проверяет загрузку поставки. Видимость и
+    # содержимое главного окна отдельно проверяет verify_ui_layout.ps1.
     $smokeDeadline = [DateTime]::UtcNow.AddSeconds(15)
     $smokeReady = $false
     while ([DateTime]::UtcNow -lt $smokeDeadline) {
@@ -244,13 +252,13 @@ try {
         if ($smoke.HasExited) {
             throw "Compact Legacy smoke exited during startup with code $($smoke.ExitCode)."
         }
-        if ($smoke.Responding -and $smoke.MainWindowHandle -ne 0) {
+        if ($smoke.Responding) {
             $smokeReady = $true
             break
         }
     }
     if (-not $smokeReady) {
-        throw "Compact Legacy smoke did not open a responsive main window within 15 seconds."
+        throw "Compact Legacy smoke did not become responsive within 15 seconds."
     }
 }
 finally {
@@ -258,6 +266,7 @@ finally {
         $null = $smoke.CloseMainWindow()
         if (-not $smoke.WaitForExit(3000)) {
             Stop-Process -Id $smoke.Id -Force
+            if (-not $smoke.WaitForExit(5000)) { throw "Compact smoke process did not exit." }
         }
     }
 }

@@ -441,14 +441,13 @@ namespace EsmTspiot.WinForms.Shared
             _lastAutomaticLocalModulesReady = 0;
             _lastAutomaticLocalModulesFailed = 0;
             _lastAutomaticLocalModuleLines.Clear();
-            LocalModuleMsiOperatorInventorySnapshot inventory =
-                CreateLocalModuleInventoryReader().Read();
-            LocalModuleMsiPlan plan = LocalModuleMsiPlanner.Build(
-                localLmKkts,
-                inventory.Assignments,
-                inventory.BaseInventory,
-                null,
-                inventory.Listeners);
+            LocalModuleMsiOperatorInventorySnapshot inventory = localLmKkts.Count == 0
+                ? new LocalModuleMsiOperatorInventorySnapshot()
+                : CreateLocalModuleInventoryReader().Read();
+            LocalModuleMsiPlan plan = localLmKkts.Count == 0
+                ? new LocalModuleMsiPlan()
+                : LocalModuleMsiPlanner.Build(localLmKkts, inventory.Assignments,
+                    inventory.BaseInventory, null, inventory.Listeners);
             if (!plan.IsValid)
                 throw new InvalidOperationException(
                     "Не удалось построить план ЛМ ЧЗ: " +
@@ -555,7 +554,7 @@ namespace EsmTspiot.WinForms.Shared
                 ? fmuApiMode
                     ? "Подготовка FMU-API завершена: ККТ зарегистрированы, ЛМ ЧЗ готовы. " +
                         "FMU-API и инициализация ЛМ настраиваются отдельно."
-                    : "Настройка завершена: ЛМ ЧЗ и контроллеры установлены, " +
+                    : "Настройка завершена: размещение ЛМ ЧЗ учтено, контроллеры настроены, " +
                         "параметры привязки применены. Готовность ЛМ проверяется отдельно."
                 : (fmuApiMode ? "Подготовка FMU-API не завершена: "
                     : "Настройка завершена частично: ") +

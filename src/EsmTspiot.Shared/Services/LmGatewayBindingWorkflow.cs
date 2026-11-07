@@ -132,6 +132,7 @@ namespace EsmTspiot.Shared.Services
 
                     // Запись привязки и готовность ЛМ — разные операции.
                     // /api/v2/info читается только по запросу диагностики.
+                    response = CreateSafeResponse(response, credentials);
                     LmGatewayBindingResult bindingResult =
                         BuildTransportResult(item, response);
                     outcome.Results.Add(bindingResult);
@@ -141,7 +142,7 @@ namespace EsmTspiot.Shared.Services
                         plan.Items.Count,
                         bindingResult,
                         GetStage(bindingResult.Status),
-                        CreateSafeResponse(response));
+                        response);
                 }
                 finally
                 {
@@ -262,23 +263,25 @@ namespace EsmTspiot.Shared.Services
             });
         }
 
-        private static ApiResponse CreateSafeResponse(ApiResponse response)
+        private static ApiResponse CreateSafeResponse(
+            ApiResponse response, LmGatewayCredentials credentials)
         {
             if (response == null)
             {
                 return null;
             }
 
+            string[] sensitiveValues = { credentials.Login, credentials.Password };
             return new ApiResponse
             {
                 Method = response.Method,
                 Url = response.Url,
-                RequestBody = SensitiveDataMasker.Mask(response.RequestBody),
+                RequestBody = SensitiveDataMasker.Mask(response.RequestBody, sensitiveValues),
                 StatusCode = response.StatusCode,
-                ReasonPhrase = SensitiveDataMasker.Mask(response.ReasonPhrase),
-                ResponseBody = SensitiveDataMasker.Mask(response.ResponseBody),
+                ReasonPhrase = SensitiveDataMasker.Mask(response.ReasonPhrase, sensitiveValues),
+                ResponseBody = SensitiveDataMasker.Mask(response.ResponseBody, sensitiveValues),
                 IsSuccess = response.IsSuccess,
-                DecodedMessage = SensitiveDataMasker.Mask(response.DecodedMessage),
+                DecodedMessage = SensitiveDataMasker.Mask(response.DecodedMessage, sensitiveValues),
                 IsConnectionFailure = response.IsConnectionFailure,
                 IsTlsCertificateFailure = response.IsTlsCertificateFailure
             };

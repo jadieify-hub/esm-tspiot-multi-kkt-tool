@@ -22,6 +22,8 @@
     <Compile Include="..\EsmTspiot.WinForms.Shared\Program.cs" Link="Program.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\AssemblyInfo.cs" Link="Properties\AssemblyInfo.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\MainForm.cs" Link="MainForm.cs" />
+    <Compile Include="..\EsmTspiot.WinForms.Shared\MainForm.ManualDiscovery.cs" Link="MainForm.ManualDiscovery.cs" />
+    <Compile Include="..\EsmTspiot.WinForms.Shared\LmSetupDialog.cs" Link="LmSetupDialog.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayPage.cs" Link="LmGatewayPage.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayPage.Layout.cs" Link="LmGatewayPage.Layout.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayPage.Services.cs" Link="LmGatewayPage.Services.cs" />

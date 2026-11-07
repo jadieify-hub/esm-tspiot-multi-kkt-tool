@@ -85,6 +85,7 @@ namespace EsmTspiot.Shared.Tests
             Run("LM gateway API uses documented PUT contract", LmGatewayApiUsesDocumentedPutContract);
             Run("LM gateway API escapes instance id", LmGatewayApiEscapesInstanceId);
             Run("LM gateway API response stores redacted request", LmGatewayApiResponseStoresRedactedRequest);
+            Run("LM gateway HTTP failure hides custom credentials end to end", LmGatewayHttpFailureHidesCustomCredentials);
             Run("LM info API uses the current documented endpoint", LmInfoApiUsesCurrentDocumentedEndpoint);
             Run("LM info API classifies TLS certificate failure", LmInfoApiClassifiesTlsCertificateFailure);
             Run("LM readback explains a rejected TLS certificate", LmReadbackExplainsRejectedTlsCertificate);
@@ -109,6 +110,7 @@ namespace EsmTspiot.Shared.Tests
             Run("Direct controller planner skips foreign names and ports", DirectControllerPlannerSkipsForeignNamesAndPorts);
             Run("Direct controller planner reports ordinal exhaustion", DirectControllerPlannerReportsOrdinalExhaustion);
             Run("Direct controller planner tolerates an absent saved KKT", DirectControllerPlannerToleratesAbsentSavedKkt);
+            Run("Direct controller planner configures B after saved base A", DirectControllerPlannerConfiguresBAfterSavedBaseA);
             Run("Direct controller planner never shares one LM port between INNs", DirectControllerPlannerNeverSharesLocalModulePort);
             Run("MSI local module planner groups KKT by INN", MsiLocalModulePlannerGroupsKktByInn);
             Run("LM server keys never collide with INN and plan in number order", LocalModuleServerKeysPlanInNumberOrder);
@@ -1253,6 +1255,65 @@ namespace EsmTspiot.Shared.Tests
             AssertFalse(response.RequestBody.Contains(password), "ApiResponse must not retain the raw password.");
         }
 
+        private static void LmGatewayHttpFailureHidesCustomCredentials()
+        {
+            const string login = "cashier-custom-operator";
+            const string password = "cashier-custom-operator-terminal-\"secret\\value";
+            RecordingHttpHandler handler = new RecordingHttpHandler
+            {
+                ResponseStatusCode = HttpStatusCode.InternalServerError,
+                ResponseBody = "{\"login\":" + JsonHelper.Serialize(login) +
+                    ",\"password\":" + JsonHelper.Serialize(password) +
+                    ",\"error\":" + JsonHelper.Serialize("Rejected " + login + " using " + password) + "}"
+            };
+            TspiotApiClient client = new TspiotApiClient(new HttpClient(handler));
+            ApiResponse response = client.ConfigureLmGatewayAsync(
+                "http://127.0.0.1:51077", "00105700000001",
+                new LmConnectionRequest
+                {
+                    Address = "127.0.0.1", Port = 50063,
+                    Login = login, Password = password
+                }, CancellationToken.None).Result;
+
+            AssertEqual(500, response.StatusCode, "The failure must retain its HTTP status.");
+            AssertContains(handler.Requests[0].Body, login);
+            AssertContains(handler.Requests[0].Body, JsonHelper.Serialize(password));
+            AssertLmExchangeHidesCredentials(response, login, password);
+            AssertContains(response.ResponseBody, "\"error\":\"Rejected *** using ***\"");
+
+            List<LmGatewayBindingProgress> progressItems = new List<LmGatewayBindingProgress>();
+            LmGatewayBindingOutcome outcome = new LmGatewayBindingWorkflow(client).ExecuteAsync(
+                "http://127.0.0.1:51077", CreateValidLmBindingPlan(1),
+                delegate { return new LmGatewayCredentials { Login = login, Password = password }; },
+                delegate(LmGatewayBindingProgress progress) { progressItems.Add(progress); },
+                CancellationToken.None).Result;
+
+            AssertEqual(LmGatewayBindingStatus.BindingFailed, outcome.Results[0].Status,
+                "An HTTP failure must remain a failed binding.");
+            AssertFalse(outcome.Results[0].Details.Contains(login), "Result must hide the custom login.");
+            AssertFalse(outcome.Results[0].Details.Contains(password), "Result must hide the custom password.");
+            bool sawResponse = false;
+            for (int index = 0; index < progressItems.Count; index++)
+            {
+                LmGatewayBindingProgress progress = progressItems[index];
+                AssertFalse(progress.Message.Contains(login), "Progress must hide the custom login.");
+                AssertFalse(progress.Message.Contains(password), "Progress must hide the custom password.");
+                if (progress.Response == null) continue;
+                sawResponse = true;
+                AssertLmExchangeHidesCredentials(progress.Response, login, password);
+            }
+            AssertTrue(sawResponse, "Failed-exchange logging must receive a safe response.");
+        }
+
+        private static void AssertLmExchangeHidesCredentials(
+            ApiResponse response, string login, string password)
+        {
+            string text = response.RequestBody + response.ResponseBody +
+                response.ReasonPhrase + response.DecodedMessage;
+            AssertFalse(text.Contains(login), "The API exchange must hide the exact custom login.");
+            AssertFalse(text.Contains(password), "The API exchange must hide the exact custom password.");
+        }
+
         private static void LmInfoApiUsesCurrentDocumentedEndpoint()
         {
             const string pass = "lm-info-secret";
@@ -1918,6 +1979,53 @@ namespace EsmTspiot.Shared.Tests
                 "Номер отсутствующей ККТ остаётся занятым за ней.");
         }
 
+        private static void DirectControllerPlannerConfiguresBAfterSavedBaseA()
+        {
+            List<DirectControllerServiceInventoryItem> services =
+                new List<DirectControllerServiceInventoryItem>
+                {
+                    new DirectControllerServiceInventoryItem
+                    {
+                        ServiceName = "esm-lm-controller", IsVerifiedOfficial = true
+                    }
+                };
+            DirectControllerPlan first = DirectControllerPlanner.Build(
+                new List<LmGatewayKkt> { CreateLmKkt("00105700000001", "1234567894") },
+                null, services, null);
+            AssertTrue(first.IsValid, string.Join("; ", first.ValidationMessages));
+            List<LmGatewayKkt> selected = new List<LmGatewayKkt>
+            {
+                CreateLmKkt("00105700000002", "7707083893")
+            };
+
+            DirectControllerPlan second = DirectControllerPlanner.Build(
+                selected, first.Assignments, services, null);
+
+            AssertTrue(second.IsValid, string.Join("; ", second.ValidationMessages));
+            AssertEqual(1, second.Assignments.Count, "Only selected B may enter the mutation plan.");
+            AssertEqual("00105700000002", second.Assignments[0].KktSerial,
+                "Saved base A must stay outside the mutation plan.");
+            AssertEqual(2, second.Assignments[0].Ordinal, "Saved A still reserves ordinal one.");
+            AssertEqual(6995, second.Assignments[0].TargetLocalModulePort,
+                "Saved A still reserves its local-module port.");
+
+            services[0].IsVerifiedOfficial = false;
+            AssertFalse(DirectControllerPlanner.Build(
+                selected, first.Assignments, services, null).IsValid,
+                "An unverified base must block the scoped plan.");
+            services[0].IsVerifiedOfficial = true;
+            AssertFalse(DirectControllerPlanner.Build(
+                selected, first.Assignments, services,
+                new List<TcpListenerSnapshotItem>
+                {
+                    new TcpListenerSnapshotItem { Port = 50063, OwnerServiceName = "foreign" }
+                }).IsValid, "A conflicting base port must block the scoped plan.");
+            first.Assignments[0].ServiceName = "foreign";
+            AssertFalse(DirectControllerPlanner.Build(
+                selected, first.Assignments, services, null).IsValid,
+                "Only a canonical saved base may allow a scoped plan.");
+        }
+
         private static void DirectControllerPlannerSkipsForeignNamesAndPorts()
         {
             DirectControllerPlan plan = DirectControllerPlanner.Build(
@@ -2034,6 +2142,13 @@ namespace EsmTspiot.Shared.Tests
                 File.AppendAllText(Path.Combine(directory, "remote.txt"),
                     "garbage line\r\n7707083894 127.0.0.1:5995\r\n");
                 AssertEqual(2, store.Load().Count, "invalid lines are ignored");
+                var strictLoad = typeof(RemoteLocalModuleStore).GetMethod("LoadStrict");
+                AssertTrue(strictLoad != null, "Mutation paths require a strict reader to avoid overwriting malformed settings.");
+                bool strictRefused = false;
+                try { strictLoad.Invoke(store, null); }
+                catch (System.Reflection.TargetInvocationException ex)
+                { strictRefused = ex.InnerException is InvalidDataException; }
+                AssertTrue(strictRefused, "Strict loading must reject malformed persisted endpoints before mutation.");
                 saved["7707083893"] = "localhost:6995";
                 bool refused = false;
                 try { store.Save(saved); }
@@ -3741,15 +3856,16 @@ namespace EsmTspiot.Shared.Tests
 
         private static void LmBindingWorkflowProgressNeverContainsPassword()
         {
+            const string login = "workflow-custom-operator";
             const string password = "workflow-secret-value";
             FakeTspiotApiClient api = new FakeTspiotApiClient();
             api.LmGatewayResponses.Enqueue(new ApiResponse
             {
-                IsSuccess = true,
-                StatusCode = 200,
-                RequestBody = "{\"password\":\"" + password + "\"}",
-                ResponseBody = "{\"password\":\"" + password + "\"}",
-                DecodedMessage = "password=" + password
+                IsSuccess = false,
+                StatusCode = 500,
+                RequestBody = "{\"login\":\"" + login + "\",\"password\":\"" + password + "\"}",
+                ResponseBody = "Rejected " + login + " using " + password,
+                DecodedMessage = "Rejected " + login + " using " + password
             });
             List<LmGatewayBindingProgress> progressItems = new List<LmGatewayBindingProgress>();
             LmGatewayBindingWorkflow workflow = new LmGatewayBindingWorkflow(api);
@@ -3757,7 +3873,7 @@ namespace EsmTspiot.Shared.Tests
             LmGatewayBindingOutcome outcome = workflow.ExecuteAsync(
                 "http://127.0.0.1:51077",
                 CreateValidLmBindingPlan(1),
-                delegate { return new LmGatewayCredentials { Login = "operator", Password = password }; },
+                delegate { return new LmGatewayCredentials { Login = login, Password = password }; },
                 delegate(LmGatewayBindingProgress progress) { progressItems.Add(progress); },
                 CancellationToken.None).Result;
 
@@ -3774,8 +3890,10 @@ namespace EsmTspiot.Shared.Tests
                         (progress.Response.DecodedMessage ?? string.Empty);
                 }
                 AssertFalse(progressText.Contains(password), "Progress object must not retain the password.");
+                AssertFalse(progressText.Contains(login), "Progress object must not retain the login.");
             }
             AssertFalse(outcome.Results[0].Details.Contains(password), "Result details must not retain the password.");
+            AssertFalse(outcome.Results[0].Details.Contains(login), "Result details must not retain the login.");
         }
 
         private static LmGatewayBindingPlan CreateValidLmBindingPlan(int count)
@@ -5055,7 +5173,7 @@ namespace EsmTspiot.Shared.Tests
         {
             string escapedPassword = "alpha\\\"quote\\\\path\\nomega\\u041f";
             string source =
-                "{\"password\":\"" + escapedPassword + "\"," +
+                "{\"login\":\"custom-operator\",\"password\":\"" + escapedPassword + "\"," +
                 "\"NeWpAsSwOrD\":\"new-value\"," +
                 "\"token\":\"token-value\"," +
                 "\"secret\":\"secret-value\"," +
@@ -5065,6 +5183,7 @@ namespace EsmTspiot.Shared.Tests
 
             string masked = SensitiveDataMasker.Mask(source);
 
+            AssertContains(masked, "\"login\":\"***\"");
             AssertContains(masked, "\"password\":\"***\"");
             AssertContains(masked, "\"NeWpAsSwOrD\":\"***\"");
             AssertContains(masked, "\"token\":\"***\"");
@@ -5149,7 +5268,7 @@ namespace EsmTspiot.Shared.Tests
                 "YAML block secret body must be removed.");
             AssertFalse(masked.IndexOf("second-line", StringComparison.Ordinal) >= 0,
                 "Every YAML block secret line must be removed.");
-            AssertContains(masked, "login: admin");
+            AssertContains(masked, "login: ***");
             AssertContains(masked, "gRPCPort: 50063");
         }
 
@@ -5180,7 +5299,7 @@ namespace EsmTspiot.Shared.Tests
         private static void SensitiveMaskerPreservesOrdinaryFields()
         {
             string source =
-                "{\"address\":\"127.0.0.1\",\"port\":50063,\"login\":\"operator\"," +
+                "{\"address\":\"127.0.0.1\",\"port\":50063," +
                 "\"kktSerial\":\"test-serial\",\"message\":\"Обычный русский текст\"}";
 
             string masked = SensitiveDataMasker.Mask(source);
@@ -6515,10 +6634,12 @@ namespace EsmTspiot.Shared.Tests
             {
                 Requests = new List<RecordedHttpRequest>();
                 ResponseBody = "{}";
+                ResponseStatusCode = HttpStatusCode.OK;
             }
 
             public IList<RecordedHttpRequest> Requests { get; private set; }
             public string ResponseBody { get; set; }
+            public HttpStatusCode ResponseStatusCode { get; set; }
 
             protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
             {
@@ -6536,7 +6657,7 @@ namespace EsmTspiot.Shared.Tests
                         : string.Join(",", request.Headers.Accept)
                 });
 
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                return Task.FromResult(new HttpResponseMessage(ResponseStatusCode)
                 {
                     Content = new StringContent(ResponseBody ?? string.Empty)
                 });

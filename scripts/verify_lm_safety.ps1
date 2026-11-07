@@ -178,7 +178,21 @@ function Test-AllowedSecretHit {
     }
     if ($relative -eq "src/EsmTspiot.Shared/Services/TspiotApiClient.cs") {
         # Reviewed: the per-request deadline is a cancellation token, not a secret.
-        return $text -match 'deadline\.Token'
+        return $text -match 'deadline\.Token' -or
+            $text -match '^\s*request == null \? null : new\[\] \{ request\.Login, request\.Password \}\);\s*$'
+    }
+    if ($relative -eq "src/EsmTspiot.WinForms.Shared/LmGatewayPage.RemoteLm.cs") {
+        # Reviewed: copies live only in the session dictionary, never in the endpoint file.
+        return $text -match '^\s*(return )?new LmGatewayCredentials \{ Login = value\.Login, Password = value\.Password \};\s*$'
+    }
+    if ($relative -eq "src/EsmTspiot.WinForms.Shared/LmSetupDialog.cs") {
+        # Reviewed input, masking and disposal of session-only credentials.
+        return $text -match '^\s*fields\.Password\.(Clear\(\);|UseSystemPasswordChar = true;|Text = value\.Password;)\s*$' -or
+            $text -match '^\s*value\.Password = string\.Empty;\s*$' -or
+            $text -match '^\s*Login = fields\.Login\.Text\.Trim\(\), Password = fields\.Password\.Text\s*$' -or
+            $text -match '^\s*string\.IsNullOrWhiteSpace\(fields\.Password\.Text\)\)\s*$' -or
+            $text -match '^\s*internal readonly TextBox Password = new TextBox\(\);\s*$' -or
+            $text -match '^\s*AddField\(table, 2, 3, .*fields\.Password, "lm-password-" \+ fields\.Inn\);\s*$'
     }
     if ($relative -eq "src/EsmTspiot.WinForms.Shared/LmGatewayBindingDialog.cs") {
         return $text -match 'Password\s*=\s*_passwordTextBox\.Text|_passwordTextBox\.Text\s*=\s*credentials\.Password|credentials\.Password\s*=\s*string\.Empty'

@@ -104,6 +104,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Managed gateway batch operation is retired", ManagedGatewayBatchOperationIsRetired);
             Run("Journal store keeps independent rows per KKT", JournalStoreKeepsIndependentRowsPerKkt);
             Run("Direct controller protocol v2 accepts canonical batch", DirectControllerProtocolV2AcceptsCanonicalBatch);
+            Run("Direct controller protocol accepts selected B after base A", DirectControllerProtocolAcceptsSelectedBAfterBaseA);
             Run("Direct controller protocol v2 rejects stale schema and duplicates", DirectControllerProtocolV2RejectsStaleSchemaAndDuplicates);
             Run("Direct controller protocol exposes no paths commands or secrets", DirectControllerProtocolExposesNoPathsCommandsOrSecrets);
             Run("Direct controller SCM definition uses only verified vendor binary", DirectControllerScmDefinitionUsesOnlyVerifiedVendorBinary);
@@ -5450,6 +5451,26 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     original,
                     CanonicalLmPlanHasher.Compute(request)),
                 "Every direct assignment field must participate in the canonical hash.");
+        }
+
+        private static void DirectControllerProtocolAcceptsSelectedBAfterBaseA()
+        {
+            LmServiceProvisioningBatchRequest first =
+                CreateDirectControllerRequest(1, LmServiceOperation.EnsureDirectControllers);
+            AssertTrue(ProvisioningRequestValidator.Validate(first).IsValid,
+                "The first setup keeps the canonical base assignment.");
+            LmServiceProvisioningBatchRequest second =
+                CreateDirectControllerRequest(2, LmServiceOperation.EnsureDirectControllers);
+            second.DirectControllers.RemoveAt(0);
+            second.PlanHash = CanonicalLmPlanHasher.Compute(second);
+
+            ValidationResult validation = ProvisioningRequestValidator.Validate(second);
+
+            AssertTrue(validation.IsValid, validation.JoinMessages());
+            AssertEqual(1, second.DirectControllers.Count,
+                "A scoped request must not require unchanged base A in its mutation batch.");
+            AssertEqual(2, second.DirectControllers[0].Ordinal,
+                "Selected B retains its own clone ordinal.");
         }
 
         private static void DirectControllerProtocolV2RejectsStaleSchemaAndDuplicates()

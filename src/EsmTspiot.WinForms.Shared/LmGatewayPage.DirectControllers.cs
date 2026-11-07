@@ -196,7 +196,13 @@ namespace EsmTspiot.WinForms.Shared
                     await _bindingWorkflow.ExecuteAsync(
                         _baseUrlProvider(),
                         bindingPlan,
-                        delegate { return LmGatewayCredentialDefaults.Create(); },
+                        delegate(string serial)
+                        {
+                            for (int kktIndex = 0; kktIndex < registeredKkts.Count; kktIndex++)
+                                if (registeredKkts[kktIndex].KktSerial == serial)
+                                    return GetLmCredentials(registeredKkts[kktIndex].KktInn);
+                            throw new InvalidOperationException("Для привязки не найден ИНН выбранной ККТ.");
+                        },
                         delegate(LmGatewayBindingProgress progress)
                         {
                             if (progress == null) return;

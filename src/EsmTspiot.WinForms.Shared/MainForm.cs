@@ -13,10 +13,11 @@ using EsmTspiot.Shared.Validation;
 
 namespace EsmTspiot.WinForms.Shared
 {
-    public sealed class MainForm : Form
+    public sealed partial class MainForm : Form
     {
         private const int MaximumVisibleLogLength = 1500000;
-        private readonly TspiotApiClient _client = new TspiotApiClient();
+        private readonly TspiotApiClient _client;
+        private readonly IKktConnectionProvider _kktConnections;
         private readonly BulkRegistrationWorkflow _bulkWorkflow;
         private readonly KktDeletionWorkflow _deletionWorkflow;
         private readonly LmGatewayPage _lmGatewayPage;
@@ -75,8 +76,16 @@ namespace EsmTspiot.WinForms.Shared
         private bool _supportDialogOffered;
         private System.Threading.CancellationTokenSource _automaticCancellation;
 
-        public MainForm()
+        public MainForm() : this(new TspiotApiClient(), new AtolFptrConnectionProvider())
         {
+        }
+
+        public MainForm(TspiotApiClient client, IKktConnectionProvider connections)
+        {
+            if (client == null) throw new ArgumentNullException("client");
+            if (connections == null) throw new ArgumentNullException("connections");
+            _client = client;
+            _kktConnections = connections;
             _bulkWorkflow = new BulkRegistrationWorkflow(_client);
             _deletionWorkflow = new KktDeletionWorkflow(_client);
             _lmGatewayPage = new LmGatewayPage(
@@ -87,7 +96,7 @@ namespace EsmTspiot.WinForms.Shared
             _lmGatewayPage.OperationStateChanged += OnLmGatewayOperationStateChanged;
             _lmGatewayPage.InstallerSelectionChanged += UpdateAutomaticInstallerSelection;
             _lmGatewayPage.ContourConfirmed += delegate { OfferSupportDevelopment(true); };
-            Text = "Управление ККТ в ЕСМ/ТС ПИоТ";
+            Text = "MultiKKT — тестовая версия 11.3.27.0";
             // Таблица ЛМ ЧЗ шире прежнего окна: её колонки требуют около
             // 925 пикселей, и на 780 оператору приходилось растягивать окно
             // руками при каждом запуске.
@@ -166,28 +175,12 @@ namespace EsmTspiot.WinForms.Shared
                 _workspaceTabs.SelectedTab = _instancesTab;
                 await RunButtonActionAsync(CheckCurrentInstancesAsync);
             };
-            ToolStripMenuItem fillNext = new ToolStripMenuItem("Выбрать следующую ККТ");
-            fillNext.Click += async delegate
-            {
-                _workspaceTabs.SelectedTab = _manualKktTab;
-                await RunButtonActionAsync(LoadDkktDataAsync);
-            };
-            ToolStripMenuItem automatic = new ToolStripMenuItem("Автоматическая настройка");
-            automatic.Click += delegate { _workspaceTabs.SelectedTab = _automationTab; };
-            ToolStripMenuItem lmGateways = new ToolStripMenuItem("ЛМ ЧЗ");
-            lmGateways.Click += delegate { _workspaceTabs.SelectedTab = _lmGatewayTab; };
             ToolStripMenuItem lmServer = new ToolStripMenuItem("Сервер ЛМ ЧЗ...");
             lmServer.Click += delegate { _lmGatewayPage.ShowLocalModuleServer(this); };
-            ToolStripMenuItem lmRemote = new ToolStripMenuItem("ЛМ ЧЗ на другом компьютере...");
-            lmRemote.Click += delegate { _lmGatewayPage.ShowRemoteLocalModules(this); };
             _deleteMenuItem.Enabled = false;
             _deleteMenuItem.Click += async delegate { await RunButtonActionAsync(DeleteSelectedKktAsync); };
             _operationsMenuItem.DropDownItems.Add(refresh);
-            _operationsMenuItem.DropDownItems.Add(fillNext);
-            _operationsMenuItem.DropDownItems.Add(automatic);
-            _operationsMenuItem.DropDownItems.Add(lmGateways);
             _operationsMenuItem.DropDownItems.Add(lmServer);
-            _operationsMenuItem.DropDownItems.Add(lmRemote);
             _operationsMenuItem.DropDownItems.Add(new ToolStripSeparator());
             _operationsMenuItem.DropDownItems.Add(_deleteMenuItem);
 
@@ -317,17 +310,19 @@ namespace EsmTspiot.WinForms.Shared
             root.Dock = DockStyle.Fill;
             root.AutoScroll = true;
             root.ColumnCount = 1;
-            root.RowCount = 5;
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            root.RowCount = 6;
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-            root.Controls.Add(BuildKktGroup(), 0, 0);
-            root.Controls.Add(BuildPortsGroup(), 0, 1);
-            root.Controls.Add(BuildManualKktActionsGroup(), 0, 2);
-            root.Controls.Add(BuildRecoveryGroup(), 0, 3);
-            root.Controls.Add(BuildManualInstancesGroup(), 0, 4);
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            root.Controls.Add(BuildDiscoveredKktsPanel(), 0, 0);
+            root.Controls.Add(BuildKktGroup(), 0, 1);
+            root.Controls.Add(BuildPortsGroup(), 0, 2);
+            root.Controls.Add(BuildManualSelectionActions(), 0, 3);
+            root.Controls.Add(BuildManualFallbackPanel(), 0, 4);
+            root.Controls.Add(BuildRecoveryGroup(), 0, 5);
             return root;
         }
 
@@ -398,8 +393,8 @@ namespace EsmTspiot.WinForms.Shared
             _manualNextStepLabel.TextAlign = ContentAlignment.MiddleLeft;
             _manualNextStepLabel.Margin = new Padding(0, 6, 0, 2);
             _manualNextStepLabel.Text =
-                "После шага 3 перейдите на вкладку «ЛМ ЧЗ» — там создаются " +
-                "независимые контроллеры. ЛМ ЧЗ устанавливается позже.";
+                "Отдельные операции для ручного ввода и восстановления. " +
+                "После регистрации настройка подключения доступна на вкладке «ЛМ ЧЗ».";
             panel.Controls.Add(_manualNextStepLabel, 0, 1);
             panel.SetColumnSpan(_manualNextStepLabel, 3);
 
@@ -1184,38 +1179,6 @@ namespace EsmTspiot.WinForms.Shared
                 return;
             }
 
-            // Спрашиваем MSI ЛМ ЧЗ на старте, а не после регистрации и
-            // контроллеров: без него автомат доходил до конца и оставлял
-            // кассу без локального модуля.
-            // ЛМ на другом компьютере: нужен ли пакет, станет ясно после
-            // регистрации, когда известны ИНН; спросит вкладка «ЛМ ЧЗ».
-            if (!_lmGatewayPage.HasRemoteLocalModules &&
-                !_lmGatewayPage.RequireDotNetForLocalModule(this))
-            {
-                _automationStatusLabel.Text = "Статус: запуск отменен";
-                AppendLog(
-                    "Автоматическая настройка не запущена: не установлен " +
-                    ".NET Framework 4.8, нужный для ЛМ ЧЗ." + Environment.NewLine);
-                return;
-            }
-            if (!_lmGatewayPage.HasRemoteLocalModules &&
-                !_lmGatewayPage.RequireLocalModuleInstaller(this))
-            {
-                _automationStatusLabel.Text = "Статус: запуск отменен";
-                AppendLog(
-                    "Автоматическая настройка не запущена: не выбран " +
-                    "официальный MSI ЛМ ЧЗ." + Environment.NewLine);
-                MessageBox.Show(
-                    this,
-                    "Укажите официальный MSI ЛМ ЧЗ. Без него настройка " +
-                        "дойдёт до конца, но касса останется без локального " +
-                        "модуля.",
-                    "Автоматическая настройка",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Warning);
-                return;
-            }
-
             _automaticCancellation = new System.Threading.CancellationTokenSource();
             _automaticStopButton.Enabled = true;
             try
@@ -1227,56 +1190,10 @@ namespace EsmTspiot.WinForms.Shared
                     _automaticCancellation.Token;
                 _automationStatusLabel.Text =
                     "Статус: поиск подключенных и зарегистрированных ККТ...";
-                BulkRegistrationDiscovery discovery =
-                    await _bulkWorkflow.DiscoverAsync(
-                        baseUrl,
-                        dkktPort,
-                        HandleBulkProgress,
-                        token);
-                if (!discovery.IsValid)
-                {
-                    throw new InvalidOperationException(discovery.ErrorMessage);
-                }
-                SequentialKktRegistrationCoordinator sequentialCoordinator = null;
-                SequentialKktDiscovery sequentialDiscovery = null;
-                AutomaticRegistrationMode registrationMode =
-                    AutomaticRegistrationModeSelector.Select(discovery);
-                if (registrationMode ==
-                    AutomaticRegistrationMode.SequentialVcom)
-                {
-                    _automationStatusLabel.Text =
-                        "Статус: поочерёдная проверка VCOM АТОЛ...";
-                    sequentialCoordinator =
-                        new SequentialKktRegistrationCoordinator(
-                            _client,
-                            new AtolFptrConnectionProvider());
-                    sequentialDiscovery =
-                        await DiscoverSequentialKktsWithRetryAsync(
-                            sequentialCoordinator,
-                            baseUrl,
-                            token);
-                    if (sequentialDiscovery == null)
-                    {
-                        _automationStatusLabel.Text =
-                            "Статус: поочерёдная регистрация отменена";
-                        AppendLog(
-                            "Поочерёдная VCOM-регистрация отменена до " +
-                            "изменения следующей ККТ. Уже завершённые группы " +
-                            "не откатывались.\r\n\r\n");
-                        return;
-                    }
-                    discovery = await _bulkWorkflow.DiscoverFromDevicesAsync(
-                        baseUrl,
-                        dkktPort,
-                        CopySequentialDevices(sequentialDiscovery),
-                        HandleBulkProgress,
-                        token);
-                    if (!discovery.IsValid)
-                    {
-                        throw new InvalidOperationException(
-                            discovery.ErrorMessage);
-                    }
-                }
+                KktCandidateScan scan = await DiscoverKktCandidatesAsync(baseUrl, dkktPort, token);
+                BulkRegistrationDiscovery discovery = scan.Discovery;
+                SequentialKktRegistrationCoordinator sequentialCoordinator = scan.Coordinator;
+                SequentialKktDiscovery sequentialDiscovery = scan.Sequential;
                 AppendBulkDiscovery(discovery);
 
                 IList<LmGatewayKkt> registered =
@@ -1432,17 +1349,7 @@ namespace EsmTspiot.WinForms.Shared
                 bool controllersDeferred = true;
                 if (registeredAfter.Count > 0)
                 {
-                    DialogResult controllerChoice = fmuApiMode ? DialogResult.Yes : MessageBox.Show(
-                        this,
-                        "Регистрация ККТ завершена. Следующая фаза кратковременно " +
-                            "перезапустит службы экземпляров ЕСМ:\r\n\r\n" +
-                            "Настроить независимые контроллеры и ЛМ ЧЗ сейчас?\r\n\r\n" +
-                            "Нажмите «Нет», чтобы отложить без отката регистрации.",
-                        "Настройка контроллеров",
-                        MessageBoxButtons.YesNo,
-                        MessageBoxIcon.Warning,
-                        MessageBoxDefaultButton.Button2);
-                    controllersDeferred = controllerChoice != DialogResult.Yes;
+                    controllersDeferred = !_lmGatewayPage.PromptLmSetup(this, registeredAfter);
                     if (!controllersDeferred)
                     {
                         _workspaceTabs.SelectedTab = _lmGatewayTab;
@@ -2740,6 +2647,10 @@ namespace EsmTspiot.WinForms.Shared
         private void SetBusy(bool busy)
         {
             _busy = busy;
+            foreach (TextBox input in new[] { _baseUrlTextBox, _dkktPortTextBox, _kktSerialTextBox,
+                _fnSerialTextBox, _kktInnTextBox, _portTextBox, _softPortTextBox })
+                input.Enabled = !busy;
+            _discoveredKktsGrid.Enabled = !busy;
             for (int i = 0; i < _actionButtons.Count; i++)
             {
                 _actionButtons[i].Enabled = !busy;

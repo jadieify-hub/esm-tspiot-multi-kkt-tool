@@ -341,6 +341,9 @@ namespace EsmTspiot.WinForms.Shared
                     bool isRemoteLm = remoteLms.TryGetValue(
                         (item.Kkt.KktInn ?? string.Empty).Trim(),
                         out remoteLm);
+                    LmGatewayTarget appliedLm;
+                    _appliedLmTargets.TryGetValue(item.Kkt.KktSerial, out appliedLm);
+                    bool needsApply = !FmuApiMode && NeedsLmTargetApplication(appliedLm, remoteLm);
                     int ordinal = GetCurrentKktOrdinal(
                         displayPlan,
                         item.Kkt,
@@ -350,7 +353,9 @@ namespace EsmTspiot.WinForms.Shared
                         item.Kkt.KktSerial,
                         item.Kkt.KktInn,
                         item.Kkt.SoftPort ?? string.Empty,
-                        isRemoteLm
+                        needsApply && appliedLm != null
+                            ? appliedLm.Address + ":" + appliedLm.Port
+                            : isRemoteLm
                             ? remoteLm
                             : FmuApiMode && msiLm == null && managedLm == null
                             ? "Не установлен"
@@ -364,7 +369,14 @@ namespace EsmTspiot.WinForms.Shared
                         GetMsiOwnershipText(msiLm),
                         FmuApiMode
                             ? "Не применяется (FMU-API)"
-                            : GetEsmLinkStateText(item));
+                            : needsApply ? "Требует применения" : GetEsmLinkStateText(item));
+                    if (needsApply)
+                    {
+                        _grid.Rows[rowIndex].Cells["LmEndpoint"].ToolTipText =
+                            "Показан применённый адрес, если он известен. Выбрано: " +
+                            (isRemoteLm ? remoteLm : "ЛМ на этом компьютере") + ". Требуется применить настройки.";
+                        _grid.Rows[rowIndex].DefaultCellStyle.BackColor = Color.LemonChiffon;
+                    }
                     LmServiceInventoryItem removable = FindRemovalInventory(
                         removalInventory,
                         item.Kkt.KktSerial);
@@ -376,6 +388,10 @@ namespace EsmTspiot.WinForms.Shared
                     {
                         _grid.Rows[rowIndex].Cells["EsmLinkState"].Style.ForeColor =
                             SystemColors.GrayText;
+                    }
+                    else if (needsApply)
+                    {
+                        _grid.Rows[rowIndex].DefaultCellStyle.BackColor = Color.LemonChiffon;
                     }
                     else if (item.LastBindingStatus == LmGatewayBindingStatus.BindingVerified)
                     {
