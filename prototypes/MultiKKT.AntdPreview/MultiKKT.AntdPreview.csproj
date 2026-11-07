@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <LangVersion>latest</LangVersion>
+    <PlatformTarget>x86</PlatformTarget>
+    <AssemblyName>MultiKKT.UI-Preview</AssemblyName>
+    <Version>0.1.0</Version>
+    <Product>MultiKKT — прототип интерфейса</Product>
+    <Description>Визуальная проба AntdUI без подключения к оборудованию</Description>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <ApplicationIcon>../../src/EsmTspiot.WinForms.Shared/Assets/app.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="AntdUI" Version="2.4.18" />
+    <Compile Include="../../src/EsmTspiot.WinForms.Shared/SupportDevelopmentDialog.cs" Link="SupportDevelopmentDialog.cs" />
+    <EmbeddedResource Include="../../src/EsmTspiot.WinForms.Shared/Assets/support-cloudtips-qr.png" LogicalName="EsmTspiot.WinForms.Shared.Assets.support-cloudtips-qr.png" />
+  </ItemGroup>
+</Project>

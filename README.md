@@ -5,6 +5,9 @@
 Она не опубликована. Порядок проверки описан в
 [инструкции тестовой версии](docs/testing/11.3.28.0-test.md).
 
+Отдельно подготовлена [визуальная проба AntdUI](prototypes/MultiKKT.AntdPreview/README.md)
+для Windows 10/11. Она использует демонстрационные данные и не выполняет настройку оборудования.
+
 ![Тестовый мастер: выбор удалённого ЛМ для выбранной ККТ, демонстрационные данные](docs/images/wizard-lm-test.png)
 
 [![CI](https://github.com/jadieify-hub/esm-tspiot-multi-kkt-tool/actions/workflows/ci.yml/badge.svg)](https://github.com/jadieify-hub/esm-tspiot-multi-kkt-tool/actions/workflows/ci.yml)
