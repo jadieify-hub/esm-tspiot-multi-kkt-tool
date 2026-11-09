@@ -13,7 +13,7 @@ namespace EsmTspiot.WinForms.Shared
             var dialog = new Form { Text = "Служебные операции ЛМ ЧЗ", Name = "service-operations-window",
                 ClientSize = new Size(960, 650), MinimumSize = new Size(760, 480),
                 StartPosition = FormStartPosition.CenterParent, ShowInTaskbar = false,
-                MinimizeBox = false, Font = Font, ForeColor = OperatorTheme.Ink, BackColor = Color.White };
+                MinimizeBox = false, Font = Font, ForeColor = OperatorTheme.Ink, BackColor = OperatorTheme.Surface };
             var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(14),
                 ColumnCount = 1, RowCount = 4 };
             root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
@@ -85,7 +85,8 @@ namespace EsmTspiot.WinForms.Shared
             }
             var dialog = new Form { Text = "Сведения о кассе", Name = "kkt-details-dialog",
                 ClientSize = new Size(680, 580), MinimumSize = new Size(480, 380),
-                StartPosition = FormStartPosition.CenterParent, ShowInTaskbar = false, MinimizeBox = false, Font = Font };
+                StartPosition = FormStartPosition.CenterParent, ShowInTaskbar = false, MinimizeBox = false,
+                Font = Font, ForeColor = OperatorTheme.Ink, BackColor = OperatorTheme.Surface };
             var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(14),
                 ColumnCount = 1, RowCount = 2 };
             root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));

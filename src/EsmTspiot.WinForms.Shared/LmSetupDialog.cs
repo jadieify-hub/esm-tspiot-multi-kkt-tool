@@ -22,7 +22,10 @@ namespace EsmTspiot.WinForms.Shared
             StartPosition = FormStartPosition.CenterParent;
             ClientSize = new Size(750, 510);
             MinimumSize = new Size(650, 420);
-            Font = new Font("Segoe UI", 9.5F);
+            Font = new Font("Segoe UI", 10F);
+            ForeColor = OperatorTheme.Ink;
+            BackColor = OperatorTheme.Surface;
+            Shown += delegate { OperatorTheme.Dialog(this); };
             MinimizeBox = MaximizeBox = ShowInTaskbar = false;
             var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(12),
                 ColumnCount = 1, RowCount = 3 };

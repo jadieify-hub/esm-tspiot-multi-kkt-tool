@@ -148,8 +148,9 @@ namespace EsmTspiot.WinForms.Shared
             servicePort.Name = "KktServicePort";
             _grid.Columns.Add(servicePort);
             servicePort.DisplayIndex = 3;
-            foreach (string name in new[] { "KktOrdinal", "LmRole", "LmInstallRoot", "LmOwnership" })
-                _grid.Columns[name].Visible = false;
+            DataGridViewTextBoxColumn organization = CreateTextColumn("Организация", 230);
+            organization.Name = "Organization";
+            _grid.Columns.Add(organization);
             _grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
             _grid.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCells;
             _grid.RowTemplate.Height = 28;
@@ -176,6 +177,17 @@ namespace EsmTspiot.WinForms.Shared
             {
                 _grid.Columns[name].AutoSizeMode = DataGridViewAutoSizeColumnMode.None;
                 _grid.Columns[name].Width = 70;
+            }
+            _grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
+            string[] order = { "KktOrdinal", "KktSerial", "Organization", "KktInn", "KktServicePort", "KktSoftwarePort",
+                "LmEndpoint", "LmState", "EsmLinkState", "LmRole", "LmInstallRoot", "LmOwnership" };
+            int[] widths = { 42, 175, 230, 125, 75, 75, 155, 150, 175, 90, 220, 180 };
+            for (int index = 0; index < order.Length; index++)
+            {
+                var column = _grid.Columns[order[index]];
+                column.AutoSizeMode = DataGridViewAutoSizeColumnMode.None;
+                column.DisplayIndex = index;
+                column.Width = widths[index];
             }
         }
 

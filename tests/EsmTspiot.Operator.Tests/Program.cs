@@ -23,6 +23,7 @@ namespace EsmTspiot.Operator.Tests
             Run("ATOL VCOM enumeration keeps MI_00 and numeric order", VcomEnumerationKeepsMi00AndNumericOrder);
             Run("ATOL provider uses exact COM and releases a normal lease", ProviderUsesExactComAndReleasesNormalLease);
             Run("ATOL provider closes and destroys after identity failure", ProviderCleansUpAfterIdentityFailure);
+            Run("ATOL reads optional organization registration data", OrganizationTests.Run);
             Run("Frontol reads the cashier INI and COM settings", FrontolTests.ReadsCashierSettings);
             Run("Frontol uses confirmed API v1 client ports", FrontolTests.UsesConfirmedApi1ClientPorts);
             Run("Frontol maps physical serials to software ports", FrontolTests.MapsSoftwarePorts);

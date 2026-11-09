@@ -45,7 +45,7 @@ namespace EsmTspiot.ServiceProvisioner
 
             FileVersionInfo version = FileVersionInfo.GetVersionInfo(fullPath);
             if (!string.Equals(version.CompanyName, "KRS", StringComparison.Ordinal) ||
-                !string.Equals(version.ProductName, "Управление ККТ в ЕСМ/ТС ПИоТ", StringComparison.Ordinal))
+                !string.Equals(version.ProductName, "MultiKKT", StringComparison.Ordinal))
             {
                 throw new InvalidDataException("Supervisor product metadata is not trusted.");
             }

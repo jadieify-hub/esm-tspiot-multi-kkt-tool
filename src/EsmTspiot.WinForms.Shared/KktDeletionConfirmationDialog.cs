@@ -33,7 +33,10 @@ namespace EsmTspiot.WinForms.Shared
             ClientSize = new Size(430, 205);
             MinimumSize = new Size(400, 205);
             MaximumSize = new Size(620, 260);
-            Font = new Font("Segoe UI", 8.25F);
+            Font = new Font("Segoe UI", 10F);
+            ForeColor = OperatorTheme.Ink;
+            BackColor = OperatorTheme.Surface;
+            Shown += delegate { OperatorTheme.Dialog(this); };
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;

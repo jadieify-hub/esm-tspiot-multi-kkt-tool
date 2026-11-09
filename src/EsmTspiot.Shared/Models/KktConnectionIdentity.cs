@@ -6,5 +6,7 @@ namespace EsmTspiot.Shared.Models
         public string KktSerial { get; set; }
         public string ModelName { get; set; }
         public string FirmwareVersion { get; set; }
+        public string OrganizationName { get; set; }
+        public string OrganizationInn { get; set; }
     }
 }

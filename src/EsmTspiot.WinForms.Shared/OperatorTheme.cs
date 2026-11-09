@@ -6,27 +6,44 @@ namespace EsmTspiot.WinForms.Shared
 {
     internal static class OperatorTheme
     {
-        internal static readonly Color Ink = Color.FromArgb(22, 39, 66);
-        internal static readonly Color Muted = Color.FromArgb(69, 85, 108);
-        internal static readonly Color Blue = Color.FromArgb(23, 83, 183);
-        internal static readonly Color Green = Color.FromArgb(25, 116, 64);
-        internal static readonly Color Line = Color.FromArgb(187, 201, 220);
-        internal static readonly Color Background = Color.FromArgb(229, 236, 246);
-        internal static readonly Color Selection = Color.FromArgb(201, 222, 254);
+        internal static readonly Color Ink = Color.FromArgb(31, 43, 51);
+        internal static readonly Color Muted = Color.FromArgb(87, 103, 112);
+        internal static readonly Color Blue = Color.FromArgb(36, 91, 115);
+        internal static readonly Color Green = Color.FromArgb(32, 110, 73);
+        internal static readonly Color Line = Color.FromArgb(217, 225, 229);
+        internal static readonly Color Background = Color.FromArgb(245, 247, 248);
+        internal static readonly Color Surface = Color.White;
+        internal static readonly Color Soft = Background;
+        internal static readonly Color Selection = Color.FromArgb(234, 242, 245);
+        internal static readonly Color Warning = Color.FromArgb(139, 96, 27);
+        internal static readonly Color Error = Color.FromArgb(177, 62, 69);
+
+        static OperatorTheme()
+        {
+            AntdUI.Style.SetPrimary(Blue);
+            AntdUI.Style.SetInfo(Blue);
+            AntdUI.Style.SetSuccess(Green);
+            AntdUI.Style.SetWarning(Warning);
+            AntdUI.Style.SetError(Error);
+        }
 
         internal static void Button(AntdUI.Button button, bool primary)
         {
             button.AutoSize = true;
             button.AutoSizeMode = AntdUI.TAutoSize.Width;
-            button.Radius = 7;
+            button.Radius = 4;
             button.WaveSize = 1;
             button.Font = new Font("Segoe UI", 10F, primary ? FontStyle.Bold : FontStyle.Regular);
             button.Type = primary ? AntdUI.TTypeMini.Primary : AntdUI.TTypeMini.Default;
             button.BackColor = primary ? Blue : Color.White;
             button.ForeColor = primary ? Color.White : Ink;
+            button.BackHover = primary ? Blue : Selection;
+            button.ForeHover = primary ? Color.White : Blue;
+            button.BackActive = primary ? Blue : Selection;
+            button.DefaultBorderColor = Line;
             button.BorderWidth = primary ? 0 : 1;
             button.MinimumSize = Size.Empty;
-            button.Height = 40;
+            button.Height = 36;
             button.Margin = new Padding(0, 2, 8, 2);
             button.Padding = Padding.Empty;
         }
@@ -37,20 +54,48 @@ namespace EsmTspiot.WinForms.Shared
             control.AccessibleName = string.Join(", ", labels);
             control.AccessibleDescription = "Выбор стрелками влево и вправо.";
             control.Full = true;
-            control.Radius = 7;
+            control.Radius = 4;
             control.Gap = 3;
             control.IconAlign = AntdUI.TAlignMini.Left;
             control.Font = new Font("Segoe UI", 10F, FontStyle.Bold);
-            control.BackColor = Color.FromArgb(226, 233, 244);
+            control.BackColor = Background;
             control.BackActive = Blue;
             control.ForeColor = Muted;
             control.ForeActive = Color.White;
             control.SelectIndex = 0;
         }
 
+        internal static void Dialog(Form dialog)
+        {
+            dialog.BackColor = Surface;
+            dialog.ForeColor = Ink;
+            StyleNativeControls(dialog);
+        }
+
+        private static void StyleNativeControls(Control parent)
+        {
+            foreach (Control control in parent.Controls)
+            {
+                var button = control as System.Windows.Forms.Button;
+                if (button != null)
+                {
+                    button.FlatStyle = FlatStyle.Flat;
+                    button.FlatAppearance.BorderColor = Line;
+                    button.FlatAppearance.MouseOverBackColor = Selection;
+                    button.BackColor = Surface;
+                    button.ForeColor = Ink;
+                    button.Padding = new Padding(8, 4, 8, 4);
+                    button.MinimumSize = new Size(0, 34);
+                }
+                var grid = control as DataGridView;
+                if (grid != null) Grid(grid);
+                else StyleNativeControls(control);
+            }
+        }
+
         internal static Control Input(TextBox input)
         {
-            var frame = new AntdUI.Panel { Radius = 6, BorderWidth = 1, BorderColor = Line,
+            var frame = new AntdUI.Panel { Radius = 4, BorderWidth = 1, BorderColor = Line,
                 Back = Color.White, BackColor = Color.White, Height = 34, MinimumSize = new Size(0, 34),
                 Dock = DockStyle.Fill, Padding = new Padding(8, 5, 8, 3), Margin = input.Margin,
                 TabIndex = input.TabIndex };
@@ -62,7 +107,7 @@ namespace EsmTspiot.WinForms.Shared
             input.ForeColor = Ink;
             Action refresh = delegate
             {
-                Color back = input.Enabled && !input.ReadOnly ? Color.White : Color.FromArgb(238, 243, 250);
+                Color back = input.Enabled && !input.ReadOnly ? Surface : Soft;
                 frame.Back = frame.BackColor = input.BackColor = back;
                 frame.BorderColor = input.Focused ? Blue : Line;
             };
@@ -77,9 +122,9 @@ namespace EsmTspiot.WinForms.Shared
 
         internal static AntdUI.Panel Card(Control content, bool selected)
         {
-            Color back = selected ? Color.FromArgb(234, 242, 255) : Color.White;
+            Color back = selected ? Soft : Surface;
             var card = new OperatorCard { Dock = DockStyle.Fill, AutoSize = content.AutoSize,
-                Radius = 10, BorderWidth = 1, BorderColor = selected ? Color.FromArgb(100, 145, 215) : Line,
+                Radius = 0, BorderWidth = selected ? 1 : 0, BorderColor = Line,
                 Back = back, BackColor = back, Padding = new Padding(8), Margin = new Padding(0, 4, 0, 6) };
             content.BackColor = back;
             card.Controls.Add(content);
@@ -91,13 +136,15 @@ namespace EsmTspiot.WinForms.Shared
             grid.EnableHeadersVisualStyles = false;
             grid.BorderStyle = BorderStyle.None;
             grid.BackgroundColor = Color.White;
-            grid.GridColor = Color.FromArgb(219, 229, 243);
+            grid.GridColor = Line;
             grid.CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal;
             grid.ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None;
             grid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
             grid.ColumnHeadersHeight = 34;
-            grid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(219, 229, 243);
+            grid.ColumnHeadersDefaultCellStyle.BackColor = Background;
             grid.ColumnHeadersDefaultCellStyle.ForeColor = Ink;
+            grid.ColumnHeadersDefaultCellStyle.SelectionBackColor = Background;
+            grid.ColumnHeadersDefaultCellStyle.SelectionForeColor = Ink;
             grid.ColumnHeadersDefaultCellStyle.Font = new Font("Segoe UI", 9.5F, FontStyle.Bold);
             grid.ColumnHeadersDefaultCellStyle.Padding = new Padding(6, 0, 4, 0);
             grid.DefaultCellStyle.Font = new Font("Segoe UI", 9.5F);
@@ -113,16 +160,20 @@ namespace EsmTspiot.WinForms.Shared
                 string column = grid.Columns[e.ColumnIndex].Name;
                 if (column != "Состояние" && column != "ЛМ ЧЗ" && column != "LmState" && column != "EsmLinkState") return;
                 string value = e.Value.ToString();
-                Color? back = null;
                 Color fore = Ink;
                 if (value == "Зарегистрирована" || value == "Параметры применены")
-                { back = Color.FromArgb(219, 243, 228); fore = Green; }
-                else if (value == "Не зарегистрирована" || value == "Настройка отложена" || value == "Не установлен")
-                { back = Color.FromArgb(255, 237, 191); fore = Color.FromArgb(117, 70, 0); }
-                if (!back.HasValue) return;
-                e.CellStyle.BackColor = e.CellStyle.SelectionBackColor = back.Value;
+                    fore = Green;
+                else if (value == "Не зарегистрирована" || value == "Настройка отложена" || value == "Не установлен" || value == "Требует применения")
+                    fore = Warning;
+                else return;
                 e.CellStyle.ForeColor = e.CellStyle.SelectionForeColor = fore;
             };
+        }
+
+        internal static void SetOrganizationCell(DataGridViewRow row, string fullName)
+        {
+            row.Cells["Organization"].Value = EsmTspiot.Shared.Services.KktOrganizationStore.DisplayName(fullName);
+            row.Cells["Organization"].ToolTipText = fullName ?? string.Empty;
         }
     }
 

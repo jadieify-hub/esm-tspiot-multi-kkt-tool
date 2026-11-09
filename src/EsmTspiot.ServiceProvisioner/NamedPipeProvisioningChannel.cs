@@ -192,7 +192,7 @@ namespace EsmTspiot.ServiceProvisioner
         private const uint TokenQuery = 0x0008;
         private const int TokenUser = 1;
         private const string ExpectedCompany = "KRS";
-        private const string ExpectedProduct = "Управление ККТ в ЕСМ/ТС ПИоТ";
+        private const string ExpectedProduct = "MultiKKT";
 
         internal static ProvisioningPeerEvidence ReadServer(NamedPipeClientStream stream)
         {

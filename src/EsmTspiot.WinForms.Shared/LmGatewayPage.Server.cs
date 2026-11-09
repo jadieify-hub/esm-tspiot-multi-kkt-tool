@@ -43,6 +43,9 @@ namespace EsmTspiot.WinForms.Shared
                 dialog.ShowInTaskbar = false;
                 dialog.ClientSize = new Size(780, 480);
                 dialog.MinimumSize = new Size(640, 400);
+                dialog.Font = new Font("Segoe UI", 10F);
+                dialog.ForeColor = OperatorTheme.Ink;
+                dialog.BackColor = OperatorTheme.Surface;
 
                 TableLayoutPanel layout = new TableLayoutPanel();
                 layout.Dock = DockStyle.Fill;
@@ -138,6 +141,8 @@ namespace EsmTspiot.WinForms.Shared
                 bottomRow.Controls.Add(copy);
                 bottomRow.Controls.Add(reload);
                 layout.Controls.Add(bottomRow, 0, 5);
+                foreach (Button button in new[] { selectMsi, apply, removeAll, close, copy, reload })
+                    OperatorTheme.Button(button, button == apply);
                 dialog.CancelButton = close;
 
                 bool busy = false;

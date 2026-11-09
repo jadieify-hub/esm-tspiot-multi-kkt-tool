@@ -142,6 +142,7 @@ public static class SetupFlowCheck
         public bool RegistrationWasIsolated;
         public bool OnlySecond;
         public bool AllowSimultaneous;
+        public string OrganizationName;
         public readonly HashSet<int> OpenIndexes = new HashSet<int>();
         public IList<KktConnectionPort> EnumeratePorts()
         { if (OnlySecond) return new[] { new KktConnectionPort { PortName = "COM8" } };
@@ -160,7 +161,8 @@ public static class SetupFlowCheck
             private readonly int _index;
             public Lease(Connections owner, string port, int index)
             { _owner = owner; _index = index; Identity = new KktConnectionIdentity { PortName = port,
-                KktSerial = "0010570000000" + (index + 1).ToString() }; }
+                KktSerial = "0010570000000" + (index + 1).ToString(),
+                OrganizationInn = "1234567894", OrganizationName = owner.OrganizationName }; }
             public KktConnectionIdentity Identity { get; private set; }
             public void Dispose()
             {

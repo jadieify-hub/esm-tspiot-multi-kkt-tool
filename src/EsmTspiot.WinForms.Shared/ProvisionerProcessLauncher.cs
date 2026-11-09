@@ -255,7 +255,7 @@ namespace EsmTspiot.WinForms.Shared
             if (!string.Equals(helper.CompanyName, "KRS", StringComparison.Ordinal) ||
                 !string.Equals(
                     helper.ProductName,
-                    "Управление ККТ в ЕСМ/ТС ПИоТ",
+                    "MultiKKT",
                     StringComparison.Ordinal) ||
                 !string.Equals(helper.FileVersion, main.FileVersion, StringComparison.Ordinal))
             {

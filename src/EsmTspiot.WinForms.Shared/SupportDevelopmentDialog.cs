@@ -29,7 +29,11 @@ namespace EsmTspiot.WinForms.Shared
             MaximizeBox = false;
             ShowInTaskbar = false;
             AutoScaleMode = AutoScaleMode.None;
-            ClientSize = new Size(392, 476);
+            ClientSize = new Size(420, 520);
+            Font = new Font("Segoe UI", 10F);
+            ForeColor = OperatorTheme.Ink;
+            BackColor = OperatorTheme.Surface;
+            Shown += delegate { OperatorTheme.Dialog(this); };
 
             _qrImage = LoadQrImage();
             _qrPictureBox.Image = _qrImage;
@@ -64,7 +68,7 @@ namespace EsmTspiot.WinForms.Shared
             _copyStatusLabel.Dock = DockStyle.Fill;
             _copyStatusLabel.Height = 22;
             _copyStatusLabel.TextAlign = ContentAlignment.MiddleLeft;
-            _copyStatusLabel.ForeColor = SystemColors.GrayText;
+            _copyStatusLabel.ForeColor = OperatorTheme.Muted;
             _copyStatusLabel.Margin = new Padding(0, 0, 0, 4);
 
             Label offlineNotice = new Label();
@@ -75,7 +79,7 @@ namespace EsmTspiot.WinForms.Shared
             offlineNotice.Dock = DockStyle.Fill;
             offlineNotice.MaximumSize = new Size(360, 0);
             offlineNotice.TextAlign = ContentAlignment.MiddleCenter;
-            offlineNotice.ForeColor = SystemColors.GrayText;
+            offlineNotice.ForeColor = OperatorTheme.Muted;
             offlineNotice.Margin = new Padding(0, 0, 0, 10);
 
             _closeButton.Text = "Закрыть";

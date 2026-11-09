@@ -14,6 +14,7 @@ namespace EsmTspiot.WinForms.Shared
     public sealed partial class MainForm
     {
         private readonly DataGridView _discoveredKktsGrid = new DataGridView();
+        private KktOrganizationStore _organizations = KktOrganizationStore.CreateDefault();
         private readonly Button _findKktsButton = new Button();
         private readonly Button _setupSelectedButton = new Button();
         private readonly Button _manualStopButton = new Button();
@@ -80,7 +81,17 @@ namespace EsmTspiot.WinForms.Shared
             _discoveredKktsGrid.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCells;
             _discoveredKktsGrid.RowTemplate.Height = 28;
             OperatorTheme.Grid(_discoveredKktsGrid);
-            foreach (string hidden in new[] { "ФН", "Порт ЕСМ", "Порт ПО" }) _discoveredKktsGrid.Columns[hidden].Visible = false;
+            _discoveredKktsGrid.Columns.Add("Organization", "Организация");
+            _discoveredKktsGrid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
+            string[] columnOrder = { "ККТ", "Organization", "ИНН", "COM", "Состояние", "ЛМ ЧЗ", "ФН", "Порт ЕСМ", "Порт ПО" };
+            int[] widths = { 180, 230, 125, 72, 160, 160, 180, 85, 85 };
+            for (int index = 0; index < columnOrder.Length; index++)
+            {
+                var column = _discoveredKktsGrid.Columns[columnOrder[index]];
+                column.AutoSizeMode = DataGridViewAutoSizeColumnMode.None;
+                column.DisplayIndex = index;
+                column.Width = widths[index];
+            }
             _discoveredKktsGrid.Columns["ККТ"].HeaderText = "Серийный номер ККТ";
             _discoveredKktsGrid.Columns["ККТ"].MinimumWidth = 180;
             _discoveredKktsGrid.Columns["ККТ"].FillWeight = 230;
@@ -93,10 +104,10 @@ namespace EsmTspiot.WinForms.Shared
             var gridHost = new Panel { Dock = DockStyle.Fill };
             gridHost.Controls.Add(_discoveredKktsGrid);
             _wizardEmptyState.Dock = DockStyle.Fill;
-            _wizardEmptyState.Back = _wizardEmptyState.BackColor = Color.FromArgb(234, 242, 255);
+            _wizardEmptyState.Back = _wizardEmptyState.BackColor = OperatorTheme.Soft;
             _wizardEmptyState.BorderColor = OperatorTheme.Line;
             _wizardEmptyState.BorderWidth = 1;
-            _wizardEmptyState.Radius = 10;
+            _wizardEmptyState.Radius = 4;
             _wizardEmptyState.Padding = new Padding(22, 16, 20, 12);
             var emptyTitle = new Label { Text = "Подключите кассы — остальное по шагам", Dock = DockStyle.Top,
                 Height = 36, Font = new Font("Segoe UI", 14F, FontStyle.Bold), ForeColor = OperatorTheme.Ink };
@@ -117,7 +128,7 @@ namespace EsmTspiot.WinForms.Shared
             var panel = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill };
             ConfigureButton(_setupSelectedButton, "Настроить выбранную ККТ", SetupManualSelectionAsync);
             _setupSelectedButton.Tag = "SetupSelectedKkt";
-            _setupSelectedButton.BackColor = Color.FromArgb(0, 102, 204);
+            _setupSelectedButton.BackColor = OperatorTheme.Blue;
             _setupSelectedButton.ForeColor = Color.White;
             panel.Controls.Add(_setupSelectedButton);
             panel.Controls.Add(new Label { Text = "Регистрация выбранной ККТ → выбор ЛМ ЧЗ → настройка подключения",
@@ -166,6 +177,18 @@ namespace EsmTspiot.WinForms.Shared
                 scan.Discovery = await _bulkWorkflow.DiscoverFromDevicesAsync(baseUrl, dkktPort,
                     CopySequentialDevices(scan.Sequential), HandleBulkProgress, cancellation);
                 if (!scan.Discovery.IsValid) throw new InvalidOperationException(scan.Discovery.ErrorMessage);
+            }
+            if (scan.Sequential != null)
+            {
+                bool changed = false;
+                foreach (var target in scan.Sequential.Targets)
+                    if (target.Identity != null && target.Device != null &&
+                        target.Identity.OrganizationInn == target.Device.KktInn)
+                        changed |= _organizations.Remember(target.Identity.KktSerial,
+                            target.Device.KktInn, target.Identity.OrganizationName);
+                if (changed)
+                    try { _organizations.Save(); }
+                    catch (Exception error) { AppendLog("Название организации не сохранено: " + error.Message + "\r\n"); }
             }
             return scan;
         }
@@ -243,6 +266,8 @@ namespace EsmTspiot.WinForms.Shared
                         _manualRegistered.Contains(pair.Key) ? "Зарегистрирована" : ManualPortsAreFixed(pair.Key) ? "Экземпляр создан" : "Не зарегистрирована",
                         _wizardKktResults.ContainsKey(pair.Key) ? _wizardKktResults[pair.Key] : "Не настраивался");
                     _discoveredKktsGrid.Rows[row].Tag = pair.Key;
+                    string organization = _organizations.GetName(pair.Key, pair.Value.KktInn);
+                    OperatorTheme.SetOrganizationCell(_discoveredKktsGrid.Rows[row], organization);
                 }
                 _manualSelectedSerial = null;
             }

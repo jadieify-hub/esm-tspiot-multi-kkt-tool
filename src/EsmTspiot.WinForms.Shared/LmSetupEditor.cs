@@ -128,9 +128,9 @@ namespace EsmTspiot.WinForms.Shared
             var group = new OperatorCard {
                 Name = "lm-group-" + fields.Inn,
                 Text = "ИНН " + (fields.Inn.Length == 0 ? "не указан" : fields.Inn),
-                Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(8), Radius = 10,
-                BorderWidth = 1, BorderColor = Color.FromArgb(100, 145, 215),
-                Back = Color.FromArgb(234, 242, 255), BackColor = Color.FromArgb(234, 242, 255),
+                Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(12), Radius = 4,
+                BorderWidth = 1, BorderColor = OperatorTheme.Line,
+                Back = OperatorTheme.Surface, BackColor = OperatorTheme.Surface,
                 Margin = new Padding(0, 0, 18, 8)
             };
             TableLayoutPanel table = new TableLayoutPanel {

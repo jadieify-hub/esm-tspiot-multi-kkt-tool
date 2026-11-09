@@ -24,7 +24,10 @@ namespace EsmTspiot.WinForms.Shared
             StartPosition = FormStartPosition.CenterParent;
             Size = new Size(590, 360);
             MinimumSize = new Size(520, 320);
-            Font = new Font("Segoe UI", 8.25F);
+            Font = new Font("Segoe UI", 10F);
+            ForeColor = OperatorTheme.Ink;
+            BackColor = OperatorTheme.Surface;
+            Shown += delegate { OperatorTheme.Dialog(this); };
             Build(kktInn);
         }
 
@@ -53,7 +56,7 @@ namespace EsmTspiot.WinForms.Shared
             Label warning = new Label
             {
                 Dock = DockStyle.Fill,
-                ForeColor = Color.DarkRed,
+                ForeColor = OperatorTheme.Error,
                 Text = "Будут удалены созданные программой контроллер этой ККТ, профиль и связанный ЛМ ЧЗ, " +
                     "если он больше не нужен другим ККТ того же ИНН.\r\n\r\n" +
                     "Настройка связи в ЕСМ не очищается. Другие комплекты не будут затронуты.",

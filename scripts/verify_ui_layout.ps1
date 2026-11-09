@@ -1,5 +1,6 @@
 ﻿param(
-    [string]$Configuration = "Release"
+    [string]$Configuration = "Release",
+    [string]$ApplicationPath
 )
 
 $ErrorActionPreference = "Stop"
@@ -9,14 +10,17 @@ if ([IntPtr]::Size -ne 4) {
     if (-not (Test-Path -LiteralPath $x86PowerShell -PathType Leaf)) {
         throw "32-bit PowerShell is required to inspect the x86 Legacy operator application."
     }
+    $binaryArguments = @{}
+    if (-not [string]::IsNullOrWhiteSpace($ApplicationPath)) { $binaryArguments.ApplicationPath = $ApplicationPath }
     & $x86PowerShell -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath `
-        -Configuration $Configuration
+        -Configuration $Configuration @binaryArguments
     exit $LASTEXITCODE
 }
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $appPath = Join-Path $repoRoot (
     "src\EsmTspiot.Legacy.WinForms\bin\{0}\net48\EsmTspiot.Legacy.WinForms.exe" -f $Configuration)
+if (-not [string]::IsNullOrWhiteSpace($ApplicationPath)) { $appPath = [IO.Path]::GetFullPath($ApplicationPath) }
 
 if (-not (Test-Path -LiteralPath $appPath -PathType Leaf)) {
     throw "Legacy WinForms build not found: $appPath"
@@ -520,7 +524,8 @@ try {
         "LmInstallRoot",
         "LmOwnership",
         "EsmLinkState",
-        "KktServicePort")
+        "KktServicePort",
+        "Organization")
     if ($grid.Columns.Count -ne $expectedNames.Count) {
         throw "The operator-facing LM table must contain only $($expectedNames.Count) working columns; actual: $($grid.Columns.Count)."
     }
@@ -1059,8 +1064,10 @@ try {
             $visibleGridWidth += $column.Width
         }
     }
-    if ($visibleGridWidth -gt $grid.ClientSize.Width) {
-        throw "The operator-facing LM table requires horizontal resizing: columns=${visibleGridWidth}px, grid=$($grid.ClientSize.Width)px."
+    if ($visibleGridWidth -gt $grid.ClientSize.Width -and
+        $grid.ScrollBars -ne [System.Windows.Forms.ScrollBars]::Both -and
+        $grid.ScrollBars -ne [System.Windows.Forms.ScrollBars]::Horizontal) {
+        throw "The complete LM table requires horizontal scrolling at narrow widths."
     }
 
     # WizardFlowCheck verifies pending inventory reads, destination locking and

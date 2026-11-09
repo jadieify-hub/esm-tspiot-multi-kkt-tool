@@ -15,6 +15,7 @@ public static class WizardFlowCheck
 
     public static void Run()
     {
+        CheckOrganizationColumn();
         var ports = new SetupFlowCheck.Connections();
         var transport = new SetupFlowCheck.Transport(ports);
         using (var form = new MainForm(new EsmTspiot.Shared.Services.TspiotApiClient(new HttpClient(transport)), ports))
@@ -158,7 +159,55 @@ public static class WizardFlowCheck
             form.Size = new System.Drawing.Size(920, 680);
             CheckAccessible(form, Find<Button>(form, "wizard-apply"));
             Capture(form, "wizard-11-small-window.png");
+            foreach (var size in new[] { new System.Drawing.Size(1536, 1024), new System.Drawing.Size(1000, 740), new System.Drawing.Size(920, 680) })
+            {
+                form.Size = size;
+                Application.DoEvents();
+                CheckAccessible(form, Find<Button>(form, "wizard-apply"));
+                Capture(form, "layout-" + size.Width + "x" + size.Height + ".png");
+            }
         }
+    }
+
+    private static void CheckOrganizationColumn()
+    {
+        string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "MultiKKT-ui-organizations-" + Guid.NewGuid().ToString("N") + ".json");
+        try
+        {
+            var ports = new SetupFlowCheck.Connections { OrganizationName = "Общество с ограниченной ответственностью «Пример»" };
+            var transport = new SetupFlowCheck.Transport(ports) { AllowAll = true };
+            using (var form = new MainForm(new EsmTspiot.Shared.Services.TspiotApiClient(new HttpClient(transport)), ports))
+            {
+                typeof(MainForm).GetField("_organizations", Private).SetValue(form,
+                    new EsmTspiot.Shared.Services.KktOrganizationStore(path));
+                form.Show();
+                form.Size = new System.Drawing.Size(1000, 740);
+                Find<AntdUI.Segmented>(form, "wizard-mode").SelectIndex = 1;
+                Await((Task)Invoke(form, "ScanKktsCoreAsync", CancellationToken.None));
+                var grid = (DataGridView)Field(form, "_discoveredKktsGrid");
+                if ((string)grid.Rows[0].Cells["Organization"].Value != "ООО «Пример»")
+                    throw new Exception("The wizard must display organization metadata read through the existing scan lease.");
+                Capture(form, "organization-manual.png");
+                grid.CurrentCell = grid.Rows[0].Cells[0];
+                Await((Task)Invoke(form, "SetupManualSelectionAsync"));
+                var inventory = (LmGatewayPage)Field(form, "_lmGatewayPage");
+                Await(inventory.RefreshAsync());
+                var overview = (DataGridView)Field(inventory, "_grid");
+                if ((string)overview.Rows[0].Cells["Organization"].Value != "ООО «Пример»" || ports.Active != -1)
+                    throw new Exception("The overview must reuse matched organization metadata without opening a COM lease.");
+                if (!overview.Columns["Organization"].ReadOnly)
+                    throw new Exception("Organization metadata must not be editable in the inventory.");
+                ((TabControl)Field(form, "_workspaceTabs")).SelectedIndex = 1;
+                Capture(form, "organization-inventory.png");
+                grid.Rows.Clear();
+                Invoke(form, "ShowWizardForRegisteredKkt", new LmGatewayKkt { KktSerial = "00105700000001",
+                    KktInn = "1234567894", FnSerial = "7300000000000001", RegistrationConfirmed = true,
+                    Port = "50401", SoftPort = "51401" });
+                if ((string)grid.Rows[0].Cells["Organization"].Value != "ООО «Пример»")
+                    throw new Exception("Opening a registered KKT from inventory must retain cached organization metadata.");
+            }
+        }
+        finally { if (System.IO.File.Exists(path)) System.IO.File.Delete(path); }
     }
 
     private static void CheckMissingFinalRegistration(MainForm form)

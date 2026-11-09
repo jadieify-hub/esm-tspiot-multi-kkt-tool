@@ -20,7 +20,10 @@ namespace EsmTspiot.WinForms.Shared
             MinimizeBox = false;
             MaximizeBox = false;
             ShowInTaskbar = false;
-            Font = new Font("Segoe UI", 8.25F);
+            Font = new Font("Segoe UI", 10F);
+            ForeColor = OperatorTheme.Ink;
+            BackColor = OperatorTheme.Surface;
+            Shown += delegate { OperatorTheme.Dialog(this); };
 
             BuildLayout(devices ?? new List<DkktDeviceInfo>());
         }

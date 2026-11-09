@@ -78,11 +78,11 @@
       <_ProvisionerCompanyLine Include="@(_ProvisionerAssemblyInfo)"
           Condition="'%(Identity)' == '[assembly: AssemblyCompany(&quot;KRS&quot;)]'" />
       <_ProvisionerProductLine Include="@(_ProvisionerAssemblyInfo)"
-          Condition="'%(Identity)' == '[assembly: AssemblyProduct(&quot;Управление ККТ в ЕСМ/ТС ПИоТ&quot;)]'" />
+          Condition="'%(Identity)' == '[assembly: AssemblyProduct(&quot;MultiKKT&quot;)]'" />
       <_MainCompanyLine Include="@(_MainAssemblyInfo)"
           Condition="'%(Identity)' == '[assembly: AssemblyCompany(&quot;KRS&quot;)]'" />
       <_MainProductLine Include="@(_MainAssemblyInfo)"
-          Condition="'%(Identity)' == '[assembly: AssemblyProduct(&quot;Управление ККТ в ЕСМ/ТС ПИоТ&quot;)]'" />
+          Condition="'%(Identity)' == '[assembly: AssemblyProduct(&quot;MultiKKT&quot;)]'" />
     </ItemGroup>
     <Error Condition="'@(_ProvisionerCompanyLine)' == '' or '@(_MainCompanyLine)' == ''"
            Text="Provisioner company metadata is not KRS." />

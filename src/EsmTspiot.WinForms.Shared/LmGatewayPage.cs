@@ -69,6 +69,7 @@ namespace EsmTspiot.WinForms.Shared
 
         public event Action<bool> OperationStateChanged;
         public event Action InstallerSelectionChanged;
+        internal Func<string, string, string> OrganizationNameProvider { get; set; }
         internal event Action<LmGatewayKkt> SetupRequested;
         internal event Action<string> SetupProgressChanged;
 
@@ -388,12 +389,15 @@ namespace EsmTspiot.WinForms.Shared
                         FmuApiMode
                             ? "Не применяется (FMU-API)"
                             : needsApply ? "Требует применения" : GetEsmLinkStateText(item));
+                    string organization = OrganizationNameProvider == null ? string.Empty
+                        : OrganizationNameProvider(item.Kkt.KktSerial, item.Kkt.KktInn);
+                    OperatorTheme.SetOrganizationCell(_grid.Rows[rowIndex], organization);
                     if (needsApply)
                     {
                         _grid.Rows[rowIndex].Cells["LmEndpoint"].ToolTipText =
                             "Показан применённый адрес, если он известен. Выбрано: " +
                             (isRemoteLm ? remoteLm : "ЛМ на этом компьютере") + ". Требуется применить настройки.";
-                        _grid.Rows[rowIndex].DefaultCellStyle.BackColor = Color.LemonChiffon;
+                        _grid.Rows[rowIndex].Cells["EsmLinkState"].Style.ForeColor = OperatorTheme.Warning;
                     }
                     LmServiceInventoryItem removable = FindRemovalInventory(
                         removalInventory,
@@ -405,31 +409,31 @@ namespace EsmTspiot.WinForms.Shared
                     if (FmuApiMode)
                     {
                         _grid.Rows[rowIndex].Cells["EsmLinkState"].Style.ForeColor =
-                            SystemColors.GrayText;
+                            OperatorTheme.Muted;
                     }
                     else if (needsApply)
                     {
-                        _grid.Rows[rowIndex].DefaultCellStyle.BackColor = Color.LemonChiffon;
+                        _grid.Rows[rowIndex].Cells["EsmLinkState"].Style.ForeColor = OperatorTheme.Warning;
                     }
                     else if (item.LastBindingStatus == LmGatewayBindingStatus.BindingVerified)
                     {
-                        _grid.Rows[rowIndex].DefaultCellStyle.BackColor = Color.Honeydew;
+                        _grid.Rows[rowIndex].Cells["EsmLinkState"].Style.ForeColor = OperatorTheme.Green;
                     }
                     else if (item.LastBindingStatus == LmGatewayBindingStatus.BindingAccepted)
                     {
-                        _grid.Rows[rowIndex].DefaultCellStyle.BackColor = Color.LightCyan;
+                        _grid.Rows[rowIndex].Cells["EsmLinkState"].Style.ForeColor = OperatorTheme.Blue;
                     }
                     else if (item.LastBindingStatus == LmGatewayBindingStatus.BindingObserved)
                     {
-                        _grid.Rows[rowIndex].DefaultCellStyle.BackColor = Color.LightCyan;
+                        _grid.Rows[rowIndex].Cells["EsmLinkState"].Style.ForeColor = OperatorTheme.Blue;
                     }
                     else if (item.LastBindingStatus == LmGatewayBindingStatus.RequiresAttention)
                     {
-                        _grid.Rows[rowIndex].DefaultCellStyle.BackColor = Color.LemonChiffon;
+                        _grid.Rows[rowIndex].Cells["EsmLinkState"].Style.ForeColor = OperatorTheme.Warning;
                     }
                     else if (item.LastBindingStatus.HasValue)
                     {
-                        _grid.Rows[rowIndex].DefaultCellStyle.BackColor = Color.MistyRose;
+                        _grid.Rows[rowIndex].Cells["EsmLinkState"].Style.ForeColor = OperatorTheme.Error;
                     }
                     if (string.Equals(item.Kkt.KktSerial, selectedSerial, StringComparison.Ordinal))
                     {
@@ -475,8 +479,9 @@ namespace EsmTspiot.WinForms.Shared
                         null,
                         inventory,
                         inn);
-                    _grid.Rows[orphanRowIndex].DefaultCellStyle.BackColor =
-                        Color.LemonChiffon;
+                    OperatorTheme.SetOrganizationCell(_grid.Rows[orphanRowIndex], OrganizationNameProvider == null
+                        ? string.Empty : OrganizationNameProvider(inventory.KktSerial, inn));
+                    _grid.Rows[orphanRowIndex].Cells["EsmLinkState"].Style.ForeColor = OperatorTheme.Warning;
                     if (string.Equals(
                         inventory.KktSerial,
                         selectedSerial,

@@ -13,6 +13,8 @@ namespace EsmTspiot.WinForms.Shared
         private Control BuildWorkspaceNavigation()
         {
             OperatorTheme.Segments(_navigation, "Настройка ККТ", "Обзор касс", "Журнал");
+            _navigation.BackActive = OperatorTheme.Selection;
+            _navigation.ForeActive = OperatorTheme.Blue;
             _navigation.Name = "workspace-navigation";
             _navigation.Items[0].IconSvg = "SettingOutlined";
             _navigation.Items[1].IconSvg = "DesktopOutlined";
@@ -59,7 +61,8 @@ namespace EsmTspiot.WinForms.Shared
             var dialog = new Form { Text = "Подключение к ЕСМ", Name = "connection-dialog",
                 ClientSize = new Size(620, 240), FormBorderStyle = FormBorderStyle.FixedDialog,
                 StartPosition = FormStartPosition.CenterParent, ShowInTaskbar = false,
-                MaximizeBox = false, MinimizeBox = false, Font = Font, ForeColor = OperatorTheme.Ink };
+                MaximizeBox = false, MinimizeBox = false, Font = Font,
+                ForeColor = OperatorTheme.Ink, BackColor = OperatorTheme.Surface };
             var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(16),
                 ColumnCount = 2, RowCount = 4 };
             root.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));

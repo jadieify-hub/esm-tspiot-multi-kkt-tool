@@ -61,7 +61,7 @@ namespace EsmTspiot.WinForms.Shared
             var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5,
                 Padding = new Padding(6), Margin = Padding.Empty };
             root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 44F));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 52F));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
@@ -96,7 +96,7 @@ namespace EsmTspiot.WinForms.Shared
             root.Controls.Add(mode, 0, 1);
             var headings = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 1 };
             _wizardHeading.AutoSize = true;
-            _wizardHeading.Font = new Font("Segoe UI", 16F, FontStyle.Bold);
+            _wizardHeading.Font = new Font("Segoe UI", 15F, FontStyle.Bold);
             _wizardHeading.ForeColor = OperatorTheme.Ink;
             _wizardHeading.Margin = new Padding(0, 3, 0, 3);
             _wizardMessage.AutoSize = true;
@@ -272,7 +272,7 @@ namespace EsmTspiot.WinForms.Shared
         {
             _wizardHeading.Text = heading;
             _wizardMessage.Text = message;
-            _wizardMessage.ForeColor = attention ? Color.DarkRed : SystemColors.ControlText;
+            _wizardMessage.ForeColor = attention ? OperatorTheme.Error : OperatorTheme.Ink;
             _wizardSteps.SetStage(stage, attention);
         }
 
@@ -571,10 +571,10 @@ namespace EsmTspiot.WinForms.Shared
             if (empty) _wizardEmptyState.BringToFront();
             _wizardEditorsPanel.Visible = editing && !_wizardNeedsInstaller;
             _wizardInstallerPanel.Visible = editing && _wizardNeedsInstaller;
-            int gridHeight = _discoveredKktsGrid.ColumnHeadersHeight + 6;
+            int gridHeight = _discoveredKktsGrid.ColumnHeadersHeight + SystemInformation.HorizontalScrollBarHeight + 6;
             for (int row = 0; row < Math.Min(4, _discoveredKktsGrid.Rows.Count); row++)
                 gridHeight += _discoveredKktsGrid.Rows[row].Height;
-            _wizardGridPanel.Height = empty ? 190 : gridHeight;
+            _wizardGridPanel.Height = empty ? 138 : gridHeight;
             _manualDiscoveryToolbar.Visible = false;
             _manualDiscoveryHint.Visible = false;
             _wizardContext.Visible = !editing && confirmed;
@@ -617,7 +617,7 @@ namespace EsmTspiot.WinForms.Shared
                 _wizardApply.Enabled = !_busy && valid &&
                     (!_wizardNeedsInstaller || _lmGatewayPage.HasLocalModuleInstallerSelection);
                 if (!valid && !string.IsNullOrEmpty(problem))
-                { _wizardValidationProblem = problem; _wizardMessage.Text = problem; _wizardMessage.ForeColor = Color.DarkRed; }
+                { _wizardValidationProblem = problem; _wizardMessage.Text = problem; _wizardMessage.ForeColor = OperatorTheme.Error; }
                 else if (!string.IsNullOrEmpty(_wizardValidationProblem))
                 {
                     _wizardValidationProblem = null;
@@ -675,6 +675,7 @@ namespace EsmTspiot.WinForms.Shared
                 selected.Tag = kkt.KktSerial;
             }
             _discoveredKktsGrid.CurrentCell = selected.Cells[0];
+            OperatorTheme.SetOrganizationCell(selected, _organizations.GetName(kkt.KktSerial, kkt.KktInn));
             SelectManualDiscoveredKkt();
             ShowWizardLmStep(new[] { kkt }, false);
         }

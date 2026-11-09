@@ -71,8 +71,8 @@ public static class CompactLayoutCheck
                 throw new Exception("Service operations must open separately without shrinking the inventory.");
             Capture(service, "compact-04-service-operations.png");
             foreach (string name in new[] { "LmRole", "LmInstallRoot", "LmOwnership" })
-                if (grid.Columns[name].Visible)
-                    throw new Exception("Technical details must not expand the main inventory table.");
+                if (!grid.Columns[name].Visible)
+                    throw new Exception("All existing technical columns must remain available in the inventory table.");
             Invoke(form, "SetBusy", true);
             if (((Control)Field(page, "_ensureLocalModulesButton")).Enabled)
                 throw new Exception("The separate service window must share the operation lock.");

@@ -235,11 +235,27 @@ namespace EsmTspiot.WinForms.Shared
                 version = string.IsNullOrWhiteSpace(version) ? release : version + "." + release;
             }
 
+            string organization = string.Empty;
+            string organizationInn = string.Empty;
+            try
+            {
+                SetParam("LIBFPTR_PARAM_FN_DATA_TYPE", ConstantInt("LIBFPTR_FNDT_REG_INFO"));
+                EnsureSuccess("fnQueryData", InvokeInt("fnQueryData"));
+                organizationInn = (GetParamString(1018) ?? string.Empty).Trim();
+                organization = (GetParamString(1048) ?? string.Empty).Trim();
+            }
+            catch
+            {
+                // Organization is display metadata; unsupported FN reads must not stop discovery.
+                organization = organizationInn = string.Empty;
+            }
             return new KktConnectionIdentity
             {
                 KktSerial = serial == null ? string.Empty : serial.Trim(),
                 ModelName = model == null ? string.Empty : model.Trim(),
-                FirmwareVersion = version == null ? string.Empty : version.Trim()
+                FirmwareVersion = version == null ? string.Empty : version.Trim(),
+                OrganizationName = organization,
+                OrganizationInn = organizationInn
             };
         }
 
@@ -275,8 +291,13 @@ namespace EsmTspiot.WinForms.Shared
 
         private string GetParamString(string parameterConstant)
         {
+            return GetParamString(ConstantInt(parameterConstant));
+        }
+
+        private string GetParamString(int parameter)
+        {
             object result = Invoke("getParamString", new Type[] { typeof(int) },
-                new object[] { ConstantInt(parameterConstant) });
+                new object[] { parameter });
             return result as string;
         }
 

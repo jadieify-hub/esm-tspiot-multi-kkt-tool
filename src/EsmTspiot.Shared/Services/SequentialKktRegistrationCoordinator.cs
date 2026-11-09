@@ -557,6 +557,8 @@ namespace EsmTspiot.Shared.Services
                 PortName = source == null ? string.Empty : source.PortName,
                 KktSerial = source == null ? string.Empty : source.KktSerial,
                 ModelName = source == null ? string.Empty : source.ModelName,
+                OrganizationName = source == null ? string.Empty : source.OrganizationName,
+                OrganizationInn = source == null ? string.Empty : source.OrganizationInn,
                 FirmwareVersion = source == null
                     ? string.Empty
                     : source.FirmwareVersion

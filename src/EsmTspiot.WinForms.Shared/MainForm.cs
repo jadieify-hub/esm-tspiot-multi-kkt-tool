@@ -95,6 +95,7 @@ namespace EsmTspiot.WinForms.Shared
                 _client,
                 AppendLog);
             _lmGatewayPage.DetailLogger = AppendDetailToFile;
+            _lmGatewayPage.OrganizationNameProvider = delegate(string serial, string inn) { return _organizations.GetName(serial, inn); };
             _lmGatewayPage.OperationStateChanged += OnLmGatewayOperationStateChanged;
             _lmGatewayPage.InstallerSelectionChanged += UpdateAutomaticInstallerSelection;
             _lmGatewayPage.SetupRequested += ShowWizardForRegisteredKkt;
@@ -105,7 +106,7 @@ namespace EsmTspiot.WinForms.Shared
             };
             var version = (System.Reflection.AssemblyInformationalVersionAttribute)Attribute.GetCustomAttribute(
                 typeof(MainForm).Assembly, typeof(System.Reflection.AssemblyInformationalVersionAttribute));
-            Text = "MultiKKT — тестовая версия " + version.InformationalVersion;
+            Text = "MultiKKT " + version.InformationalVersion;
             // Таблица ЛМ ЧЗ шире прежнего окна: её колонки требуют около
             // 925 пикселей, и на 780 оператору приходилось растягивать окно
             // руками при каждом запуске.
@@ -120,7 +121,11 @@ namespace EsmTspiot.WinForms.Shared
             AntdUI.Config.Animation = false;
             try
             {
+#if NET8_0_OR_GREATER
                 Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+#else
+                Icon = Icon.ExtractAssociatedIcon(typeof(MainForm).Assembly.Location);
+#endif
             }
             catch
             {
@@ -178,7 +183,7 @@ namespace EsmTspiot.WinForms.Shared
         {
             MenuStrip menu = new MenuStrip();
             menu.Dock = DockStyle.Fill;
-            menu.BackColor = Color.FromArgb(213, 226, 245);
+            menu.BackColor = OperatorTheme.Background;
             menu.ForeColor = OperatorTheme.Ink;
             menu.Font = new Font("Segoe UI", 9F);
 
@@ -480,15 +485,17 @@ namespace EsmTspiot.WinForms.Shared
             table.Dock = DockStyle.Fill;
             table.ColumnCount = 1;
             table.RowCount = 2;
-            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 28F));
+            table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             table.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
 
             FlowLayoutPanel toolbar = new FlowLayoutPanel();
-            toolbar.Dock = DockStyle.Fill;
+            toolbar.Dock = DockStyle.Top;
+            toolbar.AutoSize = true;
             toolbar.FlowDirection = FlowDirection.RightToLeft;
             toolbar.WrapContents = false;
 
             _copyDiagnosticsButton.Text = "Скопировать диагностику";
+            OperatorTheme.Button(_copyDiagnosticsButton, false);
             _copyDiagnosticsButton.AutoSize = true;
             _copyDiagnosticsButton.Margin = new Padding(0, 0, 0, 3);
             _copyDiagnosticsButton.Click += CopyMaskedDiagnostics;
@@ -497,6 +504,7 @@ namespace EsmTspiot.WinForms.Shared
             toolbar.Controls.Add(_copyDiagnosticsButton);
 
             _openLogFolderButton.Text = "Открыть папку журнала";
+            OperatorTheme.Button(_openLogFolderButton, false);
             _openLogFolderButton.AutoSize = true;
             _openLogFolderButton.Margin = new Padding(0, 0, 6, 3);
             _openLogFolderButton.Click += delegate { OpenLogFolder(); };
@@ -509,7 +517,10 @@ namespace EsmTspiot.WinForms.Shared
             _logTextBox.WordWrap = false;
             _logTextBox.HideSelection = false;
             _logTextBox.MinimumSize = new Size(0, 110);
-            _logTextBox.Font = new Font("Consolas", 8.25F);
+            _logTextBox.Font = new Font("Consolas", 9F);
+            _logTextBox.ForeColor = OperatorTheme.Ink;
+            _logTextBox.BackColor = OperatorTheme.Surface;
+            _logTextBox.BorderStyle = BorderStyle.FixedSingle;
 
             table.Controls.Add(toolbar, 0, 0);
             table.Controls.Add(_logTextBox, 0, 1);
@@ -521,6 +532,8 @@ namespace EsmTspiot.WinForms.Shared
         {
             GroupBox group = new GroupBox();
             group.Text = text;
+            group.ForeColor = OperatorTheme.Ink;
+            group.BackColor = OperatorTheme.Surface;
             group.Dock = DockStyle.Fill;
             group.AutoSize = true;
             group.Padding = new Padding(6);
@@ -2101,7 +2114,7 @@ namespace EsmTspiot.WinForms.Shared
             }
             else if (!candidate.CanDelete)
             {
-                row.DefaultCellStyle.BackColor = Color.MistyRose;
+                row.DefaultCellStyle.ForeColor = OperatorTheme.Error;
             }
         }
 
@@ -2129,12 +2142,12 @@ namespace EsmTspiot.WinForms.Shared
             if (response == null || response.IsConnectionFailure || response.StatusCode == 0)
             {
                 _connectionStatusLabel.Text = "ЕСМ: нет связи";
-                _connectionStatusLabel.ForeColor = Color.Firebrick;
+                _connectionStatusLabel.ForeColor = OperatorTheme.Error;
                 return;
             }
 
             _connectionStatusLabel.Text = "ЕСМ: доступен";
-            _connectionStatusLabel.ForeColor = Color.DarkGreen;
+            _connectionStatusLabel.ForeColor = OperatorTheme.Green;
         }
 
         private void AppendReadableInstances(ApiResponse response)
