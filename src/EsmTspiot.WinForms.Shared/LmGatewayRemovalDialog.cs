@@ -26,6 +26,7 @@ namespace EsmTspiot.WinForms.Shared
             MinimumSize = new Size(520, 320);
             Font = new Font("Segoe UI", 10F);
             ForeColor = OperatorTheme.Ink;
+            Icon = OperatorTheme.AppIcon;
             BackColor = OperatorTheme.Surface;
             Shown += delegate { OperatorTheme.Dialog(this); };
             Build(kktInn);

@@ -47,6 +47,7 @@ public static class CompactLayoutCheck
             var driverPort = (TextBox)Field(form, "_dkktPortTextBox");
             Invoke(form, "ShowConnectionSettings");
             var connection = (Form)Field(form, "_connectionDialog");
+            AssertAppIcon(connection);
             if (url.FindForm() != connection || driverPort.FindForm() != connection || connection.Owner != form)
                 throw new Exception("The original connection fields must live in the owned settings window.");
             Capture(connection, "compact-03-connection.png");
@@ -67,6 +68,7 @@ public static class CompactLayoutCheck
             Size beforeService = grid.Size;
             Invoke(page, "ShowServiceOperations");
             var service = (Form)Field(page, "_serviceOperationsWindow");
+            AssertAppIcon(service);
             if (!service.Visible || service.Owner != form || grid.Size != beforeService)
                 throw new Exception("Service operations must open separately without shrinking the inventory.");
             Capture(service, "compact-04-service-operations.png");
@@ -91,6 +93,21 @@ public static class CompactLayoutCheck
             if (service.IsDisposed)
                 throw new Exception("Closing service operations must preserve its original controls.");
         }
+    }
+
+    public static void AssertAppIcon(Form dialog)
+    {
+        using (var stream = typeof(MainForm).Assembly.GetManifestResourceStream(
+            "EsmTspiot.WinForms.Shared.Assets.app.ico"))
+        using (var expected = new Icon(stream))
+        using (var expectedSize = new Icon(expected, 32, 32))
+        using (var actualSize = new Icon(dialog.Icon, 32, 32))
+        using (var reference = expectedSize.ToBitmap())
+        using (var actual = actualSize.ToBitmap())
+            for (int y = 0; y < 32; y++)
+                for (int x = 0; x < 32; x++)
+                    if (reference.GetPixel(x, y) != actual.GetPixel(x, y))
+                        throw new Exception("The window must use the MultiKKT application icon: " + dialog.Text);
     }
 
     private static object Field(object value, string name)

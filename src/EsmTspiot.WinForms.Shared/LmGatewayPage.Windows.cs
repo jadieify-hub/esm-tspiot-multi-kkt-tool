@@ -11,6 +11,7 @@ namespace EsmTspiot.WinForms.Shared
         private Form BuildServiceOperationsWindow()
         {
             var dialog = new Form { Text = "Служебные операции ЛМ ЧЗ", Name = "service-operations-window",
+                Icon = OperatorTheme.AppIcon,
                 ClientSize = new Size(960, 650), MinimumSize = new Size(760, 480),
                 StartPosition = FormStartPosition.CenterParent, ShowInTaskbar = false,
                 MinimizeBox = false, Font = Font, ForeColor = OperatorTheme.Ink, BackColor = OperatorTheme.Surface };
@@ -84,6 +85,7 @@ namespace EsmTspiot.WinForms.Shared
                 text.AppendLine();
             }
             var dialog = new Form { Text = "Сведения о кассе", Name = "kkt-details-dialog",
+                Icon = OperatorTheme.AppIcon,
                 ClientSize = new Size(680, 580), MinimumSize = new Size(480, 380),
                 StartPosition = FormStartPosition.CenterParent, ShowInTaskbar = false, MinimizeBox = false,
                 Font = Font, ForeColor = OperatorTheme.Ink, BackColor = OperatorTheme.Surface };

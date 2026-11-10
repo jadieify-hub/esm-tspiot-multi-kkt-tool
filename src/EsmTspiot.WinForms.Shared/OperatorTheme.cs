@@ -6,6 +6,7 @@ namespace EsmTspiot.WinForms.Shared
 {
     internal static class OperatorTheme
     {
+        internal static readonly Icon AppIcon;
         internal static readonly Color Ink = Color.FromArgb(31, 43, 51);
         internal static readonly Color Muted = Color.FromArgb(87, 103, 112);
         internal static readonly Color Blue = Color.FromArgb(36, 91, 115);
@@ -20,6 +21,9 @@ namespace EsmTspiot.WinForms.Shared
 
         static OperatorTheme()
         {
+            using (var stream = typeof(OperatorTheme).Assembly.GetManifestResourceStream(
+                "EsmTspiot.WinForms.Shared.Assets.app.ico"))
+                AppIcon = new Icon(stream);
             AntdUI.Style.SetPrimary(Blue);
             AntdUI.Style.SetInfo(Blue);
             AntdUI.Style.SetSuccess(Green);

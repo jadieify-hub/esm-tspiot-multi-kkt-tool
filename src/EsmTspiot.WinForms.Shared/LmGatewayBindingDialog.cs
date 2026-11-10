@@ -23,6 +23,7 @@ namespace EsmTspiot.WinForms.Shared
             MaximumSize = new Size(700, 330);
             Font = new Font("Segoe UI", 10F);
             ForeColor = OperatorTheme.Ink;
+            Icon = OperatorTheme.AppIcon;
             BackColor = OperatorTheme.Surface;
             Shown += delegate { OperatorTheme.Dialog(this); };
             FormBorderStyle = FormBorderStyle.FixedDialog;

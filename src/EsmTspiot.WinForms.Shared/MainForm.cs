@@ -119,17 +119,7 @@ namespace EsmTspiot.WinForms.Shared
             BackColor = OperatorTheme.Background;
             AntdUI.Config.IsLight = true;
             AntdUI.Config.Animation = false;
-            try
-            {
-#if NET8_0_OR_GREATER
-                Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
-#else
-                Icon = Icon.ExtractAssociatedIcon(typeof(MainForm).Assembly.Location);
-#endif
-            }
-            catch
-            {
-            }
+            Icon = OperatorTheme.AppIcon;
 
             BuildLayout();
             FillDefaults();

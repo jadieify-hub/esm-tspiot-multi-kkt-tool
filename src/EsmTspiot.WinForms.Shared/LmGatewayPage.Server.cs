@@ -37,6 +37,7 @@ namespace EsmTspiot.WinForms.Shared
             using (Form dialog = new Form())
             {
                 dialog.Text = "Сервер ЛМ ЧЗ";
+                dialog.Icon = OperatorTheme.AppIcon;
                 dialog.StartPosition = FormStartPosition.CenterParent;
                 dialog.FormBorderStyle = FormBorderStyle.Sizable;
                 dialog.MinimizeBox = false;

@@ -32,6 +32,7 @@ namespace EsmTspiot.WinForms.Shared
             ClientSize = new Size(420, 520);
             Font = new Font("Segoe UI", 10F);
             ForeColor = OperatorTheme.Ink;
+            Icon = OperatorTheme.AppIcon;
             BackColor = OperatorTheme.Surface;
             Shown += delegate { OperatorTheme.Dialog(this); };
 

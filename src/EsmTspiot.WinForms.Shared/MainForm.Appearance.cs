@@ -59,6 +59,7 @@ namespace EsmTspiot.WinForms.Shared
         private Form BuildConnectionSettings()
         {
             var dialog = new Form { Text = "Подключение к ЕСМ", Name = "connection-dialog",
+                Icon = OperatorTheme.AppIcon,
                 ClientSize = new Size(620, 240), FormBorderStyle = FormBorderStyle.FixedDialog,
                 StartPosition = FormStartPosition.CenterParent, ShowInTaskbar = false,
                 MaximizeBox = false, MinimizeBox = false, Font = Font,

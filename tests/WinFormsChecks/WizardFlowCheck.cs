@@ -146,6 +146,7 @@ public static class WizardFlowCheck
             using (var details = (Form)Invoke(inventory, "BuildKktDetailsDialog"))
             {
                 details.Show(form);
+                CompactLayoutCheck.AssertAppIcon(details);
                 var text = Find<TextBox>(details, "kkt-details");
                 if (!text.ReadOnly || !text.Text.Contains("00105700000001"))
                     throw new Exception("KKT details must show the selected registration as read-only text.");

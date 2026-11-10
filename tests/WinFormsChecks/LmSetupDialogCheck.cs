@@ -30,6 +30,7 @@ public static class LmSetupDialogCheck
             new object[] { kkts, stored, credentials, save }, null))
         {
             dialog.Show();
+            CompactLayoutCheck.AssertAppIcon(dialog);
             Application.DoEvents();
             string captureDirectory = Environment.GetEnvironmentVariable("MULTIKKT_UI_SCREENSHOT_DIR");
             if (!string.IsNullOrEmpty(captureDirectory))
