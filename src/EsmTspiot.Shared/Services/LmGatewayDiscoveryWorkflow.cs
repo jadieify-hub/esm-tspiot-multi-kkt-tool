@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using EsmTspiot.Shared.Logging;
 using EsmTspiot.Shared.Models;
 
 namespace EsmTspiot.Shared.Services
@@ -59,20 +60,25 @@ namespace EsmTspiot.Shared.Services
                     cancellationToken).ConfigureAwait(false);
                 if (detailResponse == null || !detailResponse.IsSuccess)
                 {
-                    AddIssue(discovery, instanceId, "Не удалось получить данные экземпляра ККТ из ЕСМ.");
+                    AddIssue(discovery, instance, "Не удалось получить данные экземпляра ККТ из ЕСМ. " +
+                        (detailResponse == null ? string.Empty : SensitiveDataMasker.Mask(
+                            string.IsNullOrWhiteSpace(detailResponse.DecodedMessage)
+                                ? TspiotErrorDecoder.Decode(detailResponse.StatusCode, detailResponse.ResponseBody)
+                                : detailResponse.DecodedMessage)));
                     continue;
                 }
 
                 KktInstanceDetails details;
                 if (!InstanceDetailsParser.TryParse(detailResponse.ResponseBody, out details))
                 {
-                    AddIssue(discovery, instanceId, "ЕСМ вернул некорректные данные экземпляра ККТ.");
+                    AddIssue(discovery, instance, "ЕСМ вернул некорректные данные экземпляра ККТ." +
+                        TspiotErrorDecoder.DescribeResponseBody(detailResponse.ResponseBody));
                     continue;
                 }
 
                 if (!details.HasCompleteRegistrationData)
                 {
-                    AddIssue(discovery, instanceId, "Экземпляр ККТ не зарегистрирован полностью и исключён из привязки ЛМ.");
+                    AddIssue(discovery, instance, "Экземпляр ККТ не зарегистрирован полностью и исключён из привязки ЛМ.");
                     continue;
                 }
 
@@ -80,7 +86,7 @@ namespace EsmTspiot.Shared.Services
                 string kktSerial = (registration.KktSerial ?? string.Empty).Trim();
                 if (!string.Equals(instanceId, kktSerial, StringComparison.Ordinal))
                 {
-                    AddIssue(discovery, instanceId, "Серийный номер зарегистрированной ККТ не совпадает с идентификатором экземпляра ЕСМ.");
+                    AddIssue(discovery, instance, "Серийный номер зарегистрированной ККТ не совпадает с идентификатором экземпляра ЕСМ.");
                     continue;
                 }
 
@@ -106,11 +112,12 @@ namespace EsmTspiot.Shared.Services
             return discovery;
         }
 
-        private static void AddIssue(LmGatewayDiscovery discovery, string instanceId, string message)
+        private static void AddIssue(LmGatewayDiscovery discovery, KktInstanceInfo instance, string message)
         {
             discovery.Issues.Add(new LmGatewayDiscoveryIssue
             {
-                InstanceId = instanceId,
+                InstanceId = (instance.Id ?? string.Empty).Trim(),
+                Instance = instance,
                 Message = message
             });
         }

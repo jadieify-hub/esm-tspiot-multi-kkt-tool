@@ -121,6 +121,17 @@ namespace EsmTspiot.Shared.Services
                 }
             }
 
+            if (request.Operation == LmServiceOperation.ResetControllers)
+            {
+                int count = request.ControllerResetServices == null ? 0 : request.ControllerResetServices.Count;
+                Append(canonical, "reset-services", count.ToString(CultureInfo.InvariantCulture));
+                if (request.ControllerResetServices != null)
+                    foreach (var service in request.ControllerResetServices)
+                    {
+                        Append(canonical, "reset-service", service == null ? null : service.ServiceName);
+                        Append(canonical, "reset-image", service == null ? null : service.ExpectedImagePath);
+                    }
+            }
             using (SHA256 algorithm = SHA256.Create())
             {
                 byte[] digest = algorithm.ComputeHash(Encoding.UTF8.GetBytes(canonical.ToString()));
@@ -242,7 +253,8 @@ namespace EsmTspiot.Shared.Services
             return operation == LmServiceOperation.EnsureDirectControllers ||
                 operation == LmServiceOperation.RestartDirectController ||
                 operation == LmServiceOperation.RemoveDirectController ||
-                operation == LmServiceOperation.RemoveAllDirectControllers;
+                operation == LmServiceOperation.RemoveAllDirectControllers ||
+                operation == LmServiceOperation.ResetControllers;
         }
 
         private static bool IsMsiLocalModuleOperation(

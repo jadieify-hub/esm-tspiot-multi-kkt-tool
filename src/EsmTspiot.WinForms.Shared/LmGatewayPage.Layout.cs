@@ -171,6 +171,7 @@ namespace EsmTspiot.WinForms.Shared
             _grid.Columns["LmState"].FillWeight = 150;
             _grid.Columns["EsmLinkState"].FillWeight = 160;
             _grid.Columns["LmEndpoint"].DefaultCellStyle.WrapMode = DataGridViewTriState.True;
+            _grid.Columns["EsmLinkState"].DefaultCellStyle.WrapMode = DataGridViewTriState.True;
             OperatorTheme.Grid(_grid);
             _grid.ColumnHeadersHeight = 44;
             foreach (string name in new[] { "KktSoftwarePort", "KktServicePort" })

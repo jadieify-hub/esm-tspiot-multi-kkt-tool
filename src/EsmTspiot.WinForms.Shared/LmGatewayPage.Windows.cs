@@ -40,14 +40,16 @@ namespace EsmTspiot.WinForms.Shared
             ConfigureButton(_bindButton, "Привязать к ЕСМ");
             _bindButton.Tag = "BindSelectedEsm";
             ConfigureButton(_removeServiceButton, "Удалить выбранный комплект");
-            ConfigureButton(_removeAllServicesButton, "Удалить всё созданное");
+            ConfigureButton(_removeAllServicesButton, "Удалить контроллеры и ЛМ…");
+            ConfigureButton(_resetControllersButton, "Сбросить контроллеры…");
+            _resetControllersButton.Click += async delegate { await ConfirmAndResetControllersAsync(); };
             _removeAllServicesButton.Tag = "RemoveAllCreatedComponents";
             ConfigureButton(_cleanupButton, "Завершить очистку");
             _bindButton.Click += async delegate { await BindSelectedAsync(); };
             _removeServiceButton.Click += async delegate { await ConfirmAndRemoveServiceAsync(); };
             _removeAllServicesButton.Click += async delegate { await ConfirmAndRemoveEverythingAsync(); };
             _cleanupButton.Click += async delegate { await ConfirmAndCleanupServiceAsync(); };
-            foreach (Button button in new[] { _bindButton, _removeServiceButton, _removeAllServicesButton, _cleanupButton })
+            foreach (Button button in new[] { _bindButton, _removeServiceButton, _resetControllersButton, _removeAllServicesButton, _cleanupButton })
                 removal.Controls.Add(button);
             advanced.Controls.Add(removal, 0, 2);
             _serviceOperations.Dock = DockStyle.Fill;

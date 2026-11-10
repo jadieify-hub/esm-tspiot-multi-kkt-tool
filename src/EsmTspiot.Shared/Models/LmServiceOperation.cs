@@ -41,6 +41,8 @@ namespace EsmTspiot.Shared.Models
         [EnumMember]
         RemoveMsiLocalModule = 13,
         [EnumMember]
-        RemoveAllMsiLocalModules = 14
+        RemoveAllMsiLocalModules = 14,
+        [EnumMember]
+        ResetControllers = 15
     }
 }

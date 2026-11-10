@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
@@ -58,8 +59,101 @@ public static class LmRefreshCheck
                     CheckSelectedDiagnosis(page, api);
                     CheckPartialSetupOutcome();
                 }
+                CheckUnavailableInstanceRows(page, api);
             }
         }
+        CheckUnavailableDraftPreservation();
+    }
+
+    private static void CheckUnavailableDraftPreservation()
+    {
+        string path = Path.Combine(Path.GetTempPath(), "lm-drafts-check-" + Guid.NewGuid().ToString("N") + ".json");
+        var store = new LmGatewayDraftSettingsStore(path);
+        var saved = new LmGatewayKkt { InstanceId = "00105700000002", KktSerial = "00105700000002", KktInn = "1234567894" };
+        store.Save(new[] { new LmGatewayDraft { KktSerial = saved.KktSerial, KktInn = saved.KktInn,
+            TargetAddress = "10.0.0.10", TargetPort = "5995", GrpcPort = "60063", RestPort = "6063" } });
+        try
+        {
+            var api = new DiscoveryOnlyApi { DetailFailures = 1 };
+            using (var page = new LmGatewayPage(delegate { return "http://127.0.0.1:51077"; }, api, null))
+            {
+                typeof(LmGatewayPage).GetField("_draftSettingsStore", BindingFlags.Instance | BindingFlags.NonPublic)
+                    .SetValue(page, store);
+                WaitForRefresh(page.RefreshAsync());
+                IList<LmGatewayDraft> drafts = store.LoadFor(new[] { saved });
+                if (drafts.Count != 1 || drafts[0].TargetAddress != "10.0.0.10")
+                    throw new Exception("Cold-start detail failure must preserve saved drafts on disk.");
+                api.DetailFailures = 0;
+                WaitForRefresh(page.RefreshAsync());
+                drafts = store.LoadFor(new[] { saved });
+                if (drafts.Count != 1 || drafts[0].TargetAddress != "10.0.0.10")
+                    throw new Exception("Recovery must restore the saved draft for the returning instance.");
+                api.DetailFailures = 1;
+                WaitForRefresh(page.RefreshAsync());
+                var memory = (IDictionary<string, LmGatewayDraft>)typeof(LmGatewayPage)
+                    .GetField("_serviceDrafts", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(page);
+                if (!memory.ContainsKey(saved.KktSerial))
+                    throw new Exception("A known inventory instance must retain its draft during detail failure.");
+                api.RemoveSecond = true;
+                WaitForRefresh(page.RefreshAsync());
+                if (memory.ContainsKey(saved.KktSerial) || store.LoadFor(new[] { saved }).Count != 0)
+                    throw new Exception("Only a genuinely removed instance must lose its saved draft.");
+            }
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
+    private static void CheckUnavailableInstanceRows(LmGatewayPage page, DiscoveryOnlyApi api)
+    {
+        BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var grid = (DataGridView)typeof(LmGatewayPage).GetField("_grid", flags).GetValue(page);
+        var session = (LmGatewayBindingSession)typeof(LmGatewayPage).GetField("_session", flags).GetValue(page);
+        foreach (int failures in new[] { 1, 2, 0 })
+        {
+            api.DetailFailures = failures;
+            WaitForRefresh(page.RefreshAsync());
+            if (grid.Rows.Count != 2 || session.Rows.Count != 2 - failures)
+                throw new Exception("ESM detail failure must retain inventory rows outside binding candidates.");
+            if (!page.AutomaticSetupStatus.Contains("ККТ: 2"))
+                throw new Exception("Refresh must count the real ESM inventory, including failed details.");
+            foreach (DataGridViewRow row in grid.Rows)
+            {
+                string id = (string)row.Cells["KktSerial"].Value;
+                bool failed = failures == 2 || (failures == 1 && id == "00105700000002");
+                if (!failed) continue;
+                if ((string)row.Cells["KktServicePort"].Value != (id.EndsWith("1") ? "50401" : "50402") ||
+                    (string)row.Cells["KktSoftwarePort"].Value != (id.EndsWith("1") ? "51401" : "51402") ||
+                    !((string)row.Cells["EsmLinkState"].Value).Contains("2003") ||
+                    !((string)row.Cells["EsmLinkState"].Value).Contains("не подтверждена") ||
+                    !string.IsNullOrEmpty((string)row.Cells["KktInn"].Value))
+                    throw new Exception("Failed detail row must show real ID/ports and error, without stale registration data.");
+                grid.CurrentCell = row.Cells["KktSerial"];
+                typeof(LmGatewayPage).GetMethod("UpdateActionState", flags).Invoke(page, null);
+                object selected = typeof(LmGatewayPage).GetProperty("SelectedKkt", flags).GetValue(page, null);
+                if (selected != null)
+                    throw new Exception("Failed details must never supply a KKT for configuration.");
+                foreach (string button in new[] { "_installControllerButton", "_bindButton" })
+                {
+                    var control = (Control)typeof(LmGatewayPage).GetField(button, flags).GetValue(page);
+                    if (control.Enabled) throw new Exception("Failed details must disable selected-KKT mutations.");
+                }
+            }
+        }
+        api.RemoveSecond = true;
+        WaitForRefresh(page.RefreshAsync());
+        if (grid.Rows.Count != 1 || session.Rows.Count != 1)
+            throw new Exception("A genuinely removed ESM instance must disappear after refresh.");
+        api.RemoveSecond = false;
+        WaitForRefresh(page.RefreshAsync());
+    }
+
+    private static void WaitForRefresh(Task refresh)
+    {
+        DateTime deadline = DateTime.UtcNow.AddSeconds(15);
+        while (!refresh.IsCompleted && DateTime.UtcNow < deadline)
+        { Application.DoEvents(); Thread.Sleep(5); }
+        if (!refresh.IsCompleted) throw new Exception("LM refresh timed out.");
+        refresh.GetAwaiter().GetResult();
     }
 
     private static void CheckUninstalledModuleRows(
@@ -243,6 +337,8 @@ public static class LmRefreshCheck
         public readonly List<string> InfoPorts = new List<string>();
         public readonly List<string> DetailIds = new List<string>();
         public bool AcceptBinding;
+        public int DetailFailures;
+        public bool RemoveSecond;
 
         private static Task<ApiResponse> Success(string json)
         {
@@ -252,13 +348,18 @@ public static class LmRefreshCheck
 
         public Task<ApiResponse> GetInstancesAsync(string url, CancellationToken cancellation)
         {
-            return Success("{\"instances\":[{\"id\":\"00105700000001\",\"port\":50401,\"softPort\":51401}," +
-                "{\"id\":\"00105700000002\",\"port\":50402,\"softPort\":51402}]}");
+            return Success("{\"instances\":[{\"id\":\"00105700000001\",\"port\":50401,\"softPort\":51401,\"serviceState\":\"RUNNING\"}" +
+                (RemoveSecond ? string.Empty : ",{\"id\":\"00105700000002\",\"port\":50402,\"softPort\":51402,\"serviceState\":\"RUNNING\"}") + "]}");
         }
 
         public Task<ApiResponse> GetInstanceAsync(string url, string id, CancellationToken cancellation)
         {
             DetailIds.Add(id);
+            if (DetailFailures == 2 || (DetailFailures == 1 && id == "00105700000002"))
+                return Task.FromResult(new ApiResponse { IsSuccess = DetailFailures == 2,
+                    StatusCode = DetailFailures == 2 ? 200 : 500,
+                    ResponseBody = "{\"error\":2003,\"message\":\"instance details unavailable\"}",
+                    DecodedMessage = "error 2003: instance details unavailable" });
             return Success("{\"state\":\"Registered\",\"regData\":{\"kktSerial\":\"" + id +
                 "\",\"fnSerial\":\"7300000000000001\",\"kktInn\":\"1234567894\"}}");
         }

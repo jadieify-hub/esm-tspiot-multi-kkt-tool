@@ -9,6 +9,7 @@ public static class LmSetupDialogCheck
 {
     public static void Run()
     {
+        CheckInstallerSelection();
         Type type = typeof(LmGatewayPage).Assembly.GetType(
             "EsmTspiot.WinForms.Shared.LmSetupDialog", true);
         var kkts = new List<LmGatewayKkt> {
@@ -102,6 +103,121 @@ public static class LmSetupDialogCheck
             new { Applied = new LmGatewayTarget("127.0.0.1", 5995), Desired = "", Pending = false } })
             if ((bool)needsApply.Invoke(null, new object[] { example.Applied, example.Desired }) != example.Pending)
                 throw new Exception("A shared INN's unmodified controller must remain pending, including return to a local LM.");
+    }
+
+    public static void CheckInstallerSelection()
+    {
+        CheckInstallerRequirement();
+        Type picker = typeof(LmGatewayPage).Assembly.GetType(
+            "EsmTspiot.WinForms.Shared.LocalModuleInstallerPicker", true);
+        MethodInfo confirm = picker.GetMethod("ConfirmSelection",
+            BindingFlags.Static | BindingFlags.NonPublic);
+        if (confirm == null) throw new Exception("Remembered MSI must be confirmed before installation.");
+        string firstPath = System.IO.Path.GetTempFileName();
+        string secondPath = System.IO.Path.GetTempFileName();
+        try
+        {
+            var first = new LocalModuleInstallerSelection {
+                SourcePath = firstPath, FileName = "official-1.msi", ProductVersion = "1.0" };
+            var second = new LocalModuleInstallerSelection {
+                SourcePath = secondPath, FileName = "official-2.msi", ProductVersion = "2.0" };
+            int choices = 0;
+            int confirmations = 0;
+            Func<LocalModuleInstallerSelection> choose = delegate { choices++; return second; };
+            Func<LocalModuleInstallerSelection, DialogResult> install = delegate(LocalModuleInstallerSelection shown) {
+                confirmations++;
+                if (shown != first) throw new Exception("Remembered MSI metadata was lost.");
+                return DialogResult.OK;
+            };
+            if (confirm.Invoke(null, new object[] { first, choose, install }) != first || choices != 0 || confirmations != 1)
+                throw new Exception("Remembered MSI must be confirmed without opening the file chooser.");
+            confirmations = 0;
+            Func<LocalModuleInstallerSelection, DialogResult> replace = delegate(LocalModuleInstallerSelection shown) {
+                confirmations++;
+                if (confirmations == 1 && shown == first) return DialogResult.Retry;
+                if (confirmations == 2 && shown == second) return DialogResult.OK;
+                throw new Exception("Replacement MSI must be confirmed with its own version and path.");
+            };
+            if (confirm.Invoke(null, new object[] { first, choose, replace }) != second || choices != 1)
+                throw new Exception("Choosing another MSI must replace the remembered selection.");
+            System.IO.File.Delete(firstPath);
+            confirmations = 0;
+            Func<LocalModuleInstallerSelection, DialogResult> missing = delegate(LocalModuleInstallerSelection shown) {
+                confirmations++;
+                if (shown != second) throw new Exception("Missing remembered MSI must open the chooser first.");
+                return DialogResult.OK;
+            };
+            if (confirm.Invoke(null, new object[] { first, choose, missing }) != second || choices != 2 || confirmations != 1)
+                throw new Exception("Missing MSI must be replaced through the existing chooser.");
+            Func<LocalModuleInstallerSelection, DialogResult> cancel = delegate { return DialogResult.Cancel; };
+            if (confirm.Invoke(null, new object[] { second, choose, cancel }) != null)
+                throw new Exception("Cancel must not authorize installation.");
+            Func<LocalModuleInstallerSelection> cancelChooser = delegate { return null; };
+            if (confirm.Invoke(null, new object[] { null, cancelChooser, install }) != null ||
+                confirm.Invoke(null, new object[] { second, cancelChooser,
+                    new Func<LocalModuleInstallerSelection, DialogResult>(delegate { return DialogResult.Retry; }) }) != null)
+                throw new Exception("Cancelling the MSI chooser must not authorize installation.");
+            CheckInstallerDialog(second);
+        }
+        finally
+        {
+            System.IO.File.Delete(firstPath);
+            System.IO.File.Delete(secondPath);
+        }
+    }
+
+    private static void CheckInstallerRequirement()
+    {
+        var flags = BindingFlags.Static | BindingFlags.NonPublic;
+        MethodInfo requires = typeof(LmGatewayPage).GetMethod("RequiresLocalModuleInstallation", flags);
+        if (requires == null) throw new Exception("MSI confirmation must depend on actual local installation.");
+        Type type = typeof(LmGatewayPage).Assembly.GetType(
+            "EsmTspiot.WinForms.Shared.LocalModuleMsiOperatorInventorySnapshot", true);
+        object inventory = Activator.CreateInstance(type, true);
+        var plan = new LocalModuleMsiPlan();
+        if ((bool)requires.Invoke(null, new object[] { plan, inventory }))
+            throw new Exception("Remote-only LM plan must not request MSI confirmation.");
+        var assignment = new LocalModuleMsiAssignment { Inn = "1234567894", CloneOrdinal = 1 };
+        plan.Assignments.Add(assignment);
+        if (!(bool)requires.Invoke(null, new object[] { plan, inventory }))
+            throw new Exception("New local LM must request MSI confirmation.");
+        var items = (IList<LocalModuleMsiInventoryItem>)type.GetProperty("Items",
+            BindingFlags.Instance | BindingFlags.NonPublic).GetValue(inventory, null);
+        items.Add(new LocalModuleMsiInventoryItem { Inn = assignment.Inn, CloneOrdinal = 1 });
+        if (!(bool)requires.Invoke(null, new object[] { plan, inventory }))
+            throw new Exception("Inventory record without installed services must still request confirmation.");
+        var installed = (IList<string>)type.GetProperty("InstalledModuleInns",
+            BindingFlags.Instance | BindingFlags.NonPublic).GetValue(inventory, null);
+        installed.Add(assignment.Inn);
+        if ((bool)requires.Invoke(null, new object[] { plan, inventory }))
+            throw new Exception("Existing local LM must not request new installation confirmation.");
+        plan.Assignments.Clear();
+        plan.Assignments.Add(new LocalModuleMsiAssignment { Inn = "7701234560", CloneOrdinal = 0 });
+        type.GetProperty("BaseInventory", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(
+            inventory, new LocalModuleBaseInventory { IsInstalled = true }, null);
+        if ((bool)requires.Invoke(null, new object[] { plan, inventory }))
+            throw new Exception("Adopting the installed base LM must not request MSI installation confirmation.");
+    }
+
+    private static void CheckInstallerDialog(LocalModuleInstallerSelection selection)
+    {
+        Type type = typeof(LmGatewayPage).Assembly.GetType(
+            "EsmTspiot.WinForms.Shared.LocalModuleInstallerConfirmationDialog", true);
+        using (var dialog = (Form)Activator.CreateInstance(type,
+            BindingFlags.Instance | BindingFlags.NonPublic, null, new object[] { selection }, null))
+        {
+            dialog.Show();
+            Application.DoEvents();
+            CompactLayoutCheck.AssertAppIcon(dialog);
+            if (Find<Label>(dialog, "lm-msi-file").Text.IndexOf(selection.FileName) < 0 ||
+                Find<Label>(dialog, "lm-msi-version").Text.IndexOf(selection.ProductVersion) < 0 ||
+                Find<TextBox>(dialog, "lm-msi-path").Text != selection.SourcePath)
+                throw new Exception("Installation confirmation must show the exact file, version and full path.");
+            foreach (string name in new[] { "lm-msi-install", "lm-msi-choose", "lm-msi-cancel" })
+                Find<AntdUI.Button>(dialog, name);
+            if (((Control)dialog.CancelButton).Name != "lm-msi-cancel")
+                throw new Exception("Escape must cancel MSI installation.");
+        }
     }
 
     private static bool CanRead(Type type, Form dialog)

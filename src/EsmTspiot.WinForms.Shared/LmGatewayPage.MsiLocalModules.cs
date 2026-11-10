@@ -478,18 +478,10 @@ namespace EsmTspiot.WinForms.Shared
                     "В ЕСМ нет зарегистрированных ККТ для настройки.");
 
             IList<LmGatewayKkt> localLmKkts = SelectLocalLmKkts(registeredKkts);
-            // Выбор пакета живёт на вкладке «ЛМ ЧЗ», а полный прогон
-            // запускают с другой вкладки: без этого вопроса ЛМ ЧЗ
-            // молча пропускается, и это выясняется только в журнале.
-            // Если все ЛМ на другом компьютере, пакет не нужен.
             if (localLmKkts.Count > 0 && !RequireDotNetForLocalModule(this))
                 throw new InvalidOperationException(
                     "Не установлен .NET Framework 4.8 — он нужен для ЛМ ЧЗ. " +
                     "Установите его, перезагрузите компьютер и повторите настройку.");
-            if (localLmKkts.Count > 0 && !RequireLocalModuleInstaller(this))
-                throw new InvalidOperationException(
-                    "Не выбран официальный MSI ЛМ ЧЗ. Укажите файл кнопкой " +
-                    "«Выбрать MSI...» и повторите настройку.");
 
             FullAutomaticLocalSetupOutcome outcome =
                 new FullAutomaticLocalSetupOutcome { FmuApiMode = fmuApiMode };
@@ -541,18 +533,6 @@ namespace EsmTspiot.WinForms.Shared
                             Log("ЛМ ЧЗ всех ИНН на другом компьютере; " +
                                 "здесь ставить нечего.\r\n");
                             return true;
-                        }
-                        if (_localModuleInstallerSelection == null)
-                        {
-                            outcome.LocalModulesDeferred = true;
-                            outcome.LocalModulesFailed = Math.Max(
-                                outcome.LocalModulesFailed,
-                                plan.Assignments.Count);
-                            Log("MSI ЛМ ЧЗ не выбран или установка отложена; " +
-                                (fmuApiMode
-                                    ? "подготовка FMU-API не завершена.\r\n"
-                                    : "регистрация и контроллеры не отменяются.\r\n"));
-                            return false;
                         }
                         return await EnsureMsiLocalModulesAsync(
                             plan,
@@ -704,7 +684,10 @@ namespace EsmTspiot.WinForms.Shared
             LocalModuleMsiOperatorInventorySnapshot inventory,
             CancellationToken cancellation)
         {
-            if (MessageBox.Show(
+            bool installerConfirmed = RequiresLocalModuleInstallation(plan, inventory)
+                ? ConfirmLocalModuleInstallerForInstallation(this)
+                : RequireLocalModuleInstaller(this);
+            if (!installerConfirmed || MessageBox.Show(
                     this,
                     "Будет установлен один независимый ЛМ ЧЗ на каждый ИНН; " +
                         "новые ЛМ ставятся на системный диск, уже установленный " +
@@ -756,6 +739,20 @@ namespace EsmTspiot.WinForms.Shared
             _lastAutomaticLocalModulesReady = succeeded;
             _lastAutomaticLocalModulesFailed = failed;
             return failed == 0 && succeeded == plan.Assignments.Count;
+        }
+
+        private static bool RequiresLocalModuleInstallation(
+            LocalModuleMsiPlan plan,
+            LocalModuleMsiOperatorInventorySnapshot inventory)
+        {
+            foreach (LocalModuleMsiAssignment assignment in plan.Assignments)
+            {
+                if (inventory.HasInstalledModule(assignment)) continue;
+                if (assignment.CloneOrdinal == 0 && inventory.BaseInventory != null &&
+                    inventory.BaseInventory.IsInstalled) continue;
+                return true;
+            }
+            return false;
         }
 
         private LmServiceProvisioningBatchRequest CreateMsiEnsureRequest(

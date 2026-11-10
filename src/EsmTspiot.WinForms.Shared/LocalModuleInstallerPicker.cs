@@ -1,5 +1,6 @@
 using System;
 using System.Globalization;
+using System.Drawing;
 using System.IO;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -12,6 +13,37 @@ namespace EsmTspiot.WinForms.Shared
 {
     internal static class LocalModuleInstallerPicker
     {
+        internal static LocalModuleInstallerSelection ConfirmForInstallation(
+            IWin32Window owner, LocalModuleInstallerSelection selection)
+        {
+            if (selection != null && File.Exists(selection.SourcePath))
+                selection = Inspect(selection.SourcePath);
+            return ConfirmSelection(selection,
+                delegate { return SelectAndInspect(owner); },
+                delegate(LocalModuleInstallerSelection selected)
+                {
+                    using (var dialog = new LocalModuleInstallerConfirmationDialog(selected))
+                        return dialog.ShowDialog(owner);
+                });
+        }
+
+        internal static LocalModuleInstallerSelection ConfirmSelection(
+            LocalModuleInstallerSelection selection,
+            Func<LocalModuleInstallerSelection> choose,
+            Func<LocalModuleInstallerSelection, DialogResult> confirm)
+        {
+            while (true)
+            {
+                if (selection == null || !File.Exists(selection.SourcePath))
+                    selection = choose();
+                if (selection == null) return null;
+                DialogResult result = confirm(selection);
+                if (result == DialogResult.OK) return selection;
+                if (result != DialogResult.Retry) return null;
+                selection = null;
+            }
+        }
+
         internal static LocalModuleInstallerSelection SelectAndInspect(
             IWin32Window owner)
         {
@@ -122,6 +154,58 @@ namespace EsmTspiot.WinForms.Shared
                 }
                 return result.ToString();
             }
+        }
+    }
+
+    internal sealed class LocalModuleInstallerConfirmationDialog : Form
+    {
+        internal LocalModuleInstallerConfirmationDialog(LocalModuleInstallerSelection selection)
+        {
+            Text = "Установка ЛМ ЧЗ — выбранный MSI";
+            Icon = OperatorTheme.AppIcon;
+            Font = new Font("Segoe UI", 10F);
+            ForeColor = OperatorTheme.Ink;
+            BackColor = OperatorTheme.Surface;
+            StartPosition = FormStartPosition.CenterParent;
+            MinimizeBox = MaximizeBox = ShowInTaskbar = false;
+            ClientSize = new Size(720, 280);
+            MinimumSize = new Size(640, 310);
+            var layout = new TableLayoutPanel { Dock = DockStyle.Fill,
+                Padding = new Padding(12), ColumnCount = 1, RowCount = 5 };
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            layout.Controls.Add(new Label { AutoSize = true, Dock = DockStyle.Fill,
+                Text = "Локальный ЛМ ЧЗ будет установлен из официального пакета ЦРПТ.",
+                Margin = new Padding(0, 0, 0, 12) }, 0, 0);
+            layout.Controls.Add(new Label { Name = "lm-msi-file", AutoSize = true,
+                Dock = DockStyle.Fill, Text = "Файл: " + selection.FileName }, 0, 1);
+            layout.Controls.Add(new Label { Name = "lm-msi-version", AutoSize = true,
+                Dock = DockStyle.Fill, Text = "Версия: " + selection.ProductVersion,
+                Margin = new Padding(0, 4, 0, 8) }, 0, 2);
+            layout.Controls.Add(new TextBox { Name = "lm-msi-path", ReadOnly = true,
+                Multiline = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill,
+                Text = selection.SourcePath, AccessibleName = "Полный путь к MSI",
+                Margin = new Padding(0, 0, 0, 10) }, 0, 3);
+            var buttons = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
+            var cancel = new AntdUI.Button { Name = "lm-msi-cancel", Text = "Отмена", AutoSize = true };
+            var choose = new AntdUI.Button { Name = "lm-msi-choose", Text = "Выбрать другой MSI…", AutoSize = true };
+            var install = new AntdUI.Button { Name = "lm-msi-install", Text = "Установить эту версию", AutoSize = true };
+            cancel.Click += delegate { DialogResult = DialogResult.Cancel; };
+            choose.Click += delegate { DialogResult = DialogResult.Retry; };
+            install.Click += delegate { DialogResult = DialogResult.OK; };
+            foreach (AntdUI.Button button in new[] { cancel, choose, install })
+            {
+                OperatorTheme.Button(button, button == install);
+                buttons.Controls.Add(button);
+            }
+            layout.Controls.Add(buttons, 0, 4);
+            Controls.Add(layout);
+            CancelButton = cancel;
         }
     }
 }

@@ -202,9 +202,6 @@ namespace EsmTspiot.WinForms.Shared
                     cancellation).ConfigureAwait(true);
                 return;
             }
-            if (_localModuleInstallerSelection == null)
-                throw new InvalidOperationException(
-                    "Выберите официальный MSI ЛМ ЧЗ (кнопка «Выбрать MSI...»).");
             string volume = ResolveInstallVolume(plan, inventory);
             if (!string.IsNullOrEmpty(volume))
             {

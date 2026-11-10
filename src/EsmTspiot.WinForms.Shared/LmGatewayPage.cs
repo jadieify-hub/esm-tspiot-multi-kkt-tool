@@ -273,9 +273,12 @@ namespace EsmTspiot.WinForms.Shared
             // /api/v2/info вызывается отдельной кнопкой диагностики.
             FillRows(null);
             _hasLoaded = true;
-            _statusLabel.Text = discovery.Items.Count == 0
-                ? "Зарегистрированные ККТ для настройки не найдены."
-                : "Загружено ККТ: " + discovery.Items.Count.ToString() + ". " +
+            int instanceCount = discovery.Items.Count + discovery.Issues.Count;
+            _statusLabel.Text = instanceCount == 0
+                ? "Экземпляры ККТ в ЕСМ не найдены."
+                : "Загружено ККТ: " + instanceCount.ToString() + ". " +
+                    (discovery.Issues.Count == 0 ? string.Empty
+                        : "Регистрация не подтверждена: " + discovery.Issues.Count.ToString() + ". ") +
                     (FmuApiMode ? FmuControllerNotApplicable
                         : "Готовность ЛМ по ЕСМ проверяется отдельно.");
             UpdateServiceCapabilityStatus();
@@ -284,12 +287,12 @@ namespace EsmTspiot.WinForms.Shared
             log.AppendLine(FmuApiMode
                 ? "=== ККТ и ЛМ ЧЗ для подготовки FMU-API ==="
                 : "=== ККТ, контроллеры и управляемые ЛМ ЧЗ ===");
-            log.AppendLine("Экземпляров в ЕСМ: " + discovery.Items.Count.ToString() + ".");
+            log.AppendLine("Экземпляров в ЕСМ: " + instanceCount.ToString() + ".");
             if (FmuApiMode) log.AppendLine(FmuControllerNotApplicable);
             for (int index = 0; index < discovery.Issues.Count; index++)
             {
                 LmGatewayDiscoveryIssue issue = discovery.Issues[index];
-                log.AppendLine("Пропущен экземпляр " + (issue.InstanceId ?? string.Empty) + ": " +
+                log.AppendLine("Экземпляр недоступен для настройки " + (issue.InstanceId ?? string.Empty) + ": " +
                     (issue.Message ?? string.Empty));
             }
             log.AppendLine();
@@ -329,6 +332,9 @@ namespace EsmTspiot.WinForms.Shared
                 selectedSerial = selected == null || selected.Kkt == null
                     ? string.Empty
                     : selected.Kkt.KktSerial;
+                LmGatewayDiscoveryIssue issue = _grid.CurrentRow == null
+                    ? null : _grid.CurrentRow.Tag as LmGatewayDiscoveryIssue;
+                if (issue != null) selectedSerial = issue.InstanceId;
             }
 
             _loadingGrid = true;
@@ -438,6 +444,29 @@ namespace EsmTspiot.WinForms.Shared
                     if (string.Equals(item.Kkt.KktSerial, selectedSerial, StringComparison.Ordinal))
                     {
                         rowToSelect = rowIndex;
+                    }
+                }
+
+                if (_currentDiscovery != null)
+                {
+                    foreach (LmGatewayDiscoveryIssue issue in _currentDiscovery.Issues)
+                    {
+                        KktInstanceInfo instance = issue.Instance;
+                        if (instance == null) continue;
+                        registeredSerials.Add(issue.InstanceId);
+                        string failure = "Регистрация не подтверждена. " + issue.Message;
+                        int rowIndex = _grid.Rows.Add(
+                            "—", issue.InstanceId, string.Empty, instance.SoftPort,
+                            "Не подтверждён", "Не проверен", string.Empty, string.Empty,
+                            string.Empty, failure);
+                        DataGridViewRow row = _grid.Rows[rowIndex];
+                        row.Tag = issue;
+                        row.Cells["KktServicePort"].Value = instance.Port;
+                        row.Cells["KktSerial"].ToolTipText = "Идентификатор экземпляра ЕСМ. Данные регистрации недоступны.";
+                        row.Cells["EsmLinkState"].ToolTipText = failure + " Состояние службы ЕСМ: " + instance.ServiceState;
+                        row.Cells["EsmLinkState"].Style.ForeColor = OperatorTheme.Warning;
+                        if (string.Equals(issue.InstanceId, selectedSerial, StringComparison.Ordinal))
+                            rowToSelect = rowIndex;
                     }
                 }
 
@@ -576,6 +605,10 @@ namespace EsmTspiot.WinForms.Shared
 
             _refreshButton.Enabled = idle;
             UpdateServiceActionState(idle, hasKkts);
+            if (idle && _grid.CurrentRow != null &&
+                _grid.CurrentRow.Tag is LmGatewayDiscoveryIssue)
+                _selectionActionHintLabel.Text =
+                    "Регистрация ККТ не подтверждена. Настройка недоступна; обновите данные после восстановления связи с ЕСМ.";
             _grid.Enabled = idle;
             _showServiceOperationsButton.Enabled = idle;
             _showDetailsButton.Enabled = idle && _grid.CurrentRow != null;

@@ -997,7 +997,7 @@ try {
     }
     if ($removeAllButton.Tag -ne "RemoveAllCreatedComponents" -or
         $removeAllButton.Text -ne (Get-Utf8Text(
-            "0KPQtNCw0LvQuNGC0Ywg0LLRgdGRINGB0L7Qt9C00LDQvdC90L7QtQ=="))) {
+            "0KPQtNCw0LvQuNGC0Ywg0LrQvtC90YLRgNC+0LvQu9C10YDRiyDQuCDQm9Cc4oCm"))) {
         throw "The LM page must expose the protected application-owned remove-all command."
     }
     if ($automaticSetupButton.Tag -ne "EndToEndAutomaticSetup") {

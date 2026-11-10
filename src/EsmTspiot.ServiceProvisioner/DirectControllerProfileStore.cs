@@ -114,6 +114,8 @@ namespace EsmTspiot.ServiceProvisioner
         {
             if (manifest == null) throw new ArgumentNullException("manifest");
             if (string.IsNullOrEmpty(manifest.OfficialLmUrlOriginal)) return false;
+            if (!File.Exists(_officialConfigPath))
+                throw new InvalidDataException("Не найден config.yml штатного контроллера; исходные настройки сохранены для повторного сброса.");
             bool changed = false;
             if (File.Exists(_officialConfigPath))
             {

@@ -13,6 +13,7 @@ namespace EsmTspiot.Shared.Models
             ManagedLocalModules = new List<ManagedLocalModuleProvisioningItemRequest>();
             DirectControllers = new List<DirectControllerProvisioningItemRequest>();
             LocalModuleMsiItems = new List<LocalModuleMsiProvisioningItemRequest>();
+            ControllerResetServices = new List<ControllerResetServiceRequest>();
         }
 
         [DataMember(Order = 1)]
@@ -54,5 +55,8 @@ namespace EsmTspiot.Shared.Models
         [DataMember(Order = 14, EmitDefaultValue = false)]
         public IList<LocalModuleMsiProvisioningItemRequest> LocalModuleMsiItems
         { get; private set; }
+
+        [DataMember(Order = 15, EmitDefaultValue = false)]
+        public IList<ControllerResetServiceRequest> ControllerResetServices { get; private set; }
     }
 }

@@ -94,6 +94,7 @@ namespace EsmTspiot.Shared.Tests
             Run("LM discovery returns registered KKT with INN", LmDiscoveryReturnsRegisteredKktWithInn);
             Run("LM discovery aborts on malformed instance list", LmDiscoveryAbortsOnMalformedInstanceList);
             Run("LM discovery continues after one malformed detail", LmDiscoveryContinuesAfterOneMalformedDetail);
+            Run("LM discovery retains failed instance inventory without eligibility", LmDiscoveryRetainsFailedInstanceInventory);
             Run("LM discovery excludes unregistered instance", LmDiscoveryExcludesUnregisteredInstance);
             Run("LM discovery honors cancellation", LmDiscoveryHonorsCancellation);
             Run("LM binding planner matches by KKT identity", LmBindingPlannerMatchesByKktIdentity);
@@ -1533,6 +1534,40 @@ namespace EsmTspiot.Shared.Tests
             AssertEqual("bad-detail", discovery.Issues[0].InstanceId, "Issue must identify only the invalid instance.");
             AssertEqual(1, discovery.Items.Count, "Expected discovery to continue with the next instance.");
             AssertEqual("00105700000002", discovery.Items[0].InstanceId, "Expected the valid second KKT.");
+        }
+
+        private static void LmDiscoveryRetainsFailedInstanceInventory()
+        {
+            foreach (int status in new[] { 200, 500 })
+            {
+                FakeTspiotApiClient api = new FakeTspiotApiClient();
+                api.InstancesResponse = Success(
+                    "{\"instances\":[{\"id\":\"00105700000001\",\"port\":50401,\"softPort\":51401," +
+                    "\"dkktPort\":4042,\"serviceState\":\"RUNNING\"},{\"id\":\"00105700000002\"}]}");
+                api.InstanceResponses.Enqueue(new ApiResponse {
+                    IsSuccess = status == 200, StatusCode = status,
+                    ResponseBody = "{\"error\":2003,\"token\":\"private-token\"}" });
+                api.InstanceResponses.Enqueue(Success(
+                    "{\"state\":\"Registered\",\"regData\":{\"kktSerial\":\"00105700000002\"," +
+                    "\"fnSerial\":\"7300000000000002\",\"kktInn\":\"1234567894\"}}"));
+                LmGatewayDiscovery discovery = new LmGatewayDiscoveryWorkflow(api).DiscoverAsync(
+                    "http://127.0.0.1:51077", null, CancellationToken.None).Result;
+                AssertTrue(discovery.IsSuccessful, "A failed detail must not lose the remaining inventory.");
+                AssertEqual(1, discovery.Items.Count, "Failed detail must not become a binding/setup candidate.");
+                AssertEqual("00105700000002", discovery.Items[0].InstanceId, "Keep the valid instance eligible.");
+                AssertEqual(1, discovery.Issues.Count, "Keep one visible failed inventory instance.");
+                LmGatewayDiscoveryIssue issue = discovery.Issues[0];
+                AssertEqual("00105700000001", issue.Instance.Id, "Preserve the actual inventory ID.");
+                AssertEqual("50401", issue.Instance.Port, "Preserve the service port without details.");
+                AssertEqual("51401", issue.Instance.SoftPort, "Preserve the software port without details.");
+                AssertEqual("4042", issue.Instance.DkktPort, "Preserve the DKKT port without details.");
+                AssertEqual("RUNNING", issue.Instance.ServiceState, "Preserve actual inventory state.");
+                AssertContains(issue.Message, "2003");
+                AssertFalse(issue.Message.Contains("private-token"), "Error display must mask secrets.");
+                var session = new LmGatewayBindingSession();
+                session.ReplaceDiscovery(discovery);
+                AssertEqual(1, session.Rows.Count, "Unavailable registration must never enter the binding session.");
+            }
         }
 
         private static void LmDiscoveryExcludesUnregisteredInstance()

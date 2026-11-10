@@ -284,16 +284,31 @@ namespace EsmTspiot.ServiceProvisioner
             string operationId,
             string initiatingSid)
         {
+            return Remove(item, operationId, initiatingSid, false);
+        }
+
+        internal LmServiceProvisioningItemResult RemoveForReset(
+            DirectControllerProvisioningItemRequest item, string operationId, string initiatingSid)
+        {
+            return Remove(item, operationId, initiatingSid, true);
+        }
+
+        private LmServiceProvisioningItemResult Remove(
+            DirectControllerProvisioningItemRequest item, string operationId, string initiatingSid, bool preserveStoppedBase)
+        {
             using (AcquireMutationLock())
             {
                 DirectControllerManifest manifest = RequireCurrentManifest(item);
                 _esmConfigs.RestoreAndRestart(manifest);
                 if (manifest.Ordinal == 1)
                 {
+                    var official = _services.Query(manifest.ServiceName);
+                    if (official != null) RequireOwnedService(manifest, official, initiatingSid);
                     if (_profiles.RestoreOfficial(manifest))
                     {
                         _manifests.Write(manifest);
-                        RestartControllerService(manifest);
+                        if (!preserveStoppedBase || (official != null && official.State == WindowsServiceState.Running))
+                            RestartControllerService(manifest);
                     }
                     _manifests.Delete(
                         item.KktSerial,
@@ -505,6 +520,26 @@ namespace EsmTspiot.ServiceProvisioner
             string imagePath = (service.ImagePath ?? string.Empty).Trim().Trim('"');
             return string.Equals(service.ServiceName, "esm-lm-controller", StringComparison.Ordinal) &&
                 string.Equals(imagePath, _binary.FullPath, StringComparison.OrdinalIgnoreCase);
+        }
+
+        internal void RemoveUntrackedController(string serviceName, string expectedImagePath, string initiatingSid)
+        {
+            int ordinal;
+            if (!DirectControllerIdentity.TryParseServiceName(serviceName, out ordinal) || ordinal == 1)
+                throw new InvalidDataException("Штатная или неизвестная служба не удаляется сбросом.");
+            using (AcquireMutationLock())
+            {
+                var service = _services.Query(serviceName);
+                if (service != null)
+                {
+                    if (!string.Equals(service.ImagePath, expectedImagePath, StringComparison.Ordinal))
+                        throw new InvalidDataException("Служба изменилась после подтверждения плана.");
+                    RequireOwnedService(new DirectControllerManifest { Ordinal = ordinal,
+                        ProfileEnvironmentRoot = _manifests.GetProfileEnvironmentRoot(ordinal) }, service, initiatingSid);
+                    WindowsControllerReset.StopAndDelete(_services, serviceName, delegate { Thread.Sleep(250); });
+                }
+                _manifests.DeleteCloneProfileEnvironmentRoot(ordinal);
+            }
         }
 
         private void RequireOwnedService(

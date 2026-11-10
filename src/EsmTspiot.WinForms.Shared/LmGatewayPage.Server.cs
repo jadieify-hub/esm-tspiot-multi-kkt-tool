@@ -297,11 +297,6 @@ namespace EsmTspiot.WinForms.Shared
             // Уменьшение числа только снимает лишние; установка и
             // восстановление — когда число не меньше текущего.
             if (target == 0 || target < current.Count) return;
-            if (!RequireLocalModuleInstaller(owner))
-            {
-                Log("MSI ЛМ ЧЗ не выбран; установка ЛМ сервера отложена.\r\n");
-                return;
-            }
             inventory = CreateLocalModuleInventoryReader().Read();
             IList<LmGatewayKkt> input =
                 LocalModuleServerKey.CreatePlanInput(target);
@@ -309,6 +304,14 @@ namespace EsmTspiot.WinForms.Shared
             string volume = ResolveInstallVolume(plan, inventory);
             if (!string.IsNullOrEmpty(volume))
                 plan = BuildServerPlan(input, inventory, volume);
+            bool installerConfirmed = RequiresLocalModuleInstallation(plan, inventory)
+                ? ConfirmLocalModuleInstallerForInstallation(owner)
+                : RequireLocalModuleInstaller(owner);
+            if (!installerConfirmed)
+            {
+                Log("Установка ЛМ сервера отложена оператором.\r\n");
+                return;
+            }
             if (MessageBox.Show(
                     owner,
                     "Будет установлено ЛМ ЧЗ на сервере: " +

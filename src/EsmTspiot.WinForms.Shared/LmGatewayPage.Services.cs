@@ -207,9 +207,24 @@ namespace EsmTspiot.WinForms.Shared
         /// </summary>
         public bool RequireLocalModuleInstaller(IWin32Window owner)
         {
-            if (_localModuleInstallerSelection != null) return true;
+            if (_localModuleInstallerSelection != null &&
+                File.Exists(_localModuleInstallerSelection.SourcePath)) return true;
             SelectLocalModuleInstaller(owner);
             return _localModuleInstallerSelection != null;
+        }
+
+        private bool ConfirmLocalModuleInstallerForInstallation(IWin32Window owner)
+        {
+            LocalModuleInstallerSelection selected =
+                LocalModuleInstallerPicker.ConfirmForInstallation(
+                    owner ?? this, _localModuleInstallerSelection);
+            if (selected == null) return false;
+            _localModuleInstallerSelection = selected;
+            ApplyLocalModuleInstallerSelection();
+            SaveInstallerPaths();
+            RaiseInstallerSelectionChanged();
+            UpdateActionState();
+            return true;
         }
 
         private async Task StartAutomaticSetupAsync()
@@ -529,6 +544,9 @@ namespace EsmTspiot.WinForms.Shared
                     draft.GrpcPort,
                     row.IsSelected);
             }
+            if (_currentDiscovery != null)
+                foreach (LmGatewayDiscoveryIssue issue in _currentDiscovery.Issues)
+                    existing.Add(issue.InstanceId);
             List<string> stale = new List<string>();
             foreach (string serial in _serviceDrafts.Keys)
             {
@@ -541,7 +559,9 @@ namespace EsmTspiot.WinForms.Shared
             {
                 _serviceDrafts.Remove(stale[index]);
             }
-            PersistServiceDrafts();
+            // Неполные подробности ЕСМ не должны затирать сохранённые параметры при запуске.
+            if (_currentDiscovery == null || _currentDiscovery.Issues.Count == 0)
+                PersistServiceDrafts();
         }
 
         private static void ApplyOrdinalDefaults(
@@ -971,6 +991,7 @@ namespace EsmTspiot.WinForms.Shared
                 selected.Status != LmServiceProvisioningStatus.CleanupPending;
             _removeAllServicesButton.Enabled = idle && _helperAvailable &&
                 HasOwnedComponentsForRemoval();
+            _resetControllersButton.Enabled = idle && _helperAvailable;
             _cleanupButton.Enabled = idle && managed && _helperAvailable &&
                 selected.Status == LmServiceProvisioningStatus.CleanupPending;
             string setupReason = !_helperAvailable

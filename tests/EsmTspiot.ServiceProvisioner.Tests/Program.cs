@@ -216,10 +216,12 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Direct controller profile atomically replaces read only CA", DirectControllerProfileAtomicallyReplacesReadOnlyCa);
             Run("Direct controller profile writes isolated ports without credentials", DirectControllerProfileWritesIsolatedPortsWithoutCredentials);
             Run("Direct controller profile points controllers at a remote LM and restores the official one", DirectControllerProfileTargetsRemoteLocalModule);
+            Run("Official profile restore retains originals when config is missing", DirectControllerProfileRestoreRetainsOriginalsWhenConfigMissing);
             Run("Direct controller requests may share an LM port only across hosts", DirectControllerRequestsShareLmPortOnlyAcrossHosts);
             Run("Direct controller manifest safely upgrades legacy target port", DirectControllerManifestSafelyUpgradesLegacyTargetPort);
             Run("Windows direct controller platform creates and removes exact clone", WindowsDirectControllerPlatformCreatesAndRemovesExactClone);
             Run("Windows direct controller platform accepts official base of any vendor build", WindowsDirectControllerPlatformAcceptsOfficialBaseOfAnyVendorBuild);
+            Run("Controller reset preserves the official service running state", WindowsDirectControllerResetPreservesOfficialServiceState);
             Run("Remove deletes only fully owned freshly confirmed service", RemoveDeletesOnlyFullyOwnedFreshlyConfirmedService);
             Run("Remove all managed processes every confirmed service in one batch", RemoveAllManagedProcessesEveryConfirmedServiceInOneBatch);
             Run("Remove blocks official base service", RemoveBlocksOfficialBaseService);
@@ -700,6 +702,10 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
         private static void ProvisioningProtocolAcceptsBoundedBatch()
         {
+            var reset = CreateDirectControllerRequest(2, (LmServiceOperation)15);
+            var resetValidation = ProvisioningRequestValidator.Validate(reset);
+            AssertTrue(resetValidation.IsValid, "Controller-only reset must accept tracked controllers: " + resetValidation.JoinMessages());
+            CheckControllerOnlyReset();
             LmServiceProvisioningBatchRequest request = CreateDirectControllerRequest(
                 3, LmServiceOperation.EnsureDirectControllers);
 
@@ -8235,6 +8241,85 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             }
         }
 
+        private static void DirectControllerProfileRestoreRetainsOriginalsWhenConfigMissing()
+        {
+            string root = CreateTemporaryDirectory();
+            try
+            {
+                var paths = new FakePathSafety(true);
+                var manifests = new DirectControllerManifestStore(
+                    Path.Combine(root, "DirectControllers"), paths, null);
+                var profile = ControllerCapabilityProfile.Supported();
+                var store = new DirectControllerProfileStore(profile, manifests,
+                    new DirectControllerCaStager(profile, new AtomicFileWriter(), paths, root),
+                    new AtomicFileWriter(), paths, Path.Combine(root, "missing-config.yml"));
+                var manifest = DirectControllerManifest.Create("00105700000001", "7701234567",
+                    1, 6995, "lm-server", "1.6.4.0", new string('a', 64),
+                    manifests.GetProfileEnvironmentRoot(1), Guid.NewGuid().ToString("N"),
+                    DirectControllerLifecycleState.Ready);
+                manifest.OfficialLmUrlOriginal = "http://localhost";
+                manifest.OfficialLmPortOriginal = "5995";
+                AssertThrows<InvalidDataException>(delegate { store.RestoreOfficial(manifest); },
+                    "Missing vendor config must not be reported as a completed restore.");
+                AssertEqual("http://localhost", manifest.OfficialLmUrlOriginal,
+                    "A failed restore must retain the remembered original URL for retry.");
+                AssertEqual("5995", manifest.OfficialLmPortOriginal,
+                    "A failed restore must retain the remembered original port for retry.");
+            }
+            finally { DeleteTestTreeWithReadOnlyFiles(root); }
+        }
+
+        private static void WindowsDirectControllerResetPreservesOfficialServiceState()
+        {
+            foreach (bool running in new[] { false, true })
+            {
+                string root = CreateTemporaryDirectory();
+                try
+                {
+                    var manifests = new DirectControllerManifestStore(
+                        Path.Combine(root, "DirectControllers"), new FakePathSafety(true), null,
+                        Path.Combine(root, "ProgramData"));
+                    var item = CreateDirectControllerRequest(1,
+                        LmServiceOperation.EnsureDirectControllers).DirectControllers[0];
+                    var manifest = DirectControllerManifest.Create(item.KktSerial, item.Inn,
+                        item.Ordinal, item.TargetLocalModulePort, item.TargetLocalModuleAddress,
+                        "1.6.4.0", new string('a', 64), manifests.GetProfileEnvironmentRoot(1),
+                        Guid.NewGuid().ToString("N"), DirectControllerLifecycleState.Ready);
+                    manifests.Write(manifest);
+                    item.ExpectedManifestSha256 = manifests.ComputeFingerprint(manifest);
+                    var services = new FakeWindowsServiceApi();
+                    const string binaryPath = @"C:\Program Files\ESP\LMController\bin\lmcontroller.exe";
+                    services.SetRecord(new WindowsServiceRecord {
+                        ServiceName = "esm-lm-controller", ImagePath = binaryPath,
+                        State = running ? WindowsServiceState.Running : WindowsServiceState.Stopped,
+                        ProcessId = running ? 100 : 0 });
+                    var profiles = new RecordingOfficialRestoreProfileStore();
+                    var platform = new WindowsDirectControllerPlatform(
+                        ControllerCapabilityProfile.Supported(), new VerifiedControllerBinary {
+                            FullPath = binaryPath, Version = "1.6.4.0", Sha256 = new string('a', 64),
+                            SignerThumbprint = ControllerSignerThumbprint, Machine = PeMachine.Amd64 },
+                        manifests, profiles, services, new FakeDirectControllerReadiness(true));
+                    var result = platform.RemoveForReset(item, Guid.NewGuid().ToString("N"),
+                        "S-1-5-21-111-222-333-1001");
+                    AssertEqual(LmServiceProvisioningStatus.RemovedLocalArtifactsBindingRetained,
+                        result.Status, "Official controller assignment must reset successfully.");
+                    AssertEqual(1, profiles.RestoreCalls, "The official profile must be restored once.");
+                    AssertTrue(manifests.Read(item.KktSerial) == null,
+                        "A completed reset must remove the controller assignment manifest.");
+                    AssertTrue(services.Query("esm-lm-controller") != null,
+                        "The official service must survive the reset.");
+                    AssertEqual(0, services.DeleteCount, "Reset must never delete the official service.");
+                    AssertEqual(running ? 1 : 0,
+                        services.Events.FindAll(delegate(string value) { return value == "start:esm-lm-controller"; }).Count,
+                        "Reset must restart a running official service once and leave a stopped one stopped.");
+                    AssertEqual(running ? 1 : 0,
+                        services.Events.FindAll(delegate(string value) { return value == "stop:esm-lm-controller"; }).Count,
+                        "Only a running official service may be stopped for its restart.");
+                }
+                finally { DeleteTestTreeWithReadOnlyFiles(root); }
+            }
+        }
+
         private static void DirectControllerRequestsShareLmPortOnlyAcrossHosts()
         {
             LmServiceProvisioningBatchRequest request = CreateDirectControllerRequest(
@@ -8869,6 +8954,35 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
             request.PlanHash = CanonicalLmPlanHasher.Compute(request);
             return request;
+        }
+
+        private static void CheckControllerOnlyReset()
+        {
+            var reset = CreateDirectControllerRequest(0, LmServiceOperation.ResetControllers);
+            reset.ControllerResetServices.Add(new ControllerResetServiceRequest {
+                ServiceName = "esm-lm-controller-3", ExpectedImagePath = "\"C:\\controller.exe\"" });
+            reset.PlanHash = CanonicalLmPlanHasher.Compute(reset);
+            AssertTrue(ProvisioningRequestValidator.Validate(reset).IsValid, "An orphan clone must be resettable without a manifest.");
+            reset.ControllerResetServices[0].ExpectedImagePath += "changed";
+            AssertFalse(ProvisioningRequestValidator.Validate(reset).IsValid, "The confirmed service path must be bound to the plan hash.");
+            reset.ControllerResetServices[0].ServiceName = "esm-lm-controller";
+            reset.PlanHash = CanonicalLmPlanHasher.Compute(reset);
+            AssertFalse(ProvisioningRequestValidator.Validate(reset).IsValid, "An untracked official base must never be deleted.");
+            AssertFalse(ControllerResetServiceRequest.IsAdditionalController("esm-cm-00105700000001"), "ESM services must be excluded.");
+            AssertFalse(ControllerResetServiceRequest.IsAdditionalController("regime"), "LM services must be excluded.");
+            AssertTrue(ControllerResetServiceRequest.IsAdditionalController("krs-esm-lm-00105700000001"), "Legacy controller names must be included.");
+            var services = new FakeWindowsServiceApi();
+            services.SetRecord(new WindowsServiceRecord { ServiceName = "esm-lm-controller-3",
+                State = WindowsServiceState.Running, ProcessId = 123 });
+            WindowsControllerReset.StopAndDelete(services, "esm-lm-controller-3", delegate { });
+            AssertTrue(services.Query("esm-lm-controller-3") == null, "Controller reset must stop and delete the additional service.");
+            AssertThrows<InvalidDataException>(delegate {
+                WindowsControllerReset.StopAndDelete(services, "esm-lm-controller", delegate { });
+            }, "Controller reset must refuse official service deletion.");
+            AssertThrows<InvalidDataException>(delegate {
+                WindowsControllerReset.RequireLegacyOwnership(new WindowsServiceRecord {
+                    ServiceName = "krs-esm-lm-00105700000001", ImagePath = "foreign.exe" }, "00105700000001");
+            }, "A legacy-looking foreign service must not be deleted.");
         }
 
         private static LmServiceProvisioningBatchRequest CreateDirectControllerRequest(
@@ -10163,6 +10277,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
             internal WindowsServiceDefinition LastDefinition { get; private set; }
             internal int DeleteVisibilityQueries { get; set; }
+            internal int DeleteCount { get; private set; }
             internal int QueryCount { get; set; }
             internal Action<int> BeforeQuery { get; set; }
             internal List<string> Events { get; private set; }
@@ -10250,6 +10365,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
             public void Delete(string serviceName)
             {
+                DeleteCount++;
                 RequireOwnedServiceName(serviceName);
                 EnsureExact(serviceName);
                 if (DeleteVisibilityQueries > 0)
@@ -10288,6 +10404,14 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     ? new List<int>(result)
                     : new List<int>();
             }
+        }
+
+        private sealed class RecordingOfficialRestoreProfileStore : IDirectControllerProfileStore
+        {
+            internal int RestoreCalls { get; private set; }
+            public string PrepareClone(DirectControllerManifest manifest) { throw new InvalidOperationException("Unexpected clone preparation during reset."); }
+            public bool RetargetOfficial(DirectControllerManifest manifest) { throw new InvalidOperationException("Unexpected retarget during reset."); }
+            public bool RestoreOfficial(DirectControllerManifest manifest) { RestoreCalls++; return true; }
         }
 
         private sealed class FakeDirectControllerReadiness :

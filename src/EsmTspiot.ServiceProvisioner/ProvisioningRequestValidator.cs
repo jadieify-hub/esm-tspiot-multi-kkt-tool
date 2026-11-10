@@ -24,6 +24,9 @@ namespace EsmTspiot.ServiceProvisioner
             }
 
             bool directOperation = IsDirectControllerOperation(request.Operation);
+            if (request.ControllerResetServices != null && request.ControllerResetServices.Count > 0 &&
+                request.Operation != LmServiceOperation.ResetControllers)
+                result.Add("Список сброса допускается только для ResetControllers.");
             bool msiOperation = IsMsiLocalModuleOperation(request.Operation);
             int expectedSchemaVersion = directOperation
                 ? 2
@@ -137,7 +140,19 @@ namespace EsmTspiot.ServiceProvisioner
                 : request.DirectControllers.Count;
             bool single = request.Operation == LmServiceOperation.RestartDirectController ||
                 request.Operation == LmServiceOperation.RemoveDirectController;
-            if ((single && count != 1) || (!single && (count < 1 || count > MaximumBatchSize)))
+            bool reset = request.Operation == LmServiceOperation.ResetControllers;
+            if (reset)
+            {
+                var names = new HashSet<string>(StringComparer.Ordinal);
+                int services = request.ControllerResetServices == null ? 0 : request.ControllerResetServices.Count;
+                if (services > 128 || (count == 0 && services == 0)) result.Add("План сброса пуст или слишком велик.");
+                if (request.ControllerResetServices != null)
+                    foreach (var service in request.ControllerResetServices)
+                        if (service == null || !ControllerResetServiceRequest.IsAdditionalController(service.ServiceName) ||
+                            !names.Add(service.ServiceName) || service.ExpectedImagePath == null || service.ExpectedImagePath.Length > 4096)
+                            result.Add("Недопустимая или повторная служба в плане сброса.");
+            }
+            if ((single && count != 1) || (!single && (count < (reset ? 0 : 1) || count > MaximumBatchSize)))
             {
                 result.Add(single
                     ? "Операция должна содержать ровно один прямой контроллер."
@@ -667,7 +682,8 @@ namespace EsmTspiot.ServiceProvisioner
             return operation == LmServiceOperation.EnsureDirectControllers ||
                 operation == LmServiceOperation.RestartDirectController ||
                 operation == LmServiceOperation.RemoveDirectController ||
-                operation == LmServiceOperation.RemoveAllDirectControllers;
+                operation == LmServiceOperation.RemoveAllDirectControllers ||
+                operation == LmServiceOperation.ResetControllers;
         }
 
         private static bool IsMsiLocalModuleOperation(

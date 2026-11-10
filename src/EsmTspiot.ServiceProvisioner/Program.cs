@@ -46,6 +46,15 @@ namespace EsmTspiot.ServiceProvisioner
 
                     try
                     {
+                        if (request.Operation == LmServiceOperation.ResetControllers)
+                        {
+                            using (var cancellation = new PipeProvisioningCancellation(channel, request.OperationId))
+                            {
+                                var reset = WindowsControllerReset.Execute(request, cancellation);
+                                channel.WriteMessage(reset);
+                                return ToExitCode(reset.Status);
+                            }
+                        }
                         if (IsDirectControllerOperation(request.Operation))
                         {
                             using (PipeProvisioningCancellation cancellation =

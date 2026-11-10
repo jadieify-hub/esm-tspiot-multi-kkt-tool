@@ -78,6 +78,18 @@ namespace EsmTspiot.WinForms.Shared
                 cancellation);
         }
 
+        internal Task<LmServiceProvisioningBatchResult> ResetControllersAsync(
+            IList<DirectControllerProvisioningItemRequest> tracked,
+            IList<ControllerResetServiceRequest> services,
+            CancellationToken cancellation)
+        {
+            var request = CreateRequest(LmServiceOperation.ResetControllers, Guid.NewGuid().ToString("N"), string.Empty);
+            foreach (var item in tracked) request.DirectControllers.Add(item);
+            foreach (var item in services) request.ControllerResetServices.Add(item);
+            request.PlanHash = CanonicalLmPlanHasher.Compute(request);
+            return InvokeAsync<LmServiceProvisioningBatchResult>(request, cancellation);
+        }
+
         public async Task<LmServiceProvisioningItemResult> RemoveAsync(
             LmRemovalConfirmation confirmation,
             string operationId,
@@ -472,7 +484,8 @@ namespace EsmTspiot.WinForms.Shared
             return operation == LmServiceOperation.EnsureDirectControllers ||
                 operation == LmServiceOperation.RestartDirectController ||
                 operation == LmServiceOperation.RemoveDirectController ||
-                operation == LmServiceOperation.RemoveAllDirectControllers;
+                operation == LmServiceOperation.RemoveAllDirectControllers ||
+                operation == LmServiceOperation.ResetControllers;
         }
     }
 }
