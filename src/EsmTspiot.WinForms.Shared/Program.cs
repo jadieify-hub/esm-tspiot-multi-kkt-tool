@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Net.Http;
 using System.Runtime.CompilerServices;
 using System.Windows.Forms;
 
@@ -46,7 +47,13 @@ namespace EsmTspiot.WinForms.Shared
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static void RunMainForm()
         {
-            Application.Run(new MainForm());
+            using (var form = new MainForm())
+            using (var updates = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) {
+                Timeout = TimeSpan.FromSeconds(8), MaxResponseContentBufferSize = 1024 * 1024 })
+            {
+                form.Shown += async delegate { await form.CheckForUpdatesAsync(updates); };
+                Application.Run(form);
+            }
         }
 
         private static void ReportMissingComponent(string fileName, Exception error)

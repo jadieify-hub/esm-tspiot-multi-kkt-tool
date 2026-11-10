@@ -24,6 +24,7 @@ namespace EsmTspiot.Shared.Tests
 
         private static int Main()
         {
+            Run("Update checker compares official stable releases", ReleaseUpdateTests.Run);
             Run("Valid input passes validation", ValidInputPassesValidation);
             Run("Serials must be digits", SerialsMustBeDigits);
             Run("KKT serial must have expected length", KktSerialMustHaveExpectedLength);

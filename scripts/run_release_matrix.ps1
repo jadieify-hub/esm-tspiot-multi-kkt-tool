@@ -44,6 +44,8 @@ try {
             } | ForEach-Object { $_.FullName })
         $sharedSources += (Resolve-Path `
             "tests\EsmTspiot.Shared.Tests\Program.cs").Path
+        $sharedSources += (Resolve-Path `
+            "tests\EsmTspiot.Shared.Tests\ReleaseUpdateTests.cs").Path
         $sharedNet48Exe = Join-Path $temporaryRoot "SharedTests-net48.exe"
         $cscArguments = @(
             "/nologo",

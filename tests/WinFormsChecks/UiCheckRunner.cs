@@ -26,6 +26,10 @@ public static class UiCheckRunner
             };
             Application.Run(host);
         }
-        if (failure != null) throw failure;
+        if (failure != null)
+        {
+            System.Console.Error.WriteLine(failure);
+            throw failure;
+        }
     }
 }

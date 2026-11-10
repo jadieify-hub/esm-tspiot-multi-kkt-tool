@@ -228,6 +228,7 @@ namespace EsmTspiot.WinForms.Shared
             menu.Items.Add(fileMenu);
             menu.Items.Add(_operationsMenuItem);
             menu.Items.Add(helpMenu);
+            ConfigureUpdateNotice(menu);
             return menu;
         }
 

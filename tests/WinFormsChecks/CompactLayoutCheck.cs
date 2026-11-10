@@ -15,6 +15,7 @@ public static class CompactLayoutCheck
 
     public static void Run()
     {
+        CheckUpdates();
         var ports = new SetupFlowCheck.Connections();
         var transport = new SetupFlowCheck.Transport(ports);
         using (var form = new MainForm(new TspiotApiClient(new HttpClient(transport)), ports))
@@ -92,6 +93,68 @@ public static class CompactLayoutCheck
             service.Close();
             if (service.IsDisposed)
                 throw new Exception("Closing service operations must preserve its original controls.");
+        }
+    }
+
+    private static void CheckUpdates()
+    {
+        var ports = new SetupFlowCheck.Connections();
+        using (var form = new MainForm(new TspiotApiClient(new HttpClient(new SetupFlowCheck.Transport(ports))), ports))
+        {
+            var transport = new UpdateTransport();
+            using (var pendingClient = new HttpClient(transport))
+            {
+                form.Show();
+                Task check = (Task)Invoke(form, "CheckForUpdatesAsync", pendingClient);
+                if (check.IsCompleted || (bool)Field(form, "_busy"))
+                    throw new Exception("Startup update lookup must leave the operator UI usable while HTTP is pending.");
+                transport.Response.SetResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK) {
+                    Content = new StringContent("{\"tag_name\":\"v99.1.0\",\"draft\":false,\"prerelease\":false}") });
+                Await(check);
+                var notice = (ToolStripMenuItem)Field(form, "_updateAvailableMenuItem");
+                if (!notice.Visible || !notice.Text.Contains("v99.1.0"))
+                    throw new Exception("A new official release must appear in the compact top menu.");
+                Await((Task)Invoke(form, "CheckForUpdatesAsync", pendingClient));
+                if (transport.Calls != 1) throw new Exception("Only one update lookup is allowed per launch.");
+            }
+        }
+        foreach (string response in new[] { "offline", "malformed", "old" })
+        {
+            var transport = new UpdateTransport();
+            transport.Response.SetResult(new HttpResponseMessage(response == "offline"
+                ? System.Net.HttpStatusCode.ServiceUnavailable : System.Net.HttpStatusCode.OK) {
+                Content = new StringContent(response == "old" ? "{\"tag_name\":\"v1.0.0\"}" : "<not-json>") });
+            using (var client = new HttpClient(transport))
+            using (var form = new MainForm(new TspiotApiClient(new HttpClient(new SetupFlowCheck.Transport(ports))), ports))
+            {
+                form.Show();
+                Await((Task)Invoke(form, "CheckForUpdatesAsync", client));
+                if (((ToolStripMenuItem)Field(form, "_updateAvailableMenuItem")).Visible || (bool)Field(form, "_busy"))
+                    throw new Exception("Offline/invalid/older releases must not display updates or lock the form.");
+            }
+        }
+        var closingTransport = new UpdateTransport();
+        using (var client = new HttpClient(closingTransport))
+        using (var form = new MainForm(new TspiotApiClient(new HttpClient(new SetupFlowCheck.Transport(ports))), ports))
+        {
+            form.Show();
+            Task pending = (Task)Invoke(form, "CheckForUpdatesAsync", client);
+            form.Close();
+            Await(pending);
+            if (!closingTransport.Response.Task.IsCanceled)
+                throw new Exception("Closing the operator must cancel its pending update request.");
+        }
+    }
+
+    private sealed class UpdateTransport : HttpMessageHandler
+    {
+        internal readonly TaskCompletionSource<HttpResponseMessage> Response = new TaskCompletionSource<HttpResponseMessage>();
+        internal int Calls;
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellation)
+        {
+            Calls++;
+            cancellation.Register(delegate { Response.TrySetCanceled(); });
+            return Response.Task;
         }
     }
 

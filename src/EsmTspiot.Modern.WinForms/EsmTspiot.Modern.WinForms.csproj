@@ -21,6 +21,7 @@
     <Compile Include="..\EsmTspiot.WinForms.Shared\OperatorTheme.cs" Link="OperatorTheme.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\SetupStepStrip.cs" Link="SetupStepStrip.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\MainForm.Appearance.cs" Link="MainForm.Appearance.cs" />
+    <Compile Include="..\EsmTspiot.WinForms.Shared\MainForm.Updates.cs" Link="MainForm.Updates.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayPage.Windows.cs" Link="LmGatewayPage.Windows.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayPage.ControllerReset.cs" Link="LmGatewayPage.ControllerReset.cs" />
     <ProjectReference Include="..\EsmTspiot.Shared\EsmTspiot.Shared.csproj" />
