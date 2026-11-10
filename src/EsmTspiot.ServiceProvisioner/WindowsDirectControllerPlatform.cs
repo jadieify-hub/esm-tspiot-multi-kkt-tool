@@ -9,7 +9,7 @@ namespace EsmTspiot.ServiceProvisioner
 {
     internal sealed class WindowsDirectControllerPlatform : IDirectControllerPlatform
     {
-        private const int ReadyTimeoutMilliseconds = 45000;
+        private const int ReadyTimeoutMilliseconds = 180000;
         private const int StopTimeoutMilliseconds = 30000;
         private readonly ControllerCapabilityProfile _profile;
         private readonly VerifiedControllerBinary _binary;
@@ -194,7 +194,7 @@ namespace EsmTspiot.ServiceProvisioner
                             targetChanged);
                     }
                     ProvisionerStepTrace.Write("ККТ " + item.KktSerial +
-                        ": ожидание готовности контроллера (до 45 с)");
+                        ": ожидание готовности контроллера (до " + ReadyTimeoutMilliseconds / 1000 + " с)");
                     LmReadinessResult ready = _readiness.WaitUntilReady(
                         item.Ordinal,
                         ReadyTimeoutMilliseconds);

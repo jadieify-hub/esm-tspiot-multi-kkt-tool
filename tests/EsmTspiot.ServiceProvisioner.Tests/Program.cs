@@ -112,6 +112,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             Run("Direct controller manifest is credential free and hash guarded", DirectControllerManifestIsCredentialFreeAndHashGuarded);
             Run("Direct controller provisioner continues independent KKT failures", DirectControllerProvisionerContinuesIndependentKktFailures);
             Run("Direct controller readiness requires listeners owned by service PID", DirectControllerReadinessRequiresListenersOwnedByServicePid);
+            Run("Direct controller wait reports SCM state and returns promptly on readiness", DirectControllerWaitReportsScmState);
             Run("Direct controller probe sees a local module started later", DirectControllerProbeSeesLocalModuleStartedLater);
             Run("Remove-all protocol accepts only a confirmed managed batch", RemoveAllProtocolAcceptsOnlyConfirmedManagedBatch);
             Run("Managed stack removal accepts its displayed fingerprint without controller ports", ManagedStackRemovalAcceptsDisplayedFingerprintWithoutControllerPorts);
@@ -5397,6 +5398,41 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 "A listener owned by a foreign process must fail readiness.");
         }
 
+        private static void DirectControllerWaitReportsScmState()
+        {
+            var services = new FakeWindowsServiceApi();
+            var record = new WindowsServiceRecord { ServiceName = "esm-lm-controller-2",
+                State = WindowsServiceState.StartPending, ProcessId = 0 };
+            services.SetRecord(record);
+            var listeners = new FakeDirectTcpListenerOwnerReader();
+            var probe = new DirectControllerReadinessProbe(services, listeners, new FakeProcessTreeReader());
+            LmReadinessResult failed = probe.WaitUntilReady(2, 0);
+            AssertFalse(failed.IsReady, "A pending service must not be reported ready.");
+            AssertContains(failed.Message, "StartPending");
+            AssertContains(failed.Message, "PID=0");
+            AssertContains(failed.Message, "Истекло ожидание");
+            AssertContains(ProvisionerStepTrace.ReadLastStep(), "StartPending");
+            AssertContains(ProvisionerStepTrace.ReadLastStep(), "PID=0");
+            record.State = WindowsServiceState.Running;
+            record.ProcessId = 4242;
+            listeners.SetOwners(50064, 4242);
+            listeners.SetOwners(5064, 4242);
+            services.QueryCount = 0;
+            AssertTrue(probe.WaitUntilReady(2, 180000).IsReady, "An already ready service must return without waiting for the deadline.");
+            AssertEqual(1, services.QueryCount, "An already ready controller needs only one probe.");
+            record.State = WindowsServiceState.StartPending;
+            record.ProcessId = 0;
+            services.QueryCount = 0;
+            services.BeforeQuery = delegate(int count) {
+                if (count == 2) { record.State = WindowsServiceState.Running; record.ProcessId = 4242; }
+            };
+            AssertTrue(probe.WaitUntilReady(2, 180000).IsReady, "A pending controller may become ready during polling.");
+            AssertEqual(2, services.QueryCount, "Polling must stop at the first successful readiness check.");
+            services.BeforeQuery = null;
+            services.RemoveRecord("esm-lm-controller-2");
+            AssertContains(probe.Probe(2).Message, "отсутствует");
+        }
+
         // Полевой прогон 2026-09-04: клон ЛМ ЧЗ встал после своего
         // контроллера, и ЕСМ ответил «ЛМ Контроллер не смог найти ЛМ ЧЗ»
         // (2059), а привязку отверг кодом 2025. Та же гонка повторяется после
@@ -8290,6 +8326,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
         // считать штатный контроллер чужим.
         private static void WindowsDirectControllerPlatformAcceptsOfficialBaseOfAnyVendorBuild()
         {
+            var readiness = new FakeDirectControllerReadiness(true);
             string root = CreateTemporaryDirectory();
             try
             {
@@ -8346,7 +8383,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                     manifests,
                     profiles,
                     services,
-                    new FakeDirectControllerReadiness(true));
+                    readiness);
                 LmServiceProvisioningBatchRequest request =
                     CreateDirectControllerRequest(
                         2,
@@ -8364,6 +8401,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 }
                 AssertEqual("esm-lm-controller-2", services.LastDefinition.ServiceName,
                     "The clone must still be created next to the official service.");
+                AssertEqual(180000, readiness.LastTimeoutMilliseconds,
+                    "Controller readiness must allow up to three minutes.");
             }
             finally
             {
@@ -10124,6 +10163,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
             internal WindowsServiceDefinition LastDefinition { get; private set; }
             internal int DeleteVisibilityQueries { get; set; }
+            internal int QueryCount { get; set; }
+            internal Action<int> BeforeQuery { get; set; }
             internal List<string> Events { get; private set; }
 
             internal void SetRecord(WindowsServiceRecord record)
@@ -10138,6 +10179,8 @@ namespace EsmTspiot.ServiceProvisioner.Tests
 
             public WindowsServiceRecord Query(string serviceName)
             {
+                QueryCount++;
+                if (BeforeQuery != null) BeforeQuery(QueryCount);
                 RequireLifecycleServiceName(serviceName);
                 WindowsServiceRecord record;
                 int remaining;
@@ -10259,6 +10302,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             }
 
             internal IList<int> LateLocalModulePorts { get; private set; }
+            internal int LastTimeoutMilliseconds { get; private set; }
 
             public bool LocalModuleStartedAfterController(
                 int ordinal,
@@ -10271,6 +10315,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 int ordinal,
                 int timeoutMilliseconds)
             {
+                LastTimeoutMilliseconds = timeoutMilliseconds;
                 return _ready
                     ? LmReadinessResult.Ready()
                     : LmReadinessResult.Failed("injected readiness failure");

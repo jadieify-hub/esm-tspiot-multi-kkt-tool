@@ -135,16 +135,21 @@ namespace EsmTspiot.ServiceProvisioner
         {
             string serviceName = DirectControllerIdentity.ServiceNameForOrdinal(ordinal);
             WindowsServiceRecord service = _services.Query(serviceName);
-            if (service == null || service.State != WindowsServiceState.Running ||
+            if (service == null)
+                return LmReadinessResult.Failed("Служба " + serviceName + " отсутствует в SCM.");
+            string serviceState = "Служба " + serviceName + ": состояние " + service.State + "; PID=" + service.ProcessId + ".";
+            if (service.State != WindowsServiceState.Running ||
                 service.ProcessId <= 0)
             {
                 return LmReadinessResult.Failed(
-                    "Служба прямого контроллера не запущена.");
+                    "Служба прямого контроллера не запущена. " + serviceState);
             }
             IList<int> grpc = _listeners.FindListenerProcessIds(
                 DirectControllerIdentity.GrpcPortForOrdinal(ordinal));
             IList<int> rest = _listeners.FindListenerProcessIds(
                 DirectControllerIdentity.RestPortForOrdinal(ordinal));
+            if (grpc == null || grpc.Count == 0 || rest == null || rest.Count == 0)
+                return LmReadinessResult.Failed("Listener-порты прямого контроллера ещё не открыты. " + serviceState);
             // Контроллер вендора может слушать порты не сам, а из дочернего
             // процесса. Требование точного совпадения PID со службой в этом
             // случае не выполняется никогда: стадия молча выжидает весь
@@ -155,7 +160,7 @@ namespace EsmTspiot.ServiceProvisioner
                 !OwnedByService(rest, service.ProcessId))
             {
                 return LmReadinessResult.Failed(
-                    "Listener-порты прямого контроллера заняты посторонним процессом.");
+                    "Listener-порты прямого контроллера заняты посторонним процессом. " + serviceState);
             }
             return LmReadinessResult.Ready();
         }
@@ -176,14 +181,22 @@ namespace EsmTspiot.ServiceProvisioner
         {
             DateTime deadline = DateTime.UtcNow.AddMilliseconds(timeoutMilliseconds);
             LmReadinessResult last;
+            string previousMessage = null;
             do
             {
                 last = Probe(ordinal);
                 if (last.IsReady) return last;
+                if (!string.Equals(previousMessage, last.Message, StringComparison.Ordinal))
+                {
+                    ProvisionerStepTrace.Write("Ожидание готовности контроллера (до " +
+                        timeoutMilliseconds / 1000 + " с). " + last.Message);
+                    previousMessage = last.Message;
+                }
                 Thread.Sleep(250);
             }
             while (DateTime.UtcNow < deadline);
-            return last;
+            return LmReadinessResult.Failed("Истекло ожидание готовности контроллера (" +
+                timeoutMilliseconds / 1000 + " с). Последняя проверка: " + last.Message);
         }
 
         public bool WaitUntilStopped(int ordinal, int timeoutMilliseconds)
