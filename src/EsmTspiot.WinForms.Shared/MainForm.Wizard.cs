@@ -289,6 +289,7 @@ namespace EsmTspiot.WinForms.Shared
         private void InvalidateWizardDestination()
         {
             if (!_wizardBuilt || _busy || _wizardDestination == WizardDestination()) return;
+            _registrationSupportPending = _registrationProcessFinished = false;
             _wizardDestination = WizardDestination();
             ClearWizardPending();
             _connectionStatusLabel.Text = "ЕСМ: не проверено";
@@ -488,6 +489,7 @@ namespace EsmTspiot.WinForms.Shared
 
         private async Task ApplyWizardLmAsync()
         {
+            bool setupStarted = false;
             bool automaticScope = WizardAutomatic;
             IDictionary<string, string> endpoints;
             IDictionary<string, LmGatewayCredentials> credentials;
@@ -510,6 +512,7 @@ namespace EsmTspiot.WinForms.Shared
                 }
                 _lmGatewayPage.SaveLmSetup(endpoints, credentials);
                 ShowWizardStage(3, "Применяем настройки ЛМ ЧЗ", "Выполняется настройка выбранного набора ККТ.");
+                setupStarted = true;
                 FullAutomaticLocalSetupOutcome outcome = await _lmGatewayPage.RunFullAutomaticLocalSetupFromHostAsync(
                     kkts, _automaticCancellation.Token);
                 string registrationWarning = automaticScope ? _wizardRegistrationWarning : string.Empty;
@@ -536,6 +539,7 @@ namespace EsmTspiot.WinForms.Shared
             {
                 LmSetupEditor.ClearCredentials(credentials);
                 if (_automaticCancellation != null) { _automaticCancellation.Dispose(); _automaticCancellation = null; }
+                if (setupStarted) FinishRegistrationProcess();
             }
         }
 
@@ -549,6 +553,7 @@ namespace EsmTspiot.WinForms.Shared
                     SetWizardLmRowStatus(kkt.KktSerial, "Настройка отложена");
             _wizardPending.Clear();
             UpdateWizardActions();
+            FinishRegistrationProcess();
         }
 
         private void SetWizardLmRowStatus(string serial, string status)

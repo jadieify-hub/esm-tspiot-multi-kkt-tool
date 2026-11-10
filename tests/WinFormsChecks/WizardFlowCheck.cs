@@ -89,7 +89,7 @@ public static class WizardFlowCheck
             if (!rejected || transport.MutationAttempts != attempts)
                 throw new Exception("A changed ESM driver port must invalidate the pending plan before any writes.");
             transport.ChangedDkktPort = false;
-            Invoke(form, "DeferWizardLm");
+            CheckRegistrationSupport(form);
             ((Button)Field(form, "_wizardDiagnose")).PerformClick();
             DateTime diagnosisDeadline = DateTime.UtcNow.AddSeconds(10);
             while ((bool)Field(form, "_busy") && DateTime.UtcNow < diagnosisDeadline)
@@ -117,6 +117,36 @@ public static class WizardFlowCheck
         CheckRefreshWaitsForClose();
         CheckAutomaticRegistration();
     }
+
+    private static void CheckRegistrationSupport(Form form, bool lmFailed = false)
+    {
+        int shown = 0;
+        using (var timer = new System.Windows.Forms.Timer { Interval = 20 })
+        {
+            timer.Tick += delegate {
+                foreach (Form window in new List<Form>(OpenForms()))
+                    if (window.GetType().Name == "SupportDevelopmentDialog")
+                    { shown++; window.Close(); }
+            };
+            timer.Start();
+            if (lmFailed)
+            {
+                Func<Task> failedSetup = delegate {
+                    Invoke(form, "FinishRegistrationProcess");
+                    if (shown != 0) throw new Exception("Support must wait until the operation releases the UI.");
+                    throw new InvalidOperationException("Test LM setup failure");
+                };
+                Await((Task)Invoke(form, "RunButtonActionAsync", failedSetup));
+            }
+            else Invoke(form, "DeferWizardLm");
+            if (shown != 1) throw new Exception("Successful registration must offer support when LM is deferred.");
+            Invoke(form, "DeferWizardLm");
+            if (shown != 1) throw new Exception("The same registration must not offer support twice.");
+        }
+    }
+
+    private static IEnumerable<Form> OpenForms()
+    { foreach (Form form in Application.OpenForms) yield return form; }
 
     private static void CheckAutomaticRegistration()
     {
@@ -167,6 +197,7 @@ public static class WizardFlowCheck
                 CheckAccessible(form, Find<Button>(form, "wizard-apply"));
                 Capture(form, "layout-" + size.Width + "x" + size.Height + ".png");
             }
+            CheckRegistrationSupport(form, true);
         }
     }
 

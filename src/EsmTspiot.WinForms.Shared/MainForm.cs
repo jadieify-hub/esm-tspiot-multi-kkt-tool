@@ -73,6 +73,8 @@ namespace EsmTspiot.WinForms.Shared
         private string _lastControlModulePath = string.Empty;
         private bool _fileLogErrorShown;
         private bool _busy;
+        private bool _registrationSupportPending;
+        private bool _registrationProcessFinished;
         private bool _frontolWriteInProgress;
         private System.Threading.CancellationTokenSource _automaticCancellation;
 
@@ -596,6 +598,7 @@ namespace EsmTspiot.WinForms.Shared
                     SetBusy(_lmOperationRunning);
                     _operationStatusLabel.Text = _busy ? "Выполняется операция..." : "Готово";
                     if (_closeAfterOperation && !_busy) BeginInvoke(new Action(Close));
+                    ShowRegistrationSupportIfReady();
                 }
             }
         }
@@ -875,6 +878,11 @@ namespace EsmTspiot.WinForms.Shared
             }
             ShowTspiotIdIfPresent(response);
             ShowResultMessage(response);
+            if (response.IsSuccess)
+            {
+                _registrationSupportPending = true;
+                FinishRegistrationProcess();
+            }
         }
 
         private DkktDeviceInfo SelectDkktDevice(IList<DkktDeviceInfo> candidates)
@@ -925,6 +933,7 @@ namespace EsmTspiot.WinForms.Shared
 
         private async Task ConfigureAllKktsAutomaticallyAsync()
         {
+            _registrationSupportPending = _registrationProcessFinished = false;
             bool fmuApiMode = _lmGatewayPage.FmuApiMode;
             string baseUrl = (_baseUrlTextBox.Text ?? string.Empty).Trim();
             string dkktPort = (_dkktPortTextBox.Text ?? string.Empty).Trim();
@@ -1132,6 +1141,11 @@ namespace EsmTspiot.WinForms.Shared
                 if (registrationHasFailures)
                     _wizardMessage.Text = "Есть ошибки регистрации. ЛМ можно настроить для подтверждённых касс; подробности ниже.";
                 _automationStatusLabel.Text = registrationHasFailures ? "Требуется внимание" : "Регистрация завершена";
+                if (!registrationHasFailures && bounded.Count > 0)
+                    foreach (BulkKktRegistrationResult result in registrationOutcome.Results)
+                        if (result.Status == BulkKktRegistrationStatus.Registered ||
+                            result.Status == BulkKktRegistrationStatus.RecoveredRegistration)
+                            _registrationSupportPending = true;
             }
             catch (OperationCanceledException)
             {
@@ -1890,6 +1904,19 @@ namespace EsmTspiot.WinForms.Shared
             {
                 dialog.ShowDialog(this);
             }
+        }
+
+        private void FinishRegistrationProcess()
+        {
+            _registrationProcessFinished = _registrationSupportPending;
+            ShowRegistrationSupportIfReady();
+        }
+
+        private void ShowRegistrationSupportIfReady()
+        {
+            if (!_registrationProcessFinished || _busy || _closeAfterOperation || IsDisposed || Disposing) return;
+            _registrationSupportPending = _registrationProcessFinished = false;
+            ShowSupportDevelopment();
         }
 
         private static string BuildAutomaticSetupCompletionMessage(

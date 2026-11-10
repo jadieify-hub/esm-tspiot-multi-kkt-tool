@@ -323,6 +323,8 @@ namespace EsmTspiot.WinForms.Shared
 
         private async Task<LmGatewayKkt> RegisterManualSelectionCoreAsync(CancellationToken cancellation)
         {
+            _registrationSupportPending = _registrationProcessFinished = false;
+            bool registeredNow = false;
             SaveSelectedManualInput();
             TspiotFormInput input;
             if (_manualSelectedSerial == null || !_manualInputs.TryGetValue(_manualSelectedSerial, out input))
@@ -378,6 +380,8 @@ namespace EsmTspiot.WinForms.Shared
                     throw new InvalidOperationException("Для выбранной ККТ нет подтверждённой VCOM-карты. Повторите поиск либо используйте отдельные ручные операции.");
                 }
                 AppendBulkResult(result);
+                registeredNow |= result.Status == BulkKktRegistrationStatus.Registered ||
+                    result.Status == BulkKktRegistrationStatus.RecoveredRegistration;
                 if (result.Status != BulkKktRegistrationStatus.Registered && result.Status != BulkKktRegistrationStatus.RecoveredRegistration &&
                     result.Status != BulkKktRegistrationStatus.AlreadyExists)
                     throw new InvalidOperationException(result.FormatLogLine());
@@ -391,6 +395,7 @@ namespace EsmTspiot.WinForms.Shared
                     RememberWizardKkt(kkt);
                     _portTextBox.ReadOnly = _softPortTextBox.ReadOnly = true;
                     SetManualRowStatus(kkt.KktSerial, "Зарегистрирована");
+                    _registrationSupportPending = registeredNow;
                     return kkt;
                 }
             throw new InvalidOperationException("ЕСМ не подтвердил регистрацию выбранной ККТ с ожидаемыми ИНН и ФН.");
