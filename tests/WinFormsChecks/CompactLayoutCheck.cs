@@ -33,21 +33,28 @@ public static class CompactLayoutCheck
             var page = (LmGatewayPage)Field(form, "_lmGatewayPage");
             Await(page.RefreshAsync());
             ((TabControl)Field(form, "_workspaceTabs")).SelectedIndex = 1;
-            form.Size = new Size(1000, 740);
+            form.Size = new Size(920, 640);
             Application.DoEvents();
             var grid = (DataGridView)Field(page, "_grid");
-            Size small = grid.Size;
+            Size smallClient = form.ClientSize;
+            Size smallGrid = grid.Size;
+            Capture(form, "compact-01-inventory-empty.png");
+            form.Size = new Size(1000, 740);
+            Application.DoEvents();
+            Size clientGrowth = form.ClientSize - smallClient;
+            Size gridGrowth = grid.Size - smallGrid;
+            // Allow one scrollbar of layout variation, but require real growth on both axes.
+            if (clientGrowth.Width <= SystemInformation.VerticalScrollBarWidth ||
+                clientGrowth.Height <= SystemInformation.HorizontalScrollBarHeight ||
+                gridGrowth.Width < clientGrowth.Width - SystemInformation.VerticalScrollBarWidth ||
+                gridGrowth.Height < clientGrowth.Height - SystemInformation.HorizontalScrollBarHeight)
+                throw new Exception("Resizing must expand the inventory. Client: " + smallClient + " -> " +
+                    form.ClientSize + ", grid: " + smallGrid + " -> " + grid.Size);
             var stateColumn = grid.Columns["LmState"];
             var stateBounds = grid.GetColumnDisplayRectangle(stateColumn.Index, false);
             if (stateBounds.Width != stateColumn.Width || !grid.ClientRectangle.Contains(stateBounds))
                 throw new Exception("The LM state must be fully visible at 1000 pixels without scrolling.");
-            Capture(form, "compact-01-inventory-empty.png");
-            form.Size = new Size(1300, 900);
-            Application.DoEvents();
-            if (grid.Width < small.Width + 200 || grid.Height < small.Height + 100)
-                throw new Exception("Resizing must give the inventory more usable width and height.");
             Capture(form, "compact-02-inventory-large.png");
-            form.Size = new Size(1000, 740);
             var url = (TextBox)Field(form, "_baseUrlTextBox");
             var driverPort = (TextBox)Field(form, "_dkktPortTextBox");
             Invoke(form, "ShowConnectionSettings");
