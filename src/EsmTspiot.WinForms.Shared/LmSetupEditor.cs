@@ -73,7 +73,7 @@ namespace EsmTspiot.WinForms.Shared
                 foreach (InnFields fields in _groups)
                     for (int column = 0; column < 4; column++)
                     {
-                        Control control = fields.Table.GetControlFromPosition(column, 3);
+                        Control control = fields.Table.GetControlFromPosition(column, 4);
                         if (control != null) control.Visible = !value;
                     }
                 OnInputsChanged();
@@ -92,7 +92,7 @@ namespace EsmTspiot.WinForms.Shared
                 if (labels.Length > 0)
                 {
                     labels[0].Text = "ККТ: " + string.Join(", ", serials.ToArray());
-                    labels[0].Visible = serials.Count > 1;
+                    labels[0].Visible = serials.Count > 0;
                 }
             }
         }
@@ -134,18 +134,18 @@ namespace EsmTspiot.WinForms.Shared
                 Margin = new Padding(0, 0, 18, 8)
             };
             TableLayoutPanel table = new TableLayoutPanel {
-                Dock = DockStyle.Top, AutoSize = true, ColumnCount = 4, RowCount = 5
+                Dock = DockStyle.Top, AutoSize = true, ColumnCount = 4, RowCount = 6
             };
             table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 62F));
             table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 38F));
-            for (int index = 0; index < 5; index++)
+            for (int index = 0; index < table.RowCount; index++)
                 table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             Label kkts = new Label {
                 Name = "lm-kkts-" + fields.Inn, AutoSize = true,
                 Text = serials.Count == 0 ? "ККТ: —" : "ККТ: " + string.Join(", ", new List<string>(serials).ToArray()),
-                Margin = new Padding(0, 0, 0, 4), MaximumSize = new Size(620, 0), Visible = serials.Count > 1
+                Margin = new Padding(0, 0, 0, 4), MaximumSize = new Size(620, 0), Visible = serials.Count > 0
             };
             table.Controls.Add(kkts, 0, 0);
             table.SetColumnSpan(kkts, 4);
@@ -158,12 +158,16 @@ namespace EsmTspiot.WinForms.Shared
             table.SetColumnSpan(fields.Placement, 4);
             AddField(table, 0, 2, "Адрес", fields.Host, "lm-host-" + fields.Inn);
             AddField(table, 2, 2, "Порт", fields.Port, "lm-port-" + fields.Inn);
-            AddField(table, 0, 3, "Логин", fields.Login, "lm-login-" + fields.Inn);
-            AddField(table, 2, 3, "Пароль", fields.Password, "lm-password-" + fields.Inn);
+            fields.HostError.Name = "lm-host-error-" + fields.Inn;
+            fields.PortError.Name = "lm-port-error-" + fields.Inn;
+            table.Controls.Add(fields.HostError, 1, 3);
+            table.Controls.Add(fields.PortError, 3, 3);
+            AddField(table, 0, 4, "Логин", fields.Login, "lm-login-" + fields.Inn);
+            AddField(table, 2, 4, "Пароль", fields.Password, "lm-password-" + fields.Inn);
             fields.LocalHint.Text = "ЛМ будет установлен локально. Адрес и порт назначаются автоматически.";
             fields.LocalHint.AutoSize = true;
             fields.LocalHint.Margin = new Padding(0, 6, 0, 0);
-            table.Controls.Add(fields.LocalHint, 0, 4);
+            table.Controls.Add(fields.LocalHint, 0, 5);
             table.SetColumnSpan(fields.LocalHint, 4);
             fields.Password.UseSystemPasswordChar = true;
             fields.Port.Text = string.Empty;
@@ -216,12 +220,27 @@ namespace EsmTspiot.WinForms.Shared
                 Control control = fields.Table.GetControlFromPosition(column, 2);
                 if (control != null) control.Visible = fields.Placement.SelectIndex == 1;
             }
-            string endpoint;
-            bool valid = TryGetEndpoint(fields, out endpoint);
-            string key = valid ? endpoint : "invalid";
-            if (string.Equals(key, fields.CredentialEndpoint, StringComparison.OrdinalIgnoreCase)) return;
-            fields.CredentialEndpoint = key;
-            LmGatewayCredentials value = valid && _credentials != null
+            string endpoint = string.Empty;
+            string hostError = null;
+            string portError = null;
+            if (fields.Placement.SelectIndex == 1)
+            {
+                string host = fields.Host.Text.Trim();
+                int port;
+                if (!LocalModuleTargetAddress.IsValidRemoteHost(host))
+                    hostError = host.Length == 0 ? "Введите адрес другого компьютера."
+                        : "Укажите IPv4 или имя другого компьютера.";
+                portError = LocalModuleTargetAddress.GetRemotePortError(fields.Port.Text.Trim().TrimEnd('/'), out port);
+                endpoint = hostError == null && portError == null ? LocalModuleTargetAddress.Key(host, port) : null;
+            }
+            fields.HostError.Text = hostError ?? string.Empty;
+            fields.HostError.Visible = hostError != null;
+            fields.PortError.Text = portError ?? string.Empty;
+            fields.PortError.Visible = portError != null;
+            string previousEndpoint = fields.Endpoint;
+            fields.Endpoint = endpoint;
+            if (string.Equals(endpoint, previousEndpoint, StringComparison.OrdinalIgnoreCase)) return;
+            LmGatewayCredentials value = endpoint != null && _credentials != null
                 ? _credentials(fields.Inn, endpoint) : LmGatewayCredentialDefaults.Create();
             if (value == null) value = LmGatewayCredentialDefaults.Create();
             try
@@ -236,20 +255,6 @@ namespace EsmTspiot.WinForms.Shared
             }
         }
 
-        private static bool TryGetEndpoint(InnFields fields, out string endpoint)
-        {
-            endpoint = string.Empty;
-            if (fields.Placement.SelectIndex == 0) return true;
-            string host = fields.Host.Text.Trim();
-            string parsedHost;
-            int port;
-            if (!LocalModuleTargetAddress.IsValidRemoteHost(host) ||
-                !LocalModuleTargetAddress.TryParseEndpoint(host + ":" + fields.Port.Text.Trim(),
-                    out parsedHost, out port)) return false;
-            endpoint = LocalModuleTargetAddress.Key(parsedHost, port);
-            return true;
-        }
-
         internal bool TryReadValues(out IDictionary<string, string> endpoints,
             out IDictionary<string, LmGatewayCredentials> credentials, out string problem)
         {
@@ -258,18 +263,17 @@ namespace EsmTspiot.WinForms.Shared
             problem = null;
             foreach (InnFields fields in _groups)
             {
-                string endpoint;
                 if (!LocalModuleMsiIdentity.IsInn(fields.Inn))
                     problem = "ИНН должен содержать 10 или 12 цифр. Проверьте регистрацию ККТ.";
-                else if (!TryGetEndpoint(fields, out endpoint))
-                    problem = "Для ИНН " + fields.Inn + " укажите адрес другого компьютера " +
-                        "и допустимый порт ЛМ (1024–65535, кроме портов контроллеров).";
+                else if (fields.Endpoint == null)
+                    problem = "ИНН " + fields.Inn + ". " +
+                        (fields.HostError.Text.Length > 0 ? fields.HostError.Text : fields.PortError.Text);
                 else if (!FmuApiMode && (string.IsNullOrWhiteSpace(fields.Login.Text) ||
                     string.IsNullOrWhiteSpace(fields.Password.Text)))
                     problem = "Для ИНН " + fields.Inn + " заполните логин и пароль ЛМ ЧЗ.";
                 else
                 {
-                    endpoints.Add(fields.Inn, endpoint);
+                    endpoints.Add(fields.Inn, fields.Endpoint);
                     credentials.Add(fields.Inn, new LmGatewayCredentials {
                         Login = FmuApiMode ? "admin" : fields.Login.Text.Trim(),
                         Password = FmuApiMode ? "admin" : fields.Password.Text
@@ -289,7 +293,9 @@ namespace EsmTspiot.WinForms.Shared
         {
             internal TableLayoutPanel Table;
             internal string Inn;
-            internal string CredentialEndpoint;
+            internal string Endpoint;
+            internal readonly Label HostError = new Label { AutoSize = true, ForeColor = OperatorTheme.Error };
+            internal readonly Label PortError = new Label { AutoSize = true, ForeColor = OperatorTheme.Error };
             internal readonly AntdUI.Segmented Placement = new OperatorSegments();
             internal readonly TextBox Host = new TextBox();
             internal readonly TextBox Port = new TextBox();

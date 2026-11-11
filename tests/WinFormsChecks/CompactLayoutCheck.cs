@@ -37,6 +37,10 @@ public static class CompactLayoutCheck
             Application.DoEvents();
             var grid = (DataGridView)Field(page, "_grid");
             Size small = grid.Size;
+            var stateColumn = grid.Columns["LmState"];
+            var stateBounds = grid.GetColumnDisplayRectangle(stateColumn.Index, false);
+            if (stateBounds.Width != stateColumn.Width || !grid.ClientRectangle.Contains(stateBounds))
+                throw new Exception("The LM state must be fully visible at 1000 pixels without scrolling.");
             Capture(form, "compact-01-inventory-empty.png");
             form.Size = new Size(1300, 900);
             Application.DoEvents();
@@ -70,6 +74,7 @@ public static class CompactLayoutCheck
             Invoke(page, "ShowServiceOperations");
             var service = (Form)Field(page, "_serviceOperationsWindow");
             AssertAppIcon(service);
+            AssertCentered(form, service);
             if (!service.Visible || service.Owner != form || grid.Size != beforeService)
                 throw new Exception("Service operations must open separately without shrinking the inventory.");
             Capture(service, "compact-04-service-operations.png");
@@ -93,7 +98,28 @@ public static class CompactLayoutCheck
             service.Close();
             if (service.IsDisposed)
                 throw new Exception("Closing service operations must preserve its original controls.");
+            form.Location = new Point(form.Left + 64, form.Top + 32);
+            Rectangle workingArea = Screen.FromControl(form).WorkingArea;
+            service.Height = workingArea.Height + 80;
+            Invoke(page, "ShowServiceOperations");
+            AssertCentered(form, service);
+            if (!workingArea.Contains(service.Bounds))
+                throw new Exception("Reopening the resized service window must fit the owner's working area.");
+            Point opened = service.Location;
+            form.Left += 24;
+            Invoke(page, "ShowServiceOperations");
+            if (service.Location != opened || service.Modal)
+                throw new Exception("Activating a visible modeless service window must preserve its position.");
         }
+    }
+
+    private static void AssertCentered(Form owner, Form child)
+    {
+        Rectangle area = Screen.FromControl(owner).WorkingArea;
+        int x = Math.Max(area.Left, Math.Min(area.Right - child.Width, owner.Left + (owner.Width - child.Width) / 2));
+        int y = Math.Max(area.Top, Math.Min(area.Bottom - child.Height, owner.Top + (owner.Height - child.Height) / 2));
+        if (Math.Abs(child.Left - x) > 1 || Math.Abs(child.Top - y) > 1)
+            throw new Exception("Service window must open centered on its owner: " + owner.Bounds + " / " + child.Bounds);
     }
 
     private static void CheckUpdates()

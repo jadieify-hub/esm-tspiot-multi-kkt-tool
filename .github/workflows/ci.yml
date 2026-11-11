@@ -34,6 +34,7 @@ jobs:
             Where-Object { $_.FullName -notmatch '\\obj\\|\\bin\\' } |
             ForEach-Object { $_.FullName }
           $files += (Resolve-Path "tests\EsmTspiot.Shared.Tests\Program.cs").Path
+          $files += (Resolve-Path "tests\EsmTspiot.Shared.Tests\ReleaseUpdateTests.cs").Path
           & $csc /nologo /define:NETFRAMEWORK /out:"$env:TEMP\SharedTests.exe" /r:System.Net.Http.dll /r:System.Web.Extensions.dll /r:System.Runtime.Serialization.dll $files
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & "$env:TEMP\SharedTests.exe"

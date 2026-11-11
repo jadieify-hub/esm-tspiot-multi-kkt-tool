@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using System.Windows.Forms;
 using EsmTspiot.Shared.Models;
+using EsmTspiot.Shared.Services;
 using EsmTspiot.WinForms.Shared;
 
 public static class LmSetupDialogCheck
@@ -64,7 +65,14 @@ public static class LmSetupDialogCheck
             host.Text = "another-server";
             port.Text = "70000";
             if (CanRead(type, dialog)) throw new Exception("Invalid remote port was accepted.");
-            port.Text = "6995";
+            port.Text = DirectControllerIdentity.GrpcPortForOrdinal(1).ToString();
+            if (CanRead(type, dialog) || !Find<Label>(dialog, "lm-port-error-7701234560").Text.Contains("зарезервирован"))
+                throw new Exception("A controller port must be rejected with the reason beside its field.");
+            port.Text = "6995/";
+            var read = new object[] { null, null, null };
+            if (!(bool)type.GetMethod("TryReadValues", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(dialog, read) ||
+                ((IDictionary<string, string>)read[0])["7701234560"] != "another-server:6995")
+                throw new Exception("A copied trailing slash must preserve the normalized remote endpoint.");
             password.Text = "endpoint-password";
             host.Text = "third-server";
             if (password.Text != "admin" || !CanRead(type, dialog))

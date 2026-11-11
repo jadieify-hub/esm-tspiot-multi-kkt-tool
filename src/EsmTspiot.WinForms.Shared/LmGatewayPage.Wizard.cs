@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Drawing;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -30,8 +31,21 @@ namespace EsmTspiot.WinForms.Shared
 
         internal void ShowServiceOperations()
         {
-            if (_serviceOperationsWindow.Visible) _serviceOperationsWindow.Activate();
-            else _serviceOperationsWindow.Show(FindForm());
+            var window = _serviceOperationsWindow;
+            if (window.Visible)
+            {
+                window.Activate();
+                return;
+            }
+            Form owner = FindForm();
+            Rectangle area = Screen.FromControl(owner ?? (Control)this).WorkingArea;
+            Rectangle bounds = owner == null ? area : owner.Bounds;
+            window.Size = new Size(Math.Min(window.Width, area.Width), Math.Min(window.Height, area.Height));
+            int x = bounds.Left + (bounds.Width - window.Width) / 2;
+            int y = bounds.Top + (bounds.Height - window.Height) / 2;
+            window.Location = new Point(Math.Max(area.Left, Math.Min(x, area.Right - window.Width)),
+                Math.Max(area.Top, Math.Min(y, area.Bottom - window.Height)));
+            window.Show(owner);
         }
 
         internal void InvalidateDestination()

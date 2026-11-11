@@ -180,9 +180,9 @@ namespace EsmTspiot.WinForms.Shared
                 _grid.Columns[name].Width = 70;
             }
             _grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
-            string[] order = { "KktOrdinal", "KktSerial", "Organization", "KktInn", "KktServicePort", "KktSoftwarePort",
-                "LmEndpoint", "LmState", "EsmLinkState", "LmRole", "LmInstallRoot", "LmOwnership" };
-            int[] widths = { 42, 175, 230, 125, 75, 75, 155, 150, 175, 90, 220, 180 };
+            string[] order = { "KktOrdinal", "KktSerial", "Organization", "LmState", "KktInn", "KktServicePort", "KktSoftwarePort",
+                "LmEndpoint", "EsmLinkState", "LmRole", "LmInstallRoot", "LmOwnership" };
+            int[] widths = { 42, 175, 230, 150, 125, 75, 75, 155, 175, 90, 220, 180 };
             for (int index = 0; index < order.Length; index++)
             {
                 var column = _grid.Columns[order[index]];

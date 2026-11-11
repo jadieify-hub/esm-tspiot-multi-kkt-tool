@@ -505,9 +505,9 @@ namespace EsmTspiot.WinForms.Shared
 
             _logTextBox.Dock = DockStyle.Fill;
             _logTextBox.Multiline = true;
-            _logTextBox.ScrollBars = ScrollBars.Both;
+            _logTextBox.ScrollBars = ScrollBars.Vertical;
             _logTextBox.ReadOnly = true;
-            _logTextBox.WordWrap = false;
+            _logTextBox.WordWrap = true;
             _logTextBox.HideSelection = false;
             _logTextBox.MinimumSize = new Size(0, 110);
             _logTextBox.Font = new Font("Consolas", 9F);
@@ -583,7 +583,6 @@ namespace EsmTspiot.WinForms.Shared
                     return;
                 }
 
-                AppendLog("Ошибка операции: " + SensitiveDataMasker.Mask(ex.Message) + "\r\n\r\n");
                 AppendDetailToFile("Подробности ошибки приложения:\r\n" + ex + "\r\n\r\n");
                 ShowWizardFailure(ex);
             }
@@ -949,7 +948,7 @@ namespace EsmTspiot.WinForms.Shared
             _wizardAutomaticPending.Clear();
             _wizardPartialSetup = false;
             _wizardRegistrationWarning = string.Empty;
-            _wizardResult.Visible = false;
+            SetWizardResult(null);
             _automaticCancellation = new System.Threading.CancellationTokenSource();
             _automaticStopButton.Enabled = true;
             try
@@ -1135,12 +1134,12 @@ namespace EsmTspiot.WinForms.Shared
                 _wizardRegistrationWarning = registrationHasFailures
                     ? BuildAutomaticSetupCompletionMessage(registrationOutcome,
                         "Регистрация завершена не полностью. " + finalVcomError + " " + unconfirmedWarning) : string.Empty;
-                _wizardResult.Text = _wizardRegistrationWarning;
-                _wizardResult.Visible = registrationHasFailures;
+                SetWizardResult(_wizardRegistrationWarning);
+                if (registrationHasFailures) AppendLog(_wizardRegistrationWarning + "\r\n\r\n");
                 if (bounded.Count > 0) ShowWizardLmStep(bounded, true);
                 else ShowWizardStage(2, "Регистрация не завершена", "Смотрите результат и журнал; выполненные действия сохранены.", true);
                 if (registrationHasFailures)
-                    _wizardMessage.Text = "Есть ошибки регистрации. ЛМ можно настроить для подтверждённых касс; подробности ниже.";
+                    _wizardMessage.Text = "Есть ошибки регистрации. ЛМ можно настроить для подтверждённых касс; подробности в журнале.";
                 _automationStatusLabel.Text = registrationHasFailures ? "Требуется внимание" : "Регистрация завершена";
                 if (!registrationHasFailures && bounded.Count > 0)
                     foreach (BulkKktRegistrationResult result in registrationOutcome.Results)
@@ -1155,8 +1154,7 @@ namespace EsmTspiot.WinForms.Shared
                     return;
                 }
                 _automationStatusLabel.Text = "Статус: автоматическая настройка остановлена";
-                AppendLog("Автоматическая настройка остановлена. Уже выполненные действия сохранены.\r\n\r\n");
-                ShowWizardFailure(new OperationCanceledException());
+                ShowWizardFailure(new OperationCanceledException("Выполненные шаги автоматической настройки сохранены."));
             }
             finally
             {

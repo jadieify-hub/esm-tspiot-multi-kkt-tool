@@ -15,8 +15,8 @@ namespace EsmTspiot.WinForms.Shared
         internal static readonly Color Background = Color.FromArgb(245, 247, 248);
         internal static readonly Color Surface = Color.White;
         internal static readonly Color Soft = Background;
-        internal static readonly Color Selection = Color.FromArgb(234, 242, 245);
-        internal static readonly Color Warning = Color.FromArgb(139, 96, 27);
+        internal static readonly Color Selection = Color.FromArgb(215, 233, 240);
+        internal static readonly Color Warning = Color.FromArgb(126, 84, 22);
         internal static readonly Color Error = Color.FromArgb(177, 62, 69);
 
         static OperatorTheme()
@@ -64,7 +64,9 @@ namespace EsmTspiot.WinForms.Shared
             control.Font = new Font("Segoe UI", 10F, FontStyle.Bold);
             control.BackColor = Background;
             control.BackActive = Blue;
+            control.BackHover = Selection;
             control.ForeColor = Muted;
+            control.ForeHover = Ink;
             control.ForeActive = Color.White;
             control.SelectIndex = 0;
         }

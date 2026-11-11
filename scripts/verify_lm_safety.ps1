@@ -193,7 +193,7 @@ function Test-AllowedSecretHit {
             $text -match '^\s*fields\.Password\.TextChanged \+= delegate \{ OnInputsChanged\(\); \};\s*$' -or
             $text -match '^\s*string\.IsNullOrWhiteSpace\(fields\.Password\.Text\)\)\)\s*$' -or
             $text -match '^\s*internal readonly TextBox Password = new TextBox\(\);\s*$' -or
-            $text -match '^\s*AddField\(table, 2, 3, .*fields\.Password, "lm-password-" \+ fields\.Inn\);\s*$'
+            $text -match '^\s*AddField\(table, 2, 4, .*fields\.Password, "lm-password-" \+ fields\.Inn\);\s*$'
     }
     if ($relative -eq "src/EsmTspiot.WinForms.Shared/LmGatewayBindingDialog.cs") {
         return $text -match 'Password\s*=\s*_passwordTextBox\.Text|_passwordTextBox\.Text\s*=\s*credentials\.Password|credentials\.Password\s*=\s*string\.Empty'

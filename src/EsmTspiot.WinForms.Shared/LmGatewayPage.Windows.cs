@@ -13,7 +13,7 @@ namespace EsmTspiot.WinForms.Shared
             var dialog = new Form { Text = "Служебные операции ЛМ ЧЗ", Name = "service-operations-window",
                 Icon = OperatorTheme.AppIcon,
                 ClientSize = new Size(960, 650), MinimumSize = new Size(760, 480),
-                StartPosition = FormStartPosition.CenterParent, ShowInTaskbar = false,
+                StartPosition = FormStartPosition.Manual, ShowInTaskbar = false,
                 MinimizeBox = false, Font = Font, ForeColor = OperatorTheme.Ink, BackColor = OperatorTheme.Surface };
             var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(14),
                 ColumnCount = 1, RowCount = 4 };

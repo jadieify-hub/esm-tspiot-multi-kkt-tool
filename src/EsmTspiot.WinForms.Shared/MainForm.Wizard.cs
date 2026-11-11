@@ -24,6 +24,8 @@ namespace EsmTspiot.WinForms.Shared
         private readonly TableLayoutPanel _wizardEditorsPanel = new TableLayoutPanel();
         private readonly Panel _wizardInstallerPanel = new Panel();
         private readonly TextBox _wizardResult = new TextBox();
+        private readonly TableLayoutPanel _wizardResultPanel = new TableLayoutPanel();
+        private readonly Button _hideWizardDetails = new Button();
         private readonly Button _wizardApply = new Button();
         private readonly Button _wizardDefer = new Button();
         private readonly Button _wizardPlacement = new Button();
@@ -118,18 +120,18 @@ namespace EsmTspiot.WinForms.Shared
             _wizardGridPanel = BuildDiscoveredKktsPanel();
             _wizardGridPanel.Height = 190;
             _wizardGridPanel.Dock = DockStyle.Top;
-            content.Controls.Add(_wizardGridPanel, 0, 0);
+            content.Controls.Add(_wizardGridPanel, 0, 1);
             _wizardContext.AutoSize = true;
             _wizardContext.Margin = new Padding(0, 2, 0, 2);
-            content.Controls.Add(_wizardContext, 0, 1);
+            content.Controls.Add(_wizardContext, 0, 2);
             _wizardManualDetails = BuildWizardKktDetails();
-            content.Controls.Add(_wizardManualDetails, 0, 2);
+            content.Controls.Add(_wizardManualDetails, 0, 3);
             _wizardEditorsPanel.Name = "wizard-lm-editors";
             _wizardEditorsPanel.Dock = DockStyle.Top;
             _wizardEditorsPanel.AutoSize = true;
             _wizardEditorsPanel.ColumnCount = 1;
             _wizardEditorsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-            content.Controls.Add(_wizardEditorsPanel, 0, 3);
+            content.Controls.Add(_wizardEditorsPanel, 0, 0);
             _wizardInstallerPanel.Dock = DockStyle.Top;
             _wizardInstallerPanel.Height = 76;
             var installer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, AutoSize = true };
@@ -152,8 +154,21 @@ namespace EsmTspiot.WinForms.Shared
             _wizardResult.ScrollBars = ScrollBars.Vertical;
             _wizardResult.BackColor = SystemColors.Window;
             _wizardResult.BorderStyle = BorderStyle.FixedSingle;
-            _wizardResult.Visible = false;
-            content.Controls.Add(_wizardResult, 0, 5);
+            _wizardResultPanel.Dock = DockStyle.Top;
+            _wizardResultPanel.AutoSize = true;
+            _wizardResultPanel.Margin = Padding.Empty;
+            _wizardResultPanel.ColumnCount = 2;
+            _wizardResultPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            _wizardResultPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            _wizardResultPanel.Controls.Add(_wizardResult, 0, 0);
+            _hideWizardDetails.Name = "hide-wizard-details";
+            _hideWizardDetails.Text = "Скрыть";
+            _hideWizardDetails.AccessibleName = "Скрыть подробности операции";
+            OperatorTheme.Button(_hideWizardDetails, false);
+            _hideWizardDetails.Click += delegate { _wizardResultPanel.Visible = false; UpdateWizardActions(); };
+            _wizardResultPanel.Controls.Add(_hideWizardDetails, 1, 0);
+            _wizardResultPanel.Visible = false;
+            content.Controls.Add(_wizardResultPanel, 0, 5);
             _wizardFallback = BuildManualFallbackPanel();
             content.Controls.Add(_wizardFallback, 0, 6);
             content.Controls.Add(BuildRecoveryGroup(), 0, 7);
@@ -162,7 +177,7 @@ namespace EsmTspiot.WinForms.Shared
             var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true,
                 FlowDirection = FlowDirection.RightToLeft,
                 Padding = new Padding(0, 8, 0, 0) };
-            ConfigureButton(_bulkRegisterButton, "Начать автоматическую настройку", ConfigureAllKktsAutomaticallyAsync);
+            ConfigureButton(_bulkRegisterButton, "Найти и зарегистрировать кассы", ConfigureAllKktsAutomaticallyAsync);
             _bulkRegisterButton.Tag = "EndToEndAutomaticSetup";
             ConfigureButton(_setupSelectedButton, "Зарегистрировать выбранную ККТ", SetupManualSelectionAsync);
             _setupSelectedButton.Tag = "SetupSelectedKkt";
@@ -240,7 +255,7 @@ namespace EsmTspiot.WinForms.Shared
                 _manualDiscoveryHint.MaximumSize = wrap;
             };
             ShowWizardStage(1, "Настройка всех подключённых касс",
-                "Закройте Frontol и тест драйвера АТОЛ. Найдём и зарегистрируем кассы, затем настроим привязку ЛМ ЧЗ.");
+                "Найдём и зарегистрируем кассы, затем предложим настроить ЛМ ЧЗ.");
             UpdateWizardActions();
             return OperatorTheme.Card(root, false);
         }
@@ -254,7 +269,7 @@ namespace EsmTspiot.WinForms.Shared
         {
             if (!_wizardBuilt || _busy) return;
             SaveSelectedManualInput();
-            _wizardResult.Visible = false;
+            SetWizardResult(null);
             if (WizardAutomatic && _wizardAutomaticPending.Count > 0 &&
                 _wizardAutomaticDestination == WizardDestination())
                 ShowWizardLmStep(_wizardAutomaticPending, true);
@@ -314,7 +329,7 @@ namespace EsmTspiot.WinForms.Shared
         private void UpdateWizardSelection()
         {
             if (!_wizardBuilt || _updatingWizard || !WizardManual) return;
-            _wizardResult.Visible = false;
+            SetWizardResult(null);
             LmGatewayKkt registered;
             if (_manualSelectedSerial != null && _wizardKnownKkts.TryGetValue(_manualSelectedSerial, out registered) &&
                 registered.RegistrationConfirmed)
@@ -323,11 +338,10 @@ namespace EsmTspiot.WinForms.Shared
                 if (_wizardKktResults.TryGetValue(registered.KktSerial, out result) && WizardParametersApplied(result))
                 {
                     ClearWizardPending();
-                    _wizardResult.Text = "ККТ " + registered.KktSerial + " · ИНН " + registered.KktInn +
+                    SetWizardResult("ККТ " + registered.KktSerial + " · ИНН " + registered.KktInn +
                         "\r\nПорт ЕСМ: " + registered.Port + "; порт кассового ПО: " + registered.SoftPort +
                         "\r\nЛМ ЧЗ: " + _lmGatewayPage.DescribeAppliedLmTarget(registered.KktSerial) +
-                        "\r\n" + result + ". Готовность ЛМ к продаже не проверялась.";
-                    _wizardResult.Visible = true;
+                        "\r\n" + result + ". Готовность ЛМ к продаже не проверялась.");
                     ShowWizardStage(4, "Параметры выбранной ККТ применены", "Для изменений нажмите «Изменить настройки ЛМ».");
                     UpdateWizardActions();
                     return;
@@ -364,8 +378,7 @@ namespace EsmTspiot.WinForms.Shared
                     group.Add(kkt);
                 }
                 _wizardPendingDestination = WizardDestination();
-                _wizardResult.Visible = automatic && !string.IsNullOrEmpty(_wizardRegistrationWarning);
-                if (_wizardResult.Visible) _wizardResult.Text = _wizardRegistrationWarning;
+                SetWizardResult(automatic ? _wizardRegistrationWarning : null);
                 if (automatic)
                 {
                     _wizardAutomaticPending.Clear();
@@ -386,7 +399,7 @@ namespace EsmTspiot.WinForms.Shared
                         _wizardEditors.Add(key, editor);
                     }
                     editor.FmuApiMode = _lmGatewayPage.FmuApiMode;
-                    editor.UpdateKktSummary(new List<LmGatewayKkt>(_wizardKnownKkts.Values));
+                    editor.UpdateKktSummary(pair.Value);
                     _wizardEditorsPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
                     _wizardEditorsPanel.Controls.Add(editor, 0, row++);
                 }
@@ -516,9 +529,8 @@ namespace EsmTspiot.WinForms.Shared
                 FullAutomaticLocalSetupOutcome outcome = await _lmGatewayPage.RunFullAutomaticLocalSetupFromHostAsync(
                     kkts, _automaticCancellation.Token);
                 string registrationWarning = automaticScope ? _wizardRegistrationWarning : string.Empty;
-                _wizardResult.Text = registrationWarning +
-                    (string.IsNullOrEmpty(registrationWarning) ? string.Empty : "\r\n\r\n") + outcome.FormatSummary();
-                _wizardResult.Visible = true;
+                SetWizardResult(registrationWarning +
+                    (string.IsNullOrEmpty(registrationWarning) ? string.Empty : "\r\n\r\n") + outcome.FormatSummary());
                 _wizardLmEditing = _wizardNeedsInstaller = false;
                 foreach (LmGatewayKkt kkt in kkts)
                 {
@@ -586,7 +598,7 @@ namespace EsmTspiot.WinForms.Shared
             if (_discoveredKktsGrid.Rows.Count == 0)
                 _manualDiscoveryHint.Text = manual
                     ? "Список пуст. Нажмите «Найти ККТ» или раскройте ручные операции ниже."
-                    : "Подключите ККТ по USB/VCOM и нажмите «Начать автоматическую настройку».";
+                    : "Подключите ККТ по USB/VCOM и нажмите «Найти и зарегистрировать кассы».";
             _wizardMode.Enabled = !_busy;
             _wizardEditorsPanel.Enabled = _wizardInstallerPanel.Enabled = !_busy;
             _wizardProgress.Visible = _busy;
@@ -645,17 +657,25 @@ namespace EsmTspiot.WinForms.Shared
             _wizardMessage.Text = "Дождитесь безопасного завершения текущей операции. Выполненные действия сохраняются.";
         }
 
+        private void SetWizardResult(string details, bool failure = false)
+        {
+            _wizardResult.Text = details ?? string.Empty;
+            _wizardResult.Height = failure ? 56 : 130;
+            _wizardResultPanel.Visible = !string.IsNullOrEmpty(details);
+        }
+
         private void ShowWizardFailure(Exception error)
         {
             if (!_wizardBuilt) return;
             _workspaceTabs.SelectedTab = _automationTab;
             bool cancelled = error is OperationCanceledException;
-            _wizardResult.Text = cancelled ? "Уже выполненные действия сохранены. Регистрация не откатывается."
-                : SensitiveDataMasker.Mask(error.Message);
-            _wizardResult.Visible = true;
+            string message = SensitiveDataMasker.Mask(error.Message);
+            AppendLog((cancelled ? "Операция остановлена: " : "Ошибка операции: ") + message + "\r\n\r\n");
+            SetWizardResult(cancelled ? "Уже выполненные действия сохранены. Регистрация не откатывается."
+                : message, true);
             ShowWizardStage(_wizardPending.Count > 0 ? 3 : _discoveredKktsGrid.Rows.Count > 0 ? 2 : 1,
                 cancelled ? "Настройка остановлена" : "Не удалось завершить операцию",
-                cancelled ? "Можно продолжить после проверки текущего состояния." : SensitiveDataMasker.Mask(error.Message), !cancelled);
+                cancelled ? "Можно продолжить после проверки текущего состояния." : message, !cancelled);
         }
 
         private void ShowWizardForRegisteredKkt(LmGatewayKkt kkt)

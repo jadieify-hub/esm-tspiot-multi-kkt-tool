@@ -24,6 +24,12 @@ public static class WizardFlowCheck
             form.Size = new System.Drawing.Size(1000, 740);
             Application.DoEvents();
             Capture(form, "wizard-01-auto-start.png");
+            var navigation = Find<AntdUI.Segmented>(form, "workspace-navigation");
+            if (navigation.BackActive != Find<AntdUI.Segmented>(form, "wizard-mode").BackActive ||
+                navigation.BackActive == navigation.BackHover || navigation.ForeActive != System.Drawing.Color.White)
+                throw new Exception("Active navigation must use the primary surface and remain distinct from hover.");
+            if (((Button)Field(form, "_bulkRegisterButton")).Text != "Найти и зарегистрировать кассы")
+                throw new Exception("The automatic action must describe search and registration.");
             CheckAccessible(form, (Button)Field(form, "_bulkRegisterButton"));
             var tabs = (TabControl)Field(form, "_workspaceTabs");
             if (tabs.TabPages.Count != 3)
@@ -32,7 +38,23 @@ public static class WizardFlowCheck
             if (grid.Rows.Count != 0) throw new Exception("Before search there must be no invented KKT rows.");
             Find<AntdUI.Segmented>(form, "wizard-mode").SelectIndex = 1;
             Capture(form, "wizard-02-manual-empty.png");
+            var result = (TextBox)Field(form, "_wizardResult");
+            var fallback = (Control)Field(form, "_wizardFallback");
+            const string failure = "Не удалось получить список экземпляров ЕСМ/ТС ПИоТ.";
+            Invoke(form, "ShowWizardFailure", new InvalidOperationException(failure));
+            int expanded = fallback.Top;
+            Find<Button>(form, "hide-wizard-details").PerformClick();
+            Application.DoEvents();
+            if (result.Visible || fallback.Top >= expanded || !((TextBox)Field(form, "_logTextBox")).Text.Contains(failure))
+                throw new Exception("Hiding wizard error details must reclaim space and preserve the logged failure.");
+            Invoke(form, "ShowWizardFailure", new InvalidOperationException(failure));
+            if (!result.Visible) throw new Exception("A new failure must reopen the details.");
             Await((Task)Invoke(form, "ScanKktsCoreAsync", CancellationToken.None));
+            if (result.Visible) throw new Exception("A successful retry must clear obsolete discovery error details.");
+            Invoke(form, "SetWizardResult", "Регистрация завершена не полностью.", false);
+            Find<Button>(form, "hide-wizard-details").PerformClick();
+            if (result.Visible || result.Text != "Регистрация завершена не полностью.")
+                throw new Exception("A registration summary must remain available after hiding its panel.");
             grid.CurrentCell = grid.Rows[1].Cells[0];
             Capture(form, "wizard-03-manual-selected.png");
             CheckAccessible(form, (Button)Field(form, "_setupSelectedButton"));
@@ -56,8 +78,18 @@ public static class WizardFlowCheck
             var host = Find<TextBox>(form, "lm-host-1234567894");
             Capture(form, "wizard-04-lm-local.png");
             Find<AntdUI.Segmented>(form, "lm-placement-1234567894").SelectIndex = 1;
+            if (!Find<Label>(form, "lm-host-error-1234567894").Visible)
+                throw new Exception("The remote host requires a visible field error when empty.");
             host.Text = "lm-server";
             Find<TextBox>(form, "lm-port-1234567894").Text = "x";
+            if (Find<Label>(form, "lm-host-error-1234567894").Visible ||
+                !Find<Label>(form, "lm-port-error-1234567894").Visible)
+                throw new Exception("An invalid port must show only the port field error.");
+            form.Size = new System.Drawing.Size(920, 640);
+            Application.DoEvents();
+            CheckAccessible(form, Find<TextBox>(form, "lm-password-1234567894"));
+            Capture(form, "remote-small-invalid.png");
+            form.Size = new System.Drawing.Size(1000, 740);
             Capture(form, "wizard-05-lm-invalid.png");
             grid.CurrentCell = grid.Rows[0].Cells[0];
             grid.CurrentCell = grid.Rows[1].Cells[0];
@@ -66,6 +98,8 @@ public static class WizardFlowCheck
             if (Find<Button>(form, "wizard-apply").Enabled)
                 throw new Exception("An invalid LM draft must not offer application.");
             Find<TextBox>(form, "lm-port-1234567894").Text = "5995";
+            if (Find<Label>(form, "lm-port-error-1234567894").Visible)
+                throw new Exception("Correcting the remote port must clear its field error.");
             Capture(form, "wizard-06-lm-remote.png");
             CheckAccessible(form, Find<Button>(form, "wizard-apply"));
             CheckAccessible(form, Find<TextBox>(form, "lm-password-1234567894"));
@@ -184,6 +218,8 @@ public static class WizardFlowCheck
             }
             tabs.SelectedTab = (TabPage)Field(form, "_logTab");
             Capture(form, "wizard-10-log.png");
+            if (!((TextBox)Field(form, "_logTextBox")).WordWrap)
+                throw new Exception("The visible operation log must wrap long diagnostic lines.");
             tabs.SelectedTab = (TabPage)Field(form, "_automationTab");
             if (((Label)Field(form, "_wizardMessage")).Text != pendingMessage)
                 throw new Exception("Inventory refresh must not replace the pending LM setup instruction.");
@@ -197,7 +233,14 @@ public static class WizardFlowCheck
                 CheckAccessible(form, Find<Button>(form, "wizard-apply"));
                 Capture(form, "layout-" + size.Width + "x" + size.Height + ".png");
             }
+            var registered = new List<LmGatewayKkt>(pending);
             CheckRegistrationSupport(form, true);
+            foreach (var kkt in registered)
+            {
+                Invoke(form, "ShowWizardForRegisteredKkt", kkt);
+                if (Find<Label>(form, "lm-kkts-1234567894").Text != "ККТ: " + kkt.KktSerial)
+                    throw new Exception("The manual LM card must identify only the selected KKT of a shared INN.");
+            }
         }
     }
 

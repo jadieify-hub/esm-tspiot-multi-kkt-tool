@@ -13,8 +13,6 @@ namespace EsmTspiot.WinForms.Shared
         private Control BuildWorkspaceNavigation()
         {
             OperatorTheme.Segments(_navigation, "Настройка ККТ", "Обзор касс", "Журнал");
-            _navigation.BackActive = OperatorTheme.Selection;
-            _navigation.ForeActive = OperatorTheme.Blue;
             _navigation.Name = "workspace-navigation";
             _navigation.Items[0].IconSvg = "SettingOutlined";
             _navigation.Items[1].IconSvg = "DesktopOutlined";

@@ -75,18 +75,22 @@ namespace EsmTspiot.Shared.Services
             if (colon <= 0) return false;
             string candidate = value.Substring(0, colon);
             int parsed;
-            if (!int.TryParse(
-                    value.Substring(colon + 1),
-                    NumberStyles.None,
-                    CultureInfo.InvariantCulture,
-                    out parsed) ||
-                parsed < 1024 || parsed > 65535 ||
-                DirectControllerIdentity.IsControllerPort(parsed) ||
+            if (GetRemotePortError(value.Substring(colon + 1), out parsed) != null ||
                 !IsValidRemoteHost(candidate))
                 return false;
             host = candidate;
             port = parsed;
             return true;
+        }
+
+        public static string GetRemotePortError(string text, out int port)
+        {
+            if (!int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out port) ||
+                port < 1024 || port > 65535)
+                return "Введите число от 1024 до 65535.";
+            if (DirectControllerIdentity.IsControllerPort(port))
+                return "Порт зарезервирован для контроллера.";
+            return null;
         }
     }
 }
