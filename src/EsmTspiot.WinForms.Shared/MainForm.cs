@@ -214,12 +214,15 @@ namespace EsmTspiot.WinForms.Shared
             _operationsMenuItem.DropDownItems.Add(_deleteMenuItem);
 
             ToolStripMenuItem helpMenu = new ToolStripMenuItem("Справка");
+            var quickStart = new ToolStripMenuItem("Быстрый старт") { Name = "quick-start-help" };
+            quickStart.Click += delegate { ShowQuickStart(); };
             ToolStripMenuItem instruction = new ToolStripMenuItem("Открыть инструкцию");
             instruction.Click += delegate { OpenInstruction(); };
             ToolStripMenuItem support = new ToolStripMenuItem("Поддержать разработку");
             support.Click += delegate { ShowSupportDevelopment(); };
             ToolStripMenuItem about = new ToolStripMenuItem("О программе");
             about.Click += delegate { ShowAbout(); };
+            helpMenu.DropDownItems.Add(quickStart);
             helpMenu.DropDownItems.Add(instruction);
             helpMenu.DropDownItems.Add(support);
             helpMenu.DropDownItems.Add(new ToolStripSeparator());

@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using System.IO;
 using System.Net.Http;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -21,6 +22,7 @@ public static class CompactLayoutCheck
         using (var form = new MainForm(new TspiotApiClient(new HttpClient(transport)), ports))
         {
             form.Show();
+            CheckQuickStart(form);
             if (form.FormBorderStyle != FormBorderStyle.Sizable || !form.MaximizeBox)
                 throw new Exception("The operator window must provide native edge resizing and maximize.");
             NativeRect bounds;
@@ -117,6 +119,61 @@ public static class CompactLayoutCheck
             Invoke(page, "ShowServiceOperations");
             if (service.Location != opened || service.Modal)
                 throw new Exception("Activating a visible modeless service window must preserve its position.");
+        }
+    }
+
+    private static void CheckQuickStart(MainForm form)
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "MultiKKT-guide-" + Guid.NewGuid().ToString("N"));
+        string marker = Path.Combine(directory, "seen");
+        int shown = 0;
+        bool fits = false, markedBeforeClose = false;
+        MethodInvoker dismiss = delegate {
+            foreach (Form dialog in Application.OpenForms)
+            {
+                if (!dialog.Modal) continue;
+                shown++;
+                try
+                {
+                    if (shown == 1)
+                    {
+                        markedBeforeClose = File.Exists(marker);
+                        fits = dialog.Owner == form && form.Bounds.Contains(dialog.Bounds);
+                        foreach (Control area in dialog.Controls)
+                            foreach (Control item in area.Controls)
+                                fits &= item.Visible && area.ClientRectangle.Contains(item.Bounds);
+                        Capture(dialog, "quick-start-guide.png");
+                    }
+                }
+                finally
+                {
+                    if (shown == 1) dialog.Close();
+                    else dialog.AcceptButton.PerformClick();
+                }
+                break;
+            }
+        };
+        try
+        {
+            form.Size = new Size(920, 640);
+            form.BeginInvoke(dismiss);
+            Invoke(form, "ShowQuickStartIfNew", marker);
+            if (shown != 1 || !fits || markedBeforeClose || !File.Exists(marker))
+                throw new Exception("The first-run guide must fit its owner and mark the profile only after dismissal.");
+            Capture(form, "quick-start-dismissed.png");
+            form.BeginInvoke(dismiss);
+            Invoke(form, "ShowQuickStartIfNew", marker);
+            Application.DoEvents();
+            if (shown != 1) throw new Exception("A returning user must start directly in the workspace.");
+            form.Size = new Size(1000, 740);
+            form.BeginInvoke(dismiss);
+            form.MainMenuStrip.Items.Find("quick-start-help", true)[0].PerformClick();
+            if (shown != 2) throw new Exception("Help must reopen the guide after its first-run marker exists.");
+        }
+        finally
+        {
+            if (File.Exists(marker)) File.Delete(marker);
+            if (Directory.Exists(directory)) Directory.Delete(directory);
         }
     }
 

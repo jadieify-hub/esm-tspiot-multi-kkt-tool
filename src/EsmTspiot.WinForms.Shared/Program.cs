@@ -52,6 +52,10 @@ namespace EsmTspiot.WinForms.Shared
                 Timeout = TimeSpan.FromSeconds(8), MaxResponseContentBufferSize = 1024 * 1024 })
             {
                 form.Shown += async delegate { await form.CheckForUpdatesAsync(updates); };
+                form.Shown += delegate {
+                    form.ShowQuickStartIfNew(Path.Combine(Environment.GetFolderPath(
+                        Environment.SpecialFolder.LocalApplicationData), "EsmTspiotTool", "quick-start.seen"));
+                };
                 Application.Run(form);
             }
         }
