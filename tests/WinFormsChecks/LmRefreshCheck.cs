@@ -132,7 +132,7 @@ public static class LmRefreshCheck
                 object selected = typeof(LmGatewayPage).GetProperty("SelectedKkt", flags).GetValue(page, null);
                 if (selected != null)
                     throw new Exception("Failed details must never supply a KKT for configuration.");
-                foreach (string button in new[] { "_installControllerButton", "_bindButton" })
+                foreach (string button in new[] { "_installControllerButton", "_bindButton", "_checkGismtButton" })
                 {
                     var control = (Control)typeof(LmGatewayPage).GetField(button, flags).GetValue(page);
                     if (control.Enabled) throw new Exception("Failed details must disable selected-KKT mutations.");
@@ -311,7 +311,7 @@ public static class LmRefreshCheck
                 { "7701234567", new LocalModuleMsiProvisioningItemResult { Status = LmServiceProvisioningStatus.Cancelled } } },
             new Dictionary<string, LmGatewayBindingStatus>() });
         if (states["A"] != "ЛМ подготовлен; контроллеры пропущены" || states["B"] != "ЛМ не установлен" ||
-            states["C"] != "Адрес удалённого ЛМ учтён; контроллеры пропущены" || states["D"] != "Установка ЛМ отложена" ||
+            states["C"] != "Адрес готового ЛМ учтён; контроллеры пропущены" || states["D"] != "Установка ЛМ отложена" ||
             failed.Count != 1 || failed[0] != "B")
             throw new Exception("FMU-mode results must retain per-INN success, remote choices and operator deferrals despite another INN failure.");
         outcomeType.GetProperty("FmuApiMode", flags).SetValue(outcome, false, null);
@@ -362,6 +362,12 @@ public static class LmRefreshCheck
                     DecodedMessage = "error 2003: instance details unavailable" });
             return Success("{\"state\":\"Registered\",\"regData\":{\"kktSerial\":\"" + id +
                 "\",\"fnSerial\":\"7300000000000001\",\"kktInn\":\"1234567894\"}}");
+        }
+
+        public Task<string> CheckGismtAsync(string url, string port, string softPort,
+            string clientChecksum, CancellationToken cancellation)
+        {
+            throw new Exception("Refresh must not send a test mark.");
         }
 
         public Task<ApiResponse> GetLmInfoAsync(

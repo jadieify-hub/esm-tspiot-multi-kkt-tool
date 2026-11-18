@@ -14,6 +14,7 @@ namespace EsmTspiot.WinForms.Shared
     {
         private readonly AntdUI.Button _showServiceOperationsButton = new AntdUI.Button();
         private readonly AntdUI.Button _showDetailsButton = new AntdUI.Button();
+        private readonly AntdUI.Button _checkGismtButton = new AntdUI.Button();
         private readonly AntdUI.Button _serviceCancelButton = new AntdUI.Button();
         private Form _serviceOperationsWindow;
         private readonly Panel _serviceOperations = new Panel();
@@ -65,13 +66,7 @@ namespace EsmTspiot.WinForms.Shared
             await RunOperationAsync(async delegate(CancellationToken cancellation)
             {
                 string baseUrl = ValidateAndReadBaseUrl();
-                LmGatewayDiscovery discovery = await _discoveryWorkflow.DiscoverAsync(baseUrl, null, cancellation, serial);
-                if (!discovery.IsSuccessful) throw new InvalidOperationException(discovery.ErrorMessage);
-                IList<LmGatewayKkt> fresh = discovery.Items;
-                LmGatewayKkt selected = null;
-                foreach (LmGatewayKkt kkt in fresh)
-                    if (kkt.KktSerial == serial && kkt.RegistrationConfirmed) { selected = kkt; break; }
-                if (selected == null) throw new InvalidOperationException("Регистрация выбранной ККТ не подтверждена. Обновите список.");
+                LmGatewayKkt selected = await ReadDiagnosticKktAsync(baseUrl, serial, cancellation);
                 LmGatewayTarget expected;
                 _appliedLmTargets.TryGetValue(serial, out expected);
                 LmGatewayReadbackObservation observation = await _readbackWorkflow.ReadAsync(
@@ -98,6 +93,34 @@ namespace EsmTspiot.WinForms.Shared
             LmGatewayKkt kkt = SelectedKkt;
             if (kkt == null) return Task.FromResult(0);
             return DiagnoseKktAsync(kkt.KktSerial);
+        }
+
+        private Task CheckGismtForKktAsync(string serial)
+        {
+            return RunOperationAsync(async delegate(CancellationToken cancellation)
+            {
+                _diagnosticsTextBox.Visible = false;
+                string baseUrl = ValidateAndReadBaseUrl();
+                LmGatewayKkt selected = await ReadDiagnosticKktAsync(baseUrl, serial, cancellation);
+                string checksum = LmServiceInventoryReader.ComputeSha256(Application.ExecutablePath);
+                string result = await _apiClient.CheckGismtAsync(
+                    baseUrl, selected.Port, selected.SoftPort, checksum, cancellation);
+                string report = "Проверка связи с ЧЗ · ККТ " + serial + Environment.NewLine + result;
+                _diagnosticsTextBox.Text = report;
+                _diagnosticsTextBox.Visible = true;
+                _statusLabel.Text = "Проверка связи с ЧЗ завершена.";
+                Log(report + Environment.NewLine);
+            }, "Проверка связи с ЧЗ для ККТ " + serial + "...");
+        }
+
+        private async Task<LmGatewayKkt> ReadDiagnosticKktAsync(string baseUrl, string serial,
+            CancellationToken cancellation)
+        {
+            LmGatewayDiscovery discovery = await _discoveryWorkflow.DiscoverAsync(baseUrl, null, cancellation, serial);
+            if (!discovery.IsSuccessful) throw new InvalidOperationException(discovery.ErrorMessage);
+            foreach (LmGatewayKkt kkt in discovery.Items)
+                if (kkt.KktSerial == serial && kkt.RegistrationConfirmed) return kkt;
+            throw new InvalidOperationException("Регистрация выбранной ККТ не подтверждена. Обновите список.");
         }
 
         private void UpdateWorkingGrid()

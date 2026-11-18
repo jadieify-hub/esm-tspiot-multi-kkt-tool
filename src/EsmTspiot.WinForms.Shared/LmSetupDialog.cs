@@ -35,7 +35,7 @@ namespace EsmTspiot.WinForms.Shared
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.Controls.Add(new Label { AutoSize = true, MaximumSize = new Size(700, 0),
-                Text = "Один ЛМ ЧЗ на ИНН. Локальные адреса и порты назначаются автоматически. " +
+                Text = "Один ЛМ ЧЗ на ИНН. Выберите автоматическую настройку или укажите готовый модуль. " +
                     "Учётные данные используются только до закрытия программы.",
                 Margin = new Padding(0, 0, 0, 8) }, 0, 0);
             var scroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true };

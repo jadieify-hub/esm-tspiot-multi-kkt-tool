@@ -1,27 +1,48 @@
 using System;
 using System.Globalization;
 using System.Net;
+using EsmTspiot.Shared.Models;
 
 namespace EsmTspiot.Shared.Services
 {
     /// <summary>
     /// Адрес ЛМ, на который смотрит контроллер ККТ. Пустая строка — ЛМ на
-    /// этом же компьютере (127.0.0.1); иначе — IPv4 или имя компьютера, где
-    /// стоит «Сервер ЛМ ЧЗ». Допускаются только буквы, цифры, точка и дефис:
+    /// этом же компьютере под управлением программы. Непустая строка —
+    /// готовый ЛМ по заданному адресу, в том числе 127.0.0.1. Допускаются
+    /// только буквы, цифры, точка и дефис:
     /// значение попадает в YAML контроллера без экранирования.
     /// </summary>
     public static class LocalModuleTargetAddress
     {
         public const string Local = "127.0.0.1";
 
+        // null означает, что сравнить адреса по имеющимся данным нельзя.
+        public static bool? MatchesSavedTarget(LmGatewayTarget saved, string desiredEndpoint, int automaticPort)
+        {
+            if (saved == null) return null;
+            string host;
+            int port;
+            if (!TryParseEndpoint(desiredEndpoint, out host, out port))
+            {
+                if (!string.IsNullOrEmpty(desiredEndpoint) || automaticPort == 0) return null;
+                host = Local;
+                port = automaticPort;
+            }
+            return saved.Port == port && string.Equals(
+                Describe(saved.Address), host, StringComparison.OrdinalIgnoreCase);
+        }
+
         public static bool IsRemote(string host)
         {
+            // Историческое имя: признак явного адреса готового ЛМ, а не его физического размещения.
             return !string.IsNullOrEmpty(host);
         }
 
         public static string Describe(string host)
         {
-            return IsRemote(host) ? host : Local;
+            if (string.IsNullOrEmpty(host) || string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase)) return Local;
+            IPAddress address;
+            return IPAddress.TryParse(host, out address) && IPAddress.IsLoopback(address) ? Local : host;
         }
 
         public static string Key(string host, int port)
@@ -45,13 +66,10 @@ namespace EsmTspiot.Shared.Services
                     value != '.' && value != '-')
                     return false;
             }
-            if (string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase))
-                return false;
             IPAddress address;
             if (IPAddress.TryParse(host, out address))
                 return address.AddressFamily ==
                     System.Net.Sockets.AddressFamily.InterNetwork &&
-                    !IPAddress.IsLoopback(address) &&
                     !IPAddress.Any.Equals(address);
             return true;
         }
@@ -78,7 +96,7 @@ namespace EsmTspiot.Shared.Services
             if (GetRemotePortError(value.Substring(colon + 1), out parsed) != null ||
                 !IsValidRemoteHost(candidate))
                 return false;
-            host = candidate;
+            host = Describe(candidate);
             port = parsed;
             return true;
         }

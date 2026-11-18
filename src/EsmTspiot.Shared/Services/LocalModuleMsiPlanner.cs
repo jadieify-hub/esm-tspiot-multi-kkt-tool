@@ -13,7 +13,19 @@ namespace EsmTspiot.Shared.Services
             string requestedVolumeRoot,
             IList<TcpListenerSnapshotItem> listeners)
         {
+            return Build(kkts, saved, baseInventory, requestedVolumeRoot, listeners, null);
+        }
+
+        public static LocalModuleMsiPlan Build(
+            IList<LmGatewayKkt> kkts,
+            IList<LocalModuleMsiAssignment> saved,
+            LocalModuleBaseInventory baseInventory,
+            string requestedVolumeRoot,
+            IList<TcpListenerSnapshotItem> listeners,
+            IEnumerable<int> reservedApiPorts)
+        {
             LocalModuleMsiPlan plan = new LocalModuleMsiPlan();
+            HashSet<int> reservedPorts = new HashSet<int>(reservedApiPorts ?? new int[0]);
             if (baseInventory == null ||
                 !IsLocalPort(baseInventory.ApiPort) ||
                 !IsLocalPort(baseInventory.DatabasePort) ||
@@ -23,6 +35,9 @@ namespace EsmTspiot.Shared.Services
                     "Фактические порты базового ЛМ отсутствуют или недействительны.");
                 return plan;
             }
+
+            if (baseInventory.IsInstalled && reservedPorts.Contains(baseInventory.ApiPort))
+                reservedPorts.Add(baseInventory.DatabasePort);
 
             string baseVolume;
             string cloneVolume;
@@ -66,6 +81,18 @@ namespace EsmTspiot.Shared.Services
                 LocalModuleMsiAssignment assignment;
                 if (savedByInn.TryGetValue(group.Inn, out assignment))
                 {
+                    if (reservedPorts.Contains(assignment.ApiPort) ||
+                        reservedPorts.Contains(assignment.DatabasePort))
+                    {
+                        int reservedPort = reservedPorts.Contains(assignment.ApiPort)
+                            ? assignment.ApiPort
+                            : assignment.DatabasePort;
+                        plan.ValidationMessages.Add(
+                            "Сохранённое назначение ЛМ для ИНН " + group.Inn +
+                            " использует порт " + reservedPort.ToString() +
+                            " установленного ЛМ, заданного по адресу.");
+                        continue;
+                    }
                     if (!ListenersBelongToAssignment(assignment, safeListeners))
                     {
                         plan.ValidationMessages.Add(
@@ -79,13 +106,16 @@ namespace EsmTspiot.Shared.Services
                 }
 
                 int ordinal;
-                if (!reservedOrdinals.Contains(0))
+                if (!reservedOrdinals.Contains(0) &&
+                    !reservedPorts.Contains(baseInventory.ApiPort) &&
+                    !reservedPorts.Contains(baseInventory.DatabasePort))
                 {
                     ordinal = 0;
                 }
                 else
                 {
-                    ordinal = AllocateCloneOrdinal(reservedOrdinals, safeListeners);
+                    ordinal = AllocateCloneOrdinal(
+                        reservedOrdinals, safeListeners, reservedPorts);
                     if (ordinal == 0)
                     {
                         plan.ValidationMessages.Add(
@@ -340,7 +370,8 @@ namespace EsmTspiot.Shared.Services
 
         private static int AllocateCloneOrdinal(
             ICollection<int> reservedOrdinals,
-            IList<TcpListenerSnapshotItem> listeners)
+            IList<TcpListenerSnapshotItem> listeners,
+            ICollection<int> reservedPorts)
         {
             for (int ordinal = 1;
                 ordinal <= LocalModuleMsiIdentity.MaximumCloneOrdinal;
@@ -349,6 +380,7 @@ namespace EsmTspiot.Shared.Services
                 if (reservedOrdinals.Contains(ordinal)) continue;
                 int api = LocalModuleMsiIdentity.ApiPortForClone(ordinal);
                 int database = LocalModuleMsiIdentity.DatabasePortForClone(ordinal);
+                if (reservedPorts.Contains(api) || reservedPorts.Contains(database)) continue;
                 bool occupied = false;
                 for (int index = 0; index < listeners.Count; index++)
                 {

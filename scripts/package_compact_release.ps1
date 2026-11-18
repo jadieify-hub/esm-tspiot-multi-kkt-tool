@@ -1,6 +1,7 @@
 ﻿[CmdletBinding()]
 param(
-    [string]$Configuration = "Release"
+    [string]$Configuration = "Release",
+    [switch]$SkipLaunchCheck
 )
 
 $ErrorActionPreference = "Stop"
@@ -152,7 +153,8 @@ MultiKKT — настройка ККТ в ЕСМ/ТС ПИоТ, версия $pa
 
 Важно
 - Для обоих режимов нужен ЕСМ/ТС ПИоТ. Официальный MSI ЛМ ЧЗ от ЦРПТ нужен
-  для настройки локальных ЛМ; для существующих удалённых ЛМ не требуется.
+  для автоматической настройки локальных ЛМ; при выборе установленного ЛМ
+  по адресу (включая 127.0.0.1) MSI не требуется.
   Для обычного режима также нужен штатно установленный ЕСП Контроллер ЛМ ЧЗ.
 - Режим FMU-API пропускает контроллеры, но не ЕСМ или ЛМ ЧЗ.
   Сам FMU-API и бизнес-инициализация ЛМ настраиваются отдельно.
@@ -245,45 +247,51 @@ foreach ($file in @(Get-ChildItem -LiteralPath $stageRoot -Recurse -File | Sort-
 # них и не должен упираться в запрос UAC, поэтому дымовой запуск делается
 # под совместимостью RunAsInvoker. Сам манифест проверяет контракт
 # безопасности отдельно.
-$previousCompatLayer = $env:__COMPAT_LAYER
-$env:__COMPAT_LAYER = 'RunAsInvoker'
-try {
-    $smoke = Start-Process -FilePath $stagedMain -WorkingDirectory $stageRoot -WindowStyle Hidden -PassThru
-}
-finally {
-    $env:__COMPAT_LAYER = $previousCompatLayer
-}
-try {
-    if (-not $smoke.WaitForInputIdle(10000)) {
-        throw "Compact Legacy smoke did not become interactive."
+if (-not $SkipLaunchCheck) {
+    $previousCompatLayer = $env:__COMPAT_LAYER
+    $env:__COMPAT_LAYER = 'RunAsInvoker'
+    try {
+        $smoke = Start-Process -FilePath $stagedMain -WorkingDirectory $stageRoot -WindowStyle Hidden -PassThru
     }
-    # Скрытый дымовой запуск проверяет загрузку поставки. Видимость и
-    # содержимое главного окна отдельно проверяет verify_ui_layout.ps1.
-    $smokeDeadline = [DateTime]::UtcNow.AddSeconds(15)
-    $smokeReady = $false
-    while ([DateTime]::UtcNow -lt $smokeDeadline) {
-        Start-Sleep -Milliseconds 250
-        $smoke.Refresh()
-        if ($smoke.HasExited) {
-            throw "Compact Legacy smoke exited during startup with code $($smoke.ExitCode)."
+    finally {
+        $env:__COMPAT_LAYER = $previousCompatLayer
+    }
+    try {
+        if (-not $smoke.WaitForInputIdle(10000)) {
+            throw "Compact Legacy smoke did not become interactive."
         }
-        if ($smoke.Responding) {
-            $smokeReady = $true
-            break
+        # Скрытый дымовой запуск проверяет загрузку поставки. Видимость и
+        # содержимое главного окна отдельно проверяет verify_ui_layout.ps1.
+        $smokeDeadline = [DateTime]::UtcNow.AddSeconds(15)
+        $smokeReady = $false
+        while ([DateTime]::UtcNow -lt $smokeDeadline) {
+            Start-Sleep -Milliseconds 250
+            $smoke.Refresh()
+            if ($smoke.HasExited) {
+                throw "Compact Legacy smoke exited during startup with code $($smoke.ExitCode)."
+            }
+            if ($smoke.Responding) {
+                $smokeReady = $true
+                break
+            }
         }
-    }
-    if (-not $smokeReady) {
-        throw "Compact Legacy smoke did not become responsive within 15 seconds."
-    }
-}
-finally {
-    if (-not $smoke.HasExited) {
-        $null = $smoke.CloseMainWindow()
-        if (-not $smoke.WaitForExit(3000)) {
-            Stop-Process -Id $smoke.Id -Force
-            if (-not $smoke.WaitForExit(5000)) { throw "Compact smoke process did not exit." }
+        if (-not $smokeReady) {
+            throw "Compact Legacy smoke did not become responsive within 15 seconds."
         }
     }
+    finally {
+        if (-not $smoke.HasExited) {
+            $null = $smoke.CloseMainWindow()
+            if (-not $smoke.WaitForExit(3000)) {
+                Stop-Process -Id $smoke.Id -Force
+                if (-not $smoke.WaitForExit(5000)) { throw "Compact smoke process did not exit." }
+            }
+        }
+    }
+
+}
+else {
+    Write-Host "Compact application launch check skipped (-SkipLaunchCheck)."
 }
 
 foreach ($file in @(Get-ChildItem -LiteralPath $stageRoot -Recurse -File)) {

@@ -134,14 +134,18 @@ namespace EsmTspiot.WinForms.Shared
                     if (kkts.Count == 0)
                         throw new InvalidOperationException(
                             "В ЕСМ нет зарегистрированных ККТ для этого шага.");
-                    LocalModuleMsiOperatorInventorySnapshot inventory =
-                        CreateLocalModuleInventoryReader().Read();
-                    LocalModuleMsiPlan plan = LocalModuleMsiPlanner.Build(
-                        SelectLocalLmKkts(kkts),
+                    IList<LmGatewayKkt> localLmKkts = SelectLocalLmKkts(kkts);
+                    LocalModuleMsiOperatorInventorySnapshot inventory = localLmKkts.Count == 0
+                        ? new LocalModuleMsiOperatorInventorySnapshot()
+                        : CreateLocalModuleInventoryReader().Read();
+                    LocalModuleMsiPlan plan = localLmKkts.Count == 0
+                        ? new LocalModuleMsiPlan()
+                        : LocalModuleMsiPlanner.Build(
+                        localLmKkts,
                         inventory.Assignments,
                         inventory.BaseInventory,
                         null,
-                        inventory.Listeners);
+                        inventory.Listeners, ReservedExistingLocalApiPorts());
                     Log("=== Ручной шаг " +
                         ((int)stage).ToString(CultureInfo.InvariantCulture) +
                         ": " + DescribeManualStage(stage) + " ===\r\n");
@@ -198,7 +202,7 @@ namespace EsmTspiot.WinForms.Shared
             if (plan.Assignments.Count == 0)
             {
                 await RefreshAfterManualStageAsync(
-                    "Все ЛМ ЧЗ на другом компьютере; ставить здесь нечего.",
+                    "Для всех ИНН указаны готовые ЛМ; установка пропущена.",
                     cancellation).ConfigureAwait(true);
                 return;
             }
@@ -210,13 +214,14 @@ namespace EsmTspiot.WinForms.Shared
                     inventory.Assignments,
                     inventory.BaseInventory,
                     volume,
-                    inventory.Listeners);
+                    inventory.Listeners, ReservedExistingLocalApiPorts());
                 RequireUsableLocalModulePlan(plan);
             }
             _lastAutomaticLocalModuleLines.Clear();
             bool ready = await EnsureMsiLocalModulesAsync(
                 plan,
                 inventory,
+                SelectLocalLmKkts(kkts),
                 cancellation).ConfigureAwait(true);
             string summary = ready
                 ? "ЛМ ЧЗ установлены и проверены: " +
@@ -320,12 +325,13 @@ namespace EsmTspiot.WinForms.Shared
                 Log(expected.Messages[index] + "\r\n");
             // Контроллер и привязка в ЕСМ переживают удаление ЛМ: ЕСМ хранит
             // адрес контроллера, а не факт установки модуля. Наличие
-            // назначенного ЛМ проверяется по инвентарю; его инициализация и
+            // автоматически настроенного ЛМ проверяется по инвентарю; его инициализация и
             // бизнес-статус здесь не критерий.
             int modulesMissing = 0;
-            for (int index = 0; index < kkts.Count; index++)
+            IList<LmGatewayKkt> localLmKkts = SelectLocalLmKkts(kkts);
+            for (int index = 0; index < localLmKkts.Count; index++)
             {
-                LmGatewayKkt kkt = kkts[index];
+                LmGatewayKkt kkt = localLmKkts[index];
                 if (kkt == null) continue;
                 if (inventory.HasInstalledModule(plan.FindByInn(kkt.KktInn)))
                     continue;

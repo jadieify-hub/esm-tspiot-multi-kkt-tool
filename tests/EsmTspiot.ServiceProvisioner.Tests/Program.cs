@@ -8205,6 +8205,12 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 AssertEqual("http://localhost", official.OfficialLmUrlOriginal,
                     "The first vendor values must stay remembered.");
 
+                official.TargetLocalModuleAddress = "127.0.0.1";
+                AssertTrue(store.RetargetOfficial(official),
+                    "An explicitly selected existing local LM must retarget the official controller.");
+                AssertContains(File.ReadAllText(vendorConfig, Encoding.UTF8), "    url: 'http://127.0.0.1'\r\n");
+                AssertContains(File.ReadAllText(vendorConfig, Encoding.UTF8), "    port: 7995\r\n");
+
                 official.TargetLocalModuleAddress = null;
                 official.TargetLocalModulePort = 5995;
                 AssertTrue(store.RetargetOfficial(official),
@@ -8231,6 +8237,9 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 string cloneYaml = File.ReadAllText(store.PrepareClone(clone), Encoding.UTF8);
                 AssertContains(cloneYaml, "url: 'http://lm-server'");
                 AssertContains(cloneYaml, "port: 5995");
+                clone.TargetLocalModuleAddress = "127.0.0.1";
+                cloneYaml = File.ReadAllText(store.PrepareClone(clone), Encoding.UTF8);
+                AssertContains(cloneYaml, "url: 'http://127.0.0.1'");
                 clone.TargetLocalModuleAddress = null;
                 cloneYaml = File.ReadAllText(store.PrepareClone(clone), Encoding.UTF8);
                 AssertContains(cloneYaml, "url: 'http://127.0.0.1'");
@@ -8341,6 +8350,17 @@ namespace EsmTspiot.ServiceProvisioner.Tests
             request.PlanHash = CanonicalLmPlanHasher.Compute(request);
             AssertFalse(ProvisioningRequestValidator.Validate(request).IsValid,
                 "An unsafe host must be rejected before YAML is written.");
+
+            request.DirectControllers[0].TargetLocalModuleAddress = "127.0.0.1";
+            request.DirectControllers[1].TargetLocalModuleAddress = "localhost";
+            request.DirectControllers[1].TargetLocalModulePort = 6995;
+            request.PlanHash = CanonicalLmPlanHasher.Compute(request);
+            AssertTrue(ProvisioningRequestValidator.Validate(request).IsValid,
+                "Existing local modules on distinct API ports must pass the helper boundary.");
+            request.DirectControllers[1].TargetLocalModulePort = 5995;
+            request.PlanHash = CanonicalLmPlanHasher.Compute(request);
+            AssertFalse(ProvisioningRequestValidator.Validate(request).IsValid,
+                "Loopback aliases must not hide a shared endpoint for different INNs.");
         }
 
         private static void DirectControllerManifestSafelyUpgradesLegacyTargetPort()

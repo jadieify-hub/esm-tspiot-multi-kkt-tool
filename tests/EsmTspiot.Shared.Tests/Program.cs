@@ -88,6 +88,7 @@ namespace EsmTspiot.Shared.Tests
             Run("LM gateway API response stores redacted request", LmGatewayApiResponseStoresRedactedRequest);
             Run("LM gateway HTTP failure hides custom credentials end to end", LmGatewayHttpFailureHidesCustomCredentials);
             Run("LM info API uses the current documented endpoint", LmInfoApiUsesCurrentDocumentedEndpoint);
+            Run("Gismt test checks one mark through the selected ESM API", GismtCheckUsesSelectedEsmApi);
             Run("LM info API classifies TLS certificate failure", LmInfoApiClassifiesTlsCertificateFailure);
             Run("LM readback explains a rejected TLS certificate", LmReadbackExplainsRejectedTlsCertificate);
             Run("LM readback labels controller errors without implying health", LmReadbackLabelsControllerErrorsWithoutImplyingHealth);
@@ -118,9 +119,14 @@ namespace EsmTspiot.Shared.Tests
             Run("LM server keys never collide with INN and plan in number order", LocalModuleServerKeysPlanInNumberOrder);
             Run("Remote LM address accepts only a host and an LM port", RemoteLocalModuleAddressAcceptsOnlyHostAndPort);
             Run("Remote LM store keeps INN endpoints", RemoteLocalModuleStoreKeepsInnEndpoints);
+            Run("LM target comparison separates unknown data from a mismatch", LmTargetComparisonSeparatesUnknownData);
+            Run("LM installation confirmation lists only the planned INNs and KKTs", LmInstallationConfirmationListsScope);
             Run("Controller planner targets a remote LM and retargets saved controllers", DirectControllerPlannerTargetsRemoteLocalModule);
             Run("MSI local module planner uses actual base and clone ports", MsiLocalModulePlannerUsesActualBaseAndClonePorts);
             Run("MSI local module planner preserves saved ordinals", MsiLocalModulePlannerPreservesSavedOrdinals);
+            Run("MSI local module planner skips explicitly reserved base ports", MsiLocalModulePlannerSkipsExplicitlyReservedBasePorts);
+            Run("MSI local module planner skips reserved clone API and database ports", MsiLocalModulePlannerSkipsReservedClonePorts);
+            Run("MSI local module planner rejects reserved saved ports", MsiLocalModulePlannerRejectsReservedSavedPorts);
             Run("MSI local module root policy accepts only fixed Program Files volumes", MsiLocalModuleRootPolicyAcceptsOnlyFixedProgramFilesVolumes);
             Run("MSI local module planner reserves ordinals and names port owners", MsiLocalModulePlannerReservesOrdinalsAndNamesPortOwners);
             Run("MSI local module package policy pins the vendor, not the version", MsiLocalModulePackagePolicyPinsVendorNotVersion);
@@ -1354,6 +1360,57 @@ namespace EsmTspiot.Shared.Tests
             AssertContains(explicitPort.ResponseBody, "\"token\":\"***\"");
         }
 
+        private static void GismtCheckUsesSelectedEsmApi()
+        {
+            var handler = new RecordingHttpHandler();
+            var client = new TspiotApiClient(new HttpClient(handler));
+            handler.ResponseBody = "{\"codesResponse\":{\"codesResponse\":[{\"code\":0,\"isCheckedOffline\":false,\"codes\":[{\"found\":false,\"errorCode\":10}]}]}}";
+            string result = client.CheckGismtAsync("http://127.0.0.1:51077", "50402", "51409",
+                "test-sha256", CancellationToken.None).Result;
+            AssertEqual(1, handler.Requests.Count, "Send one request for the selected KKT.");
+            AssertRequest(handler.Requests[0], "POST", "https://localhost:51409/api/v1/codes/check");
+            AssertContains(handler.Requests[0].Body, "\"codes\":[\"");
+            AssertContains(handler.Requests[0].Body, "MDEwNDYwNzAxNzA5Mzg5NDIxNUlUbDtLKmFVNChwUR05My9sZUo=");
+            AssertContains(handler.Requests[0].Body, "\"name\":\"MultiKKT Diagnostics\"");
+            AssertContains(result, "онлайн");
+            AssertContains(result, "ЧЗ не нашёл контрольный код.");
+            handler.ResponseBody = "{\"codesResponse\":[{\"code\":0,\"isCheckedOffline\":true,\"codes\":[{\"found\":false}]}]}";
+            result = client.CheckGismtAsync("http://127.0.0.1:51077", "50402", "0",
+                "test-sha256", CancellationToken.None).Result;
+            AssertRequest(handler.Requests[1], "POST", "https://localhost:51402/api/v1/codes/check");
+            AssertContains(result, "Ответил ЛМ ЧЗ");
+            handler.ResponseBody = "{\"codesResponse\":[{\"code\":514,\"isCheckedOffline\":false}]}";
+            result = client.CheckGismtAsync("http://127.0.0.1:51077", "50402", "51409",
+                "test-sha256", CancellationToken.None).Result;
+            AssertContains(result, "514");
+            AssertFalse(result.Contains("онлайн-ответ"), "An error flag alone cannot prove connectivity.");
+            handler.ResponseBody = "{\"codesResponse\":[{\"code\":0,\"codes\":[{}]}]}";
+            result = client.CheckGismtAsync("http://127.0.0.1:51077", "50402", "51409",
+                "test-sha256", CancellationToken.None).Result;
+            AssertContains(result, "Источник ответа не подтверждён");
+            handler.ResponseBody = "{\"codesResponse\":[{\"code\":0,\"isCheckedOffline\":false,\"reqId\":\"a1b2c3d4-e5f6-7890-abcd-ef1234567890\",\"codes\":[{\"found\":true,\"sold\":true,\"realizable\":false}]}]}";
+            result = client.CheckGismtAsync("http://127.0.0.1:51077", "50402", "51409",
+                "test-sha256", CancellationToken.None).Result;
+            AssertContains(result, "о выбытии товара или признаках множественных продаж (sold: true)");
+            AssertContains(result, "a1b2c3d4-e5f6-7890-abcd-ef1234567890");
+            AssertFalse(result.Contains("codesResponse"), "The report must not expose the raw response.");
+            handler.ResponseBody = "{\"codesResponse\":[{\"code\":0,\"isCheckedOffline\":false,\"codes\":[{\"found\":true,\"sold\":false,\"realizable\":false}]}]}";
+            result = client.CheckGismtAsync("http://127.0.0.1:51077", "50402", "51409",
+                "test-sha256", CancellationToken.None).Result;
+            AssertContains(result, "sold: false");
+            AssertFalse(result.Contains("sold: true"), "A restriction on sale does not imply the sold flag.");
+            handler.ResponseBody = "{\"codesResponse\":[{\"code\":0,\"isCheckedOffline\":false,\"codes\":[{}]}]}";
+            result = client.CheckGismtAsync("http://127.0.0.1:51077", "50402", "51409",
+                "test-sha256", CancellationToken.None).Result;
+            AssertContains(result, "Источник ответа не подтверждён");
+            handler.ResponseStatusCode = HttpStatusCode.Forbidden;
+            handler.ResponseBody = "detail with test-sha256";
+            result = client.CheckGismtAsync("http://127.0.0.1:51077", "50402", "51409",
+                "test-sha256", CancellationToken.None).Result;
+            AssertContains(result, "403");
+            AssertFalse(result.Contains("test-sha256"), "Do not show raw body containing client data.");
+        }
+
         private static void LmInfoApiClassifiesTlsCertificateFailure()
         {
             HttpRequestException transportFailure = new HttpRequestException(
@@ -2134,6 +2191,51 @@ namespace EsmTspiot.Shared.Tests
             AssertContains(string.Join("; ", plan.ValidationMessages), "32");
         }
 
+        private static void LmTargetComparisonSeparatesUnknownData()
+        {
+            AssertTrue(LocalModuleTargetAddress.MatchesSavedTarget(null, "192.168.0.13:5995", 0) == null,
+                "Missing saved data must not claim the remote LM was not applied.");
+            var saved = new LmGatewayTarget("192.168.0.13", 5995);
+            AssertTrue(LocalModuleTargetAddress.MatchesSavedTarget(saved, "192.168.0.13:5995", 0) == true,
+                "Matching saved data must be distinguishable from unknown data.");
+            AssertTrue(LocalModuleTargetAddress.MatchesSavedTarget(saved, "192.168.0.14:5995", 0) == false,
+                "A different saved address must require the operator's attention.");
+            AssertTrue(LocalModuleTargetAddress.MatchesSavedTarget(saved, "192.168.0.13:6995", 0) == false,
+                "A different API port must be detected.");
+            saved = new LmGatewayTarget("127.0.0.1", 5995);
+            AssertTrue(LocalModuleTargetAddress.MatchesSavedTarget(saved, "localhost:5995", 0) == true,
+                "Loopback aliases must compare as the same existing LM.");
+            AssertTrue(LocalModuleTargetAddress.MatchesSavedTarget(saved, "", 0) == null,
+                "An unknown automatic port must not be presented as a known mismatch.");
+            AssertTrue(LocalModuleTargetAddress.MatchesSavedTarget(saved, "", 5995) == true &&
+                LocalModuleTargetAddress.MatchesSavedTarget(saved, "", 6995) == false,
+                "Return to automatic placement must compare its known API port.");
+        }
+
+        private static void LmInstallationConfirmationListsScope()
+        {
+            var plan = new LocalModuleMsiPlan();
+            plan.Assignments.Add(new LocalModuleMsiAssignment { Inn = "1234567894", ApiPort = 5995 });
+            var kkts = new List<LmGatewayKkt> {
+                CreateLmKkt("00105700000001", "1234567894"),
+                CreateLmKkt("00105700000002", "7707083893")
+            };
+            string message = LocalModuleSetupMessagePolicy.BuildInstallConfirmation(plan, kkts);
+            AssertContains(message, "ККТ: 1; ИНН: 1");
+            AssertContains(message, "1234567894");
+            AssertContains(message, "00105700000001");
+            AssertFalse(message.Contains("7707083893") || message.Contains("00105700000002"),
+                "The local MSI confirmation must not include another INN outside its plan.");
+            plan.Assignments.Add(new LocalModuleMsiAssignment { Inn = "7707083893", ApiPort = 6995 });
+            kkts.Add(CreateLmKkt("00105700000003", "1234567894"));
+            message = LocalModuleSetupMessagePolicy.BuildInstallConfirmation(plan, kkts);
+            AssertContains(message, "ККТ: 3; ИНН: 2");
+            AssertContains(message, "00105700000002");
+            AssertContains(message, "00105700000003");
+            AssertContains(message, "6995");
+            AssertContains(message, "общий для касс одного ИНН");
+        }
+
         private static void RemoteLocalModuleAddressAcceptsOnlyHostAndPort()
         {
             string host;
@@ -2146,7 +2248,7 @@ namespace EsmTspiot.Shared.Tests
                 host == "lm-server.local", "host name endpoint");
             string[] rejected =
             {
-                "192.168.1.10", "127.0.0.1:5995", "localhost:5995",
+                "192.168.1.10",
                 "0.0.0.0:5995", "192.168.1.10:80", "192.168.1.10:50063",
                 "lm server:5995", "lm'srv:5995", "-lm:5995", "[::1]:5995"
             };
@@ -2155,6 +2257,9 @@ namespace EsmTspiot.Shared.Tests
                     rejected[index], out host, out port), rejected[index]);
             AssertEqual("127.0.0.1:5995", LocalModuleTargetAddress.Key(null, 5995),
                 "local key");
+            foreach (string endpoint in new[] { "127.0.0.1:5995", "localhost:5995", "127.0.0.2:5995" })
+                AssertTrue(LocalModuleTargetAddress.TryParseEndpoint(endpoint, out host, out port) &&
+                    host == "127.0.0.1" && port == 5995, "Existing local LM endpoints must normalize loopback: " + endpoint);
         }
 
         private static void RemoteLocalModuleStoreKeepsInnEndpoints()
@@ -2176,7 +2281,7 @@ namespace EsmTspiot.Shared.Tests
                 AssertEqual("192.168.1.10:6995", loaded["7707083893"],
                     "endpoint is normalized");
                 File.AppendAllText(Path.Combine(directory, "remote.txt"),
-                    "garbage line\r\n7707083894 127.0.0.1:5995\r\n");
+                    "garbage line\r\n7707083894 0.0.0.0:5995\r\n");
                 AssertEqual(2, store.Load().Count, "invalid lines are ignored");
                 var strictLoad = typeof(RemoteLocalModuleStore).GetMethod("LoadStrict");
                 AssertTrue(strictLoad != null, "Mutation paths require a strict reader to avoid overwriting malformed settings.");
@@ -2186,10 +2291,9 @@ namespace EsmTspiot.Shared.Tests
                 { strictRefused = ex.InnerException is InvalidDataException; }
                 AssertTrue(strictRefused, "Strict loading must reject malformed persisted endpoints before mutation.");
                 saved["7707083893"] = "localhost:6995";
-                bool refused = false;
-                try { store.Save(saved); }
-                catch (ArgumentException) { refused = true; }
-                AssertTrue(refused, "a local address is not a remote LM");
+                store.Save(saved);
+                AssertEqual("127.0.0.1:6995", store.LoadStrict()["7707083893"],
+                    "An explicit existing local LM must survive restart without becoming automatic installation.");
             }
             finally
             {
@@ -2412,6 +2516,122 @@ namespace EsmTspiot.Shared.Tests
                 "The first clone database port has a deliberate 2000 gap from base.");
             AssertEqual(systemVolume, plan.Assignments[1].InstallVolumeRoot,
                 "Clone root must default to the actual base-LM volume.");
+        }
+
+        private static void MsiLocalModulePlannerSkipsExplicitlyReservedBasePorts()
+        {
+            string systemVolume = Path.GetPathRoot(Environment.SystemDirectory);
+            LocalModuleMsiPlan customPlan = LocalModuleMsiPlanner.Build(
+                new[] { CreateLmKkt("00105700000002", "7707083893") },
+                new List<LocalModuleMsiAssignment>(),
+                new LocalModuleBaseInventory
+                {
+                    IsInstalled = true,
+                    InstallDirectory = Path.Combine(systemVolume, "Program Files", "Regime"),
+                    ApiPort = 5995,
+                    DatabasePort = 7984
+                },
+                null, new List<TcpListenerSnapshotItem>(), new[] { 5995 });
+            AssertTrue(customPlan.IsValid && customPlan.Assignments[0].CloneOrdinal == 2,
+                "An explicit base API must also reserve its known database port when stopped.");
+            foreach (int reservedPort in new int[] { 5995, 5984 })
+            {
+                LocalModuleMsiPlan plan = LocalModuleMsiPlanner.Build(
+                    new List<LmGatewayKkt>
+                    {
+                        CreateLmKkt("00105700000002", "7707083893")
+                    },
+                    new List<LocalModuleMsiAssignment>(),
+                    new LocalModuleBaseInventory
+                    {
+                        IsInstalled = true,
+                        InstallDirectory = Path.Combine(systemVolume, "Program Files", "Regime"),
+                        ApiPort = 5995,
+                        DatabasePort = 5984
+                    },
+                    null,
+                    new List<TcpListenerSnapshotItem>(),
+                    new int[] { reservedPort });
+
+                AssertTrue(plan.IsValid, string.Join("; ", plan.ValidationMessages));
+                AssertEqual(1, plan.Assignments.Count,
+                    "Only the automatic INN must receive a managed LM assignment.");
+                AssertEqual(1, plan.Assignments[0].CloneOrdinal,
+                    "An explicit existing LM reserves the base even when it is stopped.");
+                AssertEqual("7707083893", plan.Assignments[0].Inn,
+                    "The automatic INN must receive its own clone.");
+            }
+        }
+
+        private static void MsiLocalModulePlannerSkipsReservedClonePorts()
+        {
+            string systemVolume = Path.GetPathRoot(Environment.SystemDirectory);
+            foreach (int reservedPort in new int[] { 6995, 7984 })
+            {
+                LocalModuleMsiPlan plan = LocalModuleMsiPlanner.Build(
+                    new List<LmGatewayKkt>
+                    {
+                        CreateLmKkt("00105700000002", "7707083893")
+                    },
+                    new List<LocalModuleMsiAssignment>(),
+                    new LocalModuleBaseInventory
+                    {
+                        IsInstalled = true,
+                        AssignedInn = "1234567894",
+                        InstallDirectory = Path.Combine(systemVolume, "Program Files", "Regime"),
+                        ApiPort = 5995,
+                        DatabasePort = 5984
+                    },
+                    null,
+                    new List<TcpListenerSnapshotItem>(),
+                    new int[] { reservedPort });
+
+                AssertTrue(plan.IsValid, string.Join("; ", plan.ValidationMessages));
+                AssertEqual(2, plan.FindByInn("7707083893").CloneOrdinal,
+                    "A stopped explicit LM must block either port of a candidate clone.");
+            }
+        }
+
+        private static void MsiLocalModulePlannerRejectsReservedSavedPorts()
+        {
+            string systemVolume = Path.GetPathRoot(Environment.SystemDirectory);
+            foreach (int reservedPort in new int[] { 6995, 7984 })
+            {
+                LocalModuleMsiPlan plan = LocalModuleMsiPlanner.Build(
+                    new List<LmGatewayKkt>
+                    {
+                        CreateLmKkt("00105700000002", "7707083893")
+                    },
+                    new List<LocalModuleMsiAssignment>
+                    {
+                        new LocalModuleMsiAssignment
+                        {
+                            Inn = "7707083893",
+                            CloneOrdinal = 1,
+                            ApiPort = 6995,
+                            DatabasePort = 7984,
+                            InstallVolumeRoot = systemVolume
+                        }
+                    },
+                    new LocalModuleBaseInventory
+                    {
+                        IsInstalled = true,
+                        InstallDirectory = Path.Combine(systemVolume, "Program Files", "Regime"),
+                        ApiPort = 5995,
+                        DatabasePort = 5984
+                    },
+                    null,
+                    new List<TcpListenerSnapshotItem>(),
+                    new int[] { reservedPort });
+
+                AssertFalse(plan.IsValid,
+                    "A saved managed LM must not take an explicitly reserved port.");
+                AssertEqual(0, plan.Assignments.Count,
+                    "A conflicting saved LM must not be reused or silently reassigned.");
+                AssertContains(string.Join("; ", plan.ValidationMessages), "7707083893");
+                AssertContains(string.Join("; ", plan.ValidationMessages), reservedPort.ToString());
+                AssertContains(string.Join("; ", plan.ValidationMessages), "установленного ЛМ");
+            }
         }
 
         private static void MsiLocalModuleRootPolicyAcceptsOnlyFixedProgramFilesVolumes()
@@ -2675,7 +2895,8 @@ namespace EsmTspiot.Shared.Tests
                     DatabasePort = 5984
                 },
                 null,
-                new List<TcpListenerSnapshotItem>());
+                new List<TcpListenerSnapshotItem>(),
+                new int[] { 5995 });
 
             AssertTrue(plan.IsValid, string.Join("; ", plan.ValidationMessages));
             AssertEqual(3, plan.FindByInn("7707083893").CloneOrdinal,
@@ -2683,7 +2904,7 @@ namespace EsmTspiot.Shared.Tests
             AssertEqual(1, plan.FindByInn("500100732259").CloneOrdinal,
                 "A new INN must use the first free clone ordinal.");
             AssertTrue(plan.FindByInn("1234567894") == null,
-                "A temporarily absent base INN stays reserved without inventing a current row.");
+                "An explicit base INN stays reserved without inventing a managed row or conflict.");
         }
 
         private static void MsiLocalModuleDiskBudgetReportsBothVolumes()
@@ -6636,6 +6857,12 @@ namespace EsmTspiot.Shared.Tests
                 return Task.FromResult(LmGatewayResponses.Count == 0
                     ? Success("{}")
                     : LmGatewayResponses.Dequeue());
+            }
+
+            public Task<string> CheckGismtAsync(string baseUrl, string instancePort, string softPort,
+                string clientChecksum, CancellationToken cancellationToken)
+            {
+                throw new InvalidOperationException("The discovery and setup workflows must not send a test mark.");
             }
 
             public Task<ApiResponse> GetLmInfoAsync(

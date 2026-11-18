@@ -149,7 +149,7 @@ namespace EsmTspiot.WinForms.Shared
             };
             table.Controls.Add(kkts, 0, 0);
             table.SetColumnSpan(kkts, 4);
-            OperatorTheme.Segments(fields.Placement, "На этом компьютере", "На другом компьютере");
+            OperatorTheme.Segments(fields.Placement, "Автоматически на этом ПК", "Использовать установленный ЛМ");
             fields.Placement.Name = "lm-placement-" + fields.Inn;
             fields.Placement.Height = 38;
             fields.Placement.Dock = DockStyle.Fill;
@@ -164,8 +164,8 @@ namespace EsmTspiot.WinForms.Shared
             table.Controls.Add(fields.PortError, 3, 3);
             AddField(table, 0, 4, "Логин", fields.Login, "lm-login-" + fields.Inn);
             AddField(table, 2, 4, "Пароль", fields.Password, "lm-password-" + fields.Inn);
-            fields.LocalHint.Text = "ЛМ будет установлен локально. Адрес и порт назначаются автоматически.";
             fields.LocalHint.AutoSize = true;
+            fields.LocalHint.MaximumSize = new Size(650, 0);
             fields.LocalHint.Margin = new Padding(0, 6, 0, 0);
             table.Controls.Add(fields.LocalHint, 0, 5);
             table.SetColumnSpan(fields.LocalHint, 4);
@@ -214,7 +214,10 @@ namespace EsmTspiot.WinForms.Shared
         {
             fields.Host.Enabled = fields.Placement.SelectIndex == 1;
             fields.Port.Enabled = fields.Placement.SelectIndex == 1;
-            fields.LocalHint.Visible = fields.Placement.SelectIndex == 0;
+            fields.LocalHint.Text = fields.Placement.SelectIndex == 0
+                ? "ЛМ на этом ПК настроит программа. Адрес и порт назначаются автоматически."
+                : "Готовый ЛМ на этом или другом компьютере. Укажите модуль для этого ИНН; установка и переустановка не выполняются.";
+            fields.LocalHint.Visible = true;
             for (int column = 0; column < 4; column++)
             {
                 Control control = fields.Table.GetControlFromPosition(column, 2);
@@ -228,8 +231,8 @@ namespace EsmTspiot.WinForms.Shared
                 string host = fields.Host.Text.Trim();
                 int port;
                 if (!LocalModuleTargetAddress.IsValidRemoteHost(host))
-                    hostError = host.Length == 0 ? "Введите адрес другого компьютера."
-                        : "Укажите IPv4 или имя другого компьютера.";
+                    hostError = host.Length == 0 ? "Введите адрес ЛМ, например 127.0.0.1."
+                        : "Укажите IPv4 или имя компьютера с ЛМ.";
                 portError = LocalModuleTargetAddress.GetRemotePortError(fields.Port.Text.Trim().TrimEnd('/'), out port);
                 endpoint = hostError == null && portError == null ? LocalModuleTargetAddress.Key(host, port) : null;
             }

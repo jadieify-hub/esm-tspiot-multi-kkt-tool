@@ -984,6 +984,8 @@ namespace EsmTspiot.WinForms.Shared
             _installControllerButton.Enabled = idle && selectedSession != null && selectedSession.Kkt.RegistrationConfirmed;
             UpdateManualStageActionState(idle, hasKkts);
             _readbackEsmButton.Enabled = idle && selectedSession != null && !FmuApiMode;
+            _checkGismtButton.Enabled = idle && selectedSession != null && selectedSession.Kkt.RegistrationConfirmed;
+            _serviceToolTip.SetToolTip(_checkGismtButton, "Проверить код маркировки через ЕСМ выбранной ККТ без сканирования и чека.");
             _serviceToolTip.SetToolTip(_readbackEsmButton, "Проверить через ЕСМ только выбранную ККТ; без изменения настроек.");
             _bindButton.Enabled = idle && !FmuApiMode && selectedSession != null && managed &&
                 selected.IsRunning && selected.IsReady;

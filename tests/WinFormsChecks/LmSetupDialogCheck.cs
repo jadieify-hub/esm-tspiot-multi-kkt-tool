@@ -10,6 +10,7 @@ public static class LmSetupDialogCheck
 {
     public static void Run()
     {
+        CheckExistingLocalPorts();
         CheckInstallerSelection();
         Type type = typeof(LmGatewayPage).Assembly.GetType(
             "EsmTspiot.WinForms.Shared.LmSetupDialog", true);
@@ -102,15 +103,30 @@ public static class LmSetupDialogCheck
         {
             if (!(ex.InnerException is ArgumentException)) throw;
         }
-        var needsApply = typeof(LmGatewayPage).GetMethod("NeedsLmTargetApplication", BindingFlags.Static | BindingFlags.NonPublic);
-        if (needsApply == null) throw new Exception("Selected LM targets must be compared with each controller's applied target.");
-        foreach (var example in new[] {
-            new { Applied = new LmGatewayTarget("new-server", 6995), Desired = "new-server:6995", Pending = false },
-            new { Applied = new LmGatewayTarget("old-server", 6995), Desired = "new-server:6995", Pending = true },
-            new { Applied = new LmGatewayTarget("old-server", 6995), Desired = "", Pending = true },
-            new { Applied = new LmGatewayTarget("127.0.0.1", 5995), Desired = "", Pending = false } })
-            if ((bool)needsApply.Invoke(null, new object[] { example.Applied, example.Desired }) != example.Pending)
-                throw new Exception("A shared INN's unmodified controller must remain pending, including return to a local LM.");
+        full["7701234560"] = "127.0.0.1:5995";
+        choices["1234567894"] = "localhost:5995";
+        try
+        {
+            merge.Invoke(null, new object[] { full, choices });
+            throw new Exception("Loopback aliases were accepted for different INNs.");
+        }
+        catch (TargetInvocationException ex)
+        {
+            if (!(ex.InnerException is ArgumentException)) throw;
+        }
+    }
+
+    private static void CheckExistingLocalPorts()
+    {
+        MethodInfo collect = typeof(LmGatewayPage).GetMethod("CollectReservedExistingApiPorts", BindingFlags.Static | BindingFlags.NonPublic);
+        var localHosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
+            "127.0.0.1", "192.168.1.10", "KASSA", "KASSA.example.local"
+        };
+        var ports = (IList<int>)collect.Invoke(null, new object[] {
+            new[] { "localhost:5995", "192.168.1.10:6995", "kassa:7995", "kassa.example.local:8995", "192.168.1.20:9995" }, localHosts
+        });
+        if (ports.Count != 4 || !ports.Contains(5995) || !ports.Contains(6995) || !ports.Contains(7995) || !ports.Contains(8995))
+            throw new Exception("Existing modules on this PC must reserve their API ports through loopback, LAN IP and local names.");
     }
 
     public static void CheckInstallerSelection()

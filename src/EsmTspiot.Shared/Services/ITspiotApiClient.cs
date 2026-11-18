@@ -23,5 +23,7 @@ namespace EsmTspiot.Shared.Services
             string instancePort,
             string softPort,
             CancellationToken cancellationToken);
+        Task<string> CheckGismtAsync(string baseUrl, string instancePort, string softPort,
+            string clientChecksum, CancellationToken cancellationToken);
     }
 }

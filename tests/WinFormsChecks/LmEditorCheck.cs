@@ -43,6 +43,20 @@ public static class LmEditorCheck
             Find<TextBox>(editor, "lm-host-1234567894").Text = "other-server";
             if (password.Text != "admin")
                 throw new Exception("A different endpoint must not inherit the old endpoint's password.");
+            Find<TextBox>(editor, "lm-host-1234567894").Text = "localhost";
+            values = new object[] { null, null, null };
+            if (!(bool)type.GetMethod("TryReadValues", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(editor, values) ||
+                ((IDictionary<string, string>)values[0])["1234567894"] != "127.0.0.1:5995")
+                throw new Exception("The existing LM choice must accept a local endpoint without reverting to automatic installation.");
+        }
+        using (var restored = (Control)Activator.CreateInstance(type,
+            BindingFlags.Instance | BindingFlags.NonPublic, null,
+            new object[] { kkts, new Dictionary<string, string> { { "1234567894", "127.0.0.1:6995" } }, defaults, false }, null))
+        {
+            if (Find<AntdUI.Segmented>(restored, "lm-placement-1234567894").SelectIndex != 1 ||
+                Find<TextBox>(restored, "lm-host-1234567894").Text != "127.0.0.1" ||
+                Find<TextBox>(restored, "lm-port-1234567894").Text != "6995")
+                throw new Exception("An existing local LM choice must survive reopening the editor.");
         }
     }
 

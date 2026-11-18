@@ -174,6 +174,9 @@ namespace EsmTspiot.Operator.Tests
                     "\",\"fnSerial\":\"FN-" + id + "\",\"kktInn\":\"INN-" + id + "\"}}");
             }
 
+            public Task<string> CheckGismtAsync(string baseUrl, string instancePort, string softPort,
+                string clientChecksum, CancellationToken token) { throw new InvalidOperationException(); }
+
             public Task<ApiResponse> GetLmInfoAsync(string baseUrl, string instancePort,
                 string softPort, CancellationToken token)
             {

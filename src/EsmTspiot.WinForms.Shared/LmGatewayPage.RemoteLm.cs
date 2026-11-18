@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Net.NetworkInformation;
 using System.Windows.Forms;
 using EsmTspiot.Shared.Logging;
 using EsmTspiot.Shared.Models;
@@ -14,6 +15,8 @@ namespace EsmTspiot.WinForms.Shared
             new Dictionary<string, LmGatewayCredentials>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, LmGatewayTarget> _appliedLmTargets =
             new Dictionary<string, LmGatewayTarget>(StringComparer.Ordinal);
+        private readonly Dictionary<string, string> _savedControllerEndpoints =
+            new Dictionary<string, string>(StringComparer.Ordinal);
 
         public bool HasRemoteLocalModules
         {
@@ -63,29 +66,24 @@ namespace EsmTspiot.WinForms.Shared
         private void RefreshAppliedLmTargets()
         {
             _appliedLmTargets.Clear();
+            _savedControllerEndpoints.Clear();
             if (FmuApiMode) return;
             try
             {
                 foreach (DirectControllerProvisioningItemRequest item in new DirectControllerOperatorInventoryReader().ReadRemovalItems())
+                {
                     _appliedLmTargets[item.KktSerial] = new LmGatewayTarget(
                         LocalModuleTargetAddress.Describe(item.TargetLocalModuleAddress), item.TargetLocalModulePort);
+                    _savedControllerEndpoints[item.KktSerial] = LocalModuleTargetAddress.Key(
+                        LocalModuleTargetAddress.Local, DirectControllerIdentity.GrpcPortForOrdinal(item.Ordinal));
+                }
             }
             catch (Exception ex)
             {
                 if (!(ex is IOException) && !(ex is InvalidDataException) && !(ex is UnauthorizedAccessException) &&
                     !(ex is ArgumentException) && !(ex is System.Security.SecurityException)) throw;
-                Log("Применённые адреса контроллеров не прочитаны: " + SensitiveDataMasker.Mask(ex.Message) + "\r\n");
+                Log("Учётные адреса контроллеров не прочитаны: " + SensitiveDataMasker.Mask(ex.Message) + "\r\n");
             }
-        }
-
-        private static bool NeedsLmTargetApplication(LmGatewayTarget applied, string desiredRemote)
-        {
-            string host;
-            int port;
-            if (LocalModuleTargetAddress.TryParseEndpoint(desiredRemote, out host, out port))
-                return applied == null || applied.Port != port ||
-                    !string.Equals(applied.Address, host, StringComparison.OrdinalIgnoreCase);
-            return applied != null && !string.Equals(applied.Address, "127.0.0.1", StringComparison.OrdinalIgnoreCase);
         }
 
         private static SortedDictionary<string, string> MergeLmEndpoints(
@@ -158,7 +156,7 @@ namespace EsmTspiot.WinForms.Shared
             {
                 if (!(ex is IOException) && !(ex is InvalidDataException) && !(ex is UnauthorizedAccessException) &&
                     !(ex is ArgumentException)) throw;
-                Log("Адреса ЛМ на другом компьютере не прочитаны: " +
+                Log("Адреса готовых ЛМ не прочитаны: " +
                     SensitiveDataMasker.Mask(ex.Message) + "\r\n");
                 return new SortedDictionary<string, string>(StringComparer.Ordinal);
             }
@@ -189,6 +187,41 @@ namespace EsmTspiot.WinForms.Shared
                     result[pair.Key] = port;
             }
             return result;
+        }
+
+        private IList<int> ReservedExistingLocalApiPorts()
+        {
+            SortedDictionary<string, string> endpoints = ReadRemoteLocalModulesStrict();
+            if (endpoints.Count == 0) return new List<int>();
+            var localHosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
+                LocalModuleTargetAddress.Local, Environment.MachineName
+            };
+            try
+            {
+                string domain = IPGlobalProperties.GetIPGlobalProperties().DomainName;
+                if (!string.IsNullOrEmpty(domain)) localHosts.Add(Environment.MachineName + "." + domain);
+                foreach (NetworkInterface adapter in NetworkInterface.GetAllNetworkInterfaces())
+                    foreach (UnicastIPAddressInformation address in adapter.GetIPProperties().UnicastAddresses)
+                        localHosts.Add(address.Address.ToString());
+            }
+            catch (NetworkInformationException ex)
+            {
+                throw new InvalidOperationException("Не удалось определить адреса этого ПК для защиты портов готовых ЛМ.", ex);
+            }
+            return CollectReservedExistingApiPorts(endpoints.Values, localHosts);
+        }
+
+        private static IList<int> CollectReservedExistingApiPorts(IEnumerable<string> endpoints, ICollection<string> localHosts)
+        {
+            var ports = new List<int>();
+            foreach (string endpoint in endpoints)
+            {
+                string host;
+                int port;
+                if (LocalModuleTargetAddress.TryParseEndpoint(endpoint, out host, out port) && localHosts.Contains(host))
+                    ports.Add(port);
+            }
+            return ports;
         }
 
         private IDictionary<string, string> CreateControllerTargetAddresses()

@@ -2,6 +2,7 @@
 param(
     [string]$Configuration = "Release",
     [switch]$SkipPackage,
+    [switch]$SkipUiChecks,
     [switch]$RunElevatedSandbox
 )
 
@@ -93,10 +94,15 @@ try {
             "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
             "scripts\verify_lm_safety.ps1"
         ) "LM safety gate failed."
-        Invoke-Checked "powershell.exe" @(
-            "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-            "scripts\verify_ui_layout.ps1"
-        ) "UI gate failed."
+        if (-not $SkipUiChecks) {
+            Invoke-Checked "powershell.exe" @(
+                "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                "scripts\verify_ui_layout.ps1"
+            ) "UI gate failed."
+        }
+        else {
+            Write-Host "UI gate skipped (-SkipUiChecks); no operator application launched."
+        }
         Invoke-Checked "dotnet.exe" @(
             "build",
             "src\EsmTspiot.Modern.WinForms\EsmTspiot.Modern.WinForms.csproj",

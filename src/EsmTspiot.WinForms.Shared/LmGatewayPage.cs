@@ -18,6 +18,7 @@ namespace EsmTspiot.WinForms.Shared
     {
         private readonly Func<string> _baseUrlProvider;
         private readonly Action<string> _logger;
+        private readonly ITspiotApiClient _apiClient;
         private readonly LmGatewayDiscoveryWorkflow _discoveryWorkflow;
         private readonly LmGatewayReadbackWorkflow _readbackWorkflow;
         private readonly LmGatewayBindingSession _session = new LmGatewayBindingSession();
@@ -51,6 +52,7 @@ namespace EsmTspiot.WinForms.Shared
 
             _baseUrlProvider = baseUrlProvider;
             _logger = logger;
+            _apiClient = apiClient;
             _discoveryWorkflow = new LmGatewayDiscoveryWorkflow(apiClient);
             _bindingWorkflow = new LmGatewayBindingWorkflow(apiClient);
             _readbackWorkflow = new LmGatewayReadbackWorkflow(apiClient);
@@ -368,7 +370,8 @@ namespace EsmTspiot.WinForms.Shared
                         out remoteLm);
                     LmGatewayTarget appliedLm;
                     _appliedLmTargets.TryGetValue(item.Kkt.KktSerial, out appliedLm);
-                    bool needsApply = !FmuApiMode && NeedsLmTargetApplication(appliedLm, remoteLm);
+                    bool? matchesSaved = LocalModuleTargetAddress.MatchesSavedTarget(
+                        appliedLm, remoteLm, msiLm == null ? 0 : msiLm.ApiPort);
                     int ordinal = GetCurrentKktOrdinal(
                         displayPlan,
                         item.Kkt,
@@ -378,33 +381,42 @@ namespace EsmTspiot.WinForms.Shared
                         item.Kkt.KktSerial,
                         item.Kkt.KktInn,
                         item.Kkt.SoftPort ?? string.Empty,
-                        needsApply && appliedLm != null
-                            ? appliedLm.Address + ":" + appliedLm.Port
-                            : isRemoteLm
-                            ? remoteLm
-                            : FmuApiMode && msiLm == null && managedLm == null
-                            ? "Не установлен"
-                            : GetLmEndpointText(
-                                item, draft, inventory, managedLm, msiLm),
+                        appliedLm != null
+                            ? LocalModuleTargetAddress.Key(appliedLm.Address, appliedLm.Port)
+                            : msiLm != null || managedLm != null
+                                ? GetLmEndpointText(item, draft, inventory, managedLm, msiLm)
+                                : "Не подтверждён",
                         isRemoteLm
-                            ? "На другом компьютере"
+                            ? "Используется готовый ЛМ"
                             : GetLmStateText(inventory, managedLm, msiLm),
-                        GetMsiRoleText(msiLm),
+                        isRemoteLm ? "Готовый ЛМ" : GetMsiRoleText(msiLm),
                         msiLm == null ? string.Empty : msiLm.InstallRoot,
                         GetMsiOwnershipText(msiLm),
                         FmuApiMode
                             ? "Не применяется (FMU-API)"
-                            : needsApply ? "Требует применения" : GetEsmLinkStateText(item));
+                            : GetEsmLinkStateText(item));
                     string organization = OrganizationNameProvider == null ? string.Empty
                         : OrganizationNameProvider(item.Kkt.KktSerial, item.Kkt.KktInn);
                     OperatorTheme.SetOrganizationCell(_grid.Rows[rowIndex], organization);
-                    if (needsApply)
-                    {
-                        _grid.Rows[rowIndex].Cells["LmEndpoint"].ToolTipText =
-                            "Показан применённый адрес, если он известен. Выбрано: " +
-                            (isRemoteLm ? remoteLm : "ЛМ на этом компьютере") + ". Требуется применить настройки.";
-                        _grid.Rows[rowIndex].Cells["EsmLinkState"].Style.ForeColor = OperatorTheme.Warning;
-                    }
+                    DataGridViewRow targetRow = _grid.Rows[rowIndex];
+                    targetRow.Cells["LmEndpoint"].ToolTipText =
+                        "Адрес ЛМ из служебных данных программы. Фактический конфиг контроллера здесь не считывается.";
+                    targetRow.Cells["DesiredLmEndpoint"].Value = isRemoteLm ? remoteLm
+                        : msiLm == null ? "Автоматически на этом ПК"
+                        : LocalModuleTargetAddress.Key(LocalModuleTargetAddress.Local, msiLm.ApiPort);
+                    targetRow.Cells["LmTargetState"].Value = FmuApiMode ? "Контроллеры пропущены"
+                        : !matchesSaved.HasValue ? "Применение не подтверждено"
+                        : matchesSaved.Value ? "Совпадает по данным программы" : "Параметры отличаются";
+                    targetRow.Cells["LmTargetState"].ToolTipText =
+                        "Сравниваются выбранный адрес и служебные данные программы. Статус Ready и фактическая готовность ЛМ проверяются отдельно.";
+                    targetRow.Cells["LmTargetState"].Style.ForeColor = FmuApiMode || !matchesSaved.HasValue
+                        ? OperatorTheme.Muted : matchesSaved.Value ? OperatorTheme.Ink : OperatorTheme.Warning;
+                    string controllerEndpoint;
+                    targetRow.Cells["ControllerEndpoint"].Value = FmuApiMode ? "Не применяется"
+                        : _savedControllerEndpoints.TryGetValue(item.Kkt.KktSerial, out controllerEndpoint)
+                            ? controllerEndpoint : "Не подтверждён";
+                    targetRow.Cells["ControllerEndpoint"].ToolTipText =
+                        "Адрес контроллера по служебным данным программы. Он может быть 127.0.0.1 и при сетевом ЛМ; фактическую привязку ЕСМ проверьте диагностикой.";
                     LmServiceInventoryItem removable = FindRemovalInventory(
                         removalInventory,
                         item.Kkt.KktSerial);
@@ -416,10 +428,6 @@ namespace EsmTspiot.WinForms.Shared
                     {
                         _grid.Rows[rowIndex].Cells["EsmLinkState"].Style.ForeColor =
                             OperatorTheme.Muted;
-                    }
-                    else if (needsApply)
-                    {
-                        _grid.Rows[rowIndex].Cells["EsmLinkState"].Style.ForeColor = OperatorTheme.Warning;
                     }
                     else if (item.LastBindingStatus == LmGatewayBindingStatus.BindingVerified)
                     {

@@ -60,7 +60,7 @@ namespace EsmTspiot.WinForms.Shared
                     failed = module.Status != LmServiceProvisioningStatus.Cancelled;
                 }
                 else if (FmuApiMode)
-                    state = RemoteModuleInns.Contains(kkt.KktInn) ? "Адрес удалённого ЛМ учтён; контроллеры пропущены"
+                    state = RemoteModuleInns.Contains(kkt.KktInn) ? "Адрес готового ЛМ учтён; контроллеры пропущены"
                         : module != null && module.Status == LmServiceProvisioningStatus.Succeeded
                             ? "ЛМ подготовлен; контроллеры пропущены" : Cancelled ? "Состояние ЛМ не подтверждено" : "Подготовка ЛМ не запускалась";
                 else if (bindings.TryGetValue(kkt.KktSerial, out binding))
@@ -499,7 +499,7 @@ namespace EsmTspiot.WinForms.Shared
             LocalModuleMsiPlan plan = localLmKkts.Count == 0
                 ? new LocalModuleMsiPlan()
                 : LocalModuleMsiPlanner.Build(localLmKkts, inventory.Assignments,
-                    inventory.BaseInventory, null, inventory.Listeners);
+                    inventory.BaseInventory, null, inventory.Listeners, ReservedExistingLocalApiPorts());
             if (!plan.IsValid)
                 throw new InvalidOperationException(
                     "Не удалось построить план ЛМ ЧЗ: " +
@@ -513,7 +513,7 @@ namespace EsmTspiot.WinForms.Shared
                     inventory.Assignments,
                     inventory.BaseInventory,
                     requestedVolume,
-                    inventory.Listeners);
+                    inventory.Listeners, ReservedExistingLocalApiPorts());
                 if (!plan.IsValid)
                     throw new InvalidOperationException(
                         "Системный диск не подходит для ЛМ ЧЗ: " +
@@ -530,13 +530,13 @@ namespace EsmTspiot.WinForms.Shared
                     {
                         if (plan.Assignments.Count == 0)
                         {
-                            Log("ЛМ ЧЗ всех ИНН на другом компьютере; " +
-                                "здесь ставить нечего.\r\n");
+                            Log("Для всех ИНН указаны готовые ЛМ; установка пропущена.\r\n");
                             return true;
                         }
                         return await EnsureMsiLocalModulesAsync(
                             plan,
                             inventory,
+                            localLmKkts,
                             operationCancellation).ConfigureAwait(true);
                     },
                     async delegate(CancellationToken operationCancellation)
@@ -604,7 +604,7 @@ namespace EsmTspiot.WinForms.Shared
                 "Проверка по ЕСМ доступна отдельно на вкладке «Обзор касс».\r\n");
             string completionStatus = outcome.Cancelled ? "Настройка остановлена. Подтверждённые действия сохранены." : outcome.Complete
                 ? fmuApiMode
-                    ? "Подготовка FMU-API завершена: ККТ зарегистрированы, ЛМ ЧЗ готовы. " +
+                    ? "Подготовка FMU-API завершена: ККТ зарегистрированы, размещение ЛМ ЧЗ учтено. " +
                         "FMU-API и инициализация ЛМ настраиваются отдельно."
                     : "Настройка завершена: размещение ЛМ ЧЗ учтено, контроллеры настроены, " +
                         "параметры привязки применены. Готовность ЛМ проверяется отдельно."
@@ -682,6 +682,7 @@ namespace EsmTspiot.WinForms.Shared
         private async Task<bool> EnsureMsiLocalModulesAsync(
             LocalModuleMsiPlan plan,
             LocalModuleMsiOperatorInventorySnapshot inventory,
+            IList<LmGatewayKkt> kkts,
             CancellationToken cancellation)
         {
             bool installerConfirmed = RequiresLocalModuleInstallation(plan, inventory)
@@ -689,12 +690,7 @@ namespace EsmTspiot.WinForms.Shared
                 : RequireLocalModuleInstaller(this);
             if (!installerConfirmed || MessageBox.Show(
                     this,
-                    "Будет установлен один независимый ЛМ ЧЗ на каждый ИНН; " +
-                        "новые ЛМ ставятся на системный диск, уже установленный " +
-                        "базовый ЛМ остаётся в своём каталоге; " +
-                        "службам ЛМ будет включён автозапуск (базовому ЛМ — тоже, " +
-                        "с возвратом прежнего режима при удалении). " +
-                        "Подтвердите право использовать пакет ЛМ и продолжить.",
+                    LocalModuleSetupMessagePolicy.BuildInstallConfirmation(plan, kkts),
                     "Установка ЛМ ЧЗ",
                     MessageBoxButtons.YesNo,
                     MessageBoxIcon.Warning,

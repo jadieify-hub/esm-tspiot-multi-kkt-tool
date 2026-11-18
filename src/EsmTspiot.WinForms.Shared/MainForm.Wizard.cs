@@ -721,7 +721,7 @@ namespace EsmTspiot.WinForms.Shared
         private static bool WizardParametersApplied(string state)
         {
             return state == "Параметры применены" || state == "ЛМ подготовлен; контроллеры пропущены" ||
-                state == "Адрес удалённого ЛМ учтён; контроллеры пропущены";
+                state == "Адрес готового ЛМ учтён; контроллеры пропущены";
         }
 
         private void RememberWizardKkt(LmGatewayKkt kkt)

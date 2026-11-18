@@ -1,5 +1,6 @@
 using System.Drawing;
 using System.Windows.Forms;
+using EsmTspiot.Shared.Models;
 using Button = AntdUI.Button;
 
 namespace EsmTspiot.WinForms.Shared
@@ -62,6 +63,14 @@ namespace EsmTspiot.WinForms.Shared
             var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true };
             actions.Controls.Add(_installControllerButton);
             actions.Controls.Add(_readbackEsmButton);
+            ConfigureButton(_checkGismtButton, "Проверить связь с ЧЗ");
+            _checkGismtButton.Name = "check-gismt";
+            _checkGismtButton.Click += async delegate
+            {
+                LmGatewayKkt kkt = SelectedKkt;
+                if (kkt != null) await CheckGismtForKktAsync(kkt.KktSerial);
+            };
+            actions.Controls.Add(_checkGismtButton);
             ConfigureButton(_showDetailsButton, "Сведения о кассе…");
             _showDetailsButton.Click += delegate {
                 using (Form dialog = BuildKktDetailsDialog())
@@ -159,7 +168,18 @@ namespace EsmTspiot.WinForms.Shared
                 column.FillWeight = column.Width;
                 column.MinimumWidth = column.Name == "KktSerial" ? 120 : 65;
             }
-            _grid.Columns["EsmLinkState"].HeaderText = "Параметры ЛМ";
+            _grid.Columns["EsmLinkState"].HeaderText = "Привязка к ЕСМ";
+            _grid.Columns["LmEndpoint"].HeaderText = "ЛМ ЧЗ · учтённый адрес";
+            foreach (string name in new[] { "DesiredLmEndpoint", "ControllerEndpoint", "LmTargetState" })
+            {
+                DataGridViewTextBoxColumn column = CreateTextColumn(name == "DesiredLmEndpoint"
+                    ? "ЛМ ЧЗ · выбранный адрес" : name == "ControllerEndpoint"
+                        ? "Контроллер для ЕСМ" : "Применение адреса ЛМ", 180);
+                column.Name = name;
+                column.DefaultCellStyle.WrapMode = DataGridViewTriState.True;
+                column.DefaultCellStyle.NullValue = "—";
+                _grid.Columns.Add(column);
+            }
             _grid.Columns["LmState"].DefaultCellStyle.WrapMode = DataGridViewTriState.True;
             _grid.Columns["KktSerial"].MinimumWidth = 160;
             _grid.Columns["KktInn"].MinimumWidth = 100;
@@ -181,8 +201,8 @@ namespace EsmTspiot.WinForms.Shared
             }
             _grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
             string[] order = { "KktOrdinal", "KktSerial", "Organization", "LmState", "KktInn", "KktServicePort", "KktSoftwarePort",
-                "LmEndpoint", "EsmLinkState", "LmRole", "LmInstallRoot", "LmOwnership" };
-            int[] widths = { 42, 175, 230, 150, 125, 75, 75, 155, 175, 90, 220, 180 };
+                "DesiredLmEndpoint", "LmEndpoint", "LmTargetState", "ControllerEndpoint", "EsmLinkState", "LmRole", "LmInstallRoot", "LmOwnership" };
+            int[] widths = { 42, 175, 230, 150, 125, 75, 75, 180, 180, 195, 180, 175, 90, 220, 180 };
             for (int index = 0; index < order.Length; index++)
             {
                 var column = _grid.Columns[order[index]];

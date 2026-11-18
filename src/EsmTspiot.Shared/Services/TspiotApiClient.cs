@@ -14,6 +14,9 @@ namespace EsmTspiot.Shared.Services
     public sealed class TspiotApiClient : ITspiotApiClient
     {
         private readonly HttpClient _httpClient;
+        private readonly HttpClient _gismtClient;
+        private static readonly HttpClient GismtTransport =
+            new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
 
         // Чтение отвечает быстро. Создание экземпляра и регистрация ККТ ЕСМ
         // выполняет с обращением к внешним сервисам: на кассе клиента это
@@ -25,6 +28,7 @@ namespace EsmTspiot.Shared.Services
         public TspiotApiClient()
         {
             _httpClient = new HttpClient();
+            _gismtClient = GismtTransport;
             _httpClient.Timeout = System.Threading.Timeout.InfiniteTimeSpan;
         }
 
@@ -36,6 +40,7 @@ namespace EsmTspiot.Shared.Services
             }
 
             _httpClient = httpClient;
+            _gismtClient = httpClient;
         }
 
         public Task<ApiResponse> GetInstancesAsync(string baseUrl)
@@ -147,6 +152,17 @@ namespace EsmTspiot.Shared.Services
             return response;
         }
 
+        public async Task<string> CheckGismtAsync(string baseUrl, string instancePort, string softPort,
+            string clientChecksum, CancellationToken cancellationToken)
+        {
+            var destination = new UriBuilder(BuildLmInfoUrl(baseUrl, instancePort, softPort));
+            destination.Path = "/api/v1/codes/check";
+            ApiResponse response = await SendAsync("POST", destination.Uri.AbsoluteUri,
+                GismtConnectionCheck.CreateRequest(clientChecksum), null, cancellationToken,
+                true, null, TimeSpan.FromSeconds(10), _gismtClient).ConfigureAwait(false);
+            return GismtConnectionCheck.Describe(response);
+        }
+
         public static string BuildUrl(string baseUrl, string path)
         {
             string normalizedBase = (baseUrl ?? string.Empty).Trim().TrimEnd('/');
@@ -200,7 +216,9 @@ namespace EsmTspiot.Shared.Services
             string requestBodyForLog,
             CancellationToken cancellationToken,
             bool acceptJson = false,
-            string[] sensitiveValues = null)
+            string[] sensitiveValues = null,
+            TimeSpan? timeout = null,
+            HttpClient transport = null)
         {
             ApiResponse result = new ApiResponse
             {
@@ -224,10 +242,11 @@ namespace EsmTspiot.Shared.Services
                         request.Content = new StringContent(requestBody, Encoding.UTF8, "application/json");
                     }
 
-                    deadline.CancelAfter(string.Equals(method, "GET", StringComparison.Ordinal)
+                    deadline.CancelAfter(timeout ?? (string.Equals(method, "GET", StringComparison.Ordinal)
                         ? ReadTimeout
-                        : WriteTimeout);
-                    using (HttpResponseMessage response = await _httpClient.SendAsync(request, deadline.Token).ConfigureAwait(false))
+                        : WriteTimeout));
+                    using (HttpResponseMessage response = await (transport ?? _httpClient)
+                        .SendAsync(request, deadline.Token).ConfigureAwait(false))
                     {
                         result.StatusCode = (int)response.StatusCode;
                         result.ReasonPhrase = response.ReasonPhrase;
