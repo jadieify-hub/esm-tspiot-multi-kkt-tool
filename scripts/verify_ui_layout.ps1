@@ -510,32 +510,25 @@ try {
         throw "The row-action availability reason is empty."
     }
 
-    if ($grid.Columns.Count -lt 1 -or $grid.Columns[0].Name -ne "KktOrdinal") {
-        throw "The LM KKT table must start with the stable KKT ordinal."
-    }
     $expectedNames = @(
         "KktOrdinal",
         "KktSerial",
-        "KktInn",
-        "KktSoftwarePort",
-        "LmEndpoint",
+        "Organization",
         "LmState",
+        "KktInn",
+        "KktServicePort",
+        "KktSoftwarePort",
+        "DesiredLmEndpoint",
+        "LmEndpoint",
+        "LmTargetState",
+        "ControllerEndpoint",
+        "EsmLinkState",
         "LmRole",
         "LmInstallRoot",
-        "LmOwnership",
-        "EsmLinkState",
-        "KktServicePort",
-        "Organization")
-    if ($grid.Columns.Count -ne $expectedNames.Count) {
-        throw "The operator-facing LM table must contain only $($expectedNames.Count) working columns; actual: $($grid.Columns.Count)."
-    }
-    for ($index = 0; $index -lt $expectedNames.Count; $index++) {
-        if ($grid.Columns[$index].Name -ne $expectedNames[$index]) {
-            throw "Unexpected LM table column $index`: '$($grid.Columns[$index].Name)'."
-        }
-    }
-    if ($null -eq $grid.Columns["LmEndpoint"]) {
-        throw "The LM KKT table must show the LM CHZ address and port."
+        "LmOwnership")
+    $actualNames = @($grid.Columns | Sort-Object DisplayIndex | ForEach-Object Name)
+    if (($actualNames -join ',') -cne ($expectedNames -join ',')) {
+        throw "Unexpected LM table columns in display order: $($actualNames -join ', ')."
     }
     $expectedSoftwarePortHeader = Get-Utf8Text("0J/QvtGA0YIg0J/Qng==")
     $softwarePortColumn = $grid.Columns["KktSoftwarePort"]
