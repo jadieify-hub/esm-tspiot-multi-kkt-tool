@@ -2,10 +2,12 @@ using System;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Runtime.Serialization;
 using System.Security.Authentication;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Xml;
 using EsmTspiot.Shared.Logging;
 using EsmTspiot.Shared.Models;
 
@@ -14,9 +16,10 @@ namespace EsmTspiot.Shared.Services
     public sealed class TspiotApiClient : ITspiotApiClient
     {
         private readonly HttpClient _httpClient;
-        private readonly HttpClient _gismtClient;
-        private static readonly HttpClient GismtTransport =
-            new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
+        private readonly HttpClient _noRedirectClient;
+        private static readonly HttpClient NoRedirectTransport =
+            new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
+            { Timeout = System.Threading.Timeout.InfiniteTimeSpan };
 
         // Чтение отвечает быстро. Создание экземпляра и регистрация ККТ ЕСМ
         // выполняет с обращением к внешним сервисам: на кассе клиента это
@@ -28,7 +31,7 @@ namespace EsmTspiot.Shared.Services
         public TspiotApiClient()
         {
             _httpClient = new HttpClient();
-            _gismtClient = GismtTransport;
+            _noRedirectClient = NoRedirectTransport;
             _httpClient.Timeout = System.Threading.Timeout.InfiniteTimeSpan;
         }
 
@@ -40,7 +43,7 @@ namespace EsmTspiot.Shared.Services
             }
 
             _httpClient = httpClient;
-            _gismtClient = httpClient;
+            _noRedirectClient = httpClient;
         }
 
         public Task<ApiResponse> GetInstancesAsync(string baseUrl)
@@ -129,7 +132,35 @@ namespace EsmTspiot.Shared.Services
                 SensitiveDataMasker.Mask(requestBody),
                 cancellationToken,
                 false,
-                request == null ? null : new[] { request.Login, request.Password });
+                request == null ? null : new[] { request.Login, request.Password },
+                transport: _noRedirectClient);
+        }
+
+        public async Task<ApiResponse> InitializeLmAsync(string baseUrl, string id, CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(id)) throw new ArgumentException("Не указан ID экземпляра ЕСМ.", "id");
+            string pathId = Uri.EscapeDataString(id.Trim());
+            ApiResponse readback = await SendAsync("GET", BuildUrl(baseUrl, TspiotDefaults.LmSettingsPath + "/" + pathId),
+                null, null, cancellationToken, acceptJson: true, transport: _noRedirectClient).ConfigureAwait(false);
+            if (!readback.IsSuccess)
+                throw new InvalidOperationException("Не удалось прочитать настройки ЛМ ЧЗ из ЕСМ. " +
+                    (readback.IsConnectionFailure ? "Ответ ЕСМ не получен." : "HTTP " + readback.StatusCode + "."));
+
+            LmConnectionRequest settings = null;
+            try { settings = JsonHelper.Deserialize<LmConnectionRequest>(readback.ResponseBody); }
+            catch (SerializationException) { }
+            catch (XmlException) { }
+            if (settings == null || string.IsNullOrWhiteSpace(settings.Address) ||
+                settings.Port < 1 || settings.Port > 65535 || string.IsNullOrWhiteSpace(settings.Login) ||
+                string.IsNullOrEmpty(settings.Password))
+                throw new InvalidOperationException("ЕСМ не вернул полные настройки подключения ЛМ ЧЗ. Проверьте его привязку.");
+
+            cancellationToken.ThrowIfCancellationRequested();
+            string path = TspiotDefaults.LmSettingsPath + "/init/" + pathId;
+            // shortcut: используем параметры подключения из примера ЕСП, пока POST не проверен на кассе.
+            return await SendAsync("POST", BuildUrl(baseUrl, path), JsonHelper.Serialize(settings), null,
+                cancellationToken, acceptJson: true, sensitiveValues: new[] { settings.Login, settings.Password },
+                transport: _noRedirectClient).ConfigureAwait(false);
         }
 
         public async Task<ApiResponse> GetLmInfoAsync(
@@ -159,7 +190,7 @@ namespace EsmTspiot.Shared.Services
             destination.Path = "/api/v1/codes/check";
             ApiResponse response = await SendAsync("POST", destination.Uri.AbsoluteUri,
                 GismtConnectionCheck.CreateRequest(clientChecksum), null, cancellationToken,
-                true, null, TimeSpan.FromSeconds(10), _gismtClient).ConfigureAwait(false);
+                true, null, TimeSpan.FromSeconds(10), _noRedirectClient).ConfigureAwait(false);
             return GismtConnectionCheck.Describe(response);
         }
 

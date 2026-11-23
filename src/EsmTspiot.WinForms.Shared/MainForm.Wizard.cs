@@ -330,6 +330,14 @@ namespace EsmTspiot.WinForms.Shared
         {
             if (!_wizardBuilt || _updatingWizard || !WizardManual) return;
             SetWizardResult(null);
+            BulkKktRegistrationResult block = ManualRegistrationBlock(_manualSelectedSerial);
+            if (block != null)
+            {
+                ClearWizardPending();
+                ShowWizardStage(2, "ККТ исключена из настройки", block.Details + ". После проверки повторите поиск.", true);
+                UpdateWizardActions();
+                return;
+            }
             LmGatewayKkt registered;
             if (_manualSelectedSerial != null && _wizardKnownKkts.TryGetValue(_manualSelectedSerial, out registered) &&
                 registered.RegistrationConfirmed)
@@ -368,7 +376,7 @@ namespace EsmTspiot.WinForms.Shared
                 var byInn = new SortedDictionary<string, List<LmGatewayKkt>>(StringComparer.Ordinal);
                 foreach (LmGatewayKkt source in new List<LmGatewayKkt>(kkts))
                 {
-                    if (source == null || !source.RegistrationConfirmed) continue;
+                    if (source == null || !source.RegistrationConfirmed || ManualRegistrationBlock(source.KktSerial) != null) continue;
                     LmGatewayKkt kkt = CopyWizardKkt(source);
                     _wizardPending.Add(kkt);
                     RememberWizardKkt(kkt);
@@ -410,7 +418,7 @@ namespace EsmTspiot.WinForms.Shared
                         " · ЕСМ " + _wizardPending[0].Port + " · ПО " + _wizardPending[0].SoftPort;
                 ShowWizardStage(3, "Где будет работать ЛМ ЧЗ?",
                     automatic ? "Выберите размещение для каждого ИНН. Регистрация уже сохранена."
-                        : "ККТ уже зарегистрирована. Применение затронет только выбранную кассу.");
+                        : "ККТ уже зарегистрирована. Привязка выполняется для выбранной ККТ. ЛМ общий для касс этого ИНН.");
             }
             catch (Exception error)
             {
@@ -439,6 +447,7 @@ namespace EsmTspiot.WinForms.Shared
             var matched = new List<LmGatewayKkt>();
             foreach (LmGatewayKkt expected in snapshot)
             {
+                RequireUnblockedRegistration(expected.KktSerial);
                 LmGatewayKkt found = null;
                 foreach (LmGatewayKkt candidate in fresh)
                     if (candidate.KktSerial == expected.KktSerial) { found = candidate; break; }
@@ -459,6 +468,11 @@ namespace EsmTspiot.WinForms.Shared
             var unconfirmed = new List<string>();
             foreach (LmGatewayKkt expected in expectedKkts)
             {
+                if (ManualRegistrationBlock(expected.KktSerial) != null)
+                {
+                    unconfirmed.Add(expected.KktSerial);
+                    continue;
+                }
                 LmGatewayKkt confirmed = null;
                 foreach (LmGatewayKkt actual in fresh)
                     if (actual.KktSerial == expected.KktSerial && actual.RegistrationConfirmed &&
@@ -611,7 +625,7 @@ namespace EsmTspiot.WinForms.Shared
             _manualStopButton.Visible = false;
             _bulkRegisterButton.Visible = !manual && !editing && !_busy;
             _setupSelectedButton.Visible = manual && !editing && !_busy && !confirmed && _manualSelectedSerial != null;
-            _setupSelectedButton.Enabled = !_busy && _manualSelectedSerial != null;
+            _setupSelectedButton.Enabled = !_busy && _manualSelectedSerial != null && ManualRegistrationBlock(_manualSelectedSerial) == null;
             _setupSelectedButton.Text = _manualSelectedSerial != null && ManualPortsAreFixed(_manualSelectedSerial) &&
                 !_manualRegistered.Contains(_manualSelectedSerial)
                 ? "Завершить регистрацию ККТ" : "Зарегистрировать выбранную ККТ";
@@ -681,6 +695,14 @@ namespace EsmTspiot.WinForms.Shared
         private void ShowWizardForRegisteredKkt(LmGatewayKkt kkt)
         {
             if (_busy || kkt == null || !kkt.RegistrationConfirmed) return;
+            if (ManualRegistrationBlock(kkt.KktSerial) != null)
+            {
+                _wizardMode.SelectIndex = 1;
+                _workspaceTabs.SelectedTab = _automationTab;
+                SelectWizardRow(kkt.KktSerial);
+                UpdateWizardSelection();
+                return;
+            }
             _wizardMode.SelectIndex = 1;
             _workspaceTabs.SelectedTab = _automationTab;
             RememberWizardKkt(kkt);

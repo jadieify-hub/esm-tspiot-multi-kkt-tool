@@ -177,9 +177,11 @@ function Test-AllowedSecretHit {
         return $text -match 'timeout\.Token'
     }
     if ($relative -eq "src/EsmTspiot.Shared/Services/TspiotApiClient.cs") {
-        # Reviewed: the per-request deadline is a cancellation token, not a secret.
+        # LM initialization checks the configured password and redacts any values echoed by ESM.
         return $text -match 'deadline\.Token' -or
-            $text -match '^\s*request == null \? null : new\[\] \{ request\.Login, request\.Password \}\);\s*$'
+            $text -match '^\s*request == null \? null : new\[\] \{ request\.Login, request\.Password \},\s*$' -or
+            $text -match '^\s*string\.IsNullOrEmpty\(settings\.Password\)\)\s*$' -or
+            $text -match '^\s*cancellationToken, acceptJson: true, sensitiveValues: new\[\] \{ settings\.Login, settings\.Password \},\s*$'
     }
     if ($relative -eq "src/EsmTspiot.WinForms.Shared/LmGatewayPage.RemoteLm.cs") {
         # Reviewed: copies live only in the session dictionary, never in the endpoint file.

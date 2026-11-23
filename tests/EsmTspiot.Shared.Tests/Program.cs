@@ -4,6 +4,7 @@ using System.IO;
 using System.IO.Pipes;
 using System.Net;
 using System.Net.Http;
+using System.Net.Sockets;
 using System.Reflection;
 using System.Security.Authentication;
 using System.Threading;
@@ -84,9 +85,11 @@ namespace EsmTspiot.Shared.Tests
             Run("Instance details parser rejects malformed registration data", InstanceDetailsParserRejectsMalformedRegistrationData);
             Run("API client uses documented HTTP contracts", ApiClientUsesDocumentedHttpContracts);
             Run("LM gateway API uses documented PUT contract", LmGatewayApiUsesDocumentedPutContract);
+            Run("LM gateway PUT returns the original redirect", LmGatewayPutReturnsOriginalRedirect);
             Run("LM gateway API escapes instance id", LmGatewayApiEscapesInstanceId);
             Run("LM gateway API response stores redacted request", LmGatewayApiResponseStoresRedactedRequest);
             Run("LM gateway HTTP failure hides custom credentials end to end", LmGatewayHttpFailureHidesCustomCredentials);
+            Run("LM init posts once to the selected orchestrator instance", LmInitApiTargetsSelectedInstance);
             Run("LM info API uses the current documented endpoint", LmInfoApiUsesCurrentDocumentedEndpoint);
             Run("Gismt test checks one mark through the selected ESM API", GismtCheckUsesSelectedEsmApi);
             Run("LM info API classifies TLS certificate failure", LmInfoApiClassifiesTlsCertificateFailure);
@@ -189,11 +192,13 @@ namespace EsmTspiot.Shared.Tests
             Run("Bulk workflow skips PUT after POST completes registration", BulkWorkflowSkipsPutAfterPostCompletesRegistration);
             Run("Bulk workflow does not skip PUT for an unregistered state", BulkWorkflowDoesNotSkipPutForUnregisteredState);
             Run("Bulk workflow blocks mismatched registration after POST", BulkWorkflowBlocksMismatchedRegistrationAfterPost);
+            Run("Bulk workflow verifies existing registration identity", BulkWorkflowVerifiesExistingRegistrationIdentity);
             Run("Bulk workflow resumes incomplete existing instance", BulkWorkflowResumesIncompleteExistingInstance);
             Run("Bulk workflow continues after add failure", BulkWorkflowContinuesAfterAddFailure);
             Run("Bulk workflow retries service not started", BulkWorkflowRetriesServiceNotStarted);
-            Run("Bulk workflow retries connection failure during add", BulkWorkflowRetriesConnectionFailureDuringAdd);
-            Run("Bulk workflow retries connection failure during registration", BulkWorkflowRetriesConnectionFailureDuringRegistration);
+            Run("Bulk workflow reconciles lost add response", BulkWorkflowReconcilesLostAddResponse);
+            Run("Bulk workflow reconciles lost registration response", BulkWorkflowReconcilesLostRegistrationResponse);
+            Run("Bulk workflow reports an unresolved write", BulkWorkflowReportsUnresolvedWrite);
             Run("Bulk workflow waits for registered state after PUT", BulkWorkflowWaitsForRegisteredStateAfterPut);
             Run("Bulk workflow rejects mismatched readback after PUT", BulkWorkflowRejectsMismatchedReadbackAfterPut);
             Run("Bulk workflow times out an unconfirmed PUT", BulkWorkflowTimesOutUnconfirmedPut);
@@ -1223,6 +1228,35 @@ namespace EsmTspiot.Shared.Tests
                 "Expected exactly the documented LM settings fields and a numeric port.");
         }
 
+        private static void LmGatewayPutReturnsOriginalRedirect()
+        {
+            var origin = new TcpListener(IPAddress.Loopback, 0);
+            origin.Start();
+            try
+            {
+                using (var destination = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp))
+                using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+                {
+                    // Reserve an unreachable redirect destination so a follow-up cannot contact another service.
+                    destination.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+                    var result = new TspiotApiClient().ConfigureLmGatewayAsync("http://" + origin.LocalEndpoint,
+                        "test", new LmConnectionRequest(), timeout.Token);
+                    AssertTrue(origin.Server.Poll(5000000, SelectMode.SelectRead), "Expected a local settings request.");
+                    using (var connection = origin.AcceptTcpClient())
+                    {
+                        byte[] redirect = System.Text.Encoding.ASCII.GetBytes(
+                            "HTTP/1.1 307 Temporary Redirect\r\nLocation: http://" + destination.LocalEndPoint +
+                            "/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                        connection.GetStream().Write(redirect, 0, redirect.Length);
+                        var response = result.GetAwaiter().GetResult();
+                        AssertEqual(307, response.StatusCode, "The settings PUT must return the original redirect.");
+                        AssertFalse(response.IsSuccess, "A redirect cannot confirm that settings were applied.");
+                    }
+                }
+            }
+            finally { origin.Stop(); }
+        }
+
         private static void LmGatewayApiEscapesInstanceId()
         {
             RecordingHttpHandler handler = new RecordingHttpHandler();
@@ -1320,6 +1354,46 @@ namespace EsmTspiot.Shared.Tests
                 response.ReasonPhrase + response.DecodedMessage;
             AssertFalse(text.Contains(login), "The API exchange must hide the exact custom login.");
             AssertFalse(text.Contains(password), "The API exchange must hide the exact custom password.");
+        }
+
+        private static void LmInitApiTargetsSelectedInstance()
+        {
+            const string password = "init-test-password";
+            var handler = new RecordingHttpHandler
+            {
+                ResponseBody = "{\"address\":\"192.0.2.44\",\"port\":50064,\"login\":\"operator\"," +
+                    "\"password\":\"" + password + "\",\"newPassword\":\"do-not-send\"}"
+            };
+            var client = new TspiotApiClient(new HttpClient(handler));
+            ApiResponse response = client.InitializeLmAsync("http://127.0.0.1:51077/", "00105700000002",
+                CancellationToken.None).GetAwaiter().GetResult();
+
+            AssertEqual(2, handler.Requests.Count, "Read settings and send exactly one initialization request.");
+            AssertRequest(handler.Requests[0], "GET", "http://127.0.0.1:51077/api/v1/settings/lm/00105700000002");
+            AssertRequest(handler.Requests[1], "POST", "http://127.0.0.1:51077/api/v1/settings/lm/init/00105700000002");
+            AssertContains(handler.Requests[1].ContentType, "application/json");
+            string body = handler.Requests[1].Body;
+            AssertContains(body, "\"address\":\"192.0.2.44\"");
+            AssertContains(body, "\"port\":50064");
+            AssertContains(body, "\"login\":\"operator\"");
+            AssertContains(body, "\"password\":\"" + password + "\"");
+            AssertFalse(body.Contains("newPassword"), "Initialization must not send a new password.");
+            AssertTrue(response.IsSuccess, "Preserve the status returned by the initialization endpoint.");
+            AssertFalse(response.RequestBody.Contains(password), "Mask the password in the request log.");
+            AssertFalse(response.ResponseBody.Contains(password), "Mask any credentials echoed by the server.");
+
+            handler.Requests.Clear();
+            handler.ResponseBody = "{\"address\":\"127.0.0.1\",\"port\":50063,\"login\":\"operator\"}";
+            try
+            {
+                client.InitializeLmAsync("http://127.0.0.1:51077", "00105700000002",
+                    CancellationToken.None).GetAwaiter().GetResult();
+                throw new Exception("Initialization must reject incomplete settings.");
+            }
+            catch (InvalidOperationException)
+            {
+                AssertEqual(1, handler.Requests.Count, "Do not post if ЕСМ did not return usable settings.");
+            }
         }
 
         private static void LmInfoApiUsesCurrentDocumentedEndpoint()
@@ -4562,6 +4636,30 @@ namespace EsmTspiot.Shared.Tests
             AssertContains(outcome.Results[0].Details, "не совпадают");
         }
 
+        private static void BulkWorkflowVerifiesExistingRegistrationIdentity()
+        {
+            const string serial = "00105700000001", fn = "7300000000000001", inn = "1234567894";
+            foreach (string field in new[] { "", "kktSerial", "fnSerial", "kktInn" })
+            {
+                FakeTspiotApiClient api = CreateSinglePendingKktApi();
+                api.InstancesResponse = Success("{\"instances\":[{\"id\":\"" + serial + "\",\"port\":50401}]}");
+                api.InstanceResponses.Enqueue(Success(RegistrationDetailsJson(
+                    field == "kktInn" ? "Не зарегистрирован" : "Зарегистрирован",
+                    field == "kktSerial" ? "00105700000002" : serial,
+                    field == "fnSerial" ? "7300000000000002" : fn,
+                    field == "kktInn" ? "7707083893" : inn)));
+                BulkRegistrationWorkflow workflow = CreateWorkflow(api);
+                BulkRegistrationDiscovery discovery = workflow.DiscoverAsync(
+                    "http://127.0.0.1:51077", "4041", null, CancellationToken.None).Result;
+                BulkRegistrationOutcome outcome = workflow.ExecuteAsync(discovery, null, CancellationToken.None).Result;
+
+                AssertEqual(0, api.AddCalls + api.RegisterCalls, "Existing identity must not be overwritten.");
+                AssertEqual(field == "" ? BulkKktRegistrationStatus.AlreadyExists : BulkKktRegistrationStatus.InspectionFailed,
+                    outcome.Results[0].Status, "All three fields must match before accepting an existing instance.");
+                if (field != "") AssertContains(outcome.Results[0].Details, field);
+            }
+        }
+
         private static void BulkWorkflowResumesIncompleteExistingInstance()
         {
             FakeTspiotApiClient api = new FakeTspiotApiClient();
@@ -4634,13 +4732,12 @@ namespace EsmTspiot.Shared.Tests
             AssertEqual(BulkKktRegistrationStatus.Registered, outcome.Results[0].Status, "Expected successful retry.");
         }
 
-        private static void BulkWorkflowRetriesConnectionFailureDuringAdd()
+        private static void BulkWorkflowReconcilesLostAddResponse()
         {
             FakeTspiotApiClient api = new FakeTspiotApiClient();
             api.InstancesResponse = Success("{\"instances\":[]}");
             api.DkktResponse = Success("{\"kkt\":[{\"kktSerial\":\"00105700000001\",\"fnSerial\":\"7300000000000001\",\"kktInn\":\"1234567894\"}]}");
             api.AddResponses.Enqueue(ConnectionFailure());
-            api.AddResponses.Enqueue(Success("{}"));
             api.InstanceResponses.Enqueue(Success("{\"clientPort\":51402}"));
             api.RegisterResponses.Enqueue(Success("{}"));
             EnqueueRegisteredReadback(
@@ -4652,11 +4749,12 @@ namespace EsmTspiot.Shared.Tests
             BulkRegistrationOutcome outcome = workflow.ExecuteAsync(
                 discovery, null, CancellationToken.None).Result;
 
-            AssertEqual(2, api.AddCalls, "Expected POST retry after a connection failure.");
-            AssertEqual(BulkKktRegistrationStatus.Registered, outcome.Results[0].Status, "Expected registration after POST retry.");
+            AssertEqual(1, api.AddCalls, "A readable instance must suppress a second POST.");
+            AssertEqual(1, api.RegisterCalls, "The existing incomplete instance should proceed to PUT.");
+            AssertEqual(BulkKktRegistrationStatus.Registered, outcome.Results[0].Status, "Expected registration after POST reconciliation.");
         }
 
-        private static void BulkWorkflowRetriesConnectionFailureDuringRegistration()
+        private static void BulkWorkflowReconcilesLostRegistrationResponse()
         {
             FakeTspiotApiClient api = new FakeTspiotApiClient();
             api.InstancesResponse = Success("{\"instances\":[]}");
@@ -4664,7 +4762,6 @@ namespace EsmTspiot.Shared.Tests
             api.AddResponses.Enqueue(Success("{}"));
             api.InstanceResponses.Enqueue(Success("{\"clientPort\":51402}"));
             api.RegisterResponses.Enqueue(ConnectionFailure());
-            api.RegisterResponses.Enqueue(Success("{}"));
             EnqueueRegisteredReadback(
                 api, "00105700000001", "7300000000000001", "1234567894");
             BulkRegistrationWorkflow workflow = CreateWorkflow(api);
@@ -4674,8 +4771,35 @@ namespace EsmTspiot.Shared.Tests
             BulkRegistrationOutcome outcome = workflow.ExecuteAsync(
                 discovery, null, CancellationToken.None).Result;
 
-            AssertEqual(2, api.RegisterCalls, "Expected PUT retry after a connection failure.");
-            AssertEqual(BulkKktRegistrationStatus.Registered, outcome.Results[0].Status, "Expected successful PUT retry.");
+            AssertEqual(1, api.RegisterCalls, "Matching registered readback must suppress a second PUT.");
+            AssertEqual(BulkKktRegistrationStatus.Registered, outcome.Results[0].Status, "Expected registration confirmed by GET.");
+        }
+
+        private static void BulkWorkflowReportsUnresolvedWrite()
+        {
+            foreach (bool lostPost in new[] { true, false })
+            {
+                FakeTspiotApiClient api = CreateSinglePendingKktApi();
+                if (lostPost)
+                {
+                    api.AddResponses.Clear();
+                    api.AddResponses.Enqueue(ConnectionFailure());
+                }
+                else
+                {
+                    api.InstanceResponses.Enqueue(Success("{\"clientPort\":51401}"));
+                    api.RegisterResponses.Enqueue(ConnectionFailure());
+                }
+                BulkRegistrationWorkflow workflow = CreateWorkflow(api);
+                BulkRegistrationDiscovery discovery = workflow.DiscoverAsync(
+                    "http://127.0.0.1:51077", "4041", null, CancellationToken.None).Result;
+                BulkRegistrationOutcome outcome = workflow.ExecuteAsync(discovery, null, CancellationToken.None).Result;
+
+                AssertEqual(1, api.AddCalls, "An unresolved POST must never be repeated.");
+                AssertEqual(lostPost ? 0 : 1, api.RegisterCalls, "An unresolved write must suppress another write.");
+                AssertTrue(api.InstanceCalls > (lostPost ? 0 : 1), "A lost response requires an instance readback.");
+                AssertContains(outcome.Results[0].FormatLogLine(), "неизвестен");
+            }
         }
 
         private static void BulkWorkflowPlansSuppliedSequentialVcomDevices()
@@ -6857,6 +6981,11 @@ namespace EsmTspiot.Shared.Tests
                 return Task.FromResult(LmGatewayResponses.Count == 0
                     ? Success("{}")
                     : LmGatewayResponses.Dequeue());
+            }
+
+            public Task<ApiResponse> InitializeLmAsync(string baseUrl, string id, CancellationToken cancellationToken)
+            {
+                throw new InvalidOperationException("This workflow must not initialize the local module.");
             }
 
             public Task<string> CheckGismtAsync(string baseUrl, string instancePort, string softPort,

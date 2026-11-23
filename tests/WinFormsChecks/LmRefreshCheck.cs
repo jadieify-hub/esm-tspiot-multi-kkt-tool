@@ -13,6 +13,7 @@ public static class LmRefreshCheck
 {
     public static void Run()
     {
+        CheckSelectionReport();
         var api = new DiscoveryOnlyApi();
         using (var page = new LmGatewayPage(
             delegate { return "http://127.0.0.1:51077"; }, api, null))
@@ -63,6 +64,29 @@ public static class LmRefreshCheck
             }
         }
         CheckUnavailableDraftPreservation();
+    }
+
+    public static void CheckSelectionReport()
+    {
+        using (var summary = new Label())
+        using (var report = new TextBox())
+        {
+            var view = new KktSelectionReport(summary, report);
+            view.Select("KKT1", "192.0.2.10:5995", "127.0.0.1:50063");
+            view.Record("KKT1", "Диагностика ЛМ", "Ready", "Отчёт первой кассы");
+            if (!report.Visible || !summary.Text.Contains("Ready") || !summary.Text.Contains("192.0.2.10:5995"))
+                throw new Exception("The selected KKT must show its own endpoints and ESM result.");
+            view.Select("KKT2", "Автоматически на этом ПК", "127.0.0.1:50064");
+            view.Record("KKT1", "Диагностика ЛМ", "Ready", "Поздний ответ первой кассы");
+            if (report.Visible || summary.Text.Contains("Ready") || !summary.Text.Contains("50064"))
+                throw new Exception("An old or late result must never appear for a different KKT.");
+            view.Select("KKT1", "192.0.2.10:5995", "127.0.0.1:50063");
+            if (report.Visible || !summary.Text.Contains("Ready"))
+                throw new Exception("Returning to a KKT must show its own last check in the summary.");
+            view.Clear();
+            view.Select("KKT1", "Автоматически на этом ПК", "Не подтверждён");
+            if (summary.Text.Contains("Ready")) throw new Exception("Results must not cross ESM destinations.");
+        }
     }
 
     private static void CheckUnavailableDraftPreservation()
@@ -132,7 +156,7 @@ public static class LmRefreshCheck
                 object selected = typeof(LmGatewayPage).GetProperty("SelectedKkt", flags).GetValue(page, null);
                 if (selected != null)
                     throw new Exception("Failed details must never supply a KKT for configuration.");
-                foreach (string button in new[] { "_installControllerButton", "_bindButton", "_checkGismtButton" })
+                foreach (string button in new[] { "_installControllerButton", "_bindButton", "_initializeLmButton", "_checkGismtButton" })
                 {
                     var control = (Control)typeof(LmGatewayPage).GetField(button, flags).GetValue(page);
                     if (control.Enabled) throw new Exception("Failed details must disable selected-KKT mutations.");
@@ -235,7 +259,7 @@ public static class LmRefreshCheck
             Task binding = (Task)typeof(LmGatewayPage)
                 .GetMethod("BindReadyDirectControllersAsync", flags)
                 .Invoke(page, new object[] { new List<LmGatewayKkt> { kkt },
-                    outcome, CancellationToken.None });
+                    outcome, CancellationToken.None, false });
             // The isolated API completes synchronously; no hardware or waiting.
             if (!binding.IsCompleted) throw new Exception("Binding unexpectedly waited.");
             binding.GetAwaiter().GetResult();
@@ -269,6 +293,13 @@ public static class LmRefreshCheck
             throw new Exception("Diagnostics of KKT 2 must not poll KKT 1.");
         if (api.DetailIds.Count != 1 || api.DetailIds[0] != "00105700000002")
             throw new Exception("Selected diagnostics must not read another KKT's details.");
+        var grid = (DataGridView)typeof(LmGatewayPage).GetField("_grid", flags).GetValue(page);
+        var report = (TextBox)typeof(LmGatewayPage).GetField("_diagnosticsTextBox", flags).GetValue(page);
+        if (!report.Text.Contains("00105700000002") || (string)grid.CurrentRow.Cells["KktSerial"].Value != "00105700000002")
+            throw new Exception("Wizard diagnostics must select and report on the requested KKT in inventory.");
+        grid.CurrentCell = grid.Rows[0].Cells["KktSerial"];
+        if (report.Text.Length != 0 || report.Visible)
+            throw new Exception("Changing the inventory row must remove the previous KKT's detailed report.");
     }
 
     private static void CheckPartialSetupOutcome()
@@ -362,6 +393,11 @@ public static class LmRefreshCheck
                     DecodedMessage = "error 2003: instance details unavailable" });
             return Success("{\"state\":\"Registered\",\"regData\":{\"kktSerial\":\"" + id +
                 "\",\"fnSerial\":\"7300000000000001\",\"kktInn\":\"1234567894\"}}");
+        }
+
+        public Task<ApiResponse> InitializeLmAsync(string baseUrl, string id, CancellationToken cancellationToken)
+        {
+            throw new InvalidOperationException("This workflow must not initialize the local module.");
         }
 
         public Task<string> CheckGismtAsync(string url, string port, string softPort,

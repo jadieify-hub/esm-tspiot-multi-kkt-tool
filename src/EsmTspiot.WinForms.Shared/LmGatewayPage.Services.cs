@@ -136,9 +136,8 @@ namespace EsmTspiot.WinForms.Shared
             table.Controls.Add(_selectLocalModuleInstallerButton, 2, 1);
             table.Controls.Add(_localModuleInstallerStatusLabel, 1, 2);
             table.SetColumnSpan(_localModuleInstallerStatusLabel, 2);
-            table.Controls.Add(_installControllerButton, 0, 3);
-            table.Controls.Add(_setupActionHintLabel, 1, 3);
-            table.SetColumnSpan(_setupActionHintLabel, 2);
+            table.Controls.Add(_setupActionHintLabel, 0, 3);
+            table.SetColumnSpan(_setupActionHintLabel, 3);
             Control manualStages = BuildManualStagePanel();
             table.Controls.Add(manualStages, 0, 4);
             table.SetColumnSpan(manualStages, 3);
@@ -167,36 +166,28 @@ namespace EsmTspiot.WinForms.Shared
 
         public bool SelectLocalModuleInstaller(IWin32Window owner)
         {
-            ClearLocalModuleInstallerSelection();
             try
             {
-                _localModuleInstallerSelection =
-                    LocalModuleInstallerPicker.SelectAndInspect(owner ?? this);
-                if (_localModuleInstallerSelection == null)
-                {
-                    _localModuleInstallerStatusLabel.Text =
-                        "Выбор MSI отменён; путь очищен.";
-                    SaveInstallerPaths();
-                    UpdateActionState();
+                if (!LocalModuleInstallerPicker.TryReplaceSelection(ref _localModuleInstallerSelection,
+                    delegate { return LocalModuleInstallerPicker.SelectAndInspect(owner ?? this); }))
                     return false;
-                }
-                ApplyLocalModuleInstallerSelection();
-                SaveInstallerPaths();
-                RaiseInstallerSelectionChanged();
             }
             catch (Exception ex)
             {
-                ClearLocalModuleInstallerSelection();
-                SaveInstallerPaths();
                 MessageBox.Show(
-                    this,
+                    owner ?? this,
                     SensitiveDataMasker.Mask(ex.Message),
                     "Проверка MSI ЛМ ЧЗ",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Error);
+                return false;
             }
+
+            ApplyLocalModuleInstallerSelection();
+            SaveInstallerPaths();
+            RaiseInstallerSelectionChanged();
             UpdateActionState();
-            return _localModuleInstallerSelection != null;
+            return true;
         }
 
         /// <summary>
@@ -209,8 +200,7 @@ namespace EsmTspiot.WinForms.Shared
         {
             if (_localModuleInstallerSelection != null &&
                 File.Exists(_localModuleInstallerSelection.SourcePath)) return true;
-            SelectLocalModuleInstaller(owner);
-            return _localModuleInstallerSelection != null;
+            return SelectLocalModuleInstaller(owner);
         }
 
         private bool ConfirmLocalModuleInstallerForInstallation(IWin32Window owner)
@@ -229,23 +219,19 @@ namespace EsmTspiot.WinForms.Shared
 
         private async Task StartAutomaticSetupAsync()
         {
+            LmGatewayKkt selected = SelectedKkt;
+            if (selected == null || !selected.RegistrationConfirmed) return;
             if (SetupRequested != null)
             {
-                LmGatewayKkt selected = SelectedKkt;
-                if (selected != null && selected.RegistrationConfirmed) SetupRequested(selected);
+                SetupRequested(selected);
                 return;
             }
             await RunOperationAsync(
                 async delegate(CancellationToken token)
                 {
-                    await RefreshCoreAsync(token);
-                    _session.SelectAll();
-                    IList<LmGatewayKkt> kkts = CopySessionKkts();
-                    if (kkts.Count == 0)
-                    {
-                        throw new InvalidOperationException(
-                            "В ЕСМ нет зарегистрированных ККТ для полной настройки.");
-                    }
+                    LmGatewayKkt current = await ReadDiagnosticKktAsync(
+                        ValidateAndReadBaseUrl(), selected.KktSerial, token);
+                    var kkts = new List<LmGatewayKkt> { current };
                     if (PromptLmSetup(this, kkts))
                         await RunFullAutomaticLocalSetupFromHostAsync(kkts, token);
                     else
@@ -278,13 +264,13 @@ namespace EsmTspiot.WinForms.Shared
             return result;
         }
 
-        private IList<LmGatewayKkt> CopySessionKkts()
+        private IList<LmGatewayKkt> CopyRegisteredSessionKkts()
         {
             List<LmGatewayKkt> result = new List<LmGatewayKkt>();
             for (int index = 0; index < _session.Rows.Count; index++)
             {
                 LmGatewayBindingSessionRow row = _session.Rows[index];
-                if (row != null && row.Kkt != null && row.IsSelected)
+                if (row != null && row.Kkt != null && row.Kkt.RegistrationConfirmed)
                 {
                     result.Add(CopyKktForPlanning(row.Kkt));
                 }
@@ -984,9 +970,14 @@ namespace EsmTspiot.WinForms.Shared
             _installControllerButton.Enabled = idle && selectedSession != null && selectedSession.Kkt.RegistrationConfirmed;
             UpdateManualStageActionState(idle, hasKkts);
             _readbackEsmButton.Enabled = idle && selectedSession != null && !FmuApiMode;
+            _initializeLmButton.Enabled = _readbackEsmButton.Enabled && selectedSession.Kkt.RegistrationConfirmed;
+            string scope = selectedSession != null ? "ККТ " + selectedSession.Kkt.KktSerial
+                : selected != null ? "ККТ " + selected.KktSerial : "ККТ не выбрана";
+            _selectedServiceScopeLabel.Text = "Выбранный комплект · " + scope;
+            _serviceToolTip.SetToolTip(_initializeLmButton, scope + ". Запросить инициализацию ЛМ через ЕСМ.");
             _checkGismtButton.Enabled = idle && selectedSession != null && selectedSession.Kkt.RegistrationConfirmed;
-            _serviceToolTip.SetToolTip(_checkGismtButton, "Проверить код маркировки через ЕСМ выбранной ККТ без сканирования и чека.");
-            _serviceToolTip.SetToolTip(_readbackEsmButton, "Проверить через ЕСМ только выбранную ККТ; без изменения настроек.");
+            _serviceToolTip.SetToolTip(_checkGismtButton, scope + ". Проверить код маркировки через ЕСМ без сканирования и чека.");
+            _serviceToolTip.SetToolTip(_readbackEsmButton, scope + ". Прочитать состояние через ЕСМ без изменения настроек.");
             _bindButton.Enabled = idle && !FmuApiMode && selectedSession != null && managed &&
                 selected.IsRunning && selected.IsReady;
             _removeServiceButton.Enabled = idle && managed && _helperAvailable &&
@@ -996,14 +987,15 @@ namespace EsmTspiot.WinForms.Shared
             _resetControllersButton.Enabled = idle && _helperAvailable;
             _cleanupButton.Enabled = idle && managed && _helperAvailable &&
                 selected.Status == LmServiceProvisioningStatus.CleanupPending;
-            string setupReason = !_helperAvailable
-                ? _helperUnavailableReason
-                : !hasKkts
-                    ? "В таблице нет зарегистрированных ККТ."
-                    : FmuApiMode
-                        ? FmuControllerNotApplicable
-                        : "Создать или обновить независимый контроллер для каждой ККТ.";
-            _setupActionHintLabel.Text = setupReason;
+            string setupReason = scope + (FmuApiMode
+                ? ". Открыть настройку ЛМ ЧЗ для FMU-API."
+                : ". Открыть настройку подключения к ЛМ ЧЗ.");
+            var selectedIssue = _grid.CurrentRow == null ? null : _grid.CurrentRow.Tag as LmGatewayDiscoveryIssue;
+            string detailsScope = selectedIssue == null ? scope : "Экземпляр ЕСМ " + selectedIssue.InstanceId;
+            _serviceToolTip.SetToolTip(_showDetailsButton, detailsScope + ". Открыть сведения о выбранной строке.");
+            _setupActionHintLabel.Text = FmuApiMode
+                ? "Шаг 1 проверяет ЛМ всех зарегистрированных ИНН. Кассы с готовым адресом ЛМ пропускаются."
+                : "Шаги 1–3 охватывают все зарегистрированные ККТ. Перед изменениями будет показан план.";
             _serviceToolTip.SetToolTip(_installControllerButton, setupReason);
             _serviceToolTip.SetToolTip(_bindButton,
                 FmuApiMode
@@ -1038,8 +1030,10 @@ namespace EsmTspiot.WinForms.Shared
             }
             else if (selected == null)
             {
-                _selectionActionHintLabel.Text =
-                    "Комплект этой ККТ ещё не создан.";
+                var context = _grid.CurrentRow == null ? null : _grid.CurrentRow.Tag as LmGatewayGridRow;
+                _selectionActionHintLabel.Text = context != null && context.ExistingLmSelected
+                    ? "Проверьте состояние выбранного ЛМ кнопкой диагностики."
+                    : "Комплект этой ККТ ещё не создан.";
             }
             else if (!managed)
             {
@@ -1511,13 +1505,15 @@ namespace EsmTspiot.WinForms.Shared
             internal LmGatewayGridRow(
                 LmGatewayBindingSessionRow sessionRow,
                 LmServiceInventoryItem inventory,
-                string kktInn)
+                string kktInn, bool existingLmSelected = false)
             {
+                ExistingLmSelected = existingLmSelected;
                 SessionRow = sessionRow;
                 Inventory = inventory;
                 KktInn = (kktInn ?? string.Empty).Trim();
             }
 
+            internal bool ExistingLmSelected { get; private set; }
             internal LmGatewayBindingSessionRow SessionRow { get; private set; }
             internal LmServiceInventoryItem Inventory { get; private set; }
             internal string KktInn { get; private set; }

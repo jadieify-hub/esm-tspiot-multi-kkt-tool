@@ -66,7 +66,7 @@ namespace EsmTspiot.WinForms.Shared
             EnsureDirectControllersFromHostAsync(
                 IList<LmGatewayKkt> registeredKkts,
                 IDictionary<string, int> targetLmPortsByInn,
-                CancellationToken cancellation)
+                CancellationToken cancellation, bool confirmManualScope = false)
         {
             DirectControllerSetupOutcome outcome =
                 new DirectControllerSetupOutcome();
@@ -100,6 +100,8 @@ namespace EsmTspiot.WinForms.Shared
                 return outcome;
             }
 
+            if (confirmManualScope)
+                ConfirmManualControllerScope("Шаг 2 · Настройка контроллеров", plan.Assignments);
             List<DirectControllerProvisioningItemRequest> requests =
                 new List<DirectControllerProvisioningItemRequest>();
             for (int index = 0; index < plan.Assignments.Count; index++)
@@ -167,7 +169,7 @@ namespace EsmTspiot.WinForms.Shared
         internal async Task BindReadyDirectControllersAsync(
             IList<LmGatewayKkt> registeredKkts,
             DirectControllerSetupOutcome outcome,
-            CancellationToken cancellation)
+            CancellationToken cancellation, bool confirmManualScope = false)
         {
             if (outcome == null) throw new ArgumentNullException("outcome");
             if (registeredKkts == null) throw new ArgumentNullException(
@@ -196,6 +198,13 @@ namespace EsmTspiot.WinForms.Shared
                 }
                 LmGatewayBindingPlan bindingPlan =
                     LmGatewayBindingPlanner.Build(discovery, inputs);
+                if (confirmManualScope)
+                {
+                    var targets = new List<DirectControllerAssignment>();
+                    foreach (LmGatewayBindingItem item in bindingPlan.Items)
+                        if (item.IsValid) targets.Add(outcome.ReadyAssignments[item.Kkt.KktSerial]);
+                    ConfirmManualControllerScope("Шаг 3 · Привязка к ЕСМ", targets);
+                }
                 _session.ReplaceDiscovery(discovery);
                 LmGatewayBindingOutcome binding =
                     await _bindingWorkflow.ExecuteAsync(

@@ -182,7 +182,13 @@ namespace EsmTspiot.Shared.Services
                 KktInstanceDetails details;
                 if (detailResponse.IsSuccess && InstanceDetailsParser.TryParse(detailResponse.ResponseBody, out details))
                 {
-                    if (details.HasCompleteRegistrationData && details.IsRegistered)
+                    BulkRegistrationWorkItem work = CreateResumeWorkItem(baseUrl, dkktPort, device, instance);
+                    BulkKktRegistrationResult conflict = CheckRegistrationIdentity(work.Item.Input, details);
+                    if (conflict != null)
+                    {
+                        discovery.InitialResults.Add(conflict);
+                    }
+                    else if (details.IsRegistered)
                     {
                         discovery.InitialResults.Add(new BulkKktRegistrationResult
                         {
@@ -193,7 +199,7 @@ namespace EsmTspiot.Shared.Services
                     }
                     else
                     {
-                        discovery.Items.Add(CreateResumeWorkItem(baseUrl, dkktPort, device, instance));
+                        discovery.Items.Add(work);
                         await ReadSettingsForDiagnostics(baseUrl, serial, progress, cancellationToken);
                     }
                 }
@@ -321,7 +327,7 @@ namespace EsmTspiot.Shared.Services
                     total,
                     progress,
                     cancellationToken);
-                bool canInspectCreatedInstance = addResponse.IsSuccess ||
+                bool canInspectCreatedInstance = addResponse.IsSuccess || addResponse.IsConnectionFailure ||
                     TspiotErrorDecoder.ContainsErrorCode(
                         addResponse.ResponseBody,
                         1010);
@@ -335,7 +341,7 @@ namespace EsmTspiot.Shared.Services
                     };
                 }
 
-                KktInstanceDetails createdDetails = await WaitForReadiness(
+                KktInstanceDetails createdDetails = await ReadInstanceAfterAddAsync(
                     item.Input.BaseUrl,
                     serial,
                     current,
@@ -344,6 +350,7 @@ namespace EsmTspiot.Shared.Services
                     cancellationToken);
                 if (createdDetails == null)
                 {
+                    if (addResponse.IsConnectionFailure) return UnknownWriteOutcome(serial, "POST");
                     return new BulkKktRegistrationResult
                     {
                         KktSerial = serial,
@@ -352,27 +359,16 @@ namespace EsmTspiot.Shared.Services
                             "POST выполнен, но готовность экземпляра не подтверждена; PUT пропущен"
                     };
                 }
-                if (createdDetails.HasCompleteRegistrationData)
+                BulkKktRegistrationResult conflict = CheckRegistrationIdentity(item.Input, createdDetails);
+                if (conflict != null) return conflict;
+                if (createdDetails.IsRegistered)
                 {
-                    if (!MatchesRegistration(item.Input, createdDetails.RegistrationData))
+                    return new BulkKktRegistrationResult
                     {
-                        return new BulkKktRegistrationResult
-                        {
-                            KktSerial = serial,
-                            Status = BulkKktRegistrationStatus.InspectionFailed,
-                            Details =
-                                "После POST regData не совпадают с выбранной ККТ; PUT пропущен"
-                        };
-                    }
-                    if (createdDetails.IsRegistered)
-                    {
-                        return new BulkKktRegistrationResult
-                        {
-                            KktSerial = serial,
-                            Status = BulkKktRegistrationStatus.Registered,
-                            Details = "POST завершил регистрацию; повторный PUT не требуется"
-                        };
-                    }
+                        KktSerial = serial,
+                        Status = BulkKktRegistrationStatus.Registered,
+                        Details = "Регистрация подтверждена чтением ЕСМ после POST"
+                    };
                 }
             }
 
@@ -382,10 +378,11 @@ namespace EsmTspiot.Shared.Services
                 total,
                 progress,
                 cancellationToken);
-            if (registerResponse.IsSuccess)
+            if (registerResponse.IsSuccess || registerResponse.IsConnectionFailure)
             {
-                return await WaitForRegistrationConfirmation(
-                    item,
+                return await ConfirmRegistrationAfterPutAsync(
+                    item.Input,
+                    registerResponse.IsConnectionFailure,
                     workItem.RequiresAdd
                         ? BulkKktRegistrationStatus.Registered
                         : BulkKktRegistrationStatus.RecoveredRegistration,
@@ -402,23 +399,24 @@ namespace EsmTspiot.Shared.Services
             };
         }
 
-        private async Task<BulkKktRegistrationResult>
-            WaitForRegistrationConfirmation(
-                BulkKktRegistrationItem item,
+        public async Task<BulkKktRegistrationResult>
+            ConfirmRegistrationAfterPutAsync(
+                TspiotFormInput input,
+                bool responseLost,
                 BulkKktRegistrationStatus successStatus,
                 int current,
                 int total,
                 Action<BulkRegistrationProgress> progress,
                 CancellationToken cancellationToken)
         {
-            string serial = item.Input.KktSerial;
+            string serial = input.KktSerial;
             for (int attempt = 1;
                 attempt <= MaximumRegistrationConfirmationAttempts;
                 attempt++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 ApiResponse response = await _api.GetInstanceAsync(
-                    item.Input.BaseUrl,
+                    input.BaseUrl,
                     serial,
                     cancellationToken);
                 Report(
@@ -434,19 +432,12 @@ namespace EsmTspiot.Shared.Services
                 if (response.IsSuccess &&
                     InstanceDetailsParser.TryParse(response.ResponseBody, out details))
                 {
-                    if (details.HasCompleteRegistrationData &&
-                        !MatchesRegistration(item.Input, details.RegistrationData))
+                    if (details.HasCompleteRegistrationData)
                     {
-                        return new BulkKktRegistrationResult
-                        {
-                            KktSerial = serial,
-                            Status = BulkKktRegistrationStatus.InspectionFailed,
-                            Details =
-                                "После PUT regData не совпадают с выбранной ККТ"
-                        };
+                        BulkKktRegistrationResult conflict = CheckRegistrationIdentity(input, details);
+                        if (conflict != null) return conflict;
                     }
-                    if (details.IsRegistered &&
-                        details.HasCompleteRegistrationData)
+                    if (details.IsRegistered && details.HasCompleteRegistrationData)
                     {
                         return new BulkKktRegistrationResult
                         {
@@ -463,12 +454,23 @@ namespace EsmTspiot.Shared.Services
                 }
             }
 
+            if (responseLost) return UnknownWriteOutcome(serial, "PUT");
             return new BulkKktRegistrationResult
             {
                 KktSerial = serial,
                 Status = BulkKktRegistrationStatus.RegistrationFailed,
                 Details =
                     "ЕСМ принял PUT, но регистрация не подтверждена read-back за 60 секунд"
+            };
+        }
+
+        private static BulkKktRegistrationResult UnknownWriteOutcome(string serial, string method)
+        {
+            return new BulkKktRegistrationResult
+            {
+                KktSerial = serial,
+                Status = BulkKktRegistrationStatus.UnknownWriteOutcome,
+                Details = "Ответ на " + method + " потерян. Чтение ЕСМ не подтвердило результат. Повторите поиск ККТ перед дальнейшими действиями."
             };
         }
 
@@ -489,7 +491,7 @@ namespace EsmTspiot.Shared.Services
                     cancellationToken);
                 Report(progress, current, total, item.Input.KktSerial, "Добавление экземпляра",
                     "Попытка " + attempt.ToString(), response);
-                if (response.IsSuccess || !IsTransientFailure(response))
+                if (response.IsSuccess || !IsRetryableVendorFailure(response))
                 {
                     return response;
                 }
@@ -520,7 +522,7 @@ namespace EsmTspiot.Shared.Services
                     cancellationToken);
                 Report(progress, current, total, item.Input.KktSerial, "Регистрация",
                     "Попытка " + attempt.ToString(), response);
-                if (response.IsSuccess || !IsTransientFailure(response))
+                if (response.IsSuccess || !IsRetryableVendorFailure(response))
                 {
                     return response;
                 }
@@ -538,11 +540,10 @@ namespace EsmTspiot.Shared.Services
         // контроллера, какое-то время отвечает 2003 «Невозможно подключиться
         // к Агенту-сервису ДККТ». Одна такая осечка не должна выбрасывать ККТ
         // из плана: если агент действительно не поднят, повтор это подтвердит.
-        private static bool IsTransientFailure(ApiResponse response)
+        private static bool IsRetryableVendorFailure(ApiResponse response)
         {
-            return response != null &&
-                (response.IsConnectionFailure ||
-                    TspiotErrorDecoder.ContainsErrorCode(response.ResponseBody, 1013) ||
+            return response != null && !response.IsConnectionFailure &&
+                (TspiotErrorDecoder.ContainsErrorCode(response.ResponseBody, 1013) ||
                     IsDkktAgentFailure(response));
         }
 
@@ -589,7 +590,7 @@ namespace EsmTspiot.Shared.Services
                     "Проверка регистрации",
                     "Попытка " + attempt.ToString(),
                     response);
-                if (response.IsSuccess || !IsTransientFailure(response))
+                if (response.IsSuccess || (!response.IsConnectionFailure && !IsRetryableVendorFailure(response)))
                 {
                     return response;
                 }
@@ -608,7 +609,7 @@ namespace EsmTspiot.Shared.Services
             }
         }
 
-        private async Task<KktInstanceDetails> WaitForReadiness(
+        public async Task<KktInstanceDetails> ReadInstanceAfterAddAsync(
             string baseUrl,
             string serial,
             int current,
@@ -637,23 +638,20 @@ namespace EsmTspiot.Shared.Services
             return null;
         }
 
-        private static bool MatchesRegistration(
-            TspiotFormInput input,
-            KktRegistrationData registration)
+        private static BulkKktRegistrationResult CheckRegistrationIdentity(
+            TspiotFormInput input, KktInstanceDetails details)
         {
-            return input != null && registration != null &&
-                string.Equals(
-                    (input.KktSerial ?? string.Empty).Trim(),
-                    (registration.KktSerial ?? string.Empty).Trim(),
-                    StringComparison.Ordinal) &&
-                string.Equals(
-                    (input.FnSerial ?? string.Empty).Trim(),
-                    (registration.FnSerial ?? string.Empty).Trim(),
-                    StringComparison.Ordinal) &&
-                string.Equals(
-                    (input.KktInn ?? string.Empty).Trim(),
-                    (registration.KktInn ?? string.Empty).Trim(),
-                    StringComparison.Ordinal);
+            if (details.HasCompleteRegistrationData)
+            {
+                KktRegistrationData data = details.RegistrationData;
+                return BulkKktRegistrationResult.CheckIdentity(input.KktSerial, input.FnSerial, input.KktInn,
+                    data.KktSerial, data.FnSerial, data.KktInn);
+            }
+            return !details.IsRegistered ? null : new BulkKktRegistrationResult
+            {
+                KktSerial = input.KktSerial, Status = BulkKktRegistrationStatus.InspectionFailed,
+                Details = "ЕСМ сообщает о регистрации, но не вернул реквизиты ККТ в regData."
+            };
         }
 
         private async Task ReadSettingsForDiagnostics(

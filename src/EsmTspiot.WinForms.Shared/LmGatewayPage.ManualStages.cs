@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Drawing;
 using System.Globalization;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -44,13 +44,7 @@ namespace EsmTspiot.WinForms.Shared
                 WrapContents = true,
                 Margin = new Padding(0, 2, 0, 0)
             };
-            Label caption = new Label
-            {
-                Text = "Ручной режим — те же шаги по отдельности; повтор безопасен:",
-                AutoSize = true,
-                Anchor = AnchorStyles.Left,
-                Margin = new Padding(0, 6, 8, 4)
-            };
+
             ConfigureButton(_ensureLocalModulesButton, "Шаг 1: ЛМ ЧЗ");
             _ensureLocalModulesButton.Tag = "EnsureLocalModules";
             _ensureLocalModulesButton.Click += async delegate
@@ -75,11 +69,10 @@ namespace EsmTspiot.WinForms.Shared
             {
                 await DiagnoseSelectedKktAsync();
             };
-            panel.Controls.Add(caption);
+
             panel.Controls.Add(_ensureLocalModulesButton);
             panel.Controls.Add(_ensureControllersButton);
             panel.Controls.Add(_bindAllEsmButton);
-            panel.Controls.Add(_readbackEsmButton);
             return panel;
         }
 
@@ -89,7 +82,7 @@ namespace EsmTspiot.WinForms.Shared
             _ensureControllersButton.Enabled = mutation && !FmuApiMode;
             _ensureLocalModulesButton.Enabled = mutation;
             _bindAllEsmButton.Enabled = idle && hasKkts && !FmuApiMode;
-            _readbackEsmButton.Enabled = idle && hasKkts && !FmuApiMode;
+
             string unavailable = !_helperAvailable
                 ? _helperUnavailableReason
                 : !hasKkts
@@ -102,19 +95,12 @@ namespace EsmTspiot.WinForms.Shared
                         "для каждой ККТ; подтверждение UAC.");
             _serviceToolTip.SetToolTip(
                 _ensureLocalModulesButton,
-                unavailable ?? "Установить или проверить ЛМ ЧЗ для каждого ИНН " +
-                    "из выбранного MSI; автозапуск включается; подтверждение UAC.");
+                unavailable ?? "Проверить или установить общий локальный ЛМ для каждого ИНН без готового адреса ЛМ.");
             _serviceToolTip.SetToolTip(
                 _bindAllEsmButton,
                 FmuApiMode ? FmuControllerNotApplicable : hasKkts
                     ? "Передать ЕСМ адрес уже созданного контроллера каждой ККТ; " +
                         "контроллеры не пересоздаются, UAC не требуется."
-                    : "В таблице нет зарегистрированных ККТ.");
-            _serviceToolTip.SetToolTip(
-                _readbackEsmButton,
-                FmuApiMode ? FmuControllerNotApplicable : hasKkts
-                    ? "Прочитать /api/v2/info каждой ККТ и сверить с планом " +
-                        "контура; без UAC."
                     : "В таблице нет зарегистрированных ККТ.");
         }
 
@@ -129,8 +115,7 @@ namespace EsmTspiot.WinForms.Shared
                 async delegate(CancellationToken cancellation)
                 {
                     await RefreshCoreAsync(cancellation);
-                    _session.SelectAll();
-                    IList<LmGatewayKkt> kkts = CopySessionKkts();
+                    IList<LmGatewayKkt> kkts = CopyRegisteredSessionKkts();
                     if (kkts.Count == 0)
                         throw new InvalidOperationException(
                             "В ЕСМ нет зарегистрированных ККТ для этого шага.");
@@ -154,7 +139,7 @@ namespace EsmTspiot.WinForms.Shared
                             kkts, plan, cancellation).ConfigureAwait(true);
                     else if (stage == ManualContourStage.LocalModules)
                         await EnsureLocalModulesManuallyAsync(
-                            kkts, plan, inventory, cancellation).ConfigureAwait(true);
+                            localLmKkts, plan, inventory, cancellation).ConfigureAwait(true);
                     else if (stage == ManualContourStage.Binding)
                         await BindControllersManuallyAsync(
                             kkts, plan, cancellation).ConfigureAwait(true);
@@ -163,6 +148,28 @@ namespace EsmTspiot.WinForms.Shared
                             kkts, plan, inventory, cancellation).ConfigureAwait(true);
                 },
                 "Ручной режим: " + DescribeManualStage(stage) + "...");
+        }
+
+        private void ConfirmManualControllerScope(string title, IList<DirectControllerAssignment> targets)
+        {
+            if (targets.Count > 0 && MessageBox.Show(_serviceOperationsWindow,
+                DescribeManualControllerScope(targets) + "\r\nПродолжить?", title,
+                MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+                throw new OperationCanceledException();
+        }
+
+        private static string DescribeManualControllerScope(IList<DirectControllerAssignment> targets)
+        {
+            var inns = new HashSet<string>(StringComparer.Ordinal);
+            var details = new StringBuilder();
+            foreach (DirectControllerAssignment target in targets)
+            {
+                inns.Add(target.KktInn);
+                details.Append("ККТ ").Append(target.KktSerial).Append(" · ИНН ").Append(target.KktInn)
+                    .Append(" · ЛМ ").AppendLine(LocalModuleTargetAddress.Key(
+                        target.TargetLocalModuleAddress, target.TargetLocalModulePort));
+            }
+            return "ККТ: " + targets.Count + "; ИНН: " + inns.Count + ".\r\n\r\n" + details;
         }
 
         private static string DescribeManualStage(ManualContourStage stage)
@@ -186,14 +193,14 @@ namespace EsmTspiot.WinForms.Shared
                 await EnsureDirectControllersFromHostAsync(
                     kkts,
                     CreateControllerTargetPorts(plan),
-                    cancellation).ConfigureAwait(true);
+                    cancellation, confirmManualScope: true).ConfigureAwait(true);
             FinalizeDirectControllerOutcome(controllers);
             await RefreshAfterManualStageAsync(_statusLabel.Text, cancellation)
                 .ConfigureAwait(true);
         }
 
         private async Task EnsureLocalModulesManuallyAsync(
-            IList<LmGatewayKkt> kkts,
+            IList<LmGatewayKkt> localLmKkts,
             LocalModuleMsiPlan plan,
             LocalModuleMsiOperatorInventorySnapshot inventory,
             CancellationToken cancellation)
@@ -210,7 +217,7 @@ namespace EsmTspiot.WinForms.Shared
             if (!string.IsNullOrEmpty(volume))
             {
                 plan = LocalModuleMsiPlanner.Build(
-                    SelectLocalLmKkts(kkts),
+                    localLmKkts,
                     inventory.Assignments,
                     inventory.BaseInventory,
                     volume,
@@ -221,7 +228,7 @@ namespace EsmTspiot.WinForms.Shared
             bool ready = await EnsureMsiLocalModulesAsync(
                 plan,
                 inventory,
-                SelectLocalLmKkts(kkts),
+                localLmKkts,
                 cancellation).ConfigureAwait(true);
             string summary = ready
                 ? "ЛМ ЧЗ установлены и проверены: " +
@@ -253,7 +260,7 @@ namespace EsmTspiot.WinForms.Shared
             await BindReadyDirectControllersAsync(
                 kkts,
                 controllers,
-                cancellation).ConfigureAwait(true);
+                cancellation, confirmManualScope: true).ConfigureAwait(true);
             FinalizeDirectControllerOutcome(controllers);
             await RefreshAfterManualStageAsync(_statusLabel.Text, cancellation)
                 .ConfigureAwait(true);

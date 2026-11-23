@@ -18,6 +18,7 @@ namespace EsmTspiot.Shared.Services
             string id,
             LmConnectionRequest request,
             CancellationToken cancellationToken);
+        Task<ApiResponse> InitializeLmAsync(string baseUrl, string id, CancellationToken cancellationToken);
         Task<ApiResponse> GetLmInfoAsync(
             string baseUrl,
             string instancePort,

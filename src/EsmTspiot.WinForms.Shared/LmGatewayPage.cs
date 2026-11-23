@@ -56,6 +56,7 @@ namespace EsmTspiot.WinForms.Shared
             _discoveryWorkflow = new LmGatewayDiscoveryWorkflow(apiClient);
             _bindingWorkflow = new LmGatewayBindingWorkflow(apiClient);
             _readbackWorkflow = new LmGatewayReadbackWorkflow(apiClient);
+            _selectionReport = new KktSelectionReport(_selectionSummary, _diagnosticsTextBox);
             InitializeServiceFeatures();
 
             Dock = DockStyle.Fill;
@@ -376,29 +377,25 @@ namespace EsmTspiot.WinForms.Shared
                         displayPlan,
                         item.Kkt,
                         index + 1);
-                    int rowIndex = _grid.Rows.Add(
-                        ordinal.ToString(),
-                        item.Kkt.KktSerial,
-                        item.Kkt.KktInn,
-                        item.Kkt.SoftPort ?? string.Empty,
-                        appliedLm != null
-                            ? LocalModuleTargetAddress.Key(appliedLm.Address, appliedLm.Port)
-                            : msiLm != null || managedLm != null
-                                ? GetLmEndpointText(item, draft, inventory, managedLm, msiLm)
-                                : "Не подтверждён",
-                        isRemoteLm
-                            ? "Используется готовый ЛМ"
-                            : GetLmStateText(inventory, managedLm, msiLm),
-                        isRemoteLm ? "Готовый ЛМ" : GetMsiRoleText(msiLm),
-                        msiLm == null ? string.Empty : msiLm.InstallRoot,
-                        GetMsiOwnershipText(msiLm),
-                        FmuApiMode
-                            ? "Не применяется (FMU-API)"
-                            : GetEsmLinkStateText(item));
+                    int rowIndex = _grid.Rows.Add();
+                    DataGridViewRow targetRow = _grid.Rows[rowIndex];
+                    targetRow.Cells["KktOrdinal"].Value = ordinal.ToString();
+                    targetRow.Cells["KktSerial"].Value = item.Kkt.KktSerial;
+                    targetRow.Cells["KktInn"].Value = item.Kkt.KktInn;
+                    targetRow.Cells["KktServicePort"].Value = item.Kkt.Port;
+                    targetRow.Cells["KktSoftwarePort"].Value = item.Kkt.SoftPort;
+                    targetRow.Cells["LmEndpoint"].Value = appliedLm != null
+                        ? LocalModuleTargetAddress.Key(appliedLm.Address, appliedLm.Port)
+                        : msiLm != null || managedLm != null
+                            ? GetLmEndpointText(item, draft, inventory, managedLm, msiLm) : "Не подтверждён";
+                    targetRow.Cells["LmState"].Value = isRemoteLm ? "Указан готовый ЛМ" : GetLmStateText(inventory, managedLm, msiLm);
+                    targetRow.Cells["LmRole"].Value = isRemoteLm ? "Готовый ЛМ" : GetMsiRoleText(msiLm);
+                    targetRow.Cells["LmInstallRoot"].Value = msiLm == null ? string.Empty : msiLm.InstallRoot;
+                    targetRow.Cells["LmOwnership"].Value = GetMsiOwnershipText(msiLm);
+                    targetRow.Cells["EsmLinkState"].Value = FmuApiMode ? "Не применяется (FMU-API)" : GetEsmLinkStateText(item);
                     string organization = OrganizationNameProvider == null ? string.Empty
                         : OrganizationNameProvider(item.Kkt.KktSerial, item.Kkt.KktInn);
-                    OperatorTheme.SetOrganizationCell(_grid.Rows[rowIndex], organization);
-                    DataGridViewRow targetRow = _grid.Rows[rowIndex];
+                    OperatorTheme.SetOrganizationCell(targetRow, organization);
                     targetRow.Cells["LmEndpoint"].ToolTipText =
                         "Адрес ЛМ из служебных данных программы. Фактический конфиг контроллера здесь не считывается.";
                     targetRow.Cells["DesiredLmEndpoint"].Value = isRemoteLm ? remoteLm
@@ -423,7 +420,7 @@ namespace EsmTspiot.WinForms.Shared
                     _grid.Rows[rowIndex].Tag = new LmGatewayGridRow(
                         item,
                         removable ?? inventory,
-                        item.Kkt.KktInn);
+                        item.Kkt.KktInn, isRemoteLm);
                     if (FmuApiMode)
                     {
                         _grid.Rows[rowIndex].Cells["EsmLinkState"].Style.ForeColor =
@@ -463,18 +460,20 @@ namespace EsmTspiot.WinForms.Shared
                         if (instance == null) continue;
                         registeredSerials.Add(issue.InstanceId);
                         string failure = "Регистрация не подтверждена. " + issue.Message;
-                        int rowIndex = _grid.Rows.Add(
-                            "—", issue.InstanceId, string.Empty, instance.SoftPort,
-                            "Не подтверждён", "Не проверен", string.Empty, string.Empty,
-                            string.Empty, failure);
-                        DataGridViewRow row = _grid.Rows[rowIndex];
+                        DataGridViewRow row = _grid.Rows[_grid.Rows.Add()];
+                        row.Cells["KktOrdinal"].Value = "—";
+                        row.Cells["KktSerial"].Value = issue.InstanceId;
+                        row.Cells["KktSoftwarePort"].Value = instance.SoftPort;
+                        row.Cells["LmEndpoint"].Value = "Не подтверждён";
+                        row.Cells["LmState"].Value = "Не проверен";
+                        row.Cells["EsmLinkState"].Value = failure;
                         row.Tag = issue;
                         row.Cells["KktServicePort"].Value = instance.Port;
                         row.Cells["KktSerial"].ToolTipText = "Идентификатор экземпляра ЕСМ. Данные регистрации недоступны.";
                         row.Cells["EsmLinkState"].ToolTipText = failure + " Состояние службы ЕСМ: " + instance.ServiceState;
                         row.Cells["EsmLinkState"].Style.ForeColor = OperatorTheme.Warning;
                         if (string.Equals(issue.InstanceId, selectedSerial, StringComparison.Ordinal))
-                            rowToSelect = rowIndex;
+                            rowToSelect = row.Index;
                     }
                 }
 
@@ -501,17 +500,17 @@ namespace EsmTspiot.WinForms.Shared
                             ? managedLm.SoftwarePort.ToString(
                                 CultureInfo.InvariantCulture)
                             : string.Empty;
-                    int orphanRowIndex = _grid.Rows.Add(
-                        ordinal,
-                        inventory.KktSerial,
-                        inn,
-                        softwarePort,
-                        GetLmEndpointText(null, null, inventory, managedLm),
-                        GetLmStateText(inventory, managedLm),
-                        "Старый комплект",
-                        string.Empty,
-                        "Старая схема",
-                        "Нет в ЕСМ");
+                    int orphanRowIndex = _grid.Rows.Add();
+                    var orphan = _grid.Rows[orphanRowIndex];
+                    orphan.Cells["KktOrdinal"].Value = ordinal;
+                    orphan.Cells["KktSerial"].Value = inventory.KktSerial;
+                    orphan.Cells["KktInn"].Value = inn;
+                    orphan.Cells["KktSoftwarePort"].Value = softwarePort;
+                    orphan.Cells["LmEndpoint"].Value = GetLmEndpointText(null, null, inventory, managedLm);
+                    orphan.Cells["LmState"].Value = GetLmStateText(inventory, managedLm);
+                    orphan.Cells["LmRole"].Value = "Старый комплект";
+                    orphan.Cells["LmOwnership"].Value = "Старая схема";
+                    orphan.Cells["EsmLinkState"].Value = "Нет в ЕСМ";
                     _grid.Rows[orphanRowIndex].Tag = new LmGatewayGridRow(
                         null,
                         inventory,
@@ -531,12 +530,12 @@ namespace EsmTspiot.WinForms.Shared
                 if (rowToSelect >= 0)
                 {
                     _grid.Rows[rowToSelect].Selected = true;
-                    _grid.CurrentCell = _grid.Rows[rowToSelect].Cells[1];
+                    _grid.CurrentCell = _grid.Rows[rowToSelect].Cells["KktSerial"];
                 }
                 else if (_grid.Rows.Count > 0)
                 {
                     _grid.Rows[0].Selected = true;
-                    _grid.CurrentCell = _grid.Rows[0].Cells[1];
+                    _grid.CurrentCell = _grid.Rows[0].Cells["KktSerial"];
                 }
             }
             finally
@@ -620,7 +619,7 @@ namespace EsmTspiot.WinForms.Shared
             _grid.Enabled = idle;
             _showServiceOperationsButton.Enabled = idle;
             _showDetailsButton.Enabled = idle && _grid.CurrentRow != null;
-            UpdateWorkingGrid();
+            UpdateSelectionSummary();
             _cancelButton.Visible = _running;
             _cancelButton.Enabled = _running && _cancellation != null && !_cancellation.IsCancellationRequested;
             _serviceCancelButton.Visible = _running;

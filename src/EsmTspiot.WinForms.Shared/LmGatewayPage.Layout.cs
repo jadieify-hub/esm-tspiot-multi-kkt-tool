@@ -9,12 +9,12 @@ namespace EsmTspiot.WinForms.Shared
     {
         private void BuildLayout()
         {
-            var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5,
+            var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 6,
                 Padding = new Padding(10) };
             root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48F));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-            for (int index = 2; index < 5; index++) root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            for (int index = 2; index < 6; index++) root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             var toolbar = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1 };
             toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
@@ -56,13 +56,20 @@ namespace EsmTspiot.WinForms.Shared
             root.Controls.Add(_grid, 0, 1);
             _selectionActionHintLabel.AutoSize = true;
             _selectionActionHintLabel.Margin = new Padding(0, 6, 0, 4);
-            root.Controls.Add(_selectionActionHintLabel, 0, 2);
+            root.Controls.Add(_selectionSummary, 0, 2);
+            root.Controls.Add(_selectionActionHintLabel, 0, 3);
+            root.SizeChanged += delegate {
+                _selectionSummary.MaximumSize = new Size(System.Math.Max(1, root.ClientSize.Width - root.Padding.Horizontal), 0);
+            };
 
             _serviceOperationsWindow = BuildServiceOperationsWindow();
 
             var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true };
             actions.Controls.Add(_installControllerButton);
             actions.Controls.Add(_readbackEsmButton);
+            ConfigureButton(_initializeLmButton, "Инициализировать ЛМ ЧЗ…");
+            _initializeLmButton.Click += async delegate { await InitializeSelectedLmAsync(); };
+            actions.Controls.Add(_initializeLmButton);
             ConfigureButton(_checkGismtButton, "Проверить связь с ЧЗ");
             _checkGismtButton.Name = "check-gismt";
             _checkGismtButton.Click += async delegate
@@ -79,14 +86,14 @@ namespace EsmTspiot.WinForms.Shared
             actions.Controls.Add(_showDetailsButton);
             _installControllerButton.Text = "Изменить настройки ЛМ ЧЗ выбранной ККТ";
             OperatorTheme.Button(_installControllerButton, true);
-            root.Controls.Add(actions, 0, 3);
+            root.Controls.Add(actions, 0, 4);
             _diagnosticsTextBox.Multiline = _diagnosticsTextBox.ReadOnly = true;
             _diagnosticsTextBox.BackColor = SystemColors.Window;
             _diagnosticsTextBox.Dock = DockStyle.Top;
             _diagnosticsTextBox.Height = 132;
             _diagnosticsTextBox.ScrollBars = ScrollBars.Vertical;
             _diagnosticsTextBox.Visible = false;
-            root.Controls.Add(_diagnosticsTextBox, 0, 4);
+            root.Controls.Add(_diagnosticsTextBox, 0, 5);
             Controls.Add(OperatorTheme.Card(root, false));
         }
 
@@ -101,115 +108,37 @@ namespace EsmTspiot.WinForms.Shared
             _grid.RowHeadersVisible = false;
             _grid.AutoGenerateColumns = false;
             _grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
-            _grid.BackgroundColor = SystemColors.Window;
-            _grid.BorderStyle = BorderStyle.Fixed3D;
             _grid.ScrollBars = ScrollBars.Both;
-
-            DataGridViewTextBoxColumn ordinal = CreateTextColumn("№", 30);
-            ordinal.Name = "KktOrdinal";
-            _grid.Columns.Add(ordinal);
-            DataGridViewTextBoxColumn serial = CreateTextColumn("Серийный № ККТ", 100);
-            serial.Name = "KktSerial";
-            _grid.Columns.Add(serial);
-            DataGridViewTextBoxColumn inn = CreateTextColumn("ИНН", 70);
-            inn.Name = "KktInn";
-            _grid.Columns.Add(inn);
-            DataGridViewTextBoxColumn softwarePort = CreateTextColumn("Порт ПО", 75);
-            softwarePort.Name = "KktSoftwarePort";
-            softwarePort.ToolTipText =
-                "softPort для Frontol или другой кассовой программы.";
-            _grid.Columns.Add(softwarePort);
-            DataGridViewTextBoxColumn endpoint = CreateTextColumn(
-                "Адрес и порт ЛМ ЧЗ",
-                115);
-            endpoint.Name = "LmEndpoint";
-            _grid.Columns.Add(endpoint);
-            DataGridViewTextBoxColumn lmState = CreateTextColumn(
-                "Состояние ЛМ",
-                85);
-            lmState.Name = "LmState";
-            _grid.Columns.Add(lmState);
-            DataGridViewTextBoxColumn lmRole = CreateTextColumn("Тип", 55);
-            lmRole.Name = "LmRole";
-            lmRole.ToolTipText = "Базовый поставщицкий ЛМ или независимый клон.";
-            _grid.Columns.Add(lmRole);
-            DataGridViewTextBoxColumn installRoot = CreateTextColumn(
-                "Каталог ЛМ",
-                110);
-            installRoot.Name = "LmInstallRoot";
-            installRoot.ToolTipText = "Фактический каталог установки ЛМ ЧЗ.";
-            _grid.Columns.Add(installRoot);
-            DataGridViewTextBoxColumn ownership = CreateTextColumn(
-                "Владение",
-                90);
-            ownership.Name = "LmOwnership";
-            ownership.ToolTipText =
-                "Создан программой или сохранён как поставщицкий компонент.";
-            _grid.Columns.Add(ownership);
-            DataGridViewTextBoxColumn esmState = CreateTextColumn(
-                "Связь с ЕСМ",
-                120);
-            esmState.Name = "EsmLinkState";
-            esmState.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
-            esmState.MinimumWidth = 120;
-            _grid.Columns.Add(esmState);
-            DataGridViewTextBoxColumn servicePort = CreateTextColumn("Порт ЕСМ", 75);
-            servicePort.Name = "KktServicePort";
-            _grid.Columns.Add(servicePort);
-            servicePort.DisplayIndex = 3;
-            DataGridViewTextBoxColumn organization = CreateTextColumn("Организация", 230);
-            organization.Name = "Organization";
-            _grid.Columns.Add(organization);
-            _grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
             _grid.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCells;
-            _grid.RowTemplate.Height = 28;
-            foreach (DataGridViewColumn column in _grid.Columns)
-            {
-                column.FillWeight = column.Width;
-                column.MinimumWidth = column.Name == "KktSerial" ? 120 : 65;
-            }
-            _grid.Columns["EsmLinkState"].HeaderText = "Привязка к ЕСМ";
-            _grid.Columns["LmEndpoint"].HeaderText = "ЛМ ЧЗ · учтённый адрес";
-            foreach (string name in new[] { "DesiredLmEndpoint", "ControllerEndpoint", "LmTargetState" })
-            {
-                DataGridViewTextBoxColumn column = CreateTextColumn(name == "DesiredLmEndpoint"
-                    ? "ЛМ ЧЗ · выбранный адрес" : name == "ControllerEndpoint"
-                        ? "Контроллер для ЕСМ" : "Применение адреса ЛМ", 180);
-                column.Name = name;
-                column.DefaultCellStyle.WrapMode = DataGridViewTriState.True;
-                column.DefaultCellStyle.NullValue = "—";
-                _grid.Columns.Add(column);
-            }
-            _grid.Columns["LmState"].DefaultCellStyle.WrapMode = DataGridViewTriState.True;
-            _grid.Columns["KktSerial"].MinimumWidth = 160;
-            _grid.Columns["KktInn"].MinimumWidth = 100;
-            _grid.Columns["LmEndpoint"].MinimumWidth = 140;
-            _grid.Columns["LmState"].MinimumWidth = 110;
-            _grid.Columns["KktSerial"].FillWeight = 180;
-            _grid.Columns["KktInn"].FillWeight = 110;
-            _grid.Columns["LmEndpoint"].FillWeight = 160;
-            _grid.Columns["LmState"].FillWeight = 150;
-            _grid.Columns["EsmLinkState"].FillWeight = 160;
-            _grid.Columns["LmEndpoint"].DefaultCellStyle.WrapMode = DataGridViewTriState.True;
-            _grid.Columns["EsmLinkState"].DefaultCellStyle.WrapMode = DataGridViewTriState.True;
             OperatorTheme.Grid(_grid);
             _grid.ColumnHeadersHeight = 44;
-            foreach (string name in new[] { "KktSoftwarePort", "KktServicePort" })
+            AddColumn("KktOrdinal", "№", 42);
+            AddColumn("KktSerial", "Серийный № ККТ", 175);
+            AddColumn("Organization", "Организация", 230);
+            AddColumn("LmState", "Состояние ЛМ", 150, wrap: true);
+            AddColumn("KktInn", "ИНН", 125);
+            AddColumn("KktServicePort", "Порт ЕСМ", 75);
+            AddColumn("KktSoftwarePort", "Порт ПО", 75, "softPort для Frontol или другой кассовой программы.");
+            AddColumn("DesiredLmEndpoint", "ЛМ ЧЗ · выбранный адрес", 180, wrap: true);
+            AddColumn("LmEndpoint", "ЛМ ЧЗ · учтённый адрес", 180, wrap: true);
+            AddColumn("LmTargetState", "Применение адреса ЛМ", 195, wrap: true);
+            AddColumn("ControllerEndpoint", "Контроллер для ЕСМ", 180, wrap: true);
+            AddColumn("EsmLinkState", "Привязка к ЕСМ", 175, wrap: true);
+            AddColumn("LmRole", "Тип", 90, "Базовый поставщицкий ЛМ или независимый клон.");
+            AddColumn("LmInstallRoot", "Каталог ЛМ", 220, "Фактический каталог установки ЛМ ЧЗ.");
+            AddColumn("LmOwnership", "Владение", 180, "Создан программой или сохранён как поставщицкий компонент.");
+        }
+
+        private void AddColumn(string name, string header, int width, string hint = "", bool wrap = false)
+        {
+            var column = new DataGridViewTextBoxColumn
             {
-                _grid.Columns[name].AutoSizeMode = DataGridViewAutoSizeColumnMode.None;
-                _grid.Columns[name].Width = 70;
-            }
-            _grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
-            string[] order = { "KktOrdinal", "KktSerial", "Organization", "LmState", "KktInn", "KktServicePort", "KktSoftwarePort",
-                "DesiredLmEndpoint", "LmEndpoint", "LmTargetState", "ControllerEndpoint", "EsmLinkState", "LmRole", "LmInstallRoot", "LmOwnership" };
-            int[] widths = { 42, 175, 230, 150, 125, 75, 75, 180, 180, 195, 180, 175, 90, 220, 180 };
-            for (int index = 0; index < order.Length; index++)
-            {
-                var column = _grid.Columns[order[index]];
-                column.AutoSizeMode = DataGridViewAutoSizeColumnMode.None;
-                column.DisplayIndex = index;
-                column.Width = widths[index];
-            }
+                Name = name, HeaderText = header, Width = width, ToolTipText = hint,
+                ReadOnly = true, SortMode = DataGridViewColumnSortMode.NotSortable
+            };
+            column.DefaultCellStyle.WrapMode = wrap ? DataGridViewTriState.True : DataGridViewTriState.False;
+            column.DefaultCellStyle.NullValue = "—";
+            _grid.Columns.Add(column);
         }
 
         private static void ConfigureButton(Button button, string text)
@@ -219,17 +148,6 @@ namespace EsmTspiot.WinForms.Shared
             button.AutoSize = true;
             button.Margin = new Padding(0, 0, 6, 4);
             button.Padding = Padding.Empty;
-        }
-
-        private static DataGridViewTextBoxColumn CreateTextColumn(string header, int width)
-        {
-            return new DataGridViewTextBoxColumn
-            {
-                HeaderText = header,
-                Width = width,
-                ReadOnly = true,
-                SortMode = DataGridViewColumnSortMode.NotSortable
-            };
         }
 
     }

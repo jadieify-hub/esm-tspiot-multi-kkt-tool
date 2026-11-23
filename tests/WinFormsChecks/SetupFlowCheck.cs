@@ -54,13 +54,30 @@ public static class SetupFlowCheck
             Await((Task)Invoke(form, "RegisterManualSelectionCoreAsync", CancellationToken.None));
             if (transport.Writes.Count != 1)
                 throw new Exception("A confirmed registration must not be repeated.");
+            ((AntdUI.Segmented)Field(form, "_wizardMode")).SelectIndex = 1;
+            var cached = ((Dictionary<string, LmGatewayKkt>)Field(form, "_wizardKnownKkts"))["00105700000002"];
+            Invoke(form, "ShowWizardLmStep", new[] { cached }, true);
             transport.MismatchedIdentity = true;
-            bool mismatchRefused = false;
-            try { Await((Task)Invoke(form, "ScanKktsCoreAsync", CancellationToken.None)); }
-            catch (InvalidOperationException) { mismatchRefused = true; }
-            if (!mismatchRefused)
-                throw new Exception("An ESM registration must not overwrite a physical KKT's different INN or FN.");
+            Await((Task)Invoke(form, "ScanKktsCoreAsync", CancellationToken.None));
+            grid.CurrentCell = grid.Rows[1].Cells[0];
+            if (grid.Rows.Count != 2 || !Convert.ToString(grid.Rows[1].Cells["Состояние"].Value).Contains("kktInn") ||
+                ((Control)Field(form, "_setupSelectedButton")).Enabled ||
+                ((List<LmGatewayKkt>)Field(form, "_wizardAutomaticPending")).Count != 0)
+                throw new Exception("An identity conflict must remain visible, block only its row and invalidate the cached automatic target.");
+            Invoke(form, "ShowWizardForRegisteredKkt", cached);
+            if (((List<LmGatewayKkt>)Field(form, "_wizardPending")).Count != 0)
+                throw new Exception("A cached registration must not reopen LM setup for a blocked row.");
+            int writesBeforeRetry = transport.MutationAttempts;
+            // A later attempt requires a new scan even if the next ESM response would match.
             transport.MismatchedIdentity = false;
+            try { Await((Task)Invoke(form, "RegisterManualSelectionCoreAsync", CancellationToken.None));
+                throw new Exception("Expected the selected conflicting row to be blocked."); }
+            catch (InvalidOperationException ex) { if (!ex.Message.Contains("kktInn")) throw; }
+            if (transport.MutationAttempts != writesBeforeRetry)
+                throw new Exception("A blocked row must not issue a registration request.");
+            grid.CurrentCell = grid.Rows[0].Cells[0];
+            if (!((Control)Field(form, "_setupSelectedButton")).Enabled)
+                throw new Exception("The healthy KKT must remain available for registration beside the conflicted KKT.");
             transport.Confirmed = false;
             Await((Task)Invoke(form, "ScanKktsCoreAsync", CancellationToken.None));
             if (((HashSet<string>)Field(form, "_manualRegistered")).Contains("00105700000002"))
@@ -81,6 +98,14 @@ public static class SetupFlowCheck
             catch (InvalidOperationException) { }
             if (transport.MutationAttempts != attempts)
                 throw new Exception("The primary manual path must reject a missing physical target before any POST.");
+            transport.MismatchedIdentity = true;
+            transport.AllowAll = ports.AllowSimultaneous = true;
+            ((AntdUI.Segmented)Field(form, "_wizardMode")).SelectIndex = 0;
+            Await((Task)Invoke(form, "ConfigureAllKktsAutomaticallyAsync"));
+            var pending = (List<LmGatewayKkt>)Field(form, "_wizardAutomaticPending");
+            if (transport.Writes.Count != 2 || transport.Writes[1] != "00105700000001" ||
+                pending.Count != 1 || pending[0].KktSerial != "00105700000001")
+                throw new Exception("Automatic registration must complete the healthy KKT and exclude the conflicting one from LM setup.");
         }
         CheckPortAssignments();
     }
@@ -229,7 +254,7 @@ public static class SetupFlowCheck
             {
                 string serial = path.Substring(path.LastIndexOf('/') + 1);
                 string identity = Identity(serial);
-                if (MismatchedIdentity) identity = identity.Replace("1234567894", "7701234560");
+                if (MismatchedIdentity && serial == "00105700000002") identity = identity.Replace("1234567894", "7701234560");
                 json = "{\"state\":\"" + (Confirmed ? "Registered" : "Created") + "\",\"regData\":{" + identity + "}}";
             }
             else if (path.Contains("/settings/")) json = "{}";

@@ -730,6 +730,7 @@ namespace EsmTspiot.WinForms.Shared
         private async Task AddSelectedInstanceAsync()
         {
             TspiotFormInput input = ReadInput();
+            RequireUnblockedRegistration(input.KktSerial.Trim());
             ValidationResult validation = TspiotInputValidator.ValidatePost(input);
             if (!ShowValidation(validation))
             {
@@ -751,6 +752,22 @@ namespace EsmTspiot.WinForms.Shared
 
             ApiResponse response = await _client.AddInstanceAsync(input.BaseUrl, addRequest);
             AppendResponse(response);
+
+            if (response.IsConnectionFailure)
+            {
+                KktInstanceDetails details = await _bulkWorkflow.ReadInstanceAfterAddAsync(
+                    input.BaseUrl, input.KktSerial.Trim(), 1, 1, HandleBulkProgress, System.Threading.CancellationToken.None);
+                if (details == null)
+                    throw new InvalidOperationException("Результат POST неизвестен. ЕСМ не подтвердил наличие экземпляра. Повторите поиск ККТ.");
+                if (details.HasCompleteRegistrationData && details.RegistrationData.KktSerial != input.KktSerial.Trim())
+                    throw new InvalidOperationException("После потери ответа на POST серийный номер в regData ЕСМ не совпадает с выбранной ККТ.");
+                HideServiceRecovery();
+                await RefreshInstancesAfterSuccessfulMutationAsync(input.BaseUrl);
+                string message = "Ответ на POST потерян. Чтение ЕСМ подтвердило наличие экземпляра " + input.KktSerial + ".";
+                AppendLog(message + "\r\n");
+                MessageBox.Show(this, message, "Проверка добавления", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
 
             if (!response.IsSuccess && ServiceRecoveryCommandBuilder.IsManualServiceRecoveryError(response.ResponseBody))
             {
@@ -863,6 +880,7 @@ namespace EsmTspiot.WinForms.Shared
         private async Task RegisterSelectedKktAsync()
         {
             TspiotFormInput input = ReadInput();
+            RequireUnblockedRegistration(input.KktSerial.Trim());
             ValidationResult validation = TspiotInputValidator.ValidatePut(input, _atolConfirmedCheckBox.Checked);
             if (!ShowValidation(validation))
             {
@@ -875,14 +893,24 @@ namespace EsmTspiot.WinForms.Shared
 
             ApiResponse response = await _client.RegisterInstanceAsync(input.BaseUrl, TspiotInputValidator.CreateRegisterRequest(input));
             AppendResponse(response);
-            if (response.IsSuccess)
+            bool confirmed = response.IsSuccess;
+            if (response.IsConnectionFailure)
+            {
+                BulkKktRegistrationResult result = await _bulkWorkflow.ConfirmRegistrationAfterPutAsync(
+                    input, true, BulkKktRegistrationStatus.Registered, 1, 1, HandleBulkProgress, System.Threading.CancellationToken.None);
+                AppendBulkResult(result);
+                confirmed = result.Status == BulkKktRegistrationStatus.Registered;
+                MessageBox.Show(this, result.FormatLogLine(), "Проверка регистрации", MessageBoxButtons.OK,
+                    confirmed ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+            }
+            else
+            {
+                ShowTspiotIdIfPresent(response);
+                ShowResultMessage(response);
+            }
+            if (confirmed)
             {
                 await RefreshInstancesAfterSuccessfulMutationAsync(input.BaseUrl);
-            }
-            ShowTspiotIdIfPresent(response);
-            ShowResultMessage(response);
-            if (response.IsSuccess)
-            {
                 _registrationSupportPending = true;
                 FinishRegistrationProcess();
             }
@@ -970,13 +998,8 @@ namespace EsmTspiot.WinForms.Shared
                 SequentialKktDiscovery sequentialDiscovery = scan.Sequential;
                 AppendBulkDiscovery(discovery);
 
-                IList<LmGatewayKkt> registered =
-                    await _lmGatewayPage
-                        .DiscoverRegisteredKktsForAutomaticPlanAsync(
-                            baseUrl,
-                            token);
                 _manualScan = scan;
-                FillDiscoveredKkts(scan, registered, false);
+                FillDiscoveredKkts(scan, false);
                 ShowWizardStage(2, "Регистрируем кассы в ЕСМ", "Каждая касса настраивается по очереди.");
                 Dictionary<string, BulkRegistrationWorkItem> workBySerial =
                     new Dictionary<string, BulkRegistrationWorkItem>(
@@ -989,7 +1012,7 @@ namespace EsmTspiot.WinForms.Shared
                     discovery.InitialResults,
                     registrationOutcome.Results);
                 IList<LmGatewayKkt> candidates = BuildCompleteSetupCandidates(
-                    registered,
+                    scan.Registered,
                     discovery,
                     workBySerial,
                     workOrdinalBySerial,
@@ -997,9 +1020,11 @@ namespace EsmTspiot.WinForms.Shared
                 if (candidates.Count == 0)
                 {
                     throw new InvalidOperationException(
+                        registrationOutcome.Results.Count > 0 ? registrationOutcome.Results[0].FormatLogLine() :
                         "Не найдено ни одной ККТ с корректными данными для полной настройки.");
                 }
 
+                int plannedRegistrationCount = discovery.Items.Count;
                 HashSet<string> attempted =
                     new HashSet<string>(StringComparer.Ordinal);
                 for (int index = 0; index < candidates.Count; index++)
@@ -1041,7 +1066,7 @@ namespace EsmTspiot.WinForms.Shared
                                         return _bulkWorkflow.ExecuteItemAsync(
                                             work,
                                             workOrdinalBySerial[serial],
-                                            discovery.Items.Count,
+                                            plannedRegistrationCount,
                                             HandleBulkProgress,
                                             registrationToken);
                                     },
@@ -1053,7 +1078,7 @@ namespace EsmTspiot.WinForms.Shared
                             itemResult = await _bulkWorkflow.ExecuteItemAsync(
                                 work,
                                 workOrdinalBySerial[serial],
-                                discovery.Items.Count,
+                                plannedRegistrationCount,
                                 HandleBulkProgress,
                                 token);
                         }
@@ -1077,10 +1102,16 @@ namespace EsmTspiot.WinForms.Shared
                     }
                     registrationOutcome.Results.Add(itemResult);
                     AppendBulkResult(itemResult);
+                    if (itemResult.Status == BulkKktRegistrationStatus.InspectionFailed)
+                    {
+                        BlockScannedKkt(itemResult);
+                        continue;
+                    }
                     SetManualRowStatus(serial,
                         itemResult.Status == BulkKktRegistrationStatus.Registered ||
                         itemResult.Status == BulkKktRegistrationStatus.RecoveredRegistration ||
-                        itemResult.Status == BulkKktRegistrationStatus.AlreadyExists ? "Зарегистрирована" : "Ошибка регистрации");
+                        itemResult.Status == BulkKktRegistrationStatus.AlreadyExists ? "Зарегистрирована" :
+                        itemResult.Status == BulkKktRegistrationStatus.UnknownWriteOutcome ? "Результат записи неизвестен" : "Ошибка регистрации");
                 }
                 AddUnattemptedBulkResults(
                     discovery,
@@ -1614,6 +1645,7 @@ namespace EsmTspiot.WinForms.Shared
                     status == BulkKktRegistrationStatus.InvalidData ||
                     status == BulkKktRegistrationStatus.AddFailed ||
                     status == BulkKktRegistrationStatus.RegistrationFailed ||
+                    status == BulkKktRegistrationStatus.UnknownWriteOutcome ||
                     status == BulkKktRegistrationStatus.Cancelled)
                 {
                     return true;

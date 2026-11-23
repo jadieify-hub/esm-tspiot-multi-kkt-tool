@@ -8,6 +8,8 @@ namespace EsmTspiot.WinForms.Shared
 {
     public sealed partial class LmGatewayPage
     {
+        private readonly Label _selectedServiceScopeLabel = new Label { AutoSize = true, Anchor = AnchorStyles.Left };
+
         private Form BuildServiceOperationsWindow()
         {
             var dialog = new Form { Text = "Служебные операции ЛМ ЧЗ", Name = "service-operations-window",
@@ -49,9 +51,15 @@ namespace EsmTspiot.WinForms.Shared
             _removeServiceButton.Click += async delegate { await ConfirmAndRemoveServiceAsync(); };
             _removeAllServicesButton.Click += async delegate { await ConfirmAndRemoveEverythingAsync(); };
             _cleanupButton.Click += async delegate { await ConfirmAndCleanupServiceAsync(); };
-            foreach (Button button in new[] { _bindButton, _removeServiceButton, _resetControllersButton, _removeAllServicesButton, _cleanupButton })
-                removal.Controls.Add(button);
-            advanced.Controls.Add(removal, 0, 2);
+            var selectedActions = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true };
+            selectedActions.Controls.Add(_selectedServiceScopeLabel);
+            foreach (Button button in new[] { _bindButton, _removeServiceButton, _cleanupButton })
+                selectedActions.Controls.Add(button);
+            advanced.Controls.Add(selectedActions, 0, 2);
+            removal.Controls.Add(new Label { Text = "Все созданные комплекты на этом ПК", AutoSize = true, Anchor = AnchorStyles.Left });
+            removal.Controls.Add(_resetControllersButton);
+            removal.Controls.Add(_removeAllServicesButton);
+            advanced.Controls.Add(removal, 0, 3);
             _serviceOperations.Dock = DockStyle.Fill;
             _serviceOperations.AutoScroll = true;
             _serviceOperations.Controls.Add(advanced);

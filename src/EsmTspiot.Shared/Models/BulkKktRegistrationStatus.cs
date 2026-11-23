@@ -9,6 +9,7 @@ namespace EsmTspiot.Shared.Models
         InvalidData,
         AddFailed,
         RegistrationFailed,
-        Cancelled
+        Cancelled,
+        UnknownWriteOutcome
     }
 }

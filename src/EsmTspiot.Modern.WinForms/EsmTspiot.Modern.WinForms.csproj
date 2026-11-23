@@ -37,6 +37,7 @@
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayPage.cs" Link="LmGatewayPage.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayPage.Layout.cs" Link="LmGatewayPage.Layout.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayPage.Wizard.cs" Link="LmGatewayPage.Wizard.cs" />
+    <Compile Include="..\EsmTspiot.WinForms.Shared\KktSelectionReport.cs" Link="KktSelectionReport.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayPage.Services.cs" Link="LmGatewayPage.Services.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayPage.Binding.cs" Link="LmGatewayPage.Binding.cs" />
     <Compile Include="..\EsmTspiot.WinForms.Shared\LmGatewayPage.DirectControllers.cs" Link="LmGatewayPage.DirectControllers.cs" />

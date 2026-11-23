@@ -12,6 +12,7 @@ public static class LmSetupDialogCheck
     {
         CheckExistingLocalPorts();
         CheckInstallerSelection();
+        CheckManualScopeAndMsiReplacement();
         Type type = typeof(LmGatewayPage).Assembly.GetType(
             "EsmTspiot.WinForms.Shared.LmSetupDialog", true);
         var kkts = new List<LmGatewayKkt> {
@@ -129,6 +130,39 @@ public static class LmSetupDialogCheck
             throw new Exception("Existing modules on this PC must reserve their API ports through loopback, LAN IP and local names.");
     }
 
+    private delegate bool ReplaceMsi(ref LocalModuleInstallerSelection current, Func<LocalModuleInstallerSelection> choose);
+
+    public static void CheckManualScopeAndMsiReplacement()
+    {
+        var targets = new List<DirectControllerAssignment> {
+            new DirectControllerAssignment { KktSerial = "001", KktInn = "7701234560", TargetLocalModulePort = 5995 },
+            new DirectControllerAssignment { KktSerial = "002", KktInn = "7701234560", TargetLocalModulePort = 5995 },
+            new DirectControllerAssignment { KktSerial = "003", KktInn = "1234567894", TargetLocalModuleAddress = "lm-server",
+                TargetLocalModulePort = 7995 }
+        };
+        string scope = (string)typeof(LmGatewayPage).GetMethod("DescribeManualControllerScope",
+            BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, new object[] { targets });
+        foreach (string expected in new[] { "ККТ: 3; ИНН: 2", "ККТ 001", "ККТ 002", "ККТ 003", "lm-server:7995" })
+            if (!scope.Contains(expected)) throw new Exception("Manual scope lacks " + expected);
+        Type picker = typeof(LmGatewayPage).Assembly.GetType(
+            "EsmTspiot.WinForms.Shared.LocalModuleInstallerPicker", true);
+        var replace = (ReplaceMsi)Delegate.CreateDelegate(typeof(ReplaceMsi),
+            picker.GetMethod("TryReplaceSelection", BindingFlags.Static | BindingFlags.NonPublic));
+        var remembered = new LocalModuleInstallerSelection { SourcePath = "verified.msi" };
+        var current = remembered;
+        if (replace(ref current, delegate { return null; }) || current != remembered)
+            throw new Exception("Cancelling a replacement must preserve the verified MSI.");
+        try
+        {
+            replace(ref current, delegate { throw new System.IO.InvalidDataException("invalid package"); });
+            throw new Exception("An invalid replacement MSI was accepted.");
+        }
+        catch (System.IO.InvalidDataException)
+        {
+            if (current != remembered) throw new Exception("An invalid candidate discarded the verified MSI.");
+        }
+    }
+
     public static void CheckInstallerSelection()
     {
         CheckInstallerRequirement();
@@ -181,6 +215,7 @@ public static class LmSetupDialogCheck
                 confirm.Invoke(null, new object[] { second, cancelChooser,
                     new Func<LocalModuleInstallerSelection, DialogResult>(delegate { return DialogResult.Retry; }) }) != null)
                 throw new Exception("Cancelling the MSI chooser must not authorize installation.");
+
             CheckInstallerDialog(second);
         }
         finally

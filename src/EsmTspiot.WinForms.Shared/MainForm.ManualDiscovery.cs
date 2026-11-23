@@ -32,6 +32,7 @@ namespace EsmTspiot.WinForms.Shared
         private sealed class KktCandidateScan
         {
             internal BulkRegistrationDiscovery Discovery;
+            internal IList<LmGatewayKkt> Registered;
             internal SequentialKktDiscovery Sequential;
             internal SequentialKktRegistrationCoordinator Coordinator;
         }
@@ -190,6 +191,23 @@ namespace EsmTspiot.WinForms.Shared
                     try { _organizations.Save(); }
                     catch (Exception error) { AppendLog("Название организации не сохранено: " + error.Message + "\r\n"); }
             }
+            var registered = new List<LmGatewayKkt>(
+                await _lmGatewayPage.DiscoverRegisteredKktsForAutomaticPlanAsync(baseUrl, cancellation));
+            foreach (LmGatewayKkt kkt in registered)
+            {
+                if (scan.Discovery.FindInspectionFailure(kkt.KktSerial) != null) continue;
+                foreach (DkktDeviceInfo physical in scan.Discovery.ObservedDevices)
+                {
+                    if (physical.KktSerial != kkt.KktSerial) continue;
+                    BulkKktRegistrationResult conflict = BulkKktRegistrationResult.CheckIdentity(
+                        physical.KktSerial, physical.FnSerial, physical.KktInn, kkt.KktSerial, kkt.FnSerial, kkt.KktInn);
+                    if (conflict != null) scan.Discovery.BlockRegistration(conflict);
+                }
+            }
+            foreach (BulkKktRegistrationResult result in scan.Discovery.InitialResults)
+                if (result.Status == BulkKktRegistrationStatus.InspectionFailed)
+                    registered.RemoveAll(kkt => kkt.KktSerial == result.KktSerial);
+            scan.Registered = registered;
             return scan;
         }
 
@@ -211,21 +229,14 @@ namespace EsmTspiot.WinForms.Shared
             _manualDiscoveryHint.Text = "Поочерёдный поиск ККТ. Закройте Frontol и тест драйвера.";
             KktCandidateScan scan = await DiscoverKktCandidatesAsync(
                 _baseUrlTextBox.Text.Trim(), _dkktPortTextBox.Text.Trim(), cancellation, true);
-            IList<LmGatewayKkt> registered = await _lmGatewayPage.DiscoverRegisteredKktsForAutomaticPlanAsync(
-                _baseUrlTextBox.Text.Trim(), cancellation);
+            AppendBulkDiscovery(scan.Discovery);
             _manualScan = scan;
-            FillDiscoveredKkts(scan, registered);
+            FillDiscoveredKkts(scan);
             UpdateWizardSelection();
         }
 
-        private void FillDiscoveredKkts(KktCandidateScan scan, IList<LmGatewayKkt> registered, bool preserveInputs = true)
+        private void FillDiscoveredKkts(KktCandidateScan scan, bool preserveInputs = true)
         {
-            foreach (LmGatewayKkt kkt in registered)
-                if (kkt.RegistrationConfirmed)
-                    foreach (DkktDeviceInfo physical in scan.Discovery.ObservedDevices)
-                        if (physical.KktSerial == kkt.KktSerial &&
-                            (physical.KktInn != kkt.KktInn || physical.FnSerial != kkt.FnSerial))
-                            throw new InvalidOperationException("ФН или ИНН физической ККТ " + kkt.KktSerial + " не совпадают с регистрацией ЕСМ.");
             var found = new SortedDictionary<string, TspiotFormInput>(StringComparer.Ordinal);
             _manualRegistered.Clear();
             foreach (BulkRegistrationWorkItem work in scan.Discovery.Items)
@@ -237,18 +248,22 @@ namespace EsmTspiot.WinForms.Shared
                 { input.Port = previous.Port; input.SoftPort = previous.SoftPort; }
                 found[input.KktSerial] = input;
             }
-            foreach (LmGatewayKkt kkt in registered)
+            foreach (LmGatewayKkt kkt in scan.Registered)
             {
                 if (!kkt.RegistrationConfirmed) continue;
-                TspiotFormInput physical;
-                if (found.TryGetValue(kkt.KktSerial, out physical) &&
-                    (physical.KktInn != kkt.KktInn || physical.FnSerial != kkt.FnSerial))
-                    throw new InvalidOperationException("ФН или ИНН физической ККТ " + kkt.KktSerial + " не совпадают с регистрацией ЕСМ.");
                 found[kkt.KktSerial] = new TspiotFormInput { BaseUrl = _baseUrlTextBox.Text.Trim(),
                     DkktPort = _dkktPortTextBox.Text.Trim(), KktSerial = kkt.KktSerial,
                     FnSerial = kkt.FnSerial, KktInn = kkt.KktInn, Port = kkt.Port, SoftPort = kkt.SoftPort };
                 _manualRegistered.Add(kkt.KktSerial);
                 RememberWizardKkt(kkt);
+            }
+            foreach (DkktDeviceInfo physical in scan.Discovery.ObservedDevices)
+            {
+                string serial = physical.KktSerial;
+                if (scan.Discovery.FindInspectionFailure(serial) == null) continue;
+                found[serial] = new TspiotFormInput { BaseUrl = _baseUrlTextBox.Text.Trim(), DkktPort = _dkktPortTextBox.Text.Trim(),
+                    KktSerial = serial, FnSerial = physical.FnSerial, KktInn = physical.KktInn };
+                ClearBlockedWizardKkt(serial);
             }
             foreach (string serial in new List<string>(_wizardKnownKkts.Keys))
                 if (!_manualRegistered.Contains(serial))
@@ -261,10 +276,11 @@ namespace EsmTspiot.WinForms.Shared
                 {
                     _manualInputs[pair.Key] = pair.Value;
                     SequentialKktRegistrationTarget target = scan.Sequential == null ? null : scan.Sequential.FindBySerial(pair.Key);
+                    BulkKktRegistrationResult block = scan.Discovery.FindInspectionFailure(pair.Key);
                     int row = _discoveredKktsGrid.Rows.Add(pair.Key, pair.Value.FnSerial, pair.Value.KktInn,
                         target == null ? "—" : target.Port.PortName, pair.Value.Port, pair.Value.SoftPort,
-                        _manualRegistered.Contains(pair.Key) ? "Зарегистрирована" : ManualPortsAreFixed(pair.Key) ? "Экземпляр создан" : "Не зарегистрирована",
-                        _wizardKktResults.ContainsKey(pair.Key) ? _wizardKktResults[pair.Key] : "Не настраивался");
+                        block != null ? block.Details : _manualRegistered.Contains(pair.Key) ? "Зарегистрирована" : ManualPortsAreFixed(pair.Key) ? "Экземпляр создан" : "Не зарегистрирована",
+                        block != null ? "Настройка заблокирована" : _wizardKktResults.ContainsKey(pair.Key) ? _wizardKktResults[pair.Key] : "Не настраивался");
                     _discoveredKktsGrid.Rows[row].Tag = pair.Key;
                     string organization = _organizations.GetName(pair.Key, pair.Value.KktInn);
                     OperatorTheme.SetOrganizationCell(_discoveredKktsGrid.Rows[row], organization);
@@ -290,9 +306,37 @@ namespace EsmTspiot.WinForms.Shared
             }
         }
 
+        private BulkKktRegistrationResult ManualRegistrationBlock(string serial)
+        {
+            return _manualScan == null ? null : _manualScan.Discovery.FindInspectionFailure(serial);
+        }
+
+        private void ClearBlockedWizardKkt(string serial)
+        {
+            _manualRegistered.Remove(serial);
+            _wizardKnownKkts.Remove(serial);
+            _wizardKktResults.Remove(serial);
+            _wizardAutomaticPending.RemoveAll(kkt => kkt.KktSerial == serial);
+            if (_wizardPending.Exists(kkt => kkt.KktSerial == serial)) ClearWizardPending();
+        }
+
+        private void BlockScannedKkt(BulkKktRegistrationResult result)
+        {
+            if (_manualScan != null) _manualScan.Discovery.BlockRegistration(result);
+            ClearBlockedWizardKkt(result.KktSerial);
+            SetManualRowStatus(result.KktSerial, result.Details);
+            SetWizardLmRowStatus(result.KktSerial, "Настройка заблокирована");
+        }
+
+        private void RequireUnblockedRegistration(string serial)
+        {
+            BulkKktRegistrationResult block = ManualRegistrationBlock(serial);
+            if (block != null) throw new InvalidOperationException(block.FormatLogLine() + " Повторите поиск после проверки ККТ.");
+        }
+
         private bool ManualPortsAreFixed(string serial)
         {
-            if (_manualRegistered.Contains(serial)) return true;
+            if (_manualRegistered.Contains(serial) || ManualRegistrationBlock(serial) != null) return true;
             if (_manualScan != null)
                 foreach (BulkRegistrationWorkItem work in _manualScan.Discovery.Items)
                     if (work.Item.Input.KktSerial == serial && !work.RequiresAdd) return true;
@@ -329,6 +373,7 @@ namespace EsmTspiot.WinForms.Shared
             TspiotFormInput input;
             if (_manualSelectedSerial == null || !_manualInputs.TryGetValue(_manualSelectedSerial, out input))
                 throw new InvalidOperationException("Нажмите «Найти ККТ» и выберите строку. Для ввода руками доступны отдельные операции.");
+            RequireUnblockedRegistration(input.KktSerial);
             if (_kktSerialTextBox.Text.Trim() != input.KktSerial || _fnSerialTextBox.Text.Trim() != input.FnSerial ||
                 _kktInnTextBox.Text.Trim() != input.KktInn)
                 throw new InvalidOperationException("Данные формы отличаются от найденной физической ККТ. Повторите поиск.");
@@ -347,7 +392,10 @@ namespace EsmTspiot.WinForms.Shared
             if (!fresh.IsValid) throw new InvalidOperationException(fresh.ErrorMessage);
             foreach (BulkKktRegistrationResult result in fresh.InitialResults)
                 if (result.Status != BulkKktRegistrationStatus.AlreadyExists)
+                {
+                    if (result.Status == BulkKktRegistrationStatus.InspectionFailed) BlockScannedKkt(result);
                     throw new InvalidOperationException(result.FormatLogLine());
+                }
             foreach (BulkRegistrationWorkItem work in fresh.Items)
             {
                 if (work.Item.Input.KktSerial != input.KktSerial) throw new InvalidOperationException("План содержит постороннюю ККТ.");
@@ -380,6 +428,9 @@ namespace EsmTspiot.WinForms.Shared
                     throw new InvalidOperationException("Для выбранной ККТ нет подтверждённой VCOM-карты. Повторите поиск либо используйте отдельные ручные операции.");
                 }
                 AppendBulkResult(result);
+                if (result.Status == BulkKktRegistrationStatus.InspectionFailed) BlockScannedKkt(result);
+                if (result.Status == BulkKktRegistrationStatus.UnknownWriteOutcome)
+                    SetManualRowStatus(result.KktSerial, "Результат записи неизвестен");
                 registeredNow |= result.Status == BulkKktRegistrationStatus.Registered ||
                     result.Status == BulkKktRegistrationStatus.RecoveredRegistration;
                 if (result.Status != BulkKktRegistrationStatus.Registered && result.Status != BulkKktRegistrationStatus.RecoveredRegistration &&
@@ -389,8 +440,15 @@ namespace EsmTspiot.WinForms.Shared
             }
             IList<LmGatewayKkt> registered = await _lmGatewayPage.DiscoverRegisteredKktsForAutomaticPlanAsync(input.BaseUrl, cancellation);
             foreach (LmGatewayKkt kkt in registered)
-                if (kkt.RegistrationConfirmed && kkt.KktSerial == input.KktSerial && kkt.KktInn == input.KktInn && kkt.FnSerial == input.FnSerial)
+                if (kkt.RegistrationConfirmed && kkt.KktSerial == input.KktSerial)
                 {
+                    BulkKktRegistrationResult conflict = BulkKktRegistrationResult.CheckIdentity(input.KktSerial, input.FnSerial,
+                        input.KktInn, kkt.KktSerial, kkt.FnSerial, kkt.KktInn);
+                    if (conflict != null)
+                    {
+                        BlockScannedKkt(conflict);
+                        throw new InvalidOperationException(conflict.FormatLogLine());
+                    }
                     _manualRegistered.Add(kkt.KktSerial);
                     RememberWizardKkt(kkt);
                     _portTextBox.ReadOnly = _softPortTextBox.ReadOnly = true;

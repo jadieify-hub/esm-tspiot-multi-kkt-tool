@@ -44,6 +44,15 @@ namespace EsmTspiot.WinForms.Shared
             }
         }
 
+        internal static bool TryReplaceSelection(ref LocalModuleInstallerSelection current,
+            Func<LocalModuleInstallerSelection> choose)
+        {
+            LocalModuleInstallerSelection candidate = choose();
+            if (candidate == null) return false;
+            current = candidate;
+            return true;
+        }
+
         internal static LocalModuleInstallerSelection SelectAndInspect(
             IWin32Window owner)
         {

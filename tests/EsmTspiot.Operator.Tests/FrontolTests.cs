@@ -174,6 +174,11 @@ namespace EsmTspiot.Operator.Tests
                     "\",\"fnSerial\":\"FN-" + id + "\",\"kktInn\":\"INN-" + id + "\"}}");
             }
 
+            public Task<ApiResponse> InitializeLmAsync(string baseUrl, string id, CancellationToken cancellationToken)
+            {
+                throw new InvalidOperationException("This workflow must not initialize the local module.");
+            }
+
             public Task<string> CheckGismtAsync(string baseUrl, string instancePort, string softPort,
                 string clientChecksum, CancellationToken token) { throw new InvalidOperationException(); }
 
