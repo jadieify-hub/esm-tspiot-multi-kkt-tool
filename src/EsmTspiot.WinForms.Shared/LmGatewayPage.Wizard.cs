@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Drawing;
 using System.Text;
 using System.Threading;
@@ -23,16 +22,7 @@ namespace EsmTspiot.WinForms.Shared
         private readonly TextBox _diagnosticsTextBox = new TextBox();
         private readonly Label _selectionSummary = new Label { AutoSize = true, Margin = new Padding(0, 4, 0, 4) };
         private readonly KktSelectionReport _selectionReport;
-        private readonly Dictionary<string, CancellationTokenSource> _lmStatusWatches =
-            new Dictionary<string, CancellationTokenSource>(StringComparer.Ordinal);
         internal event Action KktSelectionChanged;
-
-        private void CancelLmStatusWatches()
-        {
-            var sources = new List<CancellationTokenSource>(_lmStatusWatches.Values);
-            _lmStatusWatches.Clear();
-            foreach (var source in sources) source.Cancel();
-        }
 
         internal LmGatewayKkt SelectedKkt
         {
@@ -64,7 +54,6 @@ namespace EsmTspiot.WinForms.Shared
 
         internal void InvalidateDestination()
         {
-            CancelLmStatusWatches();
             _session.ReplaceDiscovery(null);
             _currentDiscovery = null;
             _hasLoaded = false;
@@ -127,85 +116,20 @@ namespace EsmTspiot.WinForms.Shared
                 title, MessageBoxButtons.YesNo, MessageBoxIcon.Question,
                 MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
 
-            LmGatewayKkt watchKkt = null;
-            string baseUrl = null;
             await RunOperationAsync(async delegate(CancellationToken cancellation)
             {
                 _diagnosticsTextBox.Visible = false;
-                baseUrl = ValidateAndReadBaseUrl();
+                string baseUrl = ValidateAndReadBaseUrl();
                 LmGatewayKkt selected = await ReadDiagnosticKktAsync(baseUrl, kkt.KktSerial, cancellation);
                 ApiResponse response = await _apiClient.InitializeLmAsync(baseUrl, selected.InstanceId, cancellation);
-                string result;
-                bool alreadyRunning = response.StatusCode == 409 &&
-                    TspiotErrorDecoder.ContainsErrorCode(response.ResponseBody, 2073);
-                if (alreadyRunning)
-                    result = "Инициализация уже идёт";
-                else if (response.IsSuccess)
-                    result = "ЕСМ принял запрос. Состояние ЛМ обновляется автоматически.";
-                else if (response.IsConnectionFailure)
-                    result = "Ответ ЕСМ не получен. Перед повтором проверьте состояние ЛМ диагностикой.";
-                else
-                {
-                    result = "ЕСМ не выполнил запрос (HTTP " + response.StatusCode + ").";
-                    if (response.StatusCode == 404 || response.StatusCode == 405)
-                        result += " Проверьте ID экземпляра и версию ЕСМ. Метод появился в 1.6.4.3.";
-                    result += TspiotErrorDecoder.DescribeResponseBody(response.ResponseBody);
-                }
-
+                string result = await _readbackWorkflow.ReadInitializationResultAsync(
+                    baseUrl, selected, response, cancellation);
+                cancellation.ThrowIfCancellationRequested();
                 string report = title + " · ККТ " + selected.KktSerial + Environment.NewLine + result;
-                if (response.IsSuccess || alreadyRunning) watchKkt = selected;
                 _selectionReport.Record(selected.KktSerial, title, result, report);
                 _statusLabel.Text = "ККТ " + selected.KktSerial + " · " + result;
                 Log(report + Environment.NewLine);
             }, title + " · ККТ " + kkt.KktSerial + "…");
-            if (watchKkt != null && !IsDisposed && !Disposing)
-                await WatchLmStatusAsync(baseUrl, watchKkt);
-        }
-
-        private async Task WatchLmStatusAsync(string baseUrl, LmGatewayKkt kkt)
-        {
-            string serial = kkt.KktSerial;
-            if (_lmStatusWatches.ContainsKey(serial)) return;
-            using (var source = new CancellationTokenSource())
-            {
-                _lmStatusWatches.Add(serial, source);
-                try
-                {
-                    LmGatewayTarget expected;
-                    _appliedLmTargets.TryGetValue(serial, out expected);
-                    string previous = null;
-                    await _readbackWorkflow.WatchInitializationAsync(baseUrl, kkt, expected,
-                        TimeSpan.FromSeconds(15), delegate(LmGatewayReadbackObservation observation)
-                        {
-                            string status = observation.IsVerified && !string.IsNullOrWhiteSpace(observation.LmStatus)
-                                ? LmContourReadbackPolicy.DescribeStatus(observation.LmStatus) : observation.Details;
-                            if (observation.IsAvailable && !observation.IdentityMatches)
-                                status += " Автообновление остановлено.";
-                            if (status == previous) return;
-                            previous = status;
-                            string report = "ККТ " + serial + " · Состояние ЛМ: " + status;
-                            _selectionReport.Record(serial, "Состояние ЛМ", status, report);
-                            if (!_running && SelectedKkt != null && SelectedKkt.KktSerial == serial)
-                                _statusLabel.Text = report;
-                            Log(report + Environment.NewLine);
-                        }, source.Token);
-                }
-                catch (OperationCanceledException)
-                {
-                    if (!source.IsCancellationRequested)
-                        Log("ККТ " + serial + " · Истекло время ожидания проверки ЛМ." + Environment.NewLine);
-                }
-                catch (Exception ex)
-                {
-                    string message = "Автообновление остановлено: " + SensitiveDataMasker.Mask(ex.Message);
-                    _selectionReport.Record(serial, "Состояние ЛМ", message, message);
-                    Log("ККТ " + serial + " · " + message + Environment.NewLine);
-                }
-                finally
-                {
-                    if (!source.IsCancellationRequested) _lmStatusWatches.Remove(serial);
-                }
-            }
         }
 
         private Task CheckGismtForKktAsync(string serial)

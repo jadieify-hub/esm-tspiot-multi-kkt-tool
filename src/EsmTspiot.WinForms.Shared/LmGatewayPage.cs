@@ -111,7 +111,6 @@ namespace EsmTspiot.WinForms.Shared
                 if (_running || _hostBusy)
                     throw new InvalidOperationException(
                         "Режим FMU-API нельзя менять во время операции.");
-                CancelLmStatusWatches();
                 _fmuApiMode = value;
                 _hasLoaded = false;
                 UpdateOfficialControllerStatus();
@@ -159,7 +158,6 @@ namespace EsmTspiot.WinForms.Shared
         {
             if (disposing)
             {
-                CancelLmStatusWatches();
                 if (_cancellation != null)
                 {
                     _cancellation.Cancel();

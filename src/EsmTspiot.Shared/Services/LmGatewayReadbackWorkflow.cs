@@ -183,33 +183,31 @@ namespace EsmTspiot.Shared.Services
             return observation;
         }
 
-        public async Task WatchInitializationAsync(
-            string baseUrl, LmGatewayKkt kkt, LmGatewayTarget expected, TimeSpan interval,
-            Action<LmGatewayReadbackObservation> report, CancellationToken cancellation)
+        public async Task<string> ReadInitializationResultAsync(string baseUrl, LmGatewayKkt kkt,
+            ApiResponse response, CancellationToken cancellation)
         {
-            while (true)
+            if (response == null || response.IsConnectionFailure)
+                return "Ответ ЕСМ не получен. Перед повтором проверьте состояние ЛМ диагностикой.";
+            if (response.StatusCode == 409 && TspiotErrorDecoder.ContainsErrorCode(response.ResponseBody, 2073))
+                return "Инициализация уже идёт";
+            if (!response.IsSuccess)
             {
-                await Task.Delay(interval, cancellation);
-                LmGatewayReadbackObservation observation;
-                try
-                {
-                    observation = await ReadAsync(baseUrl, kkt,
-                        expected == null ? null : expected.Address,
-                        expected == null ? null : expected.Port.ToString(CultureInfo.InvariantCulture),
-                        cancellation);
-                }
-                catch (OperationCanceledException)
-                {
-                    cancellation.ThrowIfCancellationRequested();
-                    observation = CreateObservation(kkt);
-                    observation.Details = "ЕСМ не ответил вовремя. Проверка будет повторена.";
-                }
+                string error = "ЕСМ не выполнил запрос (HTTP " + response.StatusCode + ").";
+                if (response.StatusCode == 404 || response.StatusCode == 405)
+                    error += " Проверьте ID экземпляра и версию ЕСМ. Метод появился в 1.6.4.3.";
+                return error + TspiotErrorDecoder.DescribeResponseBody(response.ResponseBody);
+            }
+
+            const string accepted = "ЕСМ принял запрос. ";
+            try
+            {
+                var observation = await ReadAsync(baseUrl, kkt, null, null, cancellation).ConfigureAwait(false);
+                return accepted + observation.Details;
+            }
+            catch (OperationCanceledException)
+            {
                 cancellation.ThrowIfCancellationRequested();
-                report(observation);
-                if ((observation.IsAvailable && !observation.IdentityMatches) ||
-                    (observation.IsVerified && string.Equals(observation.LmStatus, "ready",
-                        StringComparison.OrdinalIgnoreCase)))
-                    return;
+                return accepted + "Время ожидания ответа о состоянии ЛМ истекло.";
             }
         }
 

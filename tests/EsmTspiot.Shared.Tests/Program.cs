@@ -248,7 +248,7 @@ namespace EsmTspiot.Shared.Tests
             Run("FMU preparation skips controller and ESM binding stages", FmuPreparationSkipsControllerAndBindingStages);
             Run("FMU preparation requires registration and local modules", FmuPreparationRequiresRegistrationAndLocalModules);
             Run("FMU preparation honors cancellation after local modules", FmuPreparationHonorsCancellationAfterLocalModules);
-            Run("LM initialization watch reads until verified Ready", LmInitializationWatchReadsUntilReady);
+            Run("LM initialization reads the status once", LmInitializationReadsStatusOnce);
             Run("LM contour read-back policy classifies ESM observations", LmContourReadbackPolicyClassifiesEsmObservations);
 #endif
             Run("LM automatic setup reports incomplete controller configuration", LmAutomaticSetupReportsIncompleteControllerConfiguration);
@@ -4022,27 +4022,23 @@ namespace EsmTspiot.Shared.Tests
             AssertContains(observation.Details, "Адрес в настройках MultiKKT: " + item.Input.ExpectedLmAddress);
         }
 
-        private static void LmInitializationWatchReadsUntilReady()
+        private static void LmInitializationReadsStatusOnce()
         {
             var api = new FakeTspiotApiClient();
             var kkt = CreateValidLmBindingPlan(1).Items[0].Kkt;
-            string ready = CreateLmInfoJson(kkt.KktSerial, kkt.KktInn, "127.0.0.1", 5995);
-            api.LmInfoResponses.Enqueue(Success(ready.Replace("ready", "initialization")));
-            api.LmInfoResponses.Enqueue(Success(ready.Replace("ready", "Ready")));
-            var seen = new List<string>();
-            using (var limit = new CancellationTokenSource(TimeSpan.FromSeconds(3)))
-            {
-                new LmGatewayReadbackWorkflow(api).WatchInitializationAsync(
-                    "http://127.0.0.1:51077", kkt, null, TimeSpan.FromMilliseconds(1),
-                    delegate(LmGatewayReadbackObservation observed)
-                    {
-                        seen.Add(observed.LmStatus);
-                        AssertFalse(observed.Details.Contains("для сверки не задан"),
-                            "An optional expected target should not produce an operator warning.");
-                    }, limit.Token).GetAwaiter().GetResult();
-            }
-            AssertEqual("initialization,Ready", string.Join(",", seen.ToArray()),
-                "Readiness should be reported only after the selected instance reports it.");
+            var workflow = new LmGatewayReadbackWorkflow(api);
+            const string url = "http://127.0.0.1:51077";
+            string info = CreateLmInfoJson(kkt.KktSerial, kkt.KktInn, "127.0.0.1", 5995);
+            api.LmInfoResponses.Enqueue(Success(info.Replace("ready", "initialization")));
+            api.LmInfoResponses.Enqueue(Success(info));
+            string status = workflow.ReadInitializationResultAsync(url, kkt, Success("{}"),
+                CancellationToken.None).GetAwaiter().GetResult();
+            AssertContains(status, "Идёт инициализация (initialization)");
+            AssertEqual(1, api.LmInfoCalls, "Accepted initialization reads once and returns before Ready.");
+            status = workflow.ReadInitializationResultAsync(url, kkt,
+                Failure(409, "{\"error\":{\"code\":2073}}"), CancellationToken.None).GetAwaiter().GetResult();
+            AssertEqual("Инициализация уже идёт", status, "2073 confirms initialization directly.");
+            AssertEqual(1, api.LmInfoCalls, "2073 should not trigger any status requests.");
         }
 
         private static string CreateLmInfoJson(
