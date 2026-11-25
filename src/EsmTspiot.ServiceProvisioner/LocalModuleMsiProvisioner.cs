@@ -102,9 +102,9 @@ namespace EsmTspiot.ServiceProvisioner
             {
                 LocalModuleMsiObservedState observed =
                     RequireUnconflicted(request, manifest, context);
+                bool installProduct = manifest == null && !observed.ProductPresent;
                 if (manifest == null)
                 {
-                    bool installProduct = !observed.ProductPresent;
                     if (observed.ProductPresent)
                     {
                         if (request.CloneOrdinal != 0 ||
@@ -169,7 +169,7 @@ namespace EsmTspiot.ServiceProvisioner
                     CompleteJournal(request, manifest, context);
                     return Result(request,
                         LmServiceProvisioningStatus.Succeeded,
-                        "Локальный модуль уже настроен и запущен.",
+                        installProduct ? "ЛМ установлен и запущен." : "Использован ранее установленный ЛМ.",
                         manifest.ManifestSha256);
                 }
                 RequireInstalledShape(observed);
@@ -211,7 +211,7 @@ namespace EsmTspiot.ServiceProvisioner
                 CompleteJournal(request, manifest, context);
                 return Result(request,
                     LmServiceProvisioningStatus.Succeeded,
-                    "Локальный модуль установлен и запущен; автозапуск служб включён.",
+                    installProduct ? "ЛМ установлен и запущен." : "Использован ранее установленный ЛМ.",
                     manifest.ManifestSha256);
             }
             catch (Exception exception)

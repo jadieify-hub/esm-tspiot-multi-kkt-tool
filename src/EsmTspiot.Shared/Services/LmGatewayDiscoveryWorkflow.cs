@@ -33,6 +33,7 @@ namespace EsmTspiot.Shared.Services
             ApiResponse instancesResponse = await _apiClient.GetInstancesAsync(
                 baseUrl,
                 cancellationToken).ConfigureAwait(false);
+            discovery.EsmReachable = ApiResponse.HasHttpResponse(instancesResponse);
             if (instancesResponse == null || !instancesResponse.IsSuccess)
             {
                 discovery.ErrorMessage = "Не удалось получить список экземпляров ККТ из ЕСМ.";
@@ -58,6 +59,7 @@ namespace EsmTspiot.Shared.Services
                     baseUrl,
                     instanceId,
                     cancellationToken).ConfigureAwait(false);
+                discovery.EsmReachable = ApiResponse.HasHttpResponse(detailResponse);
                 if (detailResponse == null || !detailResponse.IsSuccess)
                 {
                     AddIssue(discovery, instance, "Не удалось получить данные экземпляра ККТ из ЕСМ. " +

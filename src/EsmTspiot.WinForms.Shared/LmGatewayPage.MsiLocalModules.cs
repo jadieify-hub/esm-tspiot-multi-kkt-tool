@@ -27,9 +27,6 @@ namespace EsmTspiot.WinForms.Shared
 
         internal DirectControllerSetupOutcome Controllers { get; set; }
         internal bool FmuApiMode { get; set; }
-        internal bool LocalModulesDeferred { get; set; }
-        internal int LocalModulesReady { get; set; }
-        internal int LocalModulesFailed { get; set; }
         internal int EsmVerifiedCount { get; set; }
         internal int EsmLocalModulePendingCount { get; set; }
         internal int EsmAttentionCount { get; set; }
@@ -92,11 +89,6 @@ namespace EsmTspiot.WinForms.Shared
             StringBuilder text = new StringBuilder();
             if (Cancelled) text.Append("Операция остановлена. Подтверждённые результаты сохранены. ");
             if (FmuApiMode) text.Append("Подготовка FMU-API. ");
-            text.Append("ЛМ установлены/учтены: " +
-                LocalModulesReady.ToString(CultureInfo.InvariantCulture) +
-                "; ЛМ отложены/с ошибкой: " +
-                LocalModulesFailed.ToString(CultureInfo.InvariantCulture) +
-                ". ");
             if (FmuApiMode)
             {
                 text.Append("Контроллеры, привязка и проверка привязки ЕСМ " +
@@ -114,7 +106,7 @@ namespace EsmTspiot.WinForms.Shared
             if (!Complete && !string.IsNullOrEmpty(IncompleteReason))
                 text.Append((FmuApiMode
                         ? " Подготовка не завершена: "
-                        : " Контур не завершён: ") + IncompleteReason + ".");
+                        : " Настройка не завершена: ") + IncompleteReason + ".");
             for (int index = 0; index < LocalModuleLines.Count; index++)
                 text.Append("\r\n" + LocalModuleLines[index]);
             for (int index = 0; index < EsmLines.Count; index++)
@@ -489,8 +481,6 @@ namespace EsmTspiot.WinForms.Shared
             foreach (LmGatewayKkt kkt in localLmKkts) localInns.Add(kkt.KktInn);
             foreach (LmGatewayKkt kkt in registeredKkts)
                 if (!localInns.Contains(kkt.KktInn)) outcome.RemoteModuleInns.Add(kkt.KktInn);
-            _lastAutomaticLocalModulesReady = 0;
-            _lastAutomaticLocalModulesFailed = 0;
             _lastAutomaticLocalModuleLines.Clear();
             _lastMsiItemResults.Clear();
             LocalModuleMsiOperatorInventorySnapshot inventory = localLmKkts.Count == 0
@@ -575,33 +565,20 @@ namespace EsmTspiot.WinForms.Shared
             // Отложил оператор — это одно, а ЛМ не встал — совсем другое.
             // Раньше любая ошибка ЛМ печаталась как «отложена оператором»,
             // и настоящая причина терялась.
-            outcome.LocalModulesReady = _lastAutomaticLocalModulesReady;
-            outcome.LocalModulesFailed = Math.Max(
-                outcome.LocalModulesFailed,
-                _lastAutomaticLocalModulesFailed);
             outcome.Complete = coordinated != null && coordinated.Complete;
             outcome.IncompleteReason = outcome.Cancelled ? "операция остановлена; незавершённые этапы можно повторить"
                 : coordinated.IncompleteReason;
-            foreach (LocalModuleMsiProvisioningItemResult item in _lastMsiItemResults.Values)
-                if (item.Status == LmServiceProvisioningStatus.Cancelled) outcome.LocalModulesDeferred = true;
             outcome.RecordKktStates(registeredKkts, _lastMsiItemResults,
                 controllers == null ? new Dictionary<string, LmGatewayBindingStatus>() : controllers.BindingStates);
             for (int index = 0;
                 index < _lastAutomaticLocalModuleLines.Count;
                 index++)
                 outcome.LocalModuleLines.Add(_lastAutomaticLocalModuleLines[index]);
-            if (outcome.LocalModulesDeferred)
-                outcome.LocalModuleLines.Add(
-                    "ЛМ ЧЗ: установка отложена оператором или MSI не выбран; " +
-                    (fmuApiMode
-                        ? "подготовка без ЛМ не считается завершённой."
-                        : "контур без ЛМ не считается завершённым."));
-            else if (outcome.LocalModulesFailed > 0)
-                outcome.LocalModuleLines.Add(
-                    "ЛМ ЧЗ: часть модулей не готова; причина указана выше " +
-                    "в строке по этому ИНН.");
-            Log("Готовность и инициализация ЛМ ЧЗ не проверяются при настройке. " +
-                "Проверка по ЕСМ доступна отдельно на вкладке «Обзор касс».\r\n");
+            foreach (string inn in outcome.RemoteModuleInns)
+                outcome.LocalModuleLines.Add("ИНН " + inn + ": выбран существующий ЛМ ЧЗ.");
+            foreach (var assignment in plan.Assignments)
+                if (!_lastMsiItemResults.ContainsKey(assignment.Inn))
+                    outcome.LocalModuleLines.Add("ИНН " + assignment.Inn + ": результат установки ЛМ не получен.");
             string completionStatus = outcome.Cancelled ? "Настройка остановлена. Подтверждённые действия сохранены." : outcome.Complete
                 ? fmuApiMode
                     ? "Подготовка FMU-API завершена: ККТ зарегистрированы, размещение ЛМ ЧЗ учтено. " +
@@ -612,7 +589,7 @@ namespace EsmTspiot.WinForms.Shared
                     : "Настройка завершена частично: ") +
                     outcome.IncompleteReason + ". Проверьте журнал.";
             _statusLabel.Text = completionStatus;
-            Log("=== Итог полного автомата ===\r\n" +
+            Log("=== Результат автоматической настройки ===\r\n" +
                 outcome.FormatSummary() + "\r\n");
 
             // Таблица на этой вкладке держала снимок, снятый до прогона:
@@ -696,11 +673,12 @@ namespace EsmTspiot.WinForms.Shared
                     MessageBoxIcon.Warning,
                     MessageBoxDefaultButton.Button2) != DialogResult.Yes)
             {
-                Log("Установка ЛМ ЧЗ отложена оператором.\r\n");
-                _lastAutomaticLocalModulesFailed = plan.Assignments.Count;
                 foreach (LocalModuleMsiAssignment assignment in plan.Assignments)
-                    _lastMsiItemResults[assignment.Inn] = new LocalModuleMsiProvisioningItemResult {
+                {
+                    var item = new LocalModuleMsiProvisioningItemResult {
                         Inn = assignment.Inn, Status = LmServiceProvisioningStatus.Cancelled };
+                    RecordLocalModuleResult(plan, item);
+                }
                 return false;
             }
 
@@ -724,16 +702,11 @@ namespace EsmTspiot.WinForms.Shared
             {
                 LocalModuleMsiProvisioningItemResult item =
                     result.LocalModuleMsiItems[index];
-                _lastMsiItemResults[item.Inn] = item;
+                RecordLocalModuleResult(plan, item);
                 bool ready = item.Status ==
                     LmServiceProvisioningStatus.Succeeded;
                 if (ready) succeeded++; else failed++;
-                string line = DescribeLocalModuleResult(plan, item, ready);
-                _lastAutomaticLocalModuleLines.Add(line);
-                Log(line + "\r\n");
             }
-            _lastAutomaticLocalModulesReady = succeeded;
-            _lastAutomaticLocalModulesFailed = failed;
             return failed == 0 && succeeded == plan.Assignments.Count;
         }
 

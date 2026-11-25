@@ -61,41 +61,36 @@ namespace EsmTspiot.Shared.Services
                 ? string.Empty
                 : (observation.KktSerial ?? string.Empty).Trim();
             string prefix = "ККТ " + serial + ": ";
-            LmContourReadbackState state = Classify(observation);
-            if (state == LmContourReadbackState.Verified)
+            if (observation == null) return prefix + "Нет ответа ЕСМ.";
+            return prefix + (observation.IsVerified ? "привязка подтверждена ЕСМ. " : string.Empty) +
+                (string.IsNullOrWhiteSpace(observation.Details)
+                ? FormatModule(observation) : observation.Details);
+        }
+
+        internal static string FormatModule(LmGatewayReadbackObservation observation, bool labelAddress = false)
+        {
+            string status = DescribeStatus(observation.LmStatus);
+            string module = "ЛМ ЧЗ";
+            if (!string.IsNullOrEmpty(observation.LmVersion)) module += " " + observation.LmVersion;
+            if (!string.IsNullOrEmpty(observation.LmAddress))
+                module += (labelAddress ? " · Адрес в ЕСМ: " : " · ") + observation.LmAddress + ":" + observation.LmPort;
+            return module + " · " + status;
+        }
+
+        public static string DescribeStatus(string status)
+        {
+            string value = (status ?? string.Empty).Trim();
+            switch (value.ToLowerInvariant())
             {
-                string status = (observation.LmStatus ?? string.Empty).Trim();
-                bool endpointDiffers = observation.EndpointMatches.HasValue &&
-                    !observation.EndpointMatches.Value;
-                return prefix + "привязка подтверждена ЕСМ" +
-                    (status.Length == 0 ? string.Empty : "; ЛМ: " + status) +
-                    "." + (endpointDiffers
-                        ? " ЕСМ показывает адрес ЛМ " + observation.LmAddress +
-                            ":" + observation.LmPort +
-                            " — это его модуль по умолчанию; фактическую " +
-                            "связку он ведёт через контроллер, ошибкой это " +
-                            "не является."
-                        : string.Empty);
+                case "initialization": return "Идёт инициализация (" + value + ")";
+                case "initialization_failed": return "Ошибка инициализации (" + value + ")";
+                case "not_initialized": return "ЛМ не инициализирован (" + value + ")";
+                case "not_configured": return "ЛМ не настроен (" + value + ")";
+                case "ready": return "Готов к работе (" + value + ")";
+                case "": return "ЕСМ не сообщил состояние";
+                default: return value.StartsWith("error", StringComparison.OrdinalIgnoreCase)
+                    ? "Ошибка ЛМ: " + value : value;
             }
-            if (state == LmContourReadbackState.LocalModuleNotInitialized)
-            {
-                string reported = (observation.LmStatus ?? string.Empty).Trim();
-                bool endpointConfirmed = observation.EndpointMatches.HasValue &&
-                    observation.EndpointMatches.Value;
-                return prefix + (endpointConfirmed
-                    ? "привязка подтверждена ЕСМ (" + observation.LmAddress +
-                        ":" + observation.LmPort + "); "
-                    : "привязка принята ЕСМ; ") +
-                    "ЛМ ЧЗ пока не работает — ЕСМ сообщает: " + reported +
-                    ". Инициализация модуля идёт в фоне и занимает часы; " +
-                    "контур это не задерживает.";
-            }
-            string details = observation == null
-                ? string.Empty
-                : (observation.Details ?? string.Empty).Trim();
-            if (state == LmContourReadbackState.Attention)
-                return prefix + "требуется проверка: " + details;
-            return prefix + "ЕСМ недоступен для контрольного чтения: " + details;
         }
 
         /// <summary>

@@ -230,18 +230,8 @@ namespace EsmTspiot.WinForms.Shared
                 inventory,
                 localLmKkts,
                 cancellation).ConfigureAwait(true);
-            string summary = ready
-                ? "ЛМ ЧЗ установлены и проверены: " +
-                    _lastAutomaticLocalModulesReady.ToString(
-                        CultureInfo.InvariantCulture) +
-                    "; автозапуск служб включён."
-                : "ЛМ ЧЗ: готовы " +
-                    _lastAutomaticLocalModulesReady.ToString(
-                        CultureInfo.InvariantCulture) +
-                    ", отложены или с ошибкой " +
-                    _lastAutomaticLocalModulesFailed.ToString(
-                        CultureInfo.InvariantCulture) +
-                    "; см. журнал.";
+            string summary = ready ? "Подготовка ЛМ завершена."
+                : "Подготовка ЛМ не завершена. Результат по каждому ИНН указан в журнале.";
             await RefreshAfterManualStageAsync(summary, cancellation)
                 .ConfigureAwait(true);
         }
@@ -473,10 +463,17 @@ namespace EsmTspiot.WinForms.Shared
             return acceptable;
         }
 
+        private void RecordLocalModuleResult(LocalModuleMsiPlan plan, LocalModuleMsiProvisioningItemResult item)
+        {
+            _lastMsiItemResults[item.Inn] = item;
+            string line = DescribeLocalModuleResult(plan, item);
+            _lastAutomaticLocalModuleLines.Add(line);
+            Log(line + Environment.NewLine);
+        }
+
         private static string DescribeLocalModuleResult(
             LocalModuleMsiPlan plan,
-            LocalModuleMsiProvisioningItemResult item,
-            bool ready)
+            LocalModuleMsiProvisioningItemResult item)
         {
             string inn = item.Inn ?? string.Empty;
             LocalModuleMsiAssignment assignment = plan == null
@@ -489,12 +486,20 @@ namespace EsmTspiot.WinForms.Shared
                     : "клон ЛМ " + assignment.CloneOrdinal.ToString(
                         CultureInfo.InvariantCulture);
             int apiPort = assignment == null ? item.ApiPort : assignment.ApiPort;
-            return "ИНН " + inn + ": " + role + ", API " +
-                apiPort.ToString(CultureInfo.InvariantCulture) +
-                (ready
-                    ? " — готов, автозапуск служб включён; "
-                    : " — " + item.Status.ToString() + "; ") +
-                SensitiveDataMasker.Mask(item.Message ?? string.Empty);
+            string message = SensitiveDataMasker.Mask(item.Message ?? string.Empty);
+            string prefix = "ИНН " + inn + ": " + role + " · порт " +
+                apiPort.ToString(CultureInfo.InvariantCulture) + ". ";
+            switch (item.Status)
+            {
+                case LmServiceProvisioningStatus.Succeeded:
+                    return prefix + message;
+                case LmServiceProvisioningStatus.Cancelled:
+                    return prefix + "Установка отложена." + (message.Length == 0 ? "" : " " + message);
+                case LmServiceProvisioningStatus.Failed:
+                    return prefix + "Ошибка установки. " + message;
+                default:
+                    return prefix + "Требуется проверка (" + item.Status + "). " + message;
+            }
         }
     }
 }

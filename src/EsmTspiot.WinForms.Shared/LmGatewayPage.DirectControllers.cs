@@ -274,7 +274,7 @@ namespace EsmTspiot.WinForms.Shared
                 outcome.FailedCount,
                 outcome.Cancelled);
             _statusLabel.Text = outcome.FormatSummary();
-            Log("=== Итог прямых контроллеров ===\r\n" +
+            Log("=== Результат настройки контроллеров ===\r\n" +
                 outcome.FormatSummary() + "\r\n");
             for (int index = 0; index < outcome.Messages.Count; index++)
             {

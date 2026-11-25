@@ -11,6 +11,11 @@ namespace EsmTspiot.Shared.Models
         public bool IsSuccess { get; set; }
         public string DecodedMessage { get; set; }
         public bool IsConnectionFailure { get; set; }
+        public static bool HasHttpResponse(ApiResponse response)
+        {
+            return response != null && !response.IsConnectionFailure && response.StatusCode > 0;
+        }
+
         public bool IsTlsCertificateFailure { get; set; }
     }
 }

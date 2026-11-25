@@ -214,6 +214,10 @@ function Test-AllowedSecretHit {
         $relative -eq "src/EsmTspiot.ServiceProvisioner/LmGatewaySupervisorService.cs") {
         return $text -match '(peer|service) token'
     }
+    if ($relative -eq "src/EsmTspiot.WinForms.Shared/LmGatewayPage.Wizard.cs") {
+        # CancellationTokenSource for the read-only LM status watch.
+        return $text.Trim() -eq '}, source.Token);'
+    }
     if ($relative -eq "src/EsmTspiot.WinForms.Shared/LmGatewayPage.cs") {
         return $text -match 'CancellationToken token|_cancellation\.Token'
     }

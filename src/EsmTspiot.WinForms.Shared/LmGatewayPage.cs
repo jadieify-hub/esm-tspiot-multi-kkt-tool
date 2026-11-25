@@ -70,6 +70,7 @@ namespace EsmTspiot.WinForms.Shared
             UpdateActionState();
         }
 
+        internal event Action<bool> EsmReachabilityChanged;
         public event Action<bool> OperationStateChanged;
         public event Action InstallerSelectionChanged;
         internal Func<string, string, string> OrganizationNameProvider { get; set; }
@@ -110,6 +111,7 @@ namespace EsmTspiot.WinForms.Shared
                 if (_running || _hostBusy)
                     throw new InvalidOperationException(
                         "Режим FMU-API нельзя менять во время операции.");
+                CancelLmStatusWatches();
                 _fmuApiMode = value;
                 _hasLoaded = false;
                 UpdateOfficialControllerStatus();
@@ -157,6 +159,7 @@ namespace EsmTspiot.WinForms.Shared
         {
             if (disposing)
             {
+                CancelLmStatusWatches();
                 if (_cancellation != null)
                 {
                     _cancellation.Cancel();
@@ -250,10 +253,22 @@ namespace EsmTspiot.WinForms.Shared
             }
         }
 
+        private async Task<LmGatewayDiscovery> DiscoverKktsAsync(string baseUrl,
+            Action<LmGatewayProgress> progress, CancellationToken cancellation, string serial = null)
+        {
+            var discovery = await _discoveryWorkflow.DiscoverAsync(baseUrl, progress, cancellation, serial);
+            cancellation.ThrowIfCancellationRequested();
+            if (!IsDisposed && !Disposing && EsmReachabilityChanged != null &&
+                string.Equals(baseUrl.TrimEnd('/'), (_baseUrlProvider() ?? string.Empty).Trim().TrimEnd('/'),
+                    StringComparison.Ordinal))
+                EsmReachabilityChanged(discovery.EsmReachable);
+            return discovery;
+        }
+
         private async Task RefreshCoreAsync(CancellationToken cancellationToken)
         {
             string baseUrl = ValidateAndReadBaseUrl();
-            LmGatewayDiscovery discovery = await _discoveryWorkflow.DiscoverAsync(
+            LmGatewayDiscovery discovery = await DiscoverKktsAsync(
                 baseUrl,
                 ReportDiscoveryProgress,
                 cancellationToken);
@@ -691,8 +706,7 @@ namespace EsmTspiot.WinForms.Shared
             if (work == null) throw new ArgumentNullException("work");
             DateTime started = DateTime.UtcNow;
             ProvisionerStepTrace.Restart(stageName);
-            Log(stageName + ": начато, работает разовый помощник с правами " +
-                "администратора.\r\n");
+            Log(stageName + ": начало операции.\r\n");
             string lastReported = string.Empty;
             while (true)
             {
@@ -709,20 +723,19 @@ namespace EsmTspiot.WinForms.Shared
                 string step = ProvisionerStepTrace.ReadLastStep();
                 // След начинается со времени начала шага: «сейчас: 17:06:35»
                 // читалось как застывшие часы, хотя шаг просто длинный.
-                string suffix = string.IsNullOrEmpty(step)
-                    ? string.Empty
-                    : step.Length > 9 && step[2] == ':' && step[5] == ':' && step[8] == ' '
-                    ? "; текущий шаг начат в " + step.Substring(0, 8) + ": " +
-                        step.Substring(9)
-                    : "; текущий шаг: " + step;
-                if (!string.Equals(step, lastReported, StringComparison.Ordinal) ||
-                    string.IsNullOrEmpty(step))
-                {
-                    lastReported = step;
-                }
-                Log(stageName + ": прошло " +
+                string title = step.Length > 9 && step[2] == ':' && step[5] == ':' && step[8] == ' '
+                    ? step.Substring(9) : step;
+                if (title == "=== " + stageName + " ===") title = string.Empty;
+                title = SensitiveDataMasker.Mask(title);
+                _statusLabel.Text = stageName + ": прошло " +
                     ((int)elapsed.TotalMinutes).ToString() + " мин " +
-                    elapsed.Seconds.ToString("00") + " с" + suffix + ".\r\n");
+                    elapsed.Seconds.ToString("00") + " с" +
+                    (title.Length == 0 ? "." : ". " + title);
+                if (title.Length != 0 && title != lastReported)
+                {
+                    Log(stageName + ": " + title + "\r\n");
+                    lastReported = title;
+                }
             }
             return await work.ConfigureAwait(true);
         }

@@ -12,6 +12,7 @@ namespace EsmTspiot.Shared.Models
 
         public IList<LmGatewayKkt> Items { get; private set; }
         public IList<LmGatewayDiscoveryIssue> Issues { get; private set; }
+        public bool EsmReachable { get; internal set; }
         public string ErrorMessage { get; set; }
 
         public bool IsSuccessful

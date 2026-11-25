@@ -126,6 +126,8 @@ namespace EsmTspiot.Shared.Services
             if (!observation.HasLmConfiguration)
             {
                 observation.Details = "ЕСМ не сообщает настроенную привязку ЛМ для этой ККТ.";
+                if (observation.LmStatus.Length != 0)
+                    observation.Details += " " + LmContourReadbackPolicy.DescribeStatus(observation.LmStatus);
                 return observation;
             }
 
@@ -139,7 +141,9 @@ namespace EsmTspiot.Shared.Services
                 !int.TryParse(observation.LmPort, out observedPort) ||
                 observedPort < 1 || observedPort > 65535)
             {
-                observation.Details = "ЕСМ вернул некорректный endpoint ЛМ ЧЗ.";
+                observation.Details = "ЕСМ вернул некорректный адрес или порт ЛМ ЧЗ.";
+                if (observation.LmStatus.Length != 0)
+                    observation.Details += " " + LmContourReadbackPolicy.DescribeStatus(observation.LmStatus);
                 return observation;
             }
             observation.LmAddress = normalizedObservedAddress;
@@ -167,47 +171,46 @@ namespace EsmTspiot.Shared.Services
                     observedPort == expectedPort;
                 if (!observation.EndpointMatches.Value)
                 {
-                    // Пока ЛМ ЧЗ не инициализирован, ЕСМ подставляет в
-                    // lm.ip/lm.port значения по умолчанию, а не адрес
-                    // привязанного модуля. В поле это выглядело как «ЕСМ
-                    // сообщает 5995, ожидалось 6995» на исправно привязанной
-                    // кассе, у которой сам ЕСМ показывал наш контроллер.
-                    // Совпавший адрес сверяем как раньше: подменяется только
-                    // несовпавший.
-                    if (LmContourReadbackPolicy.IsLocalModulePending(
-                            observation.LmStatus))
-                    {
+                    if (LmContourReadbackPolicy.IsLocalModulePending(observation.LmStatus))
                         observation.EndpointMatches = null;
-                        observation.Details =
-                            "ЛМ ЧЗ пока не работает — ЕСМ сообщает: " +
-                            Trim(observation.LmStatus) + ". Пока модуль не " +
-                            "поднялся, ЕСМ не показывает фактический адрес ЛМ, " +
-                            "поэтому сверка порта отложена.";
-                        return observation;
-                    }
-
-                    // ЕСМ подставляет в lm.ip/lm.port свой модуль по
-                    // умолчанию, а не тот, к которому привязан контроллер:
-                    // в поле обе ККТ получили 127.0.0.1:5995, хотя второй
-                    // ИНН обслуживает клон на 6995 и штатный ЕСМ показывал
-                    // его как «Готов к работе». Отказом контура это быть не
-                    // может — только строкой оператору.
-                    endpointNote = " ЕСМ показывает адрес ЛМ " +
-                        observation.LmAddress + ":" + observation.LmPort +
-                        " — это его модуль по умолчанию; эту ККТ обслуживает " +
-                        "ЛМ " + Trim(expectedLmAddress) + ":" +
-                        Trim(expectedLmPort) + " через её контроллер. " +
-                        "Расхождение адресов здесь ошибкой не является.";
+                    endpointNote = Environment.NewLine + "Адрес в настройках MultiKKT: " +
+                        Trim(expectedLmAddress) + ":" + Trim(expectedLmPort);
                 }
             }
 
-            if (!hasExpectedEndpoint)
-            {
-                endpointNote = " Ожидаемый адрес ЛМ для сверки не задан.";
-            }
-
-            observation.Details = BuildVerifiedDetails(observation) + endpointNote;
+            observation.Details = LmContourReadbackPolicy.FormatModule(observation,
+                endpointNote.Length != 0) + endpointNote;
             return observation;
+        }
+
+        public async Task WatchInitializationAsync(
+            string baseUrl, LmGatewayKkt kkt, LmGatewayTarget expected, TimeSpan interval,
+            Action<LmGatewayReadbackObservation> report, CancellationToken cancellation)
+        {
+            while (true)
+            {
+                await Task.Delay(interval, cancellation);
+                LmGatewayReadbackObservation observation;
+                try
+                {
+                    observation = await ReadAsync(baseUrl, kkt,
+                        expected == null ? null : expected.Address,
+                        expected == null ? null : expected.Port.ToString(CultureInfo.InvariantCulture),
+                        cancellation);
+                }
+                catch (OperationCanceledException)
+                {
+                    cancellation.ThrowIfCancellationRequested();
+                    observation = CreateObservation(kkt);
+                    observation.Details = "ЕСМ не ответил вовремя. Проверка будет повторена.";
+                }
+                cancellation.ThrowIfCancellationRequested();
+                report(observation);
+                if ((observation.IsAvailable && !observation.IdentityMatches) ||
+                    (observation.IsVerified && string.Equals(observation.LmStatus, "ready",
+                        StringComparison.OrdinalIgnoreCase)))
+                    return;
+            }
         }
 
         public async Task<IList<LmGatewayReadbackObservation>> ReadAllAsync(
@@ -281,30 +284,6 @@ namespace EsmTspiot.Shared.Services
                 LmVersion = string.Empty,
                 Details = string.Empty
             };
-        }
-
-        private static string BuildVerifiedDetails(LmGatewayReadbackObservation observation)
-        {
-            string lmStatus = observation.LmStatus ?? string.Empty;
-            bool reportsError = lmStatus.StartsWith(
-                "error",
-                StringComparison.OrdinalIgnoreCase);
-            string details = reportsError
-                ? "Адрес привязки подтверждён ЕСМ: " +
-                    observation.LmAddress + ":" + observation.LmPort + "."
-                : "Привязка подтверждена ЕСМ: целевой ЛМ " +
-                    observation.LmAddress + ":" + observation.LmPort + ".";
-            if (!string.IsNullOrEmpty(lmStatus))
-            {
-                details += reportsError
-                    ? " ЛМ сообщает ошибку: " + lmStatus + "."
-                    : " Состояние: " + lmStatus + ".";
-            }
-            if (!string.IsNullOrEmpty(observation.LmVersion))
-            {
-                details += " Версия: " + observation.LmVersion + ".";
-            }
-            return details;
         }
 
         /// <summary>

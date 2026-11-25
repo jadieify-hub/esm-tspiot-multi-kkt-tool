@@ -57,13 +57,16 @@ namespace EsmTspiot.WinForms.Shared
             catch (OperationCanceledException)
             {
                 if (!IsDisposed && !Disposing && !_updateCancellation.IsCancellationRequested)
-                    AppendLog("Проверка обновлений: истекло время ожидания GitHub. Работа программы продолжается.\r\n");
+                    AppendLog("Не удалось проверить обновления: GitHub не ответил вовремя.\r\n");
             }
             catch (Exception error)
             {
                 if (!(error is HttpRequestException) && !(error is IOException) && !(error is SerializationException)) throw;
                 if (!IsDisposed && !Disposing)
-                    AppendLog("Проверка обновлений не выполнена: " + error.GetType().Name + ". Работа программы продолжается.\r\n");
+                {
+                    AppendLog("Не удалось получить сведения об обновлениях с GitHub.\r\n");
+                    AppendDetailToFile("Проверка обновлений: " + error.GetType().Name + ": " + error.Message + "\r\n");
+                }
             }
         }
     }

@@ -3445,6 +3445,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 provisioner.Ensure(clone, context);
             AssertEqual(LmServiceProvisioningStatus.Succeeded, created.Status,
                 "A new clone must be installed and started.");
+            AssertContains(created.Message, "ЛМ установлен");
             AssertSequence(new[]
             {
                 "install:1234567890", "firewall:1234567890",
@@ -3456,6 +3457,7 @@ namespace EsmTspiot.ServiceProvisioner.Tests
                 provisioner.Ensure(clone, context);
             AssertEqual(LmServiceProvisioningStatus.Succeeded, repeated.Status,
                 "A matching ready clone must be a successful no-op.");
+            AssertContains(repeated.Message, "Использован ранее установленный ЛМ");
             AssertEqual(mutationCount, platform.Events.Count,
                 "A second ensure must perform no mutation.");
 

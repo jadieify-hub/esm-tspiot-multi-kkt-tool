@@ -56,8 +56,6 @@ namespace EsmTspiot.WinForms.Shared
         private bool _helperAvailable;
         private string _helperUnavailableReason = string.Empty;
         private string _serviceInventoryWarning = string.Empty;
-        private int _lastAutomaticLocalModulesReady;
-        private int _lastAutomaticLocalModulesFailed;
 
         private void InitializeServiceFeatures()
         {
@@ -247,7 +245,7 @@ namespace EsmTspiot.WinForms.Shared
             string baseUrl,
             CancellationToken cancellation)
         {
-            LmGatewayDiscovery discovery = await _discoveryWorkflow.DiscoverAsync(
+            LmGatewayDiscovery discovery = await DiscoverKktsAsync(
                 baseUrl,
                 null,
                 cancellation);
@@ -384,8 +382,7 @@ namespace EsmTspiot.WinForms.Shared
                     throw;
                 _localModuleMsiInventory =
                     new LocalModuleMsiOperatorInventorySnapshot();
-                Log("Инвентарь независимых MSI ЛМ будет повторно проверен " +
-                    "helper: " + ex.GetType().Name + "; " +
+                Log("Не удалось прочитать список установленных ЛМ ЧЗ: " +
                     SensitiveDataMasker.Mask(ex.Message) + "\r\n");
             }
             UpdateOfficialControllerStatus();

@@ -97,6 +97,7 @@ namespace EsmTspiot.Shared.Tests
             Run("LM readback labels controller errors without implying health", LmReadbackLabelsControllerErrorsWithoutImplyingHealth);
             Run("LM info parser exposes only safe readback fields", LmInfoParserExposesOnlySafeReadbackFields);
             Run("LM discovery returns registered KKT with INN", LmDiscoveryReturnsRegisteredKktWithInn);
+            Run("LM overview reports ESM reachability", LmDiscoveryReportsEsmReachability);
             Run("LM discovery aborts on malformed instance list", LmDiscoveryAbortsOnMalformedInstanceList);
             Run("LM discovery continues after one malformed detail", LmDiscoveryContinuesAfterOneMalformedDetail);
             Run("LM discovery retains failed instance inventory without eligibility", LmDiscoveryRetainsFailedInstanceInventory);
@@ -247,6 +248,7 @@ namespace EsmTspiot.Shared.Tests
             Run("FMU preparation skips controller and ESM binding stages", FmuPreparationSkipsControllerAndBindingStages);
             Run("FMU preparation requires registration and local modules", FmuPreparationRequiresRegistrationAndLocalModules);
             Run("FMU preparation honors cancellation after local modules", FmuPreparationHonorsCancellationAfterLocalModules);
+            Run("LM initialization watch reads until verified Ready", LmInitializationWatchReadsUntilReady);
             Run("LM contour read-back policy classifies ESM observations", LmContourReadbackPolicyClassifiesEsmObservations);
 #endif
             Run("LM automatic setup reports incomplete controller configuration", LmAutomaticSetupReportsIncompleteControllerConfiguration);
@@ -1566,8 +1568,9 @@ namespace EsmTspiot.Shared.Tests
 
             AssertTrue(observation.EndpointMatches.HasValue && observation.EndpointMatches.Value,
                 "The endpoint itself must remain confirmed.");
-            AssertContains(observation.Details, "Адрес привязки");
-            AssertContains(observation.Details, "ЛМ сообщает ошибку");
+            AssertContains(observation.Details, "127.0.0.1:5995");
+            AssertFalse(observation.Details.Contains("Идёт инициализация"),
+                "An error cannot confirm that initialization is running.");
             AssertContains(observation.Details, "error 2055");
             AssertFalse(observation.Details.StartsWith("Подтверждено ЕСМ", StringComparison.Ordinal),
                 "A matching address must not make an unhealthy LM look fully confirmed.");
@@ -1598,6 +1601,23 @@ namespace EsmTspiot.Shared.Tests
                 "Readback model must not expose the LM token.");
         }
 
+        private static void LmDiscoveryReportsEsmReachability()
+        {
+            var api = new FakeTspiotApiClient();
+            var workflow = new LmGatewayDiscoveryWorkflow(api);
+            api.InstancesResponses.Enqueue(new ApiResponse { IsSuccess = true, StatusCode = 204 });
+            api.InstancesResponses.Enqueue(Failure(500, "{}"));
+            api.InstancesResponses.Enqueue(ConnectionFailure());
+            foreach (bool expected in new[] { true, true, false })
+            {
+                var discovery = workflow.DiscoverAsync("http://127.0.0.1:51077",
+                    null, CancellationToken.None).Result;
+                AssertEqual(expected, discovery.EsmReachable, "The header follows the HTTP response.");
+                AssertEqual(0, discovery.Items.Count, "Availability is independent of the row count.");
+            }
+            AssertEqual(3, api.InstancesCalls, "Reporting availability must not send an extra probe.");
+        }
+
         private static void LmDiscoveryReturnsRegisteredKktWithInn()
         {
             FakeTspiotApiClient api = new FakeTspiotApiClient();
@@ -1617,6 +1637,7 @@ namespace EsmTspiot.Shared.Tests
                 "http://127.0.0.1:51077", null, CancellationToken.None).Result;
 
             AssertTrue(discovery.IsSuccessful, "Expected successful LM discovery.");
+            AssertTrue(discovery.EsmReachable, "Registered KKTs were read from ESM.");
             AssertEqual(2, discovery.Items.Count, "Expected two registered KKT.");
             AssertEqual("00105700000002", discovery.Items[0].InstanceId, "Expected source order to be preserved.");
             AssertEqual("1234567894", discovery.Items[0].KktInn, "Expected first KKT INN.");
@@ -3997,7 +4018,31 @@ namespace EsmTspiot.Shared.Tests
             AssertTrue(observation.IsVerified,
                 "ESM's default LM port report must not deny an otherwise healthy binding.");
             AssertContains(observation.Details, "6995");
-            AssertContains(observation.Details, "по умолчанию");
+            AssertContains(observation.Details, "Адрес в ЕСМ: 127.0.0.1:6995");
+            AssertContains(observation.Details, "Адрес в настройках MultiKKT: " + item.Input.ExpectedLmAddress);
+        }
+
+        private static void LmInitializationWatchReadsUntilReady()
+        {
+            var api = new FakeTspiotApiClient();
+            var kkt = CreateValidLmBindingPlan(1).Items[0].Kkt;
+            string ready = CreateLmInfoJson(kkt.KktSerial, kkt.KktInn, "127.0.0.1", 5995);
+            api.LmInfoResponses.Enqueue(Success(ready.Replace("ready", "initialization")));
+            api.LmInfoResponses.Enqueue(Success(ready.Replace("ready", "Ready")));
+            var seen = new List<string>();
+            using (var limit = new CancellationTokenSource(TimeSpan.FromSeconds(3)))
+            {
+                new LmGatewayReadbackWorkflow(api).WatchInitializationAsync(
+                    "http://127.0.0.1:51077", kkt, null, TimeSpan.FromMilliseconds(1),
+                    delegate(LmGatewayReadbackObservation observed)
+                    {
+                        seen.Add(observed.LmStatus);
+                        AssertFalse(observed.Details.Contains("для сверки не задан"),
+                            "An optional expected target should not produce an operator warning.");
+                    }, limit.Token).GetAwaiter().GetResult();
+            }
+            AssertEqual("initialization,Ready", string.Join(",", seen.ToArray()),
+                "Readiness should be reported only after the selected instance reports it.");
         }
 
         private static string CreateLmInfoJson(
@@ -4073,13 +4118,10 @@ namespace EsmTspiot.Shared.Tests
                 LmContourReadbackPolicy.IsAcceptable(
                     LmContourReadbackPolicy.Classify(observation)),
                 "Deferred LM initialization stays acceptable for the contour.");
-            AssertContains(observation.Details, "пока не работает");
-            AssertFalse(
-                observation.Details.Contains("ожидалось"),
-                "The port comparison must be postponed until initialization.");
-            AssertContains(
-                LmContourReadbackPolicy.Describe(observation),
-                "ЛМ ЧЗ пока не работает");
+            AssertContains(observation.Details, "Идёт инициализация (initialization)");
+            AssertContains(observation.Details, "Адрес в ЕСМ: 127.0.0.1:5995");
+            AssertContains(observation.Details, "Адрес в настройках MultiKKT: 127.0.0.1:6995");
+            AssertContains(LmContourReadbackPolicy.Describe(observation), observation.Details);
         }
 
 
@@ -6364,7 +6406,7 @@ namespace EsmTspiot.Shared.Tests
                     LmContourReadbackState.LocalModuleNotInitialized),
                 "A confirmed binding with an uninitialized LM is acceptable.");
             string pendingLine = LmContourReadbackPolicy.Describe(uninitialized);
-            AssertTrue(pendingLine.IndexOf("пока не работает", StringComparison.Ordinal) >= 0 &&
+            AssertTrue(pendingLine.IndexOf("Идёт инициализация", StringComparison.Ordinal) < 0 &&
                 pendingLine.IndexOf("error 2025", StringComparison.Ordinal) >= 0,
                 "The pending line must say the module is not up yet and quote ESM.");
 
@@ -6419,7 +6461,7 @@ namespace EsmTspiot.Shared.Tests
                 LmContourReadbackPolicy.Classify(unconfigured),
                 "An LM that ESM reached but reports as not configured awaits initialization.");
             AssertTrue(LmContourReadbackPolicy.Describe(unconfigured).IndexOf(
-                    "пока не работает", StringComparison.Ordinal) >= 0,
+                    "ЛМ не настроен (not_configured)", StringComparison.Ordinal) >= 0,
                 "The line must say the module is not up, not that the binding is missing.");
 
             LmGatewayReadbackObservation unbound =

@@ -96,6 +96,7 @@ namespace EsmTspiot.WinForms.Shared
                 delegate { return _baseUrlTextBox.Text; },
                 _client,
                 AppendLog);
+            _lmGatewayPage.EsmReachabilityChanged += UpdateConnectionStatus;
             _lmGatewayPage.DetailLogger = AppendDetailToFile;
             _lmGatewayPage.OrganizationNameProvider = delegate(string serial, string inn) { return _organizations.GetName(serial, inn); };
             _lmGatewayPage.OperationStateChanged += OnLmGatewayOperationStateChanged;
@@ -2050,12 +2051,12 @@ namespace EsmTspiot.WinForms.Shared
             if (response == null)
             {
                 AppendLog("ЕСМ не вернул ответ.\r\n\r\n");
-                UpdateConnectionStatus(null);
+                UpdateConnectionStatus(false);
                 return;
             }
 
             AppendLog(LogFormatter.Format(response));
-            UpdateConnectionStatus(response);
+            UpdateConnectionStatus(ApiResponse.HasHttpResponse(response));
         }
 
         private void UpdateInstancesGrid(ApiResponse response)
@@ -2188,9 +2189,9 @@ namespace EsmTspiot.WinForms.Shared
             _deleteMenuItem.Enabled = enabled || (!_busy && _workspaceTabs.SelectedTab == _instancesTab && _lmGatewayPage.SelectedKkt != null);
         }
 
-        private void UpdateConnectionStatus(ApiResponse response)
+        private void UpdateConnectionStatus(bool reachable)
         {
-            if (response == null || response.IsConnectionFailure || response.StatusCode == 0)
+            if (!reachable)
             {
                 _connectionStatusLabel.Text = "ЕСМ: нет связи";
                 _connectionStatusLabel.ForeColor = OperatorTheme.Error;
